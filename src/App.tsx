@@ -112,7 +112,7 @@ export default function App() {
   
   // Сдвиг всей раскладки относительно смещения
   const delta = clamped - positions[i]
-  const next = positions.map((p, idx) => {
+  const next = positions.map((p, _idx) => {
     if (p === 0 || p === snap.l) return p
     if (p === snap.dp || p === snap.dp + snap.dw) return p
     return Math.max(1, Math.min(snap.l - 1, p + delta))
