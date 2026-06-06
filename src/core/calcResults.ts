@@ -9,7 +9,8 @@ export function calcResults(
   dh: number,
   dp: number,
   abutment: string,
-  overlap: number
+  overlap: number,
+  gklLayers: number = 1
 ): CalcResult {
   let cwTotal = 0
   let aboveStuds = 0
@@ -36,7 +37,7 @@ export function calcResults(
     studsCount:      positions.length,
     aboveStuds,
     aboveStudHeight: aboveH,
-    gklArea:         (l * h * 2) / 1_000_000,
+    gklArea:         (l * h * 2 * gklLayers) / 1_000_000,
     needsOverlap:    h > STUD_LENGTH,
   }
 }

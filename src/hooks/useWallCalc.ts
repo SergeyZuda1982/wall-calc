@@ -39,6 +39,7 @@ export function useWallCalc(): UseWallCalcReturn {
 
   const profileRef = useRef(DEFAULT_PROFILE)
   const abutmentRef = useRef('both')
+  const wallTypeRef = useRef('c111')
   const overlapRef = useRef(DEFAULT_PROFILE.overlap)  // текущий нахлёст (кнауф или пользовательский)
   const basePositionsRef = useRef<number[]>([])
   const gridShiftRef = useRef(0)
@@ -102,6 +103,7 @@ export function useWallCalc(): UseWallCalcReturn {
       : profile.overlap
     profileRef.current = { ...profile, overlap: effectiveOverlap }
     abutmentRef.current = abutment
+    wallTypeRef.current = wallType
     // пользовательский нахлёст или норма Кнауф
     overlapRef.current = customOverlap ?? profile.overlap
 
