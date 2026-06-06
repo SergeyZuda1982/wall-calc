@@ -113,29 +113,8 @@ export default function App() {
             placeholder="Название объекта / квартиры"
             style={{ flex: 1, padding: '5px 8px', border: '1px solid #ccc', borderRadius: 4, fontSize: 13 }}
           />
-          <button
-            onClick={() => {
-              if (result && positions.length) {
-                if (activeWallId) {
-                  updateWall(activeWallId, form, result, positions)
-                } else {
-                  addWall(form, result, positions)
-                }
-              }
-            }}
-            disabled={!result}
-            style={{ padding: '5px 14px', fontSize: 13, cursor: result ? 'pointer' : 'default',
-              background: result ? '#3a7bd5' : '#ccc', color: '#fff',
-              border: 'none', borderRadius: 4, whiteSpace: 'nowrap' }}>
-            {activeWallId ? '💾 Обновить' : '➕ Добавить в объект'}
-          </button>
-          {walls.length > 0 && (
-            <button onClick={() => { setActiveWall(null); setForm(DEFAULT_INPUT) }}
-              style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer',
-                background: '#fff', border: '1px solid #aaa', borderRadius: 4 }}>
-              + Новая
-            </button>
-          )}
+
+
         </div>
 
         {/* список перегородок — dropdown */}
@@ -310,10 +289,39 @@ export default function App() {
         )}
       </div>
 
-      <button onClick={() => calculate({ ...form, customOverlap: effectiveOverlap })}
-        style={{ padding: '10px 32px', fontSize: 15, cursor: 'pointer', marginBottom: 20 }}>
-        Рассчитать
-      </button>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+        {walls.length > 0 && (
+          <button
+            onClick={() => { setActiveWall(null); setForm(DEFAULT_INPUT) }}
+            style={{ padding: '10px 20px', fontSize: 15, cursor: 'pointer',
+              background: '#fff', border: '1px solid #aaa', borderRadius: 4 }}>
+            + Новая
+          </button>
+        )}
+        <button
+          onClick={() => calculate({ ...form, customOverlap: effectiveOverlap })}
+          style={{ padding: '10px 32px', fontSize: 15, cursor: 'pointer',
+            background: '#f0f0f0', border: '1px solid #ccc', borderRadius: 4, flex: 1 }}>
+          Рассчитать
+        </button>
+        <button
+          onClick={() => {
+            if (result && positions.length) {
+              if (activeWallId) {
+                updateWall(activeWallId, form, result, positions)
+              } else {
+                addWall(form, result, positions)
+              }
+            }
+          }}
+          disabled={!result}
+          style={{ padding: '10px 20px', fontSize: 15,
+            cursor: result ? 'pointer' : 'default',
+            background: result ? '#3a7bd5' : '#ccc',
+            color: '#fff', border: 'none', borderRadius: 4, whiteSpace: 'nowrap' }}>
+          {activeWallId ? '💾 Обновить' : '➕ В объект'}
+        </button>
+      </div>
 
       {heightWarning && (
         <div style={{ background: '#fff3cd', border: '1px solid #ffc107',
