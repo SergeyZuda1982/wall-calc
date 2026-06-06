@@ -31,6 +31,9 @@ export interface WallInput {
   doorPos: number     // мм, начало проёма
   doorWidth: number   // мм
   doorHeight: number  // мм
+
+  // Пользовательский нахлёст (0 = использовать норму Кнауф по профилю)
+  customOverlap?: number | null
 }
 
 // Результат расчёта

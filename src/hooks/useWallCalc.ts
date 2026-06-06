@@ -4,21 +4,28 @@ import { getProfile, DEFAULT_PROFILE } from '../data/profiles'
 import { getMaxHeight } from '../data/maxHeight'
 import { buildPositions } from '../core/buildPositions'
 import { calcResults } from '../core/calcResults'
+import { calcStudMaterial, STUD_LENGTH } from '../core/calcStudMaterial'
 
 const CANVAS_W = 820
 const PAD = 60
 
+export interface StudOverlapInfo {
+  pos: number          // позиция стойки, мм
+  zone: { from: number; to: number }
+}
+
 export interface UseWallCalcReturn {
-  // состояние
   positions: number[]
   snap: DrawingSnap
   result: CalcResult | null
   heightWarning: string | null
-  profileWidth: number  // ширина текущего профиля в мм (для чертежа)
+  profileWidth: number
+  overlapInfos: StudOverlapInfo[]  // зоны нахлёста для чертежа
 
-  // действия
-  calculate: (input: WallInput) => void
+  calculate: (input: WallInput, customOverlap?: number) => void
   onDragEnd: (studPos: number, xpx: number) => void
+  onRightDragEnd: (_studPos: number, xpx: number, startXpx: number) => void
+  shiftGrid: (deltaMm: number) => void
   addStud: (xpx: number) => void
   removeStud: (studPos: number) => void
 }
@@ -28,31 +35,61 @@ export function useWallCalc(): UseWallCalcReturn {
   const [snap, setSnap] = useState<DrawingSnap>({ l: 0, h: 0, dw: 0, dh: 0, dp: 0 })
   const [result, setResult] = useState<CalcResult | null>(null)
   const [heightWarning, setHeightWarning] = useState<string | null>(null)
+  const [overlapInfos, setOverlapInfos] = useState<StudOverlapInfo[]>([])
 
-  // ref вместо state — чтобы чертёж не ре-рендерился при каждом драге
   const profileRef = useRef(DEFAULT_PROFILE)
+  const abutmentRef = useRef('both')
+  const overlapRef = useRef(DEFAULT_PROFILE.overlap)  // текущий нахлёст (кнауф или пользовательский)
+  const basePositionsRef = useRef<number[]>([])
+  const gridShiftRef = useRef(0)
 
-  // ─── Приватный пересчёт по уже готовым позициям + снапшоту ─────────────────
+  function isFixed(p: number, s: DrawingSnap): boolean {
+    if (p === 0 || p === s.l) return true
+    if (s.dw > 0 && (p === s.dp || p === s.dp + s.dw)) return true
+    return false
+  }
+
+  // Считает зоны нахлёста для всех стоек
+  function calcOverlapInfos(
+    pos: number[],
+    h: number,
+    l: number,
+    dw: number,
+    _dh: number,
+    dp: number,
+    abutment: string,
+    overlap: number
+  ): StudOverlapInfo[] {
+    if (h <= STUD_LENGTH) return []
+    const infos: StudOverlapInfo[] = []
+    for (const p of pos) {
+      // стойки над проёмом — их высота меньше, отдельная логика
+      if (dw > 0 && p > dp && p < dp + dw) continue
+      let kind = 'middle' as 'wall' | 'free' | 'middle'
+      if (p === 0) kind = (abutment === 'both' || abutment === 'left') ? 'wall' : 'free'
+      if (p === l) kind = (abutment === 'both' || abutment === 'right') ? 'wall' : 'free'
+      const { overlapZone } = calcStudMaterial(h, kind, overlap)
+      if (overlapZone) infos.push({ pos: p, zone: overlapZone })
+    }
+    return infos
+  }
+
   function _update(next: number[], currentSnap: DrawingSnap) {
     setPositions(next)
-    setResult(calcResults(
-      next,
-      currentSnap.h,
-      currentSnap.l,
-      currentSnap.dw,
-      currentSnap.dh,
-      currentSnap.dp,
-      // abutment не нужен в snap — передаётся через calculate
-      // но нам нужен для calcResults... решение: храним в ref
-      abutmentRef.current,
-      profileRef.current.overlap,
+    const res = calcResults(
+      next, currentSnap.h, currentSnap.l,
+      currentSnap.dw, currentSnap.dh, currentSnap.dp,
+      abutmentRef.current, overlapRef.current,
+    )
+    setResult(res)
+    setOverlapInfos(calcOverlapInfos(
+      next, currentSnap.h, currentSnap.l,
+      currentSnap.dw, currentSnap.dh, currentSnap.dp,
+      abutmentRef.current, overlapRef.current,
     ))
   }
 
-  const abutmentRef = useRef('both')
-
-  // ─── Основной расчёт ────────────────────────────────────────────────────────
-  function calculate(input: WallInput) {
+  function calculate(input: WallInput, customOverlap?: number) {
     const { wallType, profileType, profileThickness, abutment,
             length: l, height: h, step: s, firstStud,
             doorPos: dp, doorWidth: dw, doorHeight: dh } = input
@@ -60,10 +97,14 @@ export function useWallCalc(): UseWallCalcReturn {
     if (!l || !h || !s) return
 
     const profile = getProfile(profileType)
-    profileRef.current = profile
+    const effectiveOverlap = input.customOverlap !== null && input.customOverlap !== undefined
+      ? Math.max(100, input.customOverlap)
+      : profile.overlap
+    profileRef.current = { ...profile, overlap: effectiveOverlap }
     abutmentRef.current = abutment
+    // пользовательский нахлёст или норма Кнауф
+    overlapRef.current = customOverlap ?? profile.overlap
 
-    // Проверка максимальной высоты по Кнауф
     const maxH = getMaxHeight(wallType, profileType, s, profileThickness)
     if (maxH > 0 && h > maxH) {
       const thickLabel = profileThickness === '06' ? '0.6' : '0.7'
@@ -79,33 +120,52 @@ export function useWallCalc(): UseWallCalcReturn {
     const studs = buildPositions(l, s, firstStud, dp, dw)
     const newSnap: DrawingSnap = { l, h, dw, dh, dp }
 
+    basePositionsRef.current = studs
+    gridShiftRef.current = 0
     setSnap(newSnap)
     setPositions(studs)
-    setResult(calcResults(studs, h, l, dw, dh, dp, abutment, profile.overlap))
+    const res = calcResults(studs, h, l, dw, dh, dp, abutment, overlapRef.current)
+    setResult(res)
+    setOverlapInfos(calcOverlapInfos(studs, h, l, dw, dh, dp, abutment, overlapRef.current))
   }
 
-  // ─── Перемещение стойки (исправленный onDragEnd) ────────────────────────────
-  // Принимает позицию стойки в мм (а не индекс!) — так индекс не может съехать
   function onDragEnd(studPos: number, xpx: number) {
     if (!snap.l) return
     const sc = (CANVAS_W - PAD * 2) / snap.l
     const newMm = Math.round((xpx - PAD) / sc / 100) * 100
     const clamped = Math.max(1, Math.min(snap.l - 1, newMm))
-    const delta = clamped - studPos
-
     const next = positions.map((p) => {
-      // крайние и дверные — не трогаем
-      if (p === 0 || p === snap.l) return p
-      if (snap.dw > 0 && (p === snap.dp || p === snap.dp + snap.dw)) return p
-      // двигаем только ту стойку, которую тащат
+      if (isFixed(p, snap)) return p
       if (p === studPos) return clamped
       return p
     })
-
     _update([...new Set(next)].sort((a, b) => a - b), snap)
   }
 
-  // ─── Добавить стойку ────────────────────────────────────────────────────────
+  function onRightDragEnd(_studPos: number, xpx: number, startXpx: number) {
+    if (!snap.l) return
+    const sc = (CANVAS_W - PAD * 2) / snap.l
+    const deltaMm = Math.round((xpx - startXpx) / sc / 100) * 100
+    if (deltaMm === 0) return
+    gridShiftRef.current += deltaMm
+    _rebuildWithShift(gridShiftRef.current)
+  }
+
+  function shiftGrid(deltaMm: number) {
+    if (!snap.l || deltaMm === 0) return
+    gridShiftRef.current += deltaMm
+    _rebuildWithShift(gridShiftRef.current)
+  }
+
+  function _rebuildWithShift(totalShift: number) {
+    const base = basePositionsRef.current
+    if (!base.length) return
+    const next = base
+      .map((p) => isFixed(p, snap) ? p : p + totalShift)
+      .filter((p) => isFixed(p, snap) || (p > 0 && p < snap.l))
+    _update([...new Set(next)].sort((a, b) => a - b), snap)
+  }
+
   function addStud(xpx: number) {
     if (!snap.l) return
     const sc = (CANVAS_W - PAD * 2) / snap.l
@@ -114,25 +174,15 @@ export function useWallCalc(): UseWallCalcReturn {
     _update([...new Set([...positions, mm])].sort((a, b) => a - b), snap)
   }
 
-  // ─── Удалить стойку ─────────────────────────────────────────────────────────
   function removeStud(studPos: number) {
-    const { l, dp, dw } = snap
-    // защита от удаления фиксированных стоек
-    if (studPos === 0 || studPos === l) return
-    if (dw > 0 && (studPos === dp || studPos === dp + dw)) return
+    if (isFixed(studPos, snap)) return
     _update(positions.filter(p => p !== studPos), snap)
   }
 
   return {
-    positions,
-    snap,
-    result,
-    heightWarning,
-    profileWidth: profileRef.current.width,
-    calculate,
-    onDragEnd,
-    addStud,
-    removeStud,
+    positions, snap, result, heightWarning, profileWidth: profileRef.current.width,
+    overlapInfos,
+    calculate, onDragEnd, onRightDragEnd, shiftGrid, addStud, removeStud,
   }
 }
 

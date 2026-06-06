@@ -1,8 +1,11 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
 import type { WallInput } from './types'
 import { PROFILES } from './data/profiles'
 import { useWallCalc, CANVAS_W, PAD } from './hooks/useWallCalc'
+import { MIN_GAP } from './core/buildPositions'
+import { useProjectStore } from './store/useProjectStore'
+import { calcStudMaterial } from './core/calcStudMaterial'
 
 const DEFAULT_INPUT: WallInput = {
   wallType: 'c111',
@@ -16,32 +19,164 @@ const DEFAULT_INPUT: WallInput = {
   doorPos: 0,
   doorWidth: 0,
   doorHeight: 0,
+  customOverlap: null,
 }
 
 export default function App() {
   const [form, setForm] = useState(DEFAULT_INPUT)
+  const [shiftInput, setShiftInput] = useState('100')
   const {
     positions, snap, result, heightWarning, profileWidth,
-    calculate, onDragEnd, addStud, removeStud,
+    calculate, onDragEnd, onRightDragEnd, shiftGrid, addStud, removeStud,
   } = useWallCalc()
+
+  const rightDragStart = useRef<{ studPos: number; startXpx: number } | null>(null)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastTapTime = useRef<number>(0)
+  const lastTapPos = useRef<{ x: number; y: number } | null>(null)
+
+  const {
+    projectName, walls, activeWallId,
+    setProjectName, addWall, updateWall, removeWall, setActiveWall,
+  } = useProjectStore()
 
   function set<K extends keyof WallInput>(key: K, value: WallInput[K]) {
     setForm(prev => ({ ...prev, [key]: value }))
   }
 
+  const knaufOverlap = PROFILES.find(p => p.value === form.profileType)?.overlap ?? 500
+  const effectiveOverlap = (form.customOverlap != null && form.customOverlap >= 100)
+    ? form.customOverlap : knaufOverlap
+  const overlapWarning = (form.customOverlap != null && form.customOverlap >= 100 && form.customOverlap < knaufOverlap)
+    ? `⚠️ ${form.customOverlap}мм — меньше нормы Кнауф (${knaufOverlap}мм). Ответственность на монтажнике.`
+    : null
+
+  function handleStudTouchStart(pos: number, fixed: boolean) {
+    if (fixed) return
+    longPressTimer.current = setTimeout(() => {
+      removeStud(pos)
+      longPressTimer.current = null
+    }, 600)
+  }
+
+  function handleStudTouchEnd() {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
+  function handleBgTouchEnd(xpx: number) {
+    const now = Date.now()
+    const last = lastTapTime.current
+    const lastPos = lastTapPos.current
+    lastTapTime.current = now
+    lastTapPos.current = { x: xpx, y: 0 }
+    if (last && now - last < 350 && lastPos && Math.abs(lastPos.x - xpx) < 30) {
+      addStud(xpx)
+      lastTapTime.current = 0
+    }
+  }
+
   const { l, h, dw, dh, dp } = snap
   const scale = l > 0 ? (CANVAS_W - PAD * 2) / l : 1
-  const canvasH = l > 0 ? h * scale + PAD * 2 + 50 : 300
+  const TOP_PAD = 70
+  const BOT_PAD = 50
+  const canvasH = l > 0 ? h * scale + TOP_PAD + BOT_PAD : 300
   const studW = Math.max(profileWidth * scale, 4)
   const tx = (mm: number) => PAD + mm * scale
-  const ty = (mm: number) => PAD + mm * scale
+  const wallTop = TOP_PAD
+  const wallBot = TOP_PAD + h * scale
   const gklLayers = form.wallType === 'c112' ? 2 : 1
+
+  function isFixed(pos: number) {
+    if (pos === 0 || pos === l) return true
+    if (dw > 0 && (pos === dp || pos === dp + dw)) return true
+    return false
+  }
+
+  const gridStuds = positions.filter(p =>
+    p !== 0 && p !== l && !(dw > 0 && (p === dp || p === dp + dw))
+  )
+  const doorStuds = dw > 0 ? [dp, dp + dw] : []
 
   return (
     <div style={{ padding: 24, fontFamily: 'sans-serif', maxWidth: 900 }}>
+      {/* ─── Панель объекта ─── */}
+      <div style={{ marginBottom: 20, padding: '12px 16px',
+        background: '#f8f9ff', border: '1px solid #dde', borderRadius: 8 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#444', whiteSpace: 'nowrap' }}>Объект:</span>
+          <input
+            value={projectName}
+            onChange={e => setProjectName(e.target.value)}
+            placeholder="Название объекта / квартиры"
+            style={{ flex: 1, padding: '5px 8px', border: '1px solid #ccc', borderRadius: 4, fontSize: 13 }}
+          />
+          <button
+            onClick={() => {
+              if (result && positions.length) {
+                if (activeWallId) {
+                  updateWall(activeWallId, form, result, positions)
+                } else {
+                  addWall(form, result, positions)
+                }
+              }
+            }}
+            disabled={!result}
+            style={{ padding: '5px 14px', fontSize: 13, cursor: result ? 'pointer' : 'default',
+              background: result ? '#3a7bd5' : '#ccc', color: '#fff',
+              border: 'none', borderRadius: 4, whiteSpace: 'nowrap' }}>
+            {activeWallId ? '💾 Обновить' : '➕ Добавить в объект'}
+          </button>
+          {activeWallId && (
+            <button onClick={() => { setActiveWall(null) }}
+              style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer',
+                background: '#fff', border: '1px solid #aaa', borderRadius: 4 }}>
+              + Новая
+            </button>
+          )}
+        </div>
+
+        {/* список перегородок */}
+        {walls.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {walls.map(w => (
+              <div key={w.id}
+                onClick={() => {
+                  setActiveWall(w.id)
+                  setForm(w.input)
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '4px 10px', borderRadius: 20, cursor: 'pointer',
+                  border: `1px solid ${w.id === activeWallId ? '#3a7bd5' : '#ccc'}`,
+                  background: w.id === activeWallId ? '#e8f0ff' : '#fff',
+                  fontSize: 13,
+                }}>
+                <span style={{ fontWeight: 600, color: '#3a7bd5' }}>{w.label}</span>
+                <span style={{ color: '#666', fontSize: 11 }}>
+                  {w.input.length}×{w.input.height}
+                </span>
+                <span
+                  onClick={e => { e.stopPropagation(); removeWall(w.id) }}
+                  style={{ color: '#999', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>
+                  ×
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {walls.length === 0 && (
+          <p style={{ margin: 0, fontSize: 12, color: '#999' }}>
+            Рассчитайте перегородку и нажмите «Добавить в объект»
+          </p>
+        )}
+      </div>
+
       <h1>Калькулятор перегородки</h1>
 
-      {/* ─── Строка 1: тип, толщина, профиль, примыкание ─── */}
+      {/* ─── Строка 1 ─── */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <div style={{ flex: 1, minWidth: 180 }}>
           <label style={{ fontSize: 13 }}>Тип перегородки</label><br />
@@ -82,7 +217,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* ─── Строка 2: шаг, первая стойка, длина, высота ─── */}
+      {/* ─── Строка 2 ─── */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <div style={{ flex: 1, minWidth: 120 }}>
           <label style={{ fontSize: 13 }}>Шаг (мм)</label><br />
@@ -95,30 +230,31 @@ export default function App() {
             <option value={600}>600</option>
             <option value={400}>400</option>
             <option value={300}>300</option>
+            <option value={200}>200 (радиус)</option>
           </select>
         </div>
         <div style={{ flex: 1, minWidth: 130 }}>
           <label style={{ fontSize: 13 }}>Первая стойка (мм)</label><br />
-          <input type="number" value={form.firstStud}
+          <input type="number" value={form.firstStud || ''}
             onChange={e => set('firstStud', Number(e.target.value))}
             style={{ width: '100%', padding: 7, marginTop: 2 }} />
         </div>
         <div style={{ flex: 1, minWidth: 130 }}>
           <label style={{ fontSize: 13 }}>Длина (мм)</label><br />
-          <input type="number" value={form.length}
+          <input type="number" value={form.length || ''}
             onChange={e => set('length', Number(e.target.value))}
             style={{ width: '100%', padding: 7, marginTop: 2 }} />
         </div>
         <div style={{ flex: 1, minWidth: 130 }}>
           <label style={{ fontSize: 13 }}>Высота (мм)</label><br />
-          <input type="number" value={form.height}
+          <input type="number" value={form.height || ''}
             onChange={e => set('height', Number(e.target.value))}
             style={{ width: '100%', padding: 7, marginTop: 2 }} />
         </div>
       </div>
 
       {/* ─── Строка 3: проём ─── */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <div style={{ flex: 1, minWidth: 130 }}>
           <label style={{ fontSize: 13 }}>Начало проёма (мм)</label><br />
           <input type="number" value={form.doorPos || ''}
@@ -139,12 +275,39 @@ export default function App() {
         </div>
       </div>
 
-      <button onClick={() => calculate(form)}
+      {/* ─── Нахлёст ─── */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 16 }}>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <label style={{ fontSize: 13 }}>
+            Нахлёст профиля (мм)
+            <span style={{ color: '#888', marginLeft: 6, fontSize: 11 }}>
+              норма Кнауф: {knaufOverlap}мм
+            </span>
+          </label><br />
+          <input
+            type="number"
+            placeholder={`${knaufOverlap} (по умолчанию)`}
+            value={form.customOverlap ?? ''}
+            min={100}
+            max={knaufOverlap}
+            onChange={e => set('customOverlap', e.target.value === '' ? null : Number(e.target.value))}
+            style={{ width: '100%', padding: 7, marginTop: 2 }}
+          />
+        </div>
+        {overlapWarning && (
+          <div style={{ flex: 2, fontSize: 12, color: '#c05000',
+            background: '#fff3e0', border: '1px solid #ffb74d',
+            padding: '6px 10px', borderRadius: 4, marginBottom: 2 }}>
+            {overlapWarning}
+          </div>
+        )}
+      </div>
+
+      <button onClick={() => calculate({ ...form, customOverlap: effectiveOverlap })}
         style={{ padding: '10px 32px', fontSize: 15, cursor: 'pointer', marginBottom: 20 }}>
         Рассчитать
       </button>
 
-      {/* ─── Предупреждение высоты ─── */}
       {heightWarning && (
         <div style={{ background: '#fff3cd', border: '1px solid #ffc107',
           padding: 12, borderRadius: 6, marginBottom: 16 }}>
@@ -155,92 +318,229 @@ export default function App() {
       {/* ─── Чертёж ─── */}
       {l > 0 && (
         <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8,
+            marginBottom: 8, padding: '8px 12px',
+            background: '#f0f4ff', borderRadius: 6, border: '1px solid #c5d0f0' }}>
+            <span style={{ fontSize: 13, color: '#444' }}>Сдвиг гребёнки:</span>
+            <button onClick={() => shiftGrid(-Number(shiftInput))}
+              style={{ padding: '4px 12px', fontSize: 14, cursor: 'pointer',
+                background: '#fff', border: '1px solid #aaa', borderRadius: 4 }}>
+              ← влево
+            </button>
+            <input type="number" value={shiftInput}
+              onChange={e => setShiftInput(e.target.value)}
+              style={{ width: 70, padding: '4px 6px', textAlign: 'center',
+                border: '1px solid #aaa', borderRadius: 4 }} />
+            <span style={{ fontSize: 12, color: '#888' }}>мм</span>
+            <button onClick={() => shiftGrid(Number(shiftInput))}
+              style={{ padding: '4px 12px', fontSize: 14, cursor: 'pointer',
+                background: '#fff', border: '1px solid #aaa', borderRadius: 4 }}>
+              вправо →
+            </button>
+            <span style={{ fontSize: 12, color: '#888', marginLeft: 8 }}>
+              · ПКМ + drag — сдвиг по 100мм
+            </span>
+          </div>
+
           <p style={{ fontSize: 12, color: '#888', margin: '0 0 6px' }}>
-            Тяните стойку для перемещения · Двойной клик на стойке — удалить · Двойной клик на пустом месте — добавить
+            ЛКМ + drag — переместить стойку · Двойной клик на стойке — удалить · Двойной клик на пустом месте — добавить
           </p>
-          <div style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden' }}>
-            <Stage width={CANVAS_W} height={canvasH}
-              onDblClick={e => {
-                const stage = e.target.getStage()
-                if (e.target === stage) {
-                  const pos = stage?.getPointerPosition()
-                  if (pos) addStud(pos.x)
-                }
-              }}>
+
+          <div style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden' }}
+            onContextMenu={e => e.preventDefault()}>
+            <Stage width={CANVAS_W} height={canvasH}>
               <Layer>
-                <Rect x={0} y={0} width={CANVAS_W} height={canvasH} fill="#f8f8f8" />
+                <Rect x={0} y={0} width={CANVAS_W} height={canvasH} fill="#f8f8f8"
+                  onDblClick={e => {
+                    const stage = e.target.getStage()
+                    const pos = stage?.getPointerPosition()
+                    if (pos) addStud(pos.x)
+                  }}
+                  onTouchEnd={e => {
+                    const touch = e.evt.changedTouches[0]
+                    if (touch) handleBgTouchEnd(touch.clientX - (e.target.getStage()?.container().getBoundingClientRect().left ?? 0))
+                  }} />
 
-                {/* размерные стрелки */}
-                <Arrow points={[tx(0), PAD - 22, tx(l), PAD - 22]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
-                <Arrow points={[tx(l), PAD - 22, tx(0), PAD - 22]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
-                <Text x={tx(l / 2) - 25} y={PAD - 34} text={`${l} мм`} fontSize={11} fill="#444" />
+                {/* длина */}
+                <Arrow points={[tx(0), 14, tx(l), 14]} stroke="#555" fill="#555" strokeWidth={1} pointerLength={6} pointerWidth={4} />
+                <Arrow points={[tx(l), 14, tx(0), 14]} stroke="#555" fill="#555" strokeWidth={1} pointerLength={6} pointerWidth={4} />
+                <Text x={tx(l / 2) - 28} y={4} text={`${l} мм`} fontSize={11} fill="#333" fontStyle="bold" />
 
-                <Arrow points={[PAD - 22, ty(0) + 8, PAD - 22, ty(h) - 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
-                <Arrow points={[PAD - 22, ty(h) - 8, PAD - 22, ty(0) + 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
-                <Text x={8} y={ty(h / 2)} text={`${h}`} fontSize={11} fill="#444" rotation={-90} />
+                {/* высота */}
+                <Arrow points={[PAD - 22, wallTop + 8, PAD - 22, wallBot - 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
+                <Arrow points={[PAD - 22, wallBot - 8, PAD - 22, wallTop + 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
+                <Text x={8} y={(wallTop + wallBot) / 2} text={`${h}`} fontSize={11} fill="#444" rotation={-90} />
+
+                {/* накопительные позиции рядовых стоек сверху */}
+                {[0, ...gridStuds].map((pos) => (
+                  <Group key={`tp${pos}`}>
+                    <Line points={[tx(pos), wallTop - 6, tx(pos), wallTop - 18]} stroke="#666" strokeWidth={1} />
+                    <Text x={tx(pos) - 16} y={wallTop - 30} text={`${pos}`} fontSize={10} fill="#333" />
+                  </Group>
+                ))}
+
+                {/* расстояния между рядовыми стойками */}
+                {[0, ...gridStuds].map((pos, i, arr) => {
+                  if (i === 0) return null
+                  const prev = arr[i - 1]
+                  const dist = pos - prev
+                  const mx = tx(prev) + (dist * scale) / 2
+                  return (
+                    <Group key={`td${pos}`}>
+                      <Line points={[tx(prev), wallTop - 8, tx(pos), wallTop - 8]} stroke="#aaa" strokeWidth={1} />
+                      <Text x={mx - 10} y={wallTop - 20} text={`${dist}`} fontSize={9} fill="#666" />
+                    </Group>
+                  )
+                })}
 
                 {/* направляющие */}
-                <Rect x={tx(0)} y={ty(0)} width={l * scale} height={8} fill="#444" />
+                <Rect x={tx(0)} y={wallTop} width={l * scale} height={8} fill="#444" />
                 {dw > 0 ? (
                   <>
-                    <Rect x={tx(0)}       y={ty(h) - 8} width={dp * scale}           height={8} fill="#444" />
-                    <Rect x={tx(dp + dw)} y={ty(h) - 8} width={(l - dp - dw) * scale} height={8} fill="#444" />
+                    <Rect x={tx(0)}       y={wallBot - 8} width={dp * scale}            height={8} fill="#444" />
+                    <Rect x={tx(dp + dw)} y={wallBot - 8} width={(l - dp - dw) * scale} height={8} fill="#444" />
                   </>
                 ) : (
-                  <Rect x={tx(0)} y={ty(h) - 8} width={l * scale} height={8} fill="#444" />
+                  <Rect x={tx(0)} y={wallBot - 8} width={l * scale} height={8} fill="#444" />
                 )}
 
                 {/* проём */}
                 {dw > 0 && <>
-                  <Rect x={tx(dp)} y={ty(h) - dh * scale} width={dw * scale} height={dh * scale}
+                  <Rect x={tx(dp)} y={wallBot - dh * scale} width={dw * scale} height={dh * scale}
                     fill="#ddeeff" stroke="#88aacc" strokeWidth={1} />
-                  <Rect x={tx(dp) - 10} y={ty(h) - dh * scale - 6} width={dw * scale + 20} height={6} fill="#666" />
-                  <Text x={tx(dp) + dw * scale / 2 - 20} y={ty(h) - dh * scale / 2 - 6}
+                  <Rect x={tx(dp) - 10} y={wallBot - dh * scale - 6} width={dw * scale + 20} height={6} fill="#666" />
+                  <Text x={tx(dp) + dw * scale / 2 - 20} y={wallBot - dh * scale / 2 - 6}
                     text={`${dw}×${dh}`} fontSize={11} fill="#336" />
                 </>}
 
                 {/* стойки */}
                 {positions.map((pos) => {
-                  const isFixed = pos === 0 || pos === l || pos === dp || pos === dp + dw
+                  const fixed = isFixed(pos)
+                  const isDoor = dw > 0 && (pos === dp || pos === dp + dw)
                   const isAbove = dw > 0 && pos > dp && pos < dp + dw
                   const sH = isAbove ? (h - dh) * scale - 6 : (h - 16) * scale
-                  const sY = isAbove ? ty(h) - dh * scale - sH - 6 : ty(0) + 8
+                  const sY = isAbove ? wallBot - dh * scale - sH - 6 : wallTop + 8
                   return (
-                    <Group key={`s${pos}`} x={tx(pos) - studW / 2} y={0}
-                      draggable={!isFixed}
+                    <Group key={`s${pos}`}
+                      x={tx(pos) - studW / 2} y={0}
+                      draggable={!fixed}
                       dragBoundFunc={p => ({ x: p.x, y: 0 })}
-                      onDragEnd={e => onDragEnd(pos, e.target.x() + studW / 2)}
-                      onDblClick={() => removeStud(pos)}>
+                      onDragEnd={e => {
+                        if (rightDragStart.current) return
+                        onDragEnd(pos, e.target.x() + studW / 2)
+                      }}
+                      onDblClick={() => removeStud(pos)}
+                      onMouseDown={e => {
+                        if (e.evt.button === 2 && !fixed) {
+                          e.evt.preventDefault()
+                          const stagePos = e.target.getStage()?.getPointerPosition()
+                          if (stagePos) rightDragStart.current = { studPos: pos, startXpx: stagePos.x }
+                        }
+                      }}
+                      onMouseUp={e => {
+                        if (e.evt.button === 2 && rightDragStart.current) {
+                          const stagePos = e.target.getStage()?.getPointerPosition()
+                          if (stagePos) onRightDragEnd(rightDragStart.current.studPos, stagePos.x, rightDragStart.current.startXpx)
+                          rightDragStart.current = null
+                        }
+                      }}
+                      onTouchStart={() => handleStudTouchStart(pos, fixed)}
+                      onTouchEnd={() => handleStudTouchEnd()}
+                      onTouchMove={() => {
+                        if (longPressTimer.current) {
+                          clearTimeout(longPressTimer.current)
+                          longPressTimer.current = null
+                        }
+                      }}>
                       <Rect x={0} y={sY} width={studW} height={sH}
-                        fill={isFixed ? '#3a7bd5' : '#6aaee8'}
-                        stroke="#1a4fa0" strokeWidth={1} cornerRadius={2} />
+                        fill={isDoor ? '#e06030' : fixed ? '#3a7bd5' : '#6aaee8'}
+                        stroke={isDoor ? '#a03000' : '#1a4fa0'}
+                        strokeWidth={1} cornerRadius={2} />
                     </Group>
                   )
                 })}
 
-                {/* размерная цепочка */}
-                {positions.map((pos, i) => {
-                  if (i === 0) return null
-                  const prev = positions[i - 1]
-                  const dist = pos - prev
-                  const mx = tx(prev) + (dist * scale) / 2
-                  const dimY = ty(h) + 12
+                {/* зоны нахлёста */}
+                {positions.map((pos) => {
+                  const isDoor = dw > 0 && (pos === dp || pos === dp + dw)
+                  const isAbove = dw > 0 && pos > dp && pos < dp + dw
+                  if (isAbove) return null
+
+                  // все стойки от пола до потолка, высота = h
+                  const studH = h
+                  let kind: 'wall' | 'free' | 'middle' = isDoor ? 'wall' : 'middle'
+                  if (!isDoor && pos === 0) kind = (form.abutment === 'both' || form.abutment === 'left') ? 'wall' : 'free'
+                  if (!isDoor && pos === l) kind = (form.abutment === 'both' || form.abutment === 'right') ? 'wall' : 'free'
+
+                  const { overlapZone } = calcStudMaterial(studH, kind, effectiveOverlap)
+                  if (!overlapZone) return null
+
+                  const baseY = wallTop + 8
+                  const zFromPx = baseY + overlapZone.from * scale
+                  const zToPx   = baseY + overlapZone.to   * scale
+                  const zH = zToPx - zFromPx
+                  const zW = Math.max(studW + 4, 8)
+                  const zoneMm = overlapZone.to - overlapZone.from
+                  // для дверных стоек делаем зону синей чтобы была видна на оранжевом фоне
+                  const zoneFill = isDoor ? 'rgba(30,100,220,0.45)' : 'rgba(255,140,0,0.35)'
+                  const zoneStroke = isDoor ? '#1a4fa0' : '#ff8c00'
+                  const zoneTextColor = isDoor ? '#0a2a70' : '#c05000'
+
                   return (
-                    <Group key={`d${pos}`}>
-                      <Line points={[tx(prev), dimY, tx(pos), dimY]} stroke="#aaa" strokeWidth={1} />
-                      <Line points={[tx(prev), dimY - 4, tx(prev), dimY + 4]} stroke="#aaa" strokeWidth={1} />
-                      <Line points={[tx(pos),  dimY - 4, tx(pos),  dimY + 4]} stroke="#aaa" strokeWidth={1} />
-                      <Text x={mx - 12} y={dimY + 5} text={`${dist}`} fontSize={10} fill="#555" />
+                    <Group key={`ov${pos}`}>
+                      <Rect x={tx(pos) - zW / 2} y={zFromPx}
+                        width={zW} height={zH}
+                        fill={zoneFill}
+                        stroke={zoneStroke} strokeWidth={1.5} dash={[4, 3]} />
+                      <Text x={tx(pos) + zW / 2 + 3} y={zFromPx + zH / 2 - 5}
+                        text={`${zoneMm}мм`} fontSize={9} fill={zoneTextColor} fontStyle="bold" />
                     </Group>
                   )
                 })}
+
+                {/* дверные стойки снизу в кружочках */}
+                {doorStuds.map(pos => {
+                  const cx = tx(pos)
+                  const cy = wallBot + 20
+                  const tooClose = gridStuds.some(g => Math.abs(g - pos) <= MIN_GAP)
+                  return (
+                    <Group key={`dl${pos}`}>
+                      <Line points={[cx, wallBot, cx, cy - 10]} stroke="#e06030" strokeWidth={1} dash={[3, 3]} />
+                      <Rect x={cx - 18} y={cy - 10} width={36} height={20}
+                        fill={tooClose ? '#ffe0d0' : '#fff'}
+                        stroke={tooClose ? '#e06030' : '#888'}
+                        strokeWidth={1} cornerRadius={10} />
+                      <Text x={cx - 16} y={cy - 5} text={`${pos}`} fontSize={10}
+                        fill={tooClose ? '#c03000' : '#444'} width={32} align="center" />
+                    </Group>
+                  )
+                })}
+
+                {/* предупреждение о малом расстоянии */}
+                {dw > 0 && gridStuds.map(g =>
+                  doorStuds
+                    .filter(d => Math.abs(g - d) <= MIN_GAP && Math.abs(g - d) > 0)
+                    .map(d => {
+                      const x1 = tx(Math.min(g, d))
+                      const x2 = tx(Math.max(g, d))
+                      const my = wallBot + 42
+                      return (
+                        <Group key={`warn${g}_${d}`}>
+                          <Line points={[x1, my, x2, my]} stroke="#e06030" strokeWidth={1.5} />
+                          <Text x={(x1 + x2) / 2 - 12} y={my + 3}
+                            text={`${Math.abs(g - d)}мм!`} fontSize={9} fill="#c03000" fontStyle="bold" />
+                        </Group>
+                      )
+                    })
+                )}
+
               </Layer>
             </Stage>
           </div>
         </>
       )}
 
-      {/* ─── Результаты ─── */}
+      {/* результаты */}
       {result && (
         <div style={{ marginTop: 20, background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
           <h2 style={{ marginTop: 0 }}>Результат</h2>
@@ -250,7 +550,7 @@ export default function App() {
           {result.needsOverlap && (
             <div style={{ background: '#fff3cd', border: '1px solid #ffc107',
               padding: 10, borderRadius: 6, marginBottom: 12 }}>
-              ⚠️ Высота {form.height} мм — промежуточные стойки наращиваются с перехлёстом
+              ⚠️ Высота {form.height} мм — промежуточные стойки наращиваются с перехлёстом {effectiveOverlap}мм
             </div>
           )}
           <p>ПН пол: <b>{result.uwFloor.toFixed(2)} м</b></p>
