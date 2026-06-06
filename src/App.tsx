@@ -129,8 +129,8 @@ export default function App() {
               border: 'none', borderRadius: 4, whiteSpace: 'nowrap' }}>
             {activeWallId ? '💾 Обновить' : '➕ Добавить в объект'}
           </button>
-          {activeWallId && (
-            <button onClick={() => { setActiveWall(null) }}
+          {walls.length > 0 && (
+            <button onClick={() => { setActiveWall(null); setForm(DEFAULT_INPUT) }}
               style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer',
                 background: '#fff', border: '1px solid #aaa', borderRadius: 4 }}>
               + Новая
@@ -138,36 +138,43 @@ export default function App() {
           )}
         </div>
 
-        {/* список перегородок */}
-        {walls.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {walls.map(w => (
-              <div key={w.id}
-                onClick={() => {
-                  setActiveWall(w.id)
-                  setForm(w.input)
+        {/* список перегородок — dropdown */}
+        {walls.length > 0 ? (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <div style={{ flex: 1 }}>
+              <select
+                value={activeWallId ?? ''}
+                onChange={e => {
+                  const id = e.target.value
+                  if (!id) return
+                  const w = walls.find(w => w.id === id)
+                  if (w) { setActiveWall(w.id); setForm(w.input) }
                 }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '4px 10px', borderRadius: 20, cursor: 'pointer',
-                  border: `1px solid ${w.id === activeWallId ? '#3a7bd5' : '#ccc'}`,
-                  background: w.id === activeWallId ? '#e8f0ff' : '#fff',
-                  fontSize: 13,
-                }}>
-                <span style={{ fontWeight: 600, color: '#3a7bd5' }}>{w.label}</span>
-                <span style={{ color: '#666', fontSize: 11 }}>
-                  {w.input.length}×{w.input.height}
-                </span>
-                <span
-                  onClick={e => { e.stopPropagation(); removeWall(w.id) }}
-                  style={{ color: '#999', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>
-                  ×
-                </span>
-              </div>
-            ))}
+                style={{ width: '100%', padding: '6px 8px', fontSize: 13,
+                  border: '1px solid #ccc', borderRadius: 4 }}>
+                <option value="">— Выберите перегородку —</option>
+                {walls.map(w => (
+                  <option key={w.id} value={w.id}>
+                    {w.label} · {w.input.length}×{w.input.height} · {w.input.wallType.toUpperCase()} · {
+                      w.input.profileType === 'ps50' ? 'ПС50' :
+                      w.input.profileType === 'ps75' ? 'ПС75' : 'ПС100'
+                    }
+                  </option>
+                ))}
+              </select>
+            </div>
+            {activeWallId && (
+              <button
+                onClick={() => {
+                  if (window.confirm('Удалить перегородку?')) removeWall(activeWallId)
+                }}
+                style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer',
+                  background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4 }}>
+                🗑
+              </button>
+            )}
           </div>
-        )}
-        {walls.length === 0 && (
+        ) : (
           <p style={{ margin: 0, fontSize: 12, color: '#999' }}>
             Рассчитайте перегородку и нажмите «Добавить в объект»
           </p>
@@ -563,6 +570,121 @@ export default function App() {
           <p>ГКЛ ({gklLayers} сл.): <b>{result.gklArea.toFixed(2)} м²</b></p>
         </div>
       )}
+      {/* ─── Сводная таблица по объекту ─── */}
+      {walls.length > 0 && (() => {
+        const profileGroups = ['ps50', 'ps75', 'ps100'] as const
+        const profileLabels = { ps50: 'ПС 50', ps75: 'ПС 75', ps100: 'ПС 100' }
+
+        const totals = { uwFloor: 0, uwCeiling: 0, lintel: 0, cwTotal: 0, gklArea: 0 }
+
+        const groups = profileGroups.map(prof => {
+          const group = walls.filter(w => w.input.profileType === prof && w.result)
+          const sum = group.reduce((acc, w) => ({
+            uwFloor:   acc.uwFloor   + (w.result?.uwFloor   ?? 0),
+            uwCeiling: acc.uwCeiling + (w.result?.uwCeiling ?? 0),
+            lintel:    acc.lintel    + (w.result?.lintel    ?? 0),
+            cwTotal:   acc.cwTotal   + (w.result?.cwTotal   ?? 0),
+            gklArea:   acc.gklArea   + (w.result?.gklArea   ?? 0),
+          }), { uwFloor: 0, uwCeiling: 0, lintel: 0, cwTotal: 0, gklArea: 0 })
+
+          Object.keys(totals).forEach(k => {
+            (totals as Record<string,number>)[k] += (sum as Record<string,number>)[k]
+          })
+
+          return { prof, label: profileLabels[prof], walls: group, sum }
+        }).filter(g => g.walls.length > 0)
+
+        if (!groups.length) return null
+
+        const thStyle: React.CSSProperties = {
+          padding: '6px 10px', textAlign: 'left', fontSize: 12,
+          background: '#e8edf8', borderBottom: '1px solid #ccd'
+        }
+        const tdStyle: React.CSSProperties = {
+          padding: '6px 10px', fontSize: 12, borderBottom: '1px solid #eee'
+        }
+        const tdNum: React.CSSProperties = { ...tdStyle, textAlign: 'right' }
+
+        return (
+          <div style={{ marginTop: 28, borderRadius: 8, overflow: 'hidden',
+            border: '1px solid #ccd' }}>
+            <div style={{ padding: '10px 14px', background: '#e8edf8',
+              fontWeight: 600, fontSize: 14, borderBottom: '1px solid #ccd' }}>
+              Сводная ведомость объекта
+              {projectName && <span style={{ fontWeight: 400, color: '#666', marginLeft: 8 }}>
+                — {projectName}
+              </span>}
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Перегородка</th>
+                  <th style={thStyle}>Тип</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>ПН пол, м</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>ПН потолок, м</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Перемычка, м</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>ПС стойки, м</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>ГКЛ, м²</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map(g => (
+                  <>
+                    {/* заголовок группы профиля */}
+                    <tr key={`h_${g.prof}`}>
+                      <td colSpan={7} style={{ padding: '4px 10px', fontSize: 11,
+                        fontWeight: 600, color: '#3a7bd5', background: '#f4f7ff',
+                        borderBottom: '1px solid #dde' }}>
+                        {g.label}
+                      </td>
+                    </tr>
+                    {/* перегородки группы */}
+                    {g.walls.map(w => (
+                      <tr key={w.id}
+                        onClick={() => { setActiveWall(w.id); setForm(w.input) }}
+                        style={{ cursor: 'pointer',
+                          background: w.id === activeWallId ? '#e8f0ff' : 'transparent' }}>
+                        <td style={tdStyle}><b>{w.label}</b></td>
+                        <td style={tdStyle}>{w.input.wallType.toUpperCase()}</td>
+                        <td style={tdNum}>{w.result?.uwFloor.toFixed(2)}</td>
+                        <td style={tdNum}>{w.result?.uwCeiling.toFixed(2)}</td>
+                        <td style={tdNum}>{w.result?.lintel.toFixed(2) ?? '—'}</td>
+                        <td style={tdNum}>{w.result?.cwTotal.toFixed(2)}</td>
+                        <td style={tdNum}>{w.result?.gklArea.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                    {/* итого по группе */}
+                    {g.walls.length > 1 && (
+                      <tr key={`sum_${g.prof}`} style={{ background: '#f0f4ff' }}>
+                        <td style={{ ...tdStyle, fontWeight: 600 }} colSpan={2}>
+                          Итого {g.label}
+                        </td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.uwFloor.toFixed(2)}</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.uwCeiling.toFixed(2)}</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.lintel.toFixed(2)}</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.cwTotal.toFixed(2)}</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.gklArea.toFixed(2)}</td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+                {/* общий итог */}
+                {walls.length > 1 && (
+                  <tr style={{ background: '#dde6ff', borderTop: '2px solid #aac' }}>
+                    <td style={{ ...tdStyle, fontWeight: 700 }} colSpan={2}>ИТОГО по объекту</td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}>{totals.uwFloor.toFixed(2)}</td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}>{totals.uwCeiling.toFixed(2)}</td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}>{totals.lintel.toFixed(2)}</td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}>{totals.cwTotal.toFixed(2)}</td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}>{totals.gklArea.toFixed(2)}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )
+      })()}
+
     </div>
   )
 }
