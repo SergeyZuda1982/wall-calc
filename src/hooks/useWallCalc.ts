@@ -81,6 +81,7 @@ export function useWallCalc(): UseWallCalcReturn {
       next, currentSnap.h, currentSnap.l,
       currentSnap.dw, currentSnap.dh, currentSnap.dp,
       abutmentRef.current, overlapRef.current,
+      wallTypeRef.current === 'c112' ? 2 : 1,
     )
     setResult(res)
     setOverlapInfos(calcOverlapInfos(
@@ -126,7 +127,7 @@ export function useWallCalc(): UseWallCalcReturn {
     gridShiftRef.current = 0
     setSnap(newSnap)
     setPositions(studs)
-    const res = calcResults(studs, h, l, dw, dh, dp, abutment, overlapRef.current)
+    const res = calcResults(studs, h, l, dw, dh, dp, abutment, overlapRef.current, wallType === 'c112' ? 2 : 1)
     setResult(res)
     setOverlapInfos(calcOverlapInfos(studs, h, l, dw, dh, dp, abutment, overlapRef.current))
   }
