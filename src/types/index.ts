@@ -58,3 +58,42 @@ export interface DrawingSnap {
   dh: number  // высота проёма, мм
   dp: number  // позиция проёма, мм
 }
+
+// ─── Облицовка ──────────────────────────────────────────────────────────────
+
+export type LiningType = 'c623' | 'c625' | 'c626'
+export type LiningLayers = 1 | 2
+
+export interface LiningInput {
+  liningType: LiningType
+  profileType: ProfileType       // ps50 / ps75 / ps100 (для c625/c626)
+  profileThickness: ProfileThickness
+  gklLayers: LiningLayers
+
+  length: number    // длина облицовки, мм
+  height: number    // высота, мм
+  step: number      // шаг стоек, мм
+  hangerStep: number // шаг подвесов (только с623), мм
+
+  // примыкание боковых сторон (как в перегородке)
+  abutment: AbutmentType
+
+  // проём
+  doorPos: number
+  doorWidth: number
+  doorHeight: number
+}
+
+export interface LiningResult {
+  // ПН 28×27 (с623) или ПН 50/75/100×40 (с625/626)
+  guideRail: number      // периметр направляющих, метры
+  // ПП 60×27 или ПС 50/75/100
+  stud: number           // стойки итого, метры
+  studsCount: number
+  // только с623
+  hangers: number        // подвесы, штук
+  extenders: number      // удлинители профиля, штук
+  // ГКЛ
+  gklArea: number        // м², одна сторона × слои
+  needsOverlap: boolean  // нужно наращивание
+}

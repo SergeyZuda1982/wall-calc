@@ -5,6 +5,7 @@ import { PROFILES } from './data/profiles'
 import { useWallCalc, CANVAS_W, PAD } from './hooks/useWallCalc'
 import { MIN_GAP } from './core/buildPositions'
 import { useProjectStore } from './store/useProjectStore'
+import LiningCalc from './LiningCalc'
 import { calcStudMaterial } from './core/calcStudMaterial'
 
 const DEFAULT_INPUT: WallInput = {
@@ -25,6 +26,7 @@ const DEFAULT_INPUT: WallInput = {
 export default function App() {
   const [form, setForm] = useState(DEFAULT_INPUT)
   const [shiftInput, setShiftInput] = useState('100')
+  const [activeTab, setActiveTab] = useState<'wall' | 'lining'>('wall')
   const {
     positions, snap, result, heightWarning, profileWidth,
     calculate, onDragEnd, onRightDragEnd, shiftGrid, addStud, removeStud,
@@ -160,7 +162,25 @@ export default function App() {
         )}
       </div>
 
-      <h1>Калькулятор перегородки</h1>
+      {/* ─── Вкладки ─── */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 20,
+        borderBottom: '2px solid #dde' }}>
+        {([['wall', 'Перегородки'], ['lining', 'Облицовка стен']] as const).map(([tab, label]) => (
+          <button key={tab} onClick={() => setActiveTab(tab)}
+            style={{
+              padding: '10px 24px', fontSize: 14, cursor: 'pointer',
+              border: 'none', borderBottom: activeTab === tab ? '2px solid #3a7bd5' : '2px solid transparent',
+              background: 'none', color: activeTab === tab ? '#3a7bd5' : '#666',
+              fontWeight: activeTab === tab ? 600 : 400, marginBottom: -2,
+            }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'lining' && <LiningCalc />}
+      {activeTab === 'wall' && <>
+      <h1 style={{ display: 'none' }}>Калькулятор перегородки</h1>
 
       {/* ─── Строка 1 ─── */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -693,6 +713,7 @@ export default function App() {
         )
       })()}
 
+      </>}
     </div>
   )
 }

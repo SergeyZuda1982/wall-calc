@@ -1,10 +1,17 @@
 import { create } from 'zustand'
-import type { WallInput, CalcResult } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult } from '../types'
 
 const PROFILE_LETTER: Record<string, string> = {
   ps50: 'А',
   ps75: 'В',
   ps100: 'С',
+}
+
+export interface LiningEntry {
+  id: string
+  label: string        // О1, О2...
+  input: LiningInput
+  result: LiningResult | null
 }
 
 export interface WallEntry {
@@ -25,12 +32,22 @@ export interface ProjectStore {
   updateWall: (id: string, input: WallInput, result: CalcResult | null, positions: number[]) => void
   removeWall: (id: string) => void
   setActiveWall: (id: string | null) => void
+
+  // облицовки
+  linings: LiningEntry[]
+  activeLiningId: string | null
+  addLining: (input: LiningInput, result: LiningResult | null) => void
+  updateLining: (id: string, input: LiningInput, result: LiningResult | null) => void
+  removeLining: (id: string) => void
+  setActiveLining: (id: string | null) => void
 }
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   projectName: '',
   walls: [],
   activeWallId: null,
+  linings: [],
+  activeLiningId: null,
 
   setProjectName: (name) => set({ projectName: name }),
 
@@ -59,4 +76,29 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   setActiveWall: (id) => set({ activeWallId: id }),
+
+  addLining: (input, result) => {
+    const { linings } = get()
+    const count = linings.length + 1
+    const label = `О${count}`
+    const id = `l_${Date.now()}`
+    set({ linings: [...linings, { id, label, input, result }] })
+  },
+
+  updateLining: (id, input, result) => {
+    set(state => ({
+      linings: state.linings.map(l =>
+        l.id === id ? { ...l, input, result } : l
+      )
+    }))
+  },
+
+  removeLining: (id) => {
+    set(state => ({
+      linings: state.linings.filter(l => l.id !== id),
+      activeLiningId: state.activeLiningId === id ? null : state.activeLiningId,
+    }))
+  },
+
+  setActiveLining: (id) => set({ activeLiningId: id }),
 }))
