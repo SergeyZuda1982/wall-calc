@@ -30,23 +30,37 @@ export function calcLining(input: LiningInput): LiningResult {
   const guideRail = (floorRail + ceilingRail + sideRail + lintel) / 1000
 
   // ─── Стойки ──────────────────────────────────────────────────────────────
-  // Позиции: 0, step, 2*step... l (как в перегородке но без алгоритма сдвига)
+  // Расстановка как в перегородке: 0, step, 2*step... последняя у конца
   const positions: number[] = [0]
   let p = s
   while (p < l) { positions.push(p); p += s }
-  positions.push(l)
+  // последняя стойка у конца если не совпала с шагом
+  if (positions[positions.length - 1] !== l) positions.push(l)
 
   // Стойки над проёмом (между dp и dp+dw)
+  const isC623 = input.liningType === 'c623'
+
+  // Нахлёст для ПС профилей (как в перегородках)
+  const STUD_LEN = 3000
+  const overlapMap: Record<string, number> = { ps50: 500, ps75: 750, ps100: 1000 }
+  const overlap = overlapMap[input.profileType] ?? 750
+
+  function studLength(h: number): number {
+    if (h <= STUD_LEN || isC623) return h
+    // middle: h + overlap
+    return h + overlap
+  }
+
   let studTotal = 0
   let aboveStuds = 0
 
   for (const pos of positions) {
     const isAbove = dw > 0 && pos > dp && pos < dp + dw
     if (isAbove) {
-      studTotal += h - dh  // только выше проёма
+      studTotal += studLength(h - dh)
       aboveStuds++
     } else {
-      studTotal += h  // полная высота
+      studTotal += studLength(h)
     }
   }
 
@@ -86,6 +100,6 @@ export function calcLining(input: LiningInput): LiningResult {
     hangers,
     extenders,
     gklArea,
-    needsOverlap: h > STUD_LENGTH,
+    needsOverlap: h > 3000,
   }
 }
