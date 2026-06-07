@@ -60,6 +60,25 @@ export default function LiningCalc() {
     return pos
   }
 
+  function addStud(xpx: number) {
+    if (!snapL) return
+    const sc = (CANVAS_W - PAD * 2) / snapL
+    const mm = Math.round((xpx - PAD) / sc / 100) * 100
+    if (mm <= 0 || mm >= snapL) return
+    const next = [...new Set([...positions, mm])].sort((a,b) => a-b)
+    setPositions(next)
+    const input = { ...form, gklLayers: (gklLayersFixed ?? form.gklLayers) as 1|2 }
+    setResult(calcLining(input, next))
+  }
+
+  function removeStud(pos: number) {
+    if (pos === 0 || pos === snapL) return
+    const next = positions.filter(p => p !== pos)
+    setPositions(next)
+    const input = { ...form, gklLayers: (gklLayersFixed ?? form.gklLayers) as 1|2 }
+    setResult(calcLining(input, next))
+  }
+
   function calculate() {
     const input = { ...form, gklLayers: (gklLayersFixed ?? form.gklLayers) as 1 | 2 }
     if (!isC623) {
@@ -75,7 +94,7 @@ export default function LiningCalc() {
     setPositions(studs)
     setSnapL(form.length)
     setSnapH(form.height)
-    setResult(calcLining({ ...input, length: form.length }))
+    setResult(calcLining({ ...input, length: form.length }, studs))
   }
 
   function applyShift(delta: number) {
@@ -222,7 +241,11 @@ export default function LiningCalc() {
           <div style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
             <Stage width={CANVAS_W} height={canvasH}>
               <Layer>
-                <Rect x={0} y={0} width={CANVAS_W} height={canvasH} fill="#f8f8f8" />
+                <Rect x={0} y={0} width={CANVAS_W} height={canvasH} fill="#f8f8f8"
+                  onDblClick={e => {
+                    const pos = e.target.getStage()?.getPointerPosition()
+                    if (pos) addStud(pos.x)
+                  }} />
                 {/* длина */}
                 <Arrow points={[tx(0), 14, tx(snapL), 14]} stroke="#555" fill="#555" strokeWidth={1} pointerLength={6} pointerWidth={4} />
                 <Arrow points={[tx(snapL), 14, tx(0), 14]} stroke="#555" fill="#555" strokeWidth={1} pointerLength={6} pointerWidth={4} />
@@ -257,7 +280,8 @@ export default function LiningCalc() {
                       x={tx(pos)-studW/2} y={wallTop+8}
                       width={studW} height={snapH*scale-16}
                       fill={isEdge ? '#3a7bd5' : '#6aaee8'}
-                      stroke="#1a4fa0" strokeWidth={1} cornerRadius={2} />
+                      stroke="#1a4fa0" strokeWidth={1} cornerRadius={2}
+                      onDblClick={() => removeStud(pos)} />
                   )
                 })}
                 {/* размерная цепочка снизу */}
