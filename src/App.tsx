@@ -23,6 +23,24 @@ const DEFAULT_INPUT: WallInput = {
   customOverlap: null,
 }
 
+const PROFILE_LEN = 3 // стандартная длина профиля, м
+
+// Вспомогательная функция: метры → "X,XX м · N шт · ост Y,YY м"
+function fmtMeters(m: number): React.ReactNode {
+  if (m <= 0) return <span style={{ color: '#aaa' }}>—</span>
+  const pcs = Math.ceil(m / PROFILE_LEN)
+  const rest = +(pcs * PROFILE_LEN - m).toFixed(2)
+  return (
+    <span>
+      {m.toFixed(2)}&thinsp;м
+      <span style={{ color: '#666', fontSize: 11 }}>
+        {' · '}{pcs}&thinsp;шт
+        {rest > 0 && <> · ост&thinsp;{rest.toFixed(2)}&thinsp;м</>}
+      </span>
+    </span>
+  )
+}
+
 export default function App() {
   const [form, setForm] = useState(DEFAULT_INPUT)
   const [shiftInput, setShiftInput] = useState('100')
@@ -115,11 +133,8 @@ export default function App() {
             placeholder="Название объекта / квартиры"
             style={{ flex: 1, padding: '5px 8px', border: '1px solid #ccc', borderRadius: 4, fontSize: 13 }}
           />
-
-
         </div>
 
-        {/* список перегородок — dropdown */}
         {walls.length > 0 ? (
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <div style={{ flex: 1 }}>
@@ -501,7 +516,6 @@ export default function App() {
                   const isAbove = dw > 0 && pos > dp && pos < dp + dw
                   if (isAbove) return null
 
-                  // все стойки от пола до потолка, высота = h
                   const studH = h
                   let kind: 'wall' | 'free' | 'middle' = isDoor ? 'wall' : 'middle'
                   if (!isDoor && pos === 0) kind = (form.abutment === 'both' || form.abutment === 'left') ? 'wall' : 'free'
@@ -516,7 +530,6 @@ export default function App() {
                   const zH = zToPx - zFromPx
                   const zW = Math.max(studW + 4, 8)
                   const zoneMm = overlapZone.to - overlapZone.from
-                  // для дверных стоек делаем зону синей чтобы была видна на оранжевом фоне
                   const zoneFill = isDoor ? 'rgba(30,100,220,0.45)' : 'rgba(255,140,0,0.35)'
                   const zoneStroke = isDoor ? '#1a4fa0' : '#ff8c00'
                   const zoneTextColor = isDoor ? '#0a2a70' : '#c05000'
@@ -575,7 +588,7 @@ export default function App() {
         </>
       )}
 
-      {/* результаты */}
+      {/* ─── Результаты текущей перегородки ─── */}
       {result && (
         <div style={{ marginTop: 20, background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
           <h2 style={{ marginTop: 0 }}>Результат</h2>
@@ -588,16 +601,45 @@ export default function App() {
               ⚠️ Высота {form.height} мм — промежуточные стойки наращиваются с перехлёстом {effectiveOverlap}мм
             </div>
           )}
-          <p>ПН пол: <b>{result.uwFloor.toFixed(2)} м</b></p>
-          <p>ПН потолок: <b>{result.uwCeiling.toFixed(2)} м</b></p>
-          {result.lintel > 0 && <p>Перемычка над проёмом (ПН): <b>{result.lintel.toFixed(2)} м</b></p>}
-          <p>Стоечный ПС: <b>{result.cwTotal.toFixed(2)} м</b></p>
-          <p>Стоек всего: <b>{result.studsCount} шт</b></p>
-          {result.aboveStuds > 0 &&
-            <p>Над проёмом: <b>{result.aboveStuds} шт</b> (высота {result.aboveStudHeight} мм)</p>}
-          <p>ГКЛ ({gklLayers} сл.): <b>{result.gklArea.toFixed(2)} м²</b></p>
+          <table style={{ borderCollapse: 'collapse', fontSize: 14 }}>
+            <tbody>
+              <tr>
+                <td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН пол:</td>
+                <td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.uwFloor)}</b></td>
+              </tr>
+              <tr>
+                <td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН потолок:</td>
+                <td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.uwCeiling)}</b></td>
+              </tr>
+              {result.lintel > 0 && (
+                <tr>
+                  <td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Перемычка (ПН):</td>
+                  <td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.lintel)}</b></td>
+                </tr>
+              )}
+              <tr>
+                <td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Стоечный ПС:</td>
+                <td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.cwTotal)}</b></td>
+              </tr>
+              <tr>
+                <td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Стоек всего:</td>
+                <td style={{ paddingBottom: 6 }}><b>{result.studsCount} шт</b></td>
+              </tr>
+              {result.aboveStuds > 0 && (
+                <tr>
+                  <td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Над проёмом:</td>
+                  <td style={{ paddingBottom: 6 }}><b>{result.aboveStuds} шт</b> (высота {result.aboveStudHeight} мм)</td>
+                </tr>
+              )}
+              <tr>
+                <td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ГКЛ ({gklLayers} сл.):</td>
+                <td style={{ paddingBottom: 6 }}><b>{result.gklArea.toFixed(2)} м²</b></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       )}
+
       {/* ─── Сводная таблица по объекту ─── */}
       {walls.length > 0 && (() => {
         const profileGroups = ['ps50', 'ps75', 'ps100'] as const
@@ -633,6 +675,21 @@ export default function App() {
         }
         const tdNum: React.CSSProperties = { ...tdStyle, textAlign: 'right' }
 
+        // Ячейка с метрами + штуки + остаток для таблицы
+        function CellM({ m }: { m: number }) {
+          if (m <= 0) return <span style={{ color: '#aaa' }}>—</span>
+          const pcs = Math.ceil(m / PROFILE_LEN)
+          const rest = +(pcs * PROFILE_LEN - m).toFixed(2)
+          return (
+            <span>
+              <b>{m.toFixed(2)}</b>
+              <span style={{ color: '#666', fontSize: 11, display: 'block' }}>
+                {pcs}&thinsp;шт{rest > 0 ? `, ост ${rest.toFixed(2)}м` : ''}
+              </span>
+            </span>
+          )
+        }
+
         return (
           <div style={{ marginTop: 28, borderRadius: 8, overflow: 'hidden',
             border: '1px solid #ccd' }}>
@@ -658,7 +715,6 @@ export default function App() {
               <tbody>
                 {groups.map(g => (
                   <>
-                    {/* заголовок группы профиля */}
                     <tr key={`h_${g.prof}`}>
                       <td colSpan={7} style={{ padding: '4px 10px', fontSize: 11,
                         fontWeight: 600, color: '#3a7bd5', background: '#f4f7ff',
@@ -666,7 +722,6 @@ export default function App() {
                         {g.label}
                       </td>
                     </tr>
-                    {/* перегородки группы */}
                     {g.walls.map(w => (
                       <tr key={w.id}
                         onClick={() => { setActiveWall(w.id); setForm(w.input) }}
@@ -674,36 +729,34 @@ export default function App() {
                           background: w.id === activeWallId ? '#e8f0ff' : 'transparent' }}>
                         <td style={tdStyle}><b>{w.label}</b></td>
                         <td style={tdStyle}>{w.input.wallType.toUpperCase()}</td>
-                        <td style={tdNum}>{w.result?.uwFloor.toFixed(2)}</td>
-                        <td style={tdNum}>{w.result?.uwCeiling.toFixed(2)}</td>
-                        <td style={tdNum}>{w.result?.lintel.toFixed(2) ?? '—'}</td>
-                        <td style={tdNum}>{w.result?.cwTotal.toFixed(2)}</td>
+                        <td style={tdNum}><CellM m={w.result?.uwFloor ?? 0} /></td>
+                        <td style={tdNum}><CellM m={w.result?.uwCeiling ?? 0} /></td>
+                        <td style={tdNum}><CellM m={w.result?.lintel ?? 0} /></td>
+                        <td style={tdNum}><CellM m={w.result?.cwTotal ?? 0} /></td>
                         <td style={tdNum}>{w.result?.gklArea.toFixed(2)}</td>
                       </tr>
                     ))}
-                    {/* итого по группе */}
                     {g.walls.length > 1 && (
                       <tr key={`sum_${g.prof}`} style={{ background: '#f0f4ff' }}>
                         <td style={{ ...tdStyle, fontWeight: 600 }} colSpan={2}>
                           Итого {g.label}
                         </td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.uwFloor.toFixed(2)}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.uwCeiling.toFixed(2)}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.lintel.toFixed(2)}</td>
-                        <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.cwTotal.toFixed(2)}</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}><CellM m={g.sum.uwFloor} /></td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}><CellM m={g.sum.uwCeiling} /></td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}><CellM m={g.sum.lintel} /></td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}><CellM m={g.sum.cwTotal} /></td>
                         <td style={{ ...tdNum, fontWeight: 600 }}>{g.sum.gklArea.toFixed(2)}</td>
                       </tr>
                     )}
                   </>
                 ))}
-                {/* общий итог */}
                 {walls.length > 1 && (
                   <tr style={{ background: '#dde6ff', borderTop: '2px solid #aac' }}>
                     <td style={{ ...tdStyle, fontWeight: 700 }} colSpan={2}>ИТОГО по объекту</td>
-                    <td style={{ ...tdNum, fontWeight: 700 }}>{totals.uwFloor.toFixed(2)}</td>
-                    <td style={{ ...tdNum, fontWeight: 700 }}>{totals.uwCeiling.toFixed(2)}</td>
-                    <td style={{ ...tdNum, fontWeight: 700 }}>{totals.lintel.toFixed(2)}</td>
-                    <td style={{ ...tdNum, fontWeight: 700 }}>{totals.cwTotal.toFixed(2)}</td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}><CellM m={totals.uwFloor} /></td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}><CellM m={totals.uwCeiling} /></td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}><CellM m={totals.lintel} /></td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}><CellM m={totals.cwTotal} /></td>
                     <td style={{ ...tdNum, fontWeight: 700 }}>{totals.gklArea.toFixed(2)}</td>
                   </tr>
                 )}
