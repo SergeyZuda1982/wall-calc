@@ -14,7 +14,18 @@ export interface Profile {
 
 export type WallType = 'c111' | 'c112'
 export type AbutmentType = 'both' | 'left' | 'right' | 'none'
-export type StudKind = 'wall' | 'free' | 'middle'
+export type StudKind = 'wall' | 'free' | 'middle' | 'door'
+
+// Ориентация стойки: down = 3000 вниз (соединение вверху), up = 3000 вверху (соединение внизу)
+export type StudOrientation = 'down' | 'up'
+
+// Информация об одной стойке для чертежа и раскроя
+export interface StudInfo {
+  pos: number               // позиция, мм от левого края
+  kind: StudKind            // тип стойки
+  orientation: StudOrientation
+  isAbove: boolean          // стойка над проёмом (короткая)
+}
 
 // Входные данные формы
 export interface WallInput {
@@ -47,10 +58,10 @@ export interface CalcResult {
   aboveStudHeight: number // высота стоек над проёмом, мм
   gklArea: number         // ГКЛ, м²
   needsOverlap: boolean   // нужно наращивание стоек
+  studInfos: StudInfo[]   // ориентации и типы всех стоек
 }
 
 // Снапшот параметров, с которыми был построен чертёж
-// (нужен для onDragEnd и update без повторного парсинга формы)
 export interface DrawingSnap {
   l: number   // длина стены, мм
   h: number   // высота стены, мм
@@ -66,34 +77,28 @@ export type LiningLayers = 1 | 2
 
 export interface LiningInput {
   liningType: LiningType
-  profileType: ProfileType       // ps50 / ps75 / ps100 (для c625/c626)
+  profileType: ProfileType
   profileThickness: ProfileThickness
   gklLayers: LiningLayers
 
-  length: number    // длина облицовки, мм
-  height: number    // высота, мм
-  step: number      // шаг стоек, мм
-  hangerStep: number // шаг подвесов (только с623), мм
+  length: number
+  height: number
+  step: number
+  hangerStep: number
 
-  // примыкание боковых сторон (как в перегородке)
   abutment: AbutmentType
 
-  // проём
   doorPos: number
   doorWidth: number
   doorHeight: number
 }
 
 export interface LiningResult {
-  // ПН 28×27 (с623) или ПН 50/75/100×40 (с625/626)
-  guideRail: number      // периметр направляющих, метры
-  // ПП 60×27 или ПС 50/75/100
-  stud: number           // стойки итого, метры
+  guideRail: number
+  stud: number
   studsCount: number
-  // только с623
-  hangers: number        // подвесы, штук
-  extenders: number      // удлинители профиля, штук
-  // ГКЛ
-  gklArea: number        // м², одна сторона × слои
-  needsOverlap: boolean  // нужно наращивание
+  hangers: number
+  extenders: number
+  gklArea: number
+  needsOverlap: boolean
 }

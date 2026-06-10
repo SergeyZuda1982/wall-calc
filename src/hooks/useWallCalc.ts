@@ -4,15 +4,10 @@ import { getProfile, DEFAULT_PROFILE } from '../data/profiles'
 import { getMaxHeight } from '../data/maxHeight'
 import { buildPositions } from '../core/buildPositions'
 import { calcResults } from '../core/calcResults'
-import { calcStudMaterial, STUD_LENGTH } from '../core/calcStudMaterial'
+// calcStudMaterial imported via calcResults
 
 const CANVAS_W = 820
 const PAD = 60
-
-export interface StudOverlapInfo {
-  pos: number          // позиция стойки, мм
-  zone: { from: number; to: number }
-}
 
 export interface UseWallCalcReturn {
   positions: number[]
@@ -20,7 +15,6 @@ export interface UseWallCalcReturn {
   result: CalcResult | null
   heightWarning: string | null
   profileWidth: number
-  overlapInfos: StudOverlapInfo[]  // зоны нахлёста для чертежа
 
   calculate: (input: WallInput, customOverlap?: number) => void
   onDragEnd: (studPos: number, xpx: number) => void
@@ -35,12 +29,11 @@ export function useWallCalc(): UseWallCalcReturn {
   const [snap, setSnap] = useState<DrawingSnap>({ l: 0, h: 0, dw: 0, dh: 0, dp: 0 })
   const [result, setResult] = useState<CalcResult | null>(null)
   const [heightWarning, setHeightWarning] = useState<string | null>(null)
-  const [overlapInfos, setOverlapInfos] = useState<StudOverlapInfo[]>([])
 
   const profileRef = useRef(DEFAULT_PROFILE)
   const abutmentRef = useRef('both')
   const wallTypeRef = useRef('c111')
-  const overlapRef = useRef(DEFAULT_PROFILE.overlap)  // текущий нахлёст (кнауф или пользовательский)
+  const overlapRef = useRef(DEFAULT_PROFILE.overlap)
   const basePositionsRef = useRef<number[]>([])
   const gridShiftRef = useRef(0)
 
@@ -48,31 +41,6 @@ export function useWallCalc(): UseWallCalcReturn {
     if (p === 0 || p === s.l) return true
     if (s.dw > 0 && (p === s.dp || p === s.dp + s.dw)) return true
     return false
-  }
-
-  // Считает зоны нахлёста для всех стоек
-  function calcOverlapInfos(
-    pos: number[],
-    h: number,
-    l: number,
-    dw: number,
-    _dh: number,
-    dp: number,
-    abutment: string,
-    overlap: number
-  ): StudOverlapInfo[] {
-    if (h <= STUD_LENGTH) return []
-    const infos: StudOverlapInfo[] = []
-    for (const p of pos) {
-      // стойки над проёмом — их высота меньше, отдельная логика
-      if (dw > 0 && p > dp && p < dp + dw) continue
-      let kind = 'middle' as 'wall' | 'free' | 'middle'
-      if (p === 0) kind = (abutment === 'both' || abutment === 'left') ? 'wall' : 'free'
-      if (p === l) kind = (abutment === 'both' || abutment === 'right') ? 'wall' : 'free'
-      const { overlapZone } = calcStudMaterial(h, kind, overlap)
-      if (overlapZone) infos.push({ pos: p, zone: overlapZone })
-    }
-    return infos
   }
 
   function _update(next: number[], currentSnap: DrawingSnap) {
@@ -84,11 +52,6 @@ export function useWallCalc(): UseWallCalcReturn {
       wallTypeRef.current === 'c112' ? 2 : 1,
     )
     setResult(res)
-    setOverlapInfos(calcOverlapInfos(
-      next, currentSnap.h, currentSnap.l,
-      currentSnap.dw, currentSnap.dh, currentSnap.dp,
-      abutmentRef.current, overlapRef.current,
-    ))
   }
 
   function calculate(input: WallInput, customOverlap?: number) {
@@ -105,7 +68,6 @@ export function useWallCalc(): UseWallCalcReturn {
     profileRef.current = { ...profile, overlap: effectiveOverlap }
     abutmentRef.current = abutment
     wallTypeRef.current = wallType
-    // пользовательский нахлёст или норма Кнауф
     overlapRef.current = customOverlap ?? profile.overlap
 
     const maxH = getMaxHeight(wallType, profileType, s, profileThickness)
@@ -129,7 +91,6 @@ export function useWallCalc(): UseWallCalcReturn {
     setPositions(studs)
     const res = calcResults(studs, h, l, dw, dh, dp, abutment, overlapRef.current, wallType === 'c112' ? 2 : 1)
     setResult(res)
-    setOverlapInfos(calcOverlapInfos(studs, h, l, dw, dh, dp, abutment, overlapRef.current))
   }
 
   function onDragEnd(studPos: number, xpx: number) {
@@ -183,8 +144,8 @@ export function useWallCalc(): UseWallCalcReturn {
   }
 
   return {
-    positions, snap, result, heightWarning, profileWidth: profileRef.current.width,
-    overlapInfos,
+    positions, snap, result, heightWarning,
+    profileWidth: profileRef.current.width,
     calculate, onDragEnd, onRightDragEnd, shiftGrid, addStud, removeStud,
   }
 }
