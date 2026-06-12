@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import type { WallInput, CalcResult, DrawingSnap } from '../types'
 import { getProfile, DEFAULT_PROFILE } from '../data/profiles'
 import { getMaxHeight } from '../data/maxHeight'
-import { buildPositions } from '../core/buildPositions'
+import { buildPositions, buildFromPhase } from '../core/buildPositions'
 import { calcResults } from '../core/calcResults'
 
 const CANVAS_W = 820
@@ -33,8 +33,9 @@ export function useWallCalc(): UseWallCalcReturn {
   const abutmentRef = useRef('both')
   const wallTypeRef = useRef('c111')
   const overlapRef = useRef(DEFAULT_PROFILE.overlap)
-  const basePositionsRef = useRef<number[]>([])
-  const gridShiftRef = useRef(0)
+  const stepRef = useRef(600)
+  const phaseRef = useRef(0)       // фаза периодической сетки (мм, 0..step-1)
+  const gridShiftRef = useRef(0)   // накопленный пользовательский сдвиг (мм)
 
   function isFixed(p: number, s: DrawingSnap): boolean {
     if (p === 0 || p === s.l) return true
@@ -70,6 +71,7 @@ export function useWallCalc(): UseWallCalcReturn {
     abutmentRef.current = abutment
     wallTypeRef.current = wallType
     overlapRef.current = effectiveOverlap
+    stepRef.current = s
 
     const maxH = getMaxHeight(wallType, profileType, s, profileThickness)
     if (maxH > 0 && h > maxH) {
@@ -83,10 +85,10 @@ export function useWallCalc(): UseWallCalcReturn {
       setHeightWarning(null)
     }
 
-    const studs = buildPositions(l, s, firstStud, openings)
+    const { positions: studs, phase } = buildPositions(l, s, firstStud, openings)
     const newSnap: DrawingSnap = { l, h, openings }
 
-    basePositionsRef.current = studs
+    phaseRef.current = phase
     gridShiftRef.current = 0
     setSnap(newSnap)
     _update(studs, newSnap)
@@ -111,22 +113,24 @@ export function useWallCalc(): UseWallCalcReturn {
     const deltaMm = Math.round((xpx - startXpx) / sc / 100) * 100
     if (deltaMm === 0) return
     gridShiftRef.current += deltaMm
-    _rebuildWithShift(gridShiftRef.current)
+    _rebuildWithShift()
   }
 
   function shiftGrid(deltaMm: number) {
     if (!snap.l || deltaMm === 0) return
     gridShiftRef.current += deltaMm
-    _rebuildWithShift(gridShiftRef.current)
+    _rebuildWithShift()
   }
 
-  function _rebuildWithShift(totalShift: number) {
-    const base = basePositionsRef.current
-    if (!base.length) return
-    const next = base
-      .map(p => isFixed(p, snap) ? p : p + totalShift)
-      .filter(p => isFixed(p, snap) || (p > 0 && p < snap.l))
-    _update([...new Set(next)].sort((a, b) => a - b), snap)
+  // Пересобирает сетку с новой фазой = базовая фаза + накопленный сдвиг.
+  // Сетка периодическая, поэтому при сдвиге больше шага стойка автоматически
+  // "появляется" с противоположного края. Конфликт MIN_GAP с проёмами
+  // проверяется заново.
+  function _rebuildWithShift() {
+    if (!snap.l) return
+    const newPhase = phaseRef.current + gridShiftRef.current
+    const { positions: next } = buildFromPhase(snap.l, stepRef.current, newPhase, snap.openings)
+    _update(next, snap)
   }
 
   function addStud(xpx: number) {

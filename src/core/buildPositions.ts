@@ -2,36 +2,36 @@ import type { Opening } from '../types'
 
 export const MIN_GAP = 150 // мм
 
+export interface BuildResult {
+  positions: number[]
+  phase: number // мм, 0..s-1 — фаза периодической сетки стоек
+}
+
+const norm = (x: number, s: number) => ((x % s) + s) % s
+
 /**
- * Строит массив позиций стоек для стены с произвольным числом проёмов.
- * Алгоритм тот же что и раньше, но конфликт проверяется со всеми проёмами.
+ * Строит сетку стоек по заданной фазе (положению первой стойки от 0 до s-1
+ * по модулю шага), проверяя минимальное расстояние MIN_GAP от стоек проёмов.
+ *
+ * Сетка периодическая: позиции = phase, phase+s, phase+2s, ... < l
+ * Если есть конфликт с проёмом (<=MIN_GAP), фаза подбирается ближайшим
+ * сдвигом (±10мм шагами) до устранения конфликта.
  */
-export function buildPositions(
+export function buildFromPhase(
   l: number,
   s: number,
-  first: number,
+  phase: number,
   openings: Opening[]
-): number[] {
+): BuildResult {
   const activeOpenings = openings.filter(o => o.width > 0)
-
-  if (activeOpenings.length === 0) {
-    const pos: number[] = [0]
-    let p = first
-    while (p < l) { pos.push(p); p += s }
-    pos.push(l)
-    return [...new Set(pos)].sort((a, b) => a - b)
-  }
-
-  // Все стойки проёмов (левый и правый край каждого)
   const openingStuds: number[] = []
   for (const o of activeOpenings) {
-    openingStuds.push(o.pos)
-    openingStuds.push(o.pos + o.width)
+    openingStuds.push(o.pos, o.pos + o.width)
   }
 
-  function makeGrid(shiftLeft: number): number[] {
+  function makeGrid(ph: number): number[] {
     const grid: number[] = []
-    let p = s - shiftLeft
+    let p = ph
     while (p < l) {
       if (p > 0) grid.push(Math.round(p))
       p += s
@@ -48,32 +48,57 @@ export function buildPositions(
     return false
   }
 
-  let grid = makeGrid(0)
+  let ph = norm(phase, s)
+  let grid = makeGrid(ph)
 
-  if (hasConflict(grid)) {
+  if (openingStuds.length && hasConflict(grid)) {
     let found = false
-    for (let x = 10; x < s; x += 10) {
-      const candidate = makeGrid(x)
-      if (!hasConflict(candidate)) {
-        grid = candidate
-        found = true
-        break
+    for (let d = 10; d < s; d += 10) {
+      for (const cand of [norm(ph + d, s), norm(ph - d, s)]) {
+        const g = makeGrid(cand)
+        if (!hasConflict(g)) { ph = cand; grid = g; found = true; break }
       }
+      if (found) break
     }
     if (!found) {
       grid = grid.filter(p =>
-        openingStuds.every(os => Math.abs(p - os) > MIN_GAP || Math.abs(p - os) === 0)
+        openingStuds.every(os => Math.abs(p - os) > MIN_GAP || p === os)
       )
     }
   }
 
   const pos = new Set<number>([0, l])
-  for (const os of openingStuds) pos.add(os)
+  for (const os of openingStuds) {
+    if (os > 0 && os < l) pos.add(os)
+  }
   for (const p of grid) {
     if (p > 0 && p < l) pos.add(p)
   }
 
-  return [...pos].sort((a, b) => a - b)
+  return { positions: [...pos].sort((a, b) => a - b), phase: ph }
 }
 
-export { MIN_GAP as default }
+/**
+ * Начальный расчёт сетки. Фаза вычисляется из firstStud (положение
+ * первой стойки от края), по модулю шага.
+ */
+export function buildPositions(
+  l: number,
+  s: number,
+  first: number,
+  openings: Opening[]
+): BuildResult {
+  const activeOpenings = openings.filter(o => o.width > 0)
+
+  if (activeOpenings.length === 0) {
+    const pos: number[] = [0]
+    let p = first
+    while (p < l) { pos.push(p); p += s }
+    pos.push(l)
+    const sorted = [...new Set(pos)].sort((a, b) => a - b)
+    return { positions: sorted, phase: norm(first, s) }
+  }
+
+  const phase0 = norm(first, s)
+  return buildFromPhase(l, s, phase0, activeOpenings)
+}
