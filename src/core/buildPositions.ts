@@ -42,7 +42,13 @@ export function buildFromPhase(
   function hasConflict(grid: number[]): boolean {
     for (const p of grid) {
       for (const os of openingStuds) {
-        if (Math.abs(p - os) <= MIN_GAP && Math.abs(p - os) > 0) return true
+        // Конфликт при расстоянии 0..MIN_GAP включительно — в том числе
+        // точное совпадение рядовой стойки со стойкой проёма (dist=0).
+        // ВАЖНО: до сегодняшнего рефакторинга на массив openings[] здесь
+        // не было исключения "&& > 0" — его случайное добавление и было
+        // причиной бага (поиск фазы останавливался на совпадении 1160==1160,
+        // что ломало раскладку у левого края проёма).
+        if (Math.abs(p - os) <= MIN_GAP) return true
       }
     }
     return false
