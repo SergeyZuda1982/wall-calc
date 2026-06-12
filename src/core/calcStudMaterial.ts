@@ -1,20 +1,28 @@
-import type { StudKind } from '../types'
+import type { StudKind, StudOrientation } from '../types'
 
-export const STUD_LENGTH = 3000 // стандартная длина стоечного профиля, мм
-export const MIN_OVERLAP_UP = 100 // минимальный отступ от потолка при наращивании, мм
+export const STUD_LENGTH = 3000
+export const MIN_OVERLAP_UP = 100
 
 /**
- * Возвращает суммарную длину материала (мм) для одной стойки.
- * Также возвращает зону нахлёста для визуализации.
+ * Возвращает длину материала и зону нахлёста для одной стойки.
  *
- * wall:   цельная стойка точно по высоте, нет нахлёста
- * middle: нижний 3000 + верхний кусок, муфта идёт ВНИЗ на overlap
- * free:   нижний 3000 + верхний кусок, муфта = overlap вниз + up вверх
+ * Ориентация влияет только на положение зоны нахлёста (для визуализации):
+ *
+ * down: длинный кусок СВЕРХУ (от потолка), короткий снизу.
+ *       Стык на высоте h−3000 от пола.
+ *       Зона нахлёста: от (h−3000−overlap) до (h−3000) — ниже стыка.
+ *
+ * up:   длинный кусок СНИЗУ (от пола), короткий сверху.
+ *       Стык на высоте 3000 от пола.
+ *       Зона нахлёста: от 3000 до (3000+overlap) — выше стыка.
+ *
+ * Длина материала одинакова для обеих ориентаций.
  */
 export function calcStudMaterial(
   h: number,
   kind: StudKind,
-  overlap: number
+  overlap: number,
+  orientation: StudOrientation = 'up'
 ): { length: number; overlapZone: { from: number; to: number } | null } {
 
   if (h <= STUD_LENGTH) {
@@ -25,31 +33,36 @@ export function calcStudMaterial(
     return { length: h, overlapZone: null }
   }
 
-  const part2 = h - STUD_LENGTH // длина верхнего куска
+  const part2 = h - STUD_LENGTH
 
-  if (kind === 'middle') {
-    // Муфта идёт только вниз на overlap от стыка
-    const down = overlap
+  if (kind === 'middle' || kind === 'door') {
     const totalLength = h + overlap
-    return {
-      length: totalLength,
-      overlapZone: {
-        from: STUD_LENGTH - down,  // 3000 - overlap
-        to: STUD_LENGTH,           // 3000
-      }
+
+    let overlapZone: { from: number; to: number }
+    if (orientation === 'up') {
+      // длинный снизу, стык на 3000, зона выше стыка
+      overlapZone = { from: STUD_LENGTH, to: STUD_LENGTH + overlap }
+    } else {
+      // длинный сверху, стык на h−3000, зона ниже стыка
+      const jointH = h - STUD_LENGTH
+      overlapZone = { from: jointH - overlap, to: jointH }
     }
+
+    return { length: totalLength, overlapZone }
   }
 
-  // free: муфта вниз overlap + вверх сколько влезет минус 100мм до потолка
+  // free
   const up = Math.min(overlap, part2 - MIN_OVERLAP_UP)
-  const actualUp = Math.max(0, up) // не меньше 0
+  const actualUp = Math.max(0, up)
   const totalLength = STUD_LENGTH + part2 + overlap + actualUp
 
-  return {
-    length: totalLength,
-    overlapZone: {
-      from: STUD_LENGTH - overlap,       // вниз от стыка
-      to: STUD_LENGTH + actualUp,        // вверх от стыка
-    }
+  let overlapZone: { from: number; to: number }
+  if (orientation === 'up') {
+    overlapZone = { from: STUD_LENGTH, to: STUD_LENGTH + overlap + actualUp }
+  } else {
+    const jointH = h - STUD_LENGTH
+    overlapZone = { from: jointH - overlap, to: jointH + actualUp }
   }
+
+  return { length: totalLength, overlapZone }
 }

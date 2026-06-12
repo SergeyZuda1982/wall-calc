@@ -4,7 +4,6 @@ import { getProfile, DEFAULT_PROFILE } from '../data/profiles'
 import { getMaxHeight } from '../data/maxHeight'
 import { buildPositions } from '../core/buildPositions'
 import { calcResults } from '../core/calcResults'
-// calcStudMaterial imported via calcResults
 
 const CANVAS_W = 820
 const PAD = 60
@@ -16,7 +15,7 @@ export interface UseWallCalcReturn {
   heightWarning: string | null
   profileWidth: number
 
-  calculate: (input: WallInput, customOverlap?: number) => void
+  calculate: (input: WallInput) => void
   onDragEnd: (studPos: number, xpx: number) => void
   onRightDragEnd: (_studPos: number, xpx: number, startXpx: number) => void
   shiftGrid: (deltaMm: number) => void
@@ -26,7 +25,7 @@ export interface UseWallCalcReturn {
 
 export function useWallCalc(): UseWallCalcReturn {
   const [positions, setPositions] = useState<number[]>([])
-  const [snap, setSnap] = useState<DrawingSnap>({ l: 0, h: 0, dw: 0, dh: 0, dp: 0 })
+  const [snap, setSnap] = useState<DrawingSnap>({ l: 0, h: 0, openings: [] })
   const [result, setResult] = useState<CalcResult | null>(null)
   const [heightWarning, setHeightWarning] = useState<string | null>(null)
 
@@ -39,7 +38,9 @@ export function useWallCalc(): UseWallCalcReturn {
 
   function isFixed(p: number, s: DrawingSnap): boolean {
     if (p === 0 || p === s.l) return true
-    if (s.dw > 0 && (p === s.dp || p === s.dp + s.dw)) return true
+    for (const o of s.openings) {
+      if (o.width > 0 && (p === o.pos || p === o.pos + o.width)) return true
+    }
     return false
   }
 
@@ -47,28 +48,28 @@ export function useWallCalc(): UseWallCalcReturn {
     setPositions(next)
     const res = calcResults(
       next, currentSnap.h, currentSnap.l,
-      currentSnap.dw, currentSnap.dh, currentSnap.dp,
+      currentSnap.openings,
       abutmentRef.current, overlapRef.current,
       wallTypeRef.current === 'c112' ? 2 : 1,
     )
     setResult(res)
   }
 
-  function calculate(input: WallInput, customOverlap?: number) {
+  function calculate(input: WallInput) {
     const { wallType, profileType, profileThickness, abutment,
-            length: l, height: h, step: s, firstStud,
-            doorPos: dp, doorWidth: dw, doorHeight: dh } = input
+            length: l, height: h, step: s, firstStud, openings } = input
 
     if (!l || !h || !s) return
 
     const profile = getProfile(profileType)
-    const effectiveOverlap = input.customOverlap !== null && input.customOverlap !== undefined
-      ? Math.max(100, input.customOverlap)
+    const effectiveOverlap = input.customOverlap != null && input.customOverlap >= 100
+      ? input.customOverlap
       : profile.overlap
+
     profileRef.current = { ...profile, overlap: effectiveOverlap }
     abutmentRef.current = abutment
     wallTypeRef.current = wallType
-    overlapRef.current = customOverlap ?? profile.overlap
+    overlapRef.current = effectiveOverlap
 
     const maxH = getMaxHeight(wallType, profileType, s, profileThickness)
     if (maxH > 0 && h > maxH) {
@@ -76,21 +77,19 @@ export function useWallCalc(): UseWallCalcReturn {
       setHeightWarning(
         `⚠️ Высота ${(h / 1000).toFixed(2)}м превышает максимально допустимую ` +
         `${(maxH / 1000).toFixed(2)}м по Кнауф для ${profileType.toUpperCase()}, ` +
-        `шаг ${s}мм, профиль ${thickLabel}мм. Уменьшите шаг или возьмите профиль большего размера.`
+        `шаг ${s}мм, профиль ${thickLabel}мм.`
       )
     } else {
       setHeightWarning(null)
     }
 
-    const studs = buildPositions(l, s, firstStud, dp, dw)
-    const newSnap: DrawingSnap = { l, h, dw, dh, dp }
+    const studs = buildPositions(l, s, firstStud, openings)
+    const newSnap: DrawingSnap = { l, h, openings }
 
     basePositionsRef.current = studs
     gridShiftRef.current = 0
     setSnap(newSnap)
-    setPositions(studs)
-    const res = calcResults(studs, h, l, dw, dh, dp, abutment, overlapRef.current, wallType === 'c112' ? 2 : 1)
-    setResult(res)
+    _update(studs, newSnap)
   }
 
   function onDragEnd(studPos: number, xpx: number) {
@@ -98,7 +97,7 @@ export function useWallCalc(): UseWallCalcReturn {
     const sc = (CANVAS_W - PAD * 2) / snap.l
     const newMm = Math.round((xpx - PAD) / sc / 100) * 100
     const clamped = Math.max(1, Math.min(snap.l - 1, newMm))
-    const next = positions.map((p) => {
+    const next = positions.map(p => {
       if (isFixed(p, snap)) return p
       if (p === studPos) return clamped
       return p
@@ -125,8 +124,8 @@ export function useWallCalc(): UseWallCalcReturn {
     const base = basePositionsRef.current
     if (!base.length) return
     const next = base
-      .map((p) => isFixed(p, snap) ? p : p + totalShift)
-      .filter((p) => isFixed(p, snap) || (p > 0 && p < snap.l))
+      .map(p => isFixed(p, snap) ? p : p + totalShift)
+      .filter(p => isFixed(p, snap) || (p > 0 && p < snap.l))
     _update([...new Set(next)].sort((a, b) => a - b), snap)
   }
 

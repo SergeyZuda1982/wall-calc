@@ -6,8 +6,21 @@ export type ProfileThickness = '06' | '07'
 export interface Profile {
   label: string
   value: ProfileType
-  overlap: number  // мм нахлёста при наращивании
-  width: number    // мм ширины профиля
+  overlap: number
+  width: number
+}
+
+// ─── Проёмы ─────────────────────────────────────────────────────────────────
+
+export type OpeningType = 'door' | 'window'
+
+export interface Opening {
+  id: string
+  type: OpeningType
+  pos: number         // мм от левого края
+  width: number       // мм
+  height: number      // мм
+  sillHeight: number  // мм от пола (0 для дверей, >0 для окон)
 }
 
 // ─── Перегородка ────────────────────────────────────────────────────────────
@@ -15,59 +28,49 @@ export interface Profile {
 export type WallType = 'c111' | 'c112'
 export type AbutmentType = 'both' | 'left' | 'right' | 'none'
 export type StudKind = 'wall' | 'free' | 'middle' | 'door'
-
-// Ориентация стойки: down = 3000 вниз (соединение вверху), up = 3000 вверху (соединение внизу)
 export type StudOrientation = 'down' | 'up'
 
-// Информация об одной стойке для чертежа и раскроя
 export interface StudInfo {
-  pos: number               // позиция, мм от левого края
-  kind: StudKind            // тип стойки
+  pos: number
+  kind: StudKind
   orientation: StudOrientation
-  isAbove: boolean          // стойка над проёмом (короткая)
+  isAbove: boolean
+  openingId: string | null  // к какому проёму относится (для door/above стоек)
 }
 
-// Входные данные формы
 export interface WallInput {
   wallType: WallType
   profileType: ProfileType
   profileThickness: ProfileThickness
   abutment: AbutmentType
 
-  length: number      // мм
-  height: number      // мм
-  step: number        // мм, шаг стоек
-  firstStud: number   // мм, первая стойка от края
+  length: number
+  height: number
+  step: number
+  firstStud: number
 
-  doorPos: number     // мм, начало проёма
-  doorWidth: number   // мм
-  doorHeight: number  // мм
+  openings: Opening[]
 
-  // Пользовательский нахлёст (0 = использовать норму Кнауф по профилю)
   customOverlap?: number | null
 }
 
-// Результат расчёта
 export interface CalcResult {
-  uwFloor: number         // ПН пол, метры
-  uwCeiling: number       // ПН потолок, метры
-  lintel: number          // перемычка над проёмом (ПН), метры
-  cwTotal: number         // ПС стойки итого, метры
-  studsCount: number      // количество стоек
-  aboveStuds: number      // стоек над проёмом
-  aboveStudHeight: number // высота стоек над проёмом, мм
-  gklArea: number         // ГКЛ, м²
-  needsOverlap: boolean   // нужно наращивание стоек
-  studInfos: StudInfo[]   // ориентации и типы всех стоек
+  uwFloor: number
+  uwCeiling: number
+  lintel: number          // сумма перемычек над всеми проёмами, метры
+  cwTotal: number
+  studsCount: number
+  aboveStuds: number
+  aboveStudHeight: number // высота стоек над первым проёмом (для обратной совместимости)
+  gklArea: number
+  needsOverlap: boolean
+  studInfos: StudInfo[]
 }
 
-// Снапшот параметров, с которыми был построен чертёж
 export interface DrawingSnap {
-  l: number   // длина стены, мм
-  h: number   // высота стены, мм
-  dw: number  // ширина проёма, мм
-  dh: number  // высота проёма, мм
-  dp: number  // позиция проёма, мм
+  l: number
+  h: number
+  openings: Opening[]
 }
 
 // ─── Облицовка ──────────────────────────────────────────────────────────────
@@ -88,9 +91,7 @@ export interface LiningInput {
 
   abutment: AbutmentType
 
-  doorPos: number
-  doorWidth: number
-  doorHeight: number
+  openings: Opening[]
 }
 
 export interface LiningResult {

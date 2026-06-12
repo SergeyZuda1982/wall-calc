@@ -3,40 +3,50 @@ import type { LiningInput, LiningResult } from '../types'
 const STUD_LENGTH = 3000
 
 export function calcLining(input: LiningInput, positions: number[]): LiningResult {
-  const { length: l, height: h, hangerStep,
-          gklLayers, doorPos: dp, doorWidth: dw, doorHeight: dh } = input
+  const { length: l, height: h, hangerStep, gklLayers, openings } = input
+  const activeOpenings = openings.filter(o => o.width > 0)
 
   const isC623 = input.liningType === 'c623'
 
   // ─── Направляющие ────────────────────────────────────────────────────────
-  // С623: ПН 28×27 по всему периметру (пол+потолок+боковые)
-  // С625/626: ПН только пол + потолок (как в перегородке)
-  const floorRail = dw > 0 ? l - dw : l
+  // Дверные проёмы вырезают из нижней направляющей; оконные — не вырезают
+  const doorOpeningsWidth = activeOpenings
+    .filter(o => o.type === 'door')
+    .reduce((s, o) => s + o.width, 0)
+
+  const floorRail = l - doorOpeningsWidth
   const ceilingRail = l
-  const lintel = dw > 0 ? (dw + 400) : 0
+
+  // Перемычки над каждым проёмом (ширина + 400мм)
+  const lintelTotal = activeOpenings.reduce((s, o) => s + (o.width + 400), 0)
 
   let guideRail = 0
   if (isC623) {
-    // полный периметр
     let sideRail = 0
     if (input.abutment === 'both')  sideRail = 2 * h
     if (input.abutment === 'left' || input.abutment === 'right') sideRail = h
-    guideRail = (floorRail + ceilingRail + sideRail + lintel) / 1000
+    guideRail = (floorRail + ceilingRail + sideRail + lintelTotal) / 1000
   } else {
-    // только пол + потолок + перемычка
-    guideRail = (floorRail + ceilingRail + lintel) / 1000
+    guideRail = (floorRail + ceilingRail + lintelTotal) / 1000
   }
 
   // ─── Стойки ──────────────────────────────────────────────────────────────
-  // С623: крайние стойки (pos=0 и pos=l) — это ПН, не ПП
-  //       считаем только внутренние стойки
-  // С625/626: все стойки включая крайние — ПС профиль
   const overlapMap: Record<string, number> = { ps50: 500, ps75: 750, ps100: 1000 }
   const overlap = overlapMap[input.profileType] ?? 750
 
   function studLen(sh: number): number {
     if (sh <= STUD_LENGTH || isC623) return sh
     return sh + overlap
+  }
+
+  // Высота стоек над проёмом (если стойка попадает в зону проёма)
+  function aboveHeight(pos: number): number | null {
+    for (const o of activeOpenings) {
+      if (pos > o.pos && pos < o.pos + o.width) {
+        return h - o.height - o.sillHeight
+      }
+    }
+    return null
   }
 
   let studTotal = 0
@@ -50,10 +60,10 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     : positions
 
   for (const pos of countablePositions) {
-    const isAbove = dw > 0 && pos > dp && pos < dp + dw
-    const sh = isAbove ? h - dh : h
+    const above = aboveHeight(pos)
+    const sh = above !== null ? above : h
     studTotal += studLen(sh)
-    if (isAbove) aboveStuds++
+    if (above !== null) aboveStuds++
 
     if (isC623) {
       hangers += Math.ceil(sh / hangerStep)
@@ -63,8 +73,8 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
 
   // ─── ГКЛ ─────────────────────────────────────────────────────────────────
   const wallArea = l * h
-  const openingArea = dw > 0 ? dw * dh : 0
-  const gklArea = ((wallArea - openingArea) * gklLayers) / 1_000_000
+  const openingsArea = activeOpenings.reduce((s, o) => s + o.width * o.height, 0)
+  const gklArea = ((wallArea - openingsArea) * gklLayers) / 1_000_000
 
   return {
     guideRail,

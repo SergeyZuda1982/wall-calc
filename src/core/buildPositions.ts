@@ -1,25 +1,20 @@
-const MIN_GAP = 150 // мм
+import type { Opening } from '../types'
+
+export const MIN_GAP = 150 // мм
 
 /**
- * Строит массив позиций стоек (мм от левого края стены).
- *
- * Алгоритм с проёмом:
- *  - Базовая сетка: 0, s, 2s, 3s...
- *  - Если стойка сетки попадает в зону <=MIN_GAP от стойки проёма —
- *    сдвигаем всю сетку ВЛЕВО на минимальный X (кратный 10мм)
- *    пока конфликт не уйдёт.
- *  - Результат: 0, (s-X), (2s-X), (3s-X)... первый шаг < s — подрезка.
- *  - Стойки проёма добавляются отдельно, они не влияют на шаг.
+ * Строит массив позиций стоек для стены с произвольным числом проёмов.
+ * Алгоритм тот же что и раньше, но конфликт проверяется со всеми проёмами.
  */
 export function buildPositions(
   l: number,
   s: number,
   first: number,
-  dp: number,
-  dw: number
+  openings: Opening[]
 ): number[] {
+  const activeOpenings = openings.filter(o => o.width > 0)
 
-  if (dw <= 0) {
+  if (activeOpenings.length === 0) {
     const pos: number[] = [0]
     let p = first
     while (p < l) { pos.push(p); p += s }
@@ -27,14 +22,15 @@ export function buildPositions(
     return [...new Set(pos)].sort((a, b) => a - b)
   }
 
-  const doorLeft = dp
-  const doorRight = dp + dw
+  // Все стойки проёмов (левый и правый край каждого)
+  const openingStuds: number[] = []
+  for (const o of activeOpenings) {
+    openingStuds.push(o.pos)
+    openingStuds.push(o.pos + o.width)
+  }
 
-  // Сетка со сдвигом влево на X: 0, s-X, 2s-X, 3s-X...
-  // При X=0: стандартная сетка s, 2s, 3s (без нуля — он всегда отдельно)
   function makeGrid(shiftLeft: number): number[] {
     const grid: number[] = []
-    // первая стойка = s - shiftLeft, далее через s
     let p = s - shiftLeft
     while (p < l) {
       if (p > 0) grid.push(Math.round(p))
@@ -45,14 +41,15 @@ export function buildPositions(
 
   function hasConflict(grid: number[]): boolean {
     for (const p of grid) {
-      if (Math.abs(p - doorLeft) <= MIN_GAP) return true
-      if (Math.abs(p - doorRight) <= MIN_GAP) return true
+      for (const os of openingStuds) {
+        if (Math.abs(p - os) <= MIN_GAP && Math.abs(p - os) > 0) return true
+      }
     }
     return false
   }
 
   let grid = makeGrid(0)
-  
+
   if (hasConflict(grid)) {
     let found = false
     for (let x = 10; x < s; x += 10) {
@@ -64,15 +61,14 @@ export function buildPositions(
       }
     }
     if (!found) {
-      // убираем конфликтующие стойки если сдвиг не помог
       grid = grid.filter(p =>
-        Math.abs(p - doorLeft) > MIN_GAP &&
-        Math.abs(p - doorRight) > MIN_GAP
+        openingStuds.every(os => Math.abs(p - os) > MIN_GAP || Math.abs(p - os) === 0)
       )
     }
   }
 
-  const pos = new Set<number>([0, l, doorLeft, doorRight])
+  const pos = new Set<number>([0, l])
+  for (const os of openingStuds) pos.add(os)
   for (const p of grid) {
     if (p > 0 && p < l) pos.add(p)
   }
@@ -80,4 +76,4 @@ export function buildPositions(
   return [...pos].sort((a, b) => a - b)
 }
 
-export { MIN_GAP }
+export { MIN_GAP as default }
