@@ -9,13 +9,52 @@ export interface BuildResult {
 
 const norm = (x: number, s: number) => ((x % s) + s) % s
 
+function makeGrid(l: number, s: number, ph: number): number[] {
+  const grid: number[] = []
+  let p = ph
+  while (p < l) {
+    if (p > 0) grid.push(Math.round(p))
+    p += s
+  }
+  return grid
+}
+
+function openingStudsOf(openings: Opening[]): number[] {
+  const result: number[] = []
+  for (const o of openings) {
+    if (o.width > 0) result.push(o.pos, o.pos + o.width)
+  }
+  return result
+}
+
+function countConflicts(grid: number[], fixed: number[]): number {
+  let n = 0
+  for (const p of grid) {
+    for (const f of fixed) {
+      if (Math.abs(p - f) <= MIN_GAP) { n++; break }
+    }
+  }
+  return n
+}
+
 /**
- * Строит сетку стоек по заданной фазе (положению первой стойки от 0 до s-1
- * по модулю шага), проверяя минимальное расстояние MIN_GAP от стоек проёмов.
+ * Локальная очистка: убирает рядовые стойки, попавшие в зону MIN_GAP
+ * вокруг любой "фиксированной" точки (стен 0/l или стоек проёмов).
+ * Не зависит от количества проёмов, всегда завершается за O(грид × fixed).
+ */
+function localCleanup(grid: number[], fixed: number[]): number[] {
+  return grid.filter(p => fixed.every(f => Math.abs(p - f) > MIN_GAP))
+}
+
+/**
+ * Строит сетку стоек по заданной фазе БЕЗ поиска альтернативной фазы.
  *
- * Сетка периодическая: позиции = phase, phase+s, phase+2s, ... < l
- * Если есть конфликт с проёмом (<=MIN_GAP), фаза подбирается ближайшим
- * сдвигом (±10мм шагами) до устранения конфликта.
+ * Используется при ручном сдвиге гребёнки — пользователь полностью
+ * управляет позицией сетки, шаг сдвига может быть любым (от 1мм).
+ * Конфликты MIN_GAP (с проёмами и со стенами 0/l) устраняются ЛОКАЛЬНЫМ
+ * удалением конкретной конфликтующей рядовой стойки — без глобального
+ * поиска фазы. Поэтому работает при любом числе проёмов и никогда не
+ * "виснет"/не блокирует сдвиг.
  */
 export function buildFromPhase(
   l: number,
@@ -23,61 +62,29 @@ export function buildFromPhase(
   phase: number,
   openings: Opening[]
 ): BuildResult {
-  const activeOpenings = openings.filter(o => o.width > 0)
-  const openingStuds: number[] = []
-  for (const o of activeOpenings) {
-    openingStuds.push(o.pos, o.pos + o.width)
+  const openingStuds = openingStudsOf(openings)
+  const ph = norm(phase, s)
+  const grid = makeGrid(l, s, ph)
+
+  if (!openingStuds.length) {
+    // Без проёмов конфликтов MIN_GAP не бывает — стены 0/l не фильтруем,
+    // первая/последняя стойка может быть сколь угодно близко к стене
+    // (это сознательный выбор через firstStud).
+    const pos = new Set<number>([0, l])
+    for (const p of grid) if (p > 0 && p < l) pos.add(p)
+    return { positions: [...pos].sort((a, b) => a - b), phase: ph }
   }
 
-  function makeGrid(ph: number): number[] {
-    const grid: number[] = []
-    let p = ph
-    while (p < l) {
-      if (p > 0) grid.push(Math.round(p))
-      p += s
-    }
-    return grid
-  }
-
-  function hasConflict(grid: number[]): boolean {
-    for (const p of grid) {
-      for (const os of openingStuds) {
-        // Конфликт при расстоянии 0..MIN_GAP включительно — в том числе
-        // точное совпадение рядовой стойки со стойкой проёма (dist=0).
-        // ВАЖНО: до сегодняшнего рефакторинга на массив openings[] здесь
-        // не было исключения "&& > 0" — его случайное добавление и было
-        // причиной бага (поиск фазы останавливался на совпадении 1160==1160,
-        // что ломало раскладку у левого края проёма).
-        if (Math.abs(p - os) <= MIN_GAP) return true
-      }
-    }
-    return false
-  }
-
-  let ph = norm(phase, s)
-  let grid = makeGrid(ph)
-
-  if (openingStuds.length && hasConflict(grid)) {
-    let found = false
-    for (let d = 10; d < s; d += 10) {
-      for (const cand of [norm(ph + d, s), norm(ph - d, s)]) {
-        const g = makeGrid(cand)
-        if (!hasConflict(g)) { ph = cand; grid = g; found = true; break }
-      }
-      if (found) break
-    }
-    if (!found) {
-      grid = grid.filter(p =>
-        openingStuds.every(os => Math.abs(p - os) > MIN_GAP || p === os)
-      )
-    }
-  }
+  // Стены 0/l тоже считаются "фиксированными точками" — рядовая стойка
+  // ближе MIN_GAP к стене бессмысленна (там уже есть крайняя стойка).
+  const fixed = [0, l, ...openingStuds]
+  const filteredGrid = localCleanup(grid, fixed)
 
   const pos = new Set<number>([0, l])
   for (const os of openingStuds) {
     if (os > 0 && os < l) pos.add(os)
   }
-  for (const p of grid) {
+  for (const p of filteredGrid) {
     if (p > 0 && p < l) pos.add(p)
   }
 
@@ -85,8 +92,17 @@ export function buildFromPhase(
 }
 
 /**
- * Начальный расчёт сетки. Фаза вычисляется из firstStud (положение
- * первой стойки от края), по модулю шага.
+ * Начальный расчёт сетки (calculate()).
+ *
+ * Ищем фазу, при которой базовая сетка не конфликтует ни с проёмами,
+ * ни со стенами 0/l — это даёт равномерную раскладку (как в примере
+ * с одной дверью: фаза 400 вместо 0).
+ *
+ * Best-effort: если идеальной фазы не существует (много проёмов —
+ * теоретически может не найтись фазы без конфликтов вообще), берём
+ * фазу с МИНИМАЛЬНЫМ числом конфликтов среди всех проверенных, а затем
+ * прогоняем её через ту же локальную очистку, что и при ручном сдвиге.
+ * Поэтому результат всегда определён, независимо от количества проёмов.
  */
 export function buildPositions(
   l: number,
@@ -94,17 +110,28 @@ export function buildPositions(
   first: number,
   openings: Opening[]
 ): BuildResult {
-  const activeOpenings = openings.filter(o => o.width > 0)
+  const openingStuds = openingStudsOf(openings)
+  const phase0 = norm(first, s)
 
-  if (activeOpenings.length === 0) {
-    const pos: number[] = [0]
-    let p = first
-    while (p < l) { pos.push(p); p += s }
-    pos.push(l)
-    const sorted = [...new Set(pos)].sort((a, b) => a - b)
-    return { positions: sorted, phase: norm(first, s) }
+  if (!openingStuds.length) {
+    return buildFromPhase(l, s, phase0, openings)
   }
 
-  const phase0 = norm(first, s)
-  return buildFromPhase(l, s, phase0, activeOpenings)
+  const fixed = [0, l, ...openingStuds]
+
+  let bestPhase = phase0
+  let bestConflicts = countConflicts(makeGrid(l, s, phase0), fixed)
+
+  for (let d = 10; d < s && bestConflicts > 0; d += 10) {
+    for (const cand of [norm(phase0 + d, s), norm(phase0 - d, s)]) {
+      const conflicts = countConflicts(makeGrid(l, s, cand), fixed)
+      if (conflicts < bestConflicts) {
+        bestConflicts = conflicts
+        bestPhase = cand
+        if (bestConflicts === 0) break
+      }
+    }
+  }
+
+  return buildFromPhase(l, s, bestPhase, openings)
 }
