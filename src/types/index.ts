@@ -57,6 +57,7 @@ export interface WallInput {
 export interface CalcResult {
   uwFloor: number
   uwCeiling: number
+  uwSill: number          // суммарная длина направляющей под подоконниками окон, метры
   lintel: number          // сумма перемычек над всеми проёмами, метры
   cwTotal: number
   studsCount: number

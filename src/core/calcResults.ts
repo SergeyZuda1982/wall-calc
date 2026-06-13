@@ -86,16 +86,24 @@ export function calcResults(
   let cwTotal = 0
   let aboveStuds = 0
 
-  // Высота стоек над каждым проёмом
+  // Высота стоек над каждым проёмом (от потолка до верха проёма)
   function aboveHeight(openingId: string): number {
     const o = activeOpenings.find(x => x.id === openingId)
     if (!o) return 0
     return h - o.height - o.sillHeight
   }
 
+  // Высота стоек под проёмом (от пола до подоконника).
+  // Для дверей sillHeight=0, поэтому этот сегмент равен 0.
+  function belowHeight(openingId: string): number {
+    const o = activeOpenings.find(x => x.id === openingId)
+    if (!o) return 0
+    return o.sillHeight
+  }
+
   for (const { kind, isAbove, orientation, openingId } of studInfos) {
     if (isAbove && openingId) {
-      cwTotal += aboveHeight(openingId)
+      cwTotal += aboveHeight(openingId) + belowHeight(openingId)
       aboveStuds++
     } else {
       const calcKind: StudKind = (kind === 'door') ? 'middle' : kind
@@ -107,6 +115,15 @@ export function calcResults(
   const doorOpeningsWidth = activeOpenings
     .filter(o => o.type === 'door')
     .reduce((s, o) => s + o.width, 0)
+
+  // ПН подоконник: отдельная направляющая под каждым оконным проёмом
+  // (sillHeight > 0), длина = ширина проёма + запас 200мм с каждой стороны
+  // на крепление (итого +400мм). Если на практике запас меньше (150мм) —
+  // поменять SILL_TRACK_MARGIN.
+  const SILL_TRACK_MARGIN = 200
+  const sillTrackTotal = activeOpenings
+    .filter(o => o.sillHeight > 0)
+    .reduce((s, o) => s + o.width + 2 * SILL_TRACK_MARGIN, 0)
 
   // Перемычки: над каждым проёмом (ширина + 400мм)
   const lintelTotal = activeOpenings.reduce((s, o) => s + (o.width + 400), 0)
@@ -124,6 +141,7 @@ export function calcResults(
   return {
     uwFloor:         (l - doorOpeningsWidth) / 1000,
     uwCeiling:       l / 1000,
+    uwSill:          sillTrackTotal / 1000,
     lintel:          lintelTotal / 1000,
     cwTotal:         cwTotal / 1000,
     studsCount:      positions.length,

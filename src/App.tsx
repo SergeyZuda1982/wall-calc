@@ -75,7 +75,11 @@ function wallMaterials(w: WallEntry): MaterialMap {
   const prof = input.profileType
   const psKey: MaterialKey = prof === 'ps50' ? 'ps_50' : prof === 'ps75' ? 'ps_75' : 'ps_100'
   const pnKey: MaterialKey = prof === 'ps50' ? 'pn_50' : prof === 'ps75' ? 'pn_75' : 'pn_100'
-  return { [pnKey]: result.uwFloor + result.uwCeiling + result.lintel, [psKey]: result.cwTotal, gkl_m2: result.gklArea }
+  return {
+    [pnKey]: result.uwFloor + result.uwCeiling + result.lintel + result.uwSill,
+    [psKey]: result.cwTotal,
+    gkl_m2: result.gklArea,
+  }
 }
 function liningMaterials(l: LiningEntry): MaterialMap {
   const { result, input } = l
@@ -666,10 +670,11 @@ export default function App() {
               <tbody>
                 <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН пол:</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.uwFloor)}</b></td></tr>
                 <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН потолок:</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.uwCeiling)}</b></td></tr>
+                {result.uwSill > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН подоконник:</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.uwSill)}</b></td></tr>}
                 {result.lintel > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Перемычки (ПН):</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.lintel)}</b></td></tr>}
                 <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Стоечный ПС:</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.cwTotal)}</b></td></tr>
                 <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Стоек всего:</td><td style={{ paddingBottom: 6 }}><b>{result.studsCount} шт</b></td></tr>
-                {result.aboveStuds > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Над проёмами:</td><td style={{ paddingBottom: 6 }}><b>{result.aboveStuds} шт</b></td></tr>}
+                {result.aboveStuds > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Над/под проёмами:</td><td style={{ paddingBottom: 6 }}><b>{result.aboveStuds} шт</b></td></tr>}
                 <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ГКЛ ({gklLayers} сл.):</td><td style={{ paddingBottom: 6 }}><b>{result.gklArea.toFixed(2)} м²</b></td></tr>
               </tbody>
             </table>
