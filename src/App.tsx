@@ -620,75 +620,21 @@ export default function App() {
                       // Стойка внутри проёма — рисуем ДВА сегмента:
                       // верхний (от потолочной направляющей вниз до верха проёма)
                       // нижний (от напольной направляющей вверх до подоконника)
+                      // Оба куска — отрезки от целого профиля 3000мм, длина всегда < 3000мм,
+                      // поэтому зоны нахлёста НЕ рисуем.
                       const aboveH = (h - insideOpening.height - insideOpening.sillHeight) * scale - 8
                       const belowH = insideOpening.sillHeight * scale - 8
 
-                      // Зона нахлёста для этой стойки (если h > 3000)
-                      const overlapZoneNode = h > 3000 ? (() => {
-                        const { overlapZone } = calcStudMaterial(h, 'middle', effectiveOverlap, orientation)
-                        if (!overlapZone) return null
-
-                        const nodes: React.ReactNode[] = []
-                        const baseY = wallTop + 8 // база = от потолочной направляющей
-
-                        // Верхний сегмент: диапазон стойки [0, aboveH] от baseY
-                        // Зона нахлёста в координатах стойки: [overlapZone.from, overlapZone.to]
-                        const aboveRangeEnd = h - insideOpening.height - insideOpening.sillHeight
-                        if (overlapZone.from < aboveRangeEnd) {
-                          const clipFrom = Math.max(overlapZone.from, 0)
-                          const clipTo = Math.min(overlapZone.to, aboveRangeEnd)
-                          if (clipTo > clipFrom) {
-                            const zY = baseY + clipFrom * scale
-                            const zH = (clipTo - clipFrom) * scale
-                            nodes.push(
-                              <Group key="oz_above">
-                                <Rect x={0} y={zY} width={studW} height={zH}
-                                  fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
-                                <Text x={studW + 3} y={zY + zH / 2 - 5}
-                                  text={`${Math.round(clipTo - clipFrom)}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
-                              </Group>
-                            )
-                          }
-                        }
-
-                        // Нижний сегмент: стойка идёт от пола (0) до sillHeight
-                        // В координатах канваса: от wallBot-8-belowH до wallBot-8
-                        const belowRangeStart = h - insideOpening.sillHeight // от потолка до начала нижнего сегмента
-                        if (overlapZone.to > belowRangeStart) {
-                          const clipFrom = Math.max(overlapZone.from, belowRangeStart)
-                          const clipTo = Math.min(overlapZone.to, h)
-                          if (clipTo > clipFrom) {
-                            // Перевод в координаты нижнего сегмента (от wallBot-8 вверх)
-                            const toBottom = h - clipFrom   // расстояние от пола до верхней границы зоны
-                            const zY = wallBot - 8 - toBottom * scale
-                            const zH = (clipTo - clipFrom) * scale
-                            nodes.push(
-                              <Group key="oz_below">
-                                <Rect x={0} y={zY} width={studW} height={zH}
-                                  fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
-                                <Text x={studW + 3} y={zY + zH / 2 - 5}
-                                  text={`${Math.round(clipTo - clipFrom)}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
-                              </Group>
-                            )
-                          }
-                        }
-
-                        return nodes.length ? <>{nodes}</> : null
-                      })() : null
-
                       return (
                         <Group key={`s${pos}`} x={tx(pos) - studW / 2} y={0}>
-                          {/* Верхний сегмент — над проёмом */}
                           {aboveH > 0 && (
                             <Rect x={0} y={wallTop + 8} width={studW} height={aboveH}
                               fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
                           )}
-                          {/* Нижний сегмент — под подоконником */}
                           {belowH > 0 && (
                             <Rect x={0} y={wallBot - 8 - belowH} width={studW} height={belowH}
                               fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
                           )}
-                          {overlapZoneNode}
                         </Group>
                       )
                     }
