@@ -1,13 +1,21 @@
-import type { Opening } from '../types'
+import type { Opening, StudKind, AbutmentType } from '../types'
 
 export const MIN_GAP = 150 // мм
 
 export interface BuildResult {
   positions: number[]
-  phase: number // мм, 0..s-1 — фаза периодической сетки стоек
+  phase: number
+}
+
+// Типизированная стойка из mergeStuds (без orientation/isAbove — это calcResults)
+export interface MergedStud {
+  pos: number
+  kind: StudKind
 }
 
 const norm = (x: number, s: number) => ((x % s) + s) % s
+
+// ─── Шаг 1: чистая периодическая сетка ──────────────────────────────────────
 
 function makeGrid(l: number, s: number, ph: number): number[] {
   const grid: number[] = []
@@ -19,35 +27,83 @@ function makeGrid(l: number, s: number, ph: number): number[] {
   return grid
 }
 
-function openingStudsOf(openings: Opening[]): number[] {
-  const result: number[] = []
-  for (const o of openings) {
-    if (o.width > 0) result.push(o.pos, o.pos + o.width)
-  }
-  return result
-}
-
-function countConflicts(grid: number[], fixed: number[]): number {
+function countConflicts(grid: number[], openingStuds: number[]): number {
   let n = 0
   for (const p of grid) {
-    for (const f of fixed) {
-      if (Math.abs(p - f) <= MIN_GAP) { n++; break }
+    for (const os of openingStuds) {
+      if (Math.abs(p - os) <= MIN_GAP) { n++; break }
     }
   }
   return n
 }
 
+// ─── Шаг 2: стойки проёмов ───────────────────────────────────────────────────
+
 /**
- * Строит сетку стоек по заданной фазе.
+ * Возвращает типизированные стойки всех проёмов (door/window).
+ * Торцевые стойки проёма не зависят от сетки и всегда идут floor-to-ceiling.
+ */
+export function buildOpeningStuds(openings: Opening[]): MergedStud[] {
+  const result: MergedStud[] = []
+  for (const o of openings) {
+    if (o.width <= 0) continue
+    const kind: StudKind = o.type === 'door' ? 'door' : 'window'
+    result.push({ pos: o.pos, kind })
+    result.push({ pos: o.pos + o.width, kind })
+  }
+  return result
+}
+
+// ─── Шаг 3: объединение сетки и стоек проёмов ───────────────────────────────
+
+/**
+ * Объединяет периодическую сетку со стойками проёмов.
+ * Проставляет StudKind каждой стойке.
+ * Рядовые стойки, совпадающие по позиции со стойкой проёма, поглощаются ею
+ * (стойка проёма приоритетнее).
  *
- * ВАЖНО: НИКОГДА не удаляет и не фильтрует стойки — даже если рядовая
- * стойка попадает ближе MIN_GAP к стойке проёма или к стене. Калькулятор
- * показывает фактическую раскладку и предупреждает (см. UI), но решение
- * о допустимости такого шага — за монтажником/ответственным лицом, а не
- * за программой.
- *
- * Используется для ручного сдвига гребёнки — фаза применяется буквально,
- * любой шаг от 1мм, результат детерминированный.
+ * ВАЖНО: рядовые стойки НЕ удаляются даже при расстоянии < MIN_GAP —
+ * это только предупреждение в UI, решение за монтажником.
+ */
+export function mergeStuds(
+  grid: number[],
+  openingStuds: MergedStud[],
+  l: number,
+  abutment: AbutmentType,
+): MergedStud[] {
+  const openingPositions = new Set(openingStuds.map(s => s.pos))
+
+  // Крайние стойки
+  const leftKind: StudKind  = (abutment === 'both' || abutment === 'left')  ? 'wall' : 'free'
+  const rightKind: StudKind = (abutment === 'both' || abutment === 'right') ? 'wall' : 'free'
+
+  const result: MergedStud[] = [{ pos: 0, kind: leftKind }]
+
+  // Рядовые стойки из сетки (если позиция совпадает со стойкой проёма — пропускаем,
+  // стойка проёма будет добавлена ниже)
+  for (const p of grid) {
+    if (p > 0 && p < l && !openingPositions.has(p)) {
+      result.push({ pos: p, kind: 'middle' })
+    }
+  }
+
+  // Стойки проёмов (кроме тех, что совпадают с 0 или l)
+  for (const { pos, kind } of openingStuds) {
+    if (pos > 0 && pos < l) {
+      result.push({ pos, kind })
+    }
+  }
+
+  result.push({ pos: l, kind: rightKind })
+
+  return result.sort((a, b) => a.pos - b.pos)
+}
+
+// ─── Публичные функции сборки ────────────────────────────────────────────────
+
+/**
+ * buildFromPhase — для ручного сдвига гребёнки.
+ * Фаза применяется буквально, стойки не фильтруются.
  */
 export function buildFromPhase(
   l: number,
@@ -55,27 +111,20 @@ export function buildFromPhase(
   phase: number,
   openings: Opening[]
 ): BuildResult {
-  const openingStuds = openingStudsOf(openings)
   const ph = norm(phase, s)
   const grid = makeGrid(l, s, ph)
+  const openingStuds = buildOpeningStuds(openings)
 
-  const pos = new Set<number>([0, l])
-  for (const os of openingStuds) if (os > 0 && os < l) pos.add(os)
-  for (const p of grid) if (p > 0 && p < l) pos.add(p)
+  const merged = mergeStuds(grid, openingStuds, l, 'both') // abutment не нужен здесь — positions только
+  const positions = merged.map(s => s.pos)
 
-  return { positions: [...pos].sort((a, b) => a - b), phase: ph }
+  return { positions, phase: ph }
 }
 
 /**
- * Начальный расчёт сетки (calculate()).
- *
- * Ищем фазу, при которой базовая сетка не конфликтует со стойками проёмов
- * (MIN_GAP=150мм). Стены 0/l не участвуют в проверке — правила минимального
- * расстояния от стены нет, рядовая стойка может стоять вплотную к стене.
- *
- * Best-effort: если идеальной фазы не существует (много проёмов),
- * берём фазу с минимальным числом конфликтов. Результат НЕ фильтруется —
- * даже "конфликтные" стойки остаются в раскладке (с предупреждением в UI).
+ * buildPositions — начальный расчёт (calculate()).
+ * Ищет фазу с минимальным числом конфликтов MIN_GAP со стойками проёмов.
+ * Стены 0/l не участвуют в проверке — правила MIN_GAP от стены нет.
  */
 export function buildPositions(
   l: number,
@@ -83,23 +132,20 @@ export function buildPositions(
   first: number,
   openings: Opening[]
 ): BuildResult {
-  const openingStuds = openingStudsOf(openings)
+  const openingStuds = buildOpeningStuds(openings)
+  const openingPositions = openingStuds.map(s => s.pos)
   const phase0 = norm(first, s)
 
-  if (!openingStuds.length) {
+  if (!openingPositions.length) {
     return buildFromPhase(l, s, phase0, openings)
   }
 
-  // MIN_GAP проверяется только относительно стоек проёмов.
-  // Стены (0/l) — не стойки проёма, правила MIN_GAP от стен нет.
-  const fixed = [...openingStuds]
-
   let bestPhase = phase0
-  let bestConflicts = countConflicts(makeGrid(l, s, phase0), fixed)
+  let bestConflicts = countConflicts(makeGrid(l, s, phase0), openingPositions)
 
   for (let d = 10; d < s && bestConflicts > 0; d += 10) {
     for (const cand of [norm(phase0 + d, s), norm(phase0 - d, s)]) {
-      const conflicts = countConflicts(makeGrid(l, s, cand), fixed)
+      const conflicts = countConflicts(makeGrid(l, s, cand), openingPositions)
       if (conflicts < bestConflicts) {
         bestConflicts = conflicts
         bestPhase = cand

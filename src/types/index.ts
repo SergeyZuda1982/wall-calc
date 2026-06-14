@@ -27,15 +27,23 @@ export interface Opening {
 
 export type WallType = 'c111' | 'c112'
 export type AbutmentType = 'both' | 'left' | 'right' | 'none'
-export type StudKind = 'wall' | 'free' | 'middle' | 'door'
+
+export type StudKind =
+  | 'wall'    // крайняя стойка, примыкает к стене
+  | 'free'    // крайняя стойка, свободный край (собирается коробом)
+  | 'middle'  // рядовая стойка из периодической сетки
+  | 'door'    // торцевая стойка дверного проёма (floor-to-ceiling, всегда up)
+  | 'window'  // торцевая стойка оконного проёма (floor-to-ceiling, всегда up)
+  | 'user'    // стойка добавлена монтажником вручную (двойной клик / addStud)
+
 export type StudOrientation = 'down' | 'up'
 
 export interface StudInfo {
   pos: number
   kind: StudKind
   orientation: StudOrientation
-  isAbove: boolean
-  openingId: string | null  // к какому проёму относится (для door/above стоек)
+  isAbove: boolean       // стойка попадает внутрь проёма (над дверью / над/под окном)
+  openingId: string | null
 }
 
 export interface WallInput {

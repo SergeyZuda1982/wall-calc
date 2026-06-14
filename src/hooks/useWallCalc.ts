@@ -30,13 +30,16 @@ export function useWallCalc(): UseWallCalcReturn {
   const [heightWarning, setHeightWarning] = useState<string | null>(null)
 
   const profileRef = useRef(DEFAULT_PROFILE)
-  const abutmentRef = useRef('both')
+  const abutmentRef = useRef<string>('both')
   const wallTypeRef = useRef('c111')
   const overlapRef = useRef(DEFAULT_PROFILE.overlap)
   const stepRef = useRef(600)
-  const phaseRef = useRef(0)       // фаза периодической сетки (мм, 0..step-1)
-  const gridShiftRef = useRef(0)   // накопленный пользовательский сдвиг (мм)
+  const phaseRef = useRef(0)
+  const gridShiftRef = useRef(0)
 
+  // Стойки, которые нельзя удалить или двигать:
+  // - крайние (0, l)
+  // - торцевые стойки проёмов (door/window)
   function isFixed(p: number, s: DrawingSnap): boolean {
     if (p === 0 || p === s.l) return true
     for (const o of s.openings) {
@@ -122,10 +125,6 @@ export function useWallCalc(): UseWallCalcReturn {
     _rebuildWithShift()
   }
 
-  // Пересобирает сетку с новой фазой = базовая фаза + накопленный сдвиг.
-  // Сетка периодическая, поэтому при сдвиге больше шага стойка автоматически
-  // "появляется" с противоположного края. Конфликт MIN_GAP с проёмами
-  // проверяется заново.
   function _rebuildWithShift() {
     if (!snap.l) return
     const newPhase = phaseRef.current + gridShiftRef.current
@@ -138,10 +137,12 @@ export function useWallCalc(): UseWallCalcReturn {
     const sc = (CANVAS_W - PAD * 2) / snap.l
     const mm = Math.round((xpx - PAD) / sc / 100) * 100
     if (mm <= 0 || mm >= snap.l) return
+    // Стойка добавляется монтажником — kind будет 'user' (проставляется в calcResults/mergeStuds)
     _update([...new Set([...positions, mm])].sort((a, b) => a - b), snap)
   }
 
   function removeStud(studPos: number) {
+    // Нельзя удалить фиксированные стойки (крайние + торцевые проёмов)
     if (isFixed(studPos, snap)) return
     _update(positions.filter(p => p !== studPos), snap)
   }
