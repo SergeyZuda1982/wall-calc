@@ -162,6 +162,21 @@ export default function App() {
     ? `⚠️ ${form.customOverlap}мм — меньше нормы Кнауф (${knaufOverlap}мм). Ответственность на монтажнике.`
     : null
 
+  // Проверка пересечения проёмов
+  const openingConflicts: string[] = []
+  const activeOpenings = form.openings.filter(o => o.width > 0)
+  for (let i = 0; i < activeOpenings.length; i++) {
+    for (let j = i + 1; j < activeOpenings.length; j++) {
+      const a = activeOpenings[i], b = activeOpenings[j]
+      const aEnd = a.pos + a.width, bEnd = b.pos + b.width
+      if (a.pos < bEnd && aEnd > b.pos) {
+        const label = (o: typeof a) => o.type === 'door' ? 'Дверь' : 'Окно'
+        openingConflicts.push(`${label(a)} (${a.pos}–${aEnd}) пересекается с ${label(b)} (${b.pos}–${bEnd})`)
+      }
+    }
+  }
+  const hasOpeningConflict = openingConflicts.length > 0
+
   function handleStudTouchStart(pos: number, fixed: boolean) {
     if (fixed) return
     longPressTimer.current = setTimeout(() => { removeStud(pos); longPressTimer.current = null }, 600)
@@ -411,15 +426,22 @@ export default function App() {
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, marginBottom: hasOpeningConflict ? 8 : 20, flexWrap: 'wrap' }}>
           {walls.length > 0 && (
             <button onClick={() => { setActiveWall(null); setForm(DEFAULT_INPUT) }}
               style={{ padding: '10px 20px', fontSize: 15, cursor: 'pointer', background: '#fff', border: '1px solid #aaa', borderRadius: 4 }}>
               + Новая
             </button>
           )}
-          <button onClick={() => calculate({ ...form, customOverlap: effectiveOverlap })}
-            style={{ padding: '10px 32px', fontSize: 15, cursor: 'pointer', background: '#f0f0f0', border: '1px solid #ccc', borderRadius: 4, flex: 1 }}>
+          <button
+            onClick={() => !hasOpeningConflict && calculate({ ...form, customOverlap: effectiveOverlap })}
+            disabled={hasOpeningConflict}
+            style={{ padding: '10px 32px', fontSize: 15,
+              cursor: hasOpeningConflict ? 'not-allowed' : 'pointer',
+              background: hasOpeningConflict ? '#eee' : '#f0f0f0',
+              border: `1px solid ${hasOpeningConflict ? '#e05' : '#ccc'}`,
+              color: hasOpeningConflict ? '#c00' : 'inherit',
+              borderRadius: 4, flex: 1 }}>
             Рассчитать
           </button>
           <button onClick={() => {
@@ -427,12 +449,24 @@ export default function App() {
               if (activeWallId) updateWall(activeWallId, form, result, positions)
               else addWall(form, result, positions)
             }
-          }} disabled={!result}
-            style={{ padding: '10px 20px', fontSize: 15, cursor: result ? 'pointer' : 'default',
-              background: result ? '#3a7bd5' : '#ccc', color: '#fff', border: 'none', borderRadius: 4, whiteSpace: 'nowrap' }}>
+          }} disabled={!result || hasOpeningConflict}
+            style={{ padding: '10px 20px', fontSize: 15, cursor: (result && !hasOpeningConflict) ? 'pointer' : 'default',
+              background: (result && !hasOpeningConflict) ? '#3a7bd5' : '#ccc', color: '#fff', border: 'none', borderRadius: 4, whiteSpace: 'nowrap' }}>
             {activeWallId ? '💾 Обновить' : '➕ В объект'}
           </button>
         </div>
+
+        {/* Предупреждение о пересечении проёмов */}
+        {hasOpeningConflict && (
+          <div style={{ background: '#fff0f0', border: '1px solid #e05', padding: '10px 14px', borderRadius: 6, marginBottom: 16 }}>
+            <b style={{ color: '#c00' }}>🚫 Проёмы пересекаются — расчёт невозможен:</b>
+            <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+              {openingConflicts.map((msg, i) => (
+                <li key={i} style={{ fontSize: 13, color: '#900' }}>{msg}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {heightWarning && (
           <div style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: 12, borderRadius: 6, marginBottom: 16 }}>
@@ -584,9 +618,63 @@ export default function App() {
 
                     if (insideOpening) {
                       // Стойка внутри проёма — рисуем ДВА сегмента:
-                      // верхний (от потолка до верха проёма) и нижний (от пола до подоконника)
-                      const aboveH = (h - insideOpening.height - insideOpening.sillHeight) * scale - 6
-                      const belowH = insideOpening.sillHeight * scale - 6
+                      // верхний (от потолочной направляющей вниз до верха проёма)
+                      // нижний (от напольной направляющей вверх до подоконника)
+                      const aboveH = (h - insideOpening.height - insideOpening.sillHeight) * scale - 8
+                      const belowH = insideOpening.sillHeight * scale - 8
+
+                      // Зона нахлёста для этой стойки (если h > 3000)
+                      const overlapZoneNode = h > 3000 ? (() => {
+                        const { overlapZone } = calcStudMaterial(h, 'middle', effectiveOverlap, orientation)
+                        if (!overlapZone) return null
+
+                        const nodes: React.ReactNode[] = []
+                        const baseY = wallTop + 8 // база = от потолочной направляющей
+
+                        // Верхний сегмент: диапазон стойки [0, aboveH] от baseY
+                        // Зона нахлёста в координатах стойки: [overlapZone.from, overlapZone.to]
+                        const aboveRangeEnd = h - insideOpening.height - insideOpening.sillHeight
+                        if (overlapZone.from < aboveRangeEnd) {
+                          const clipFrom = Math.max(overlapZone.from, 0)
+                          const clipTo = Math.min(overlapZone.to, aboveRangeEnd)
+                          if (clipTo > clipFrom) {
+                            const zY = baseY + clipFrom * scale
+                            const zH = (clipTo - clipFrom) * scale
+                            nodes.push(
+                              <Group key="oz_above">
+                                <Rect x={0} y={zY} width={studW} height={zH}
+                                  fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
+                                <Text x={studW + 3} y={zY + zH / 2 - 5}
+                                  text={`${Math.round(clipTo - clipFrom)}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
+                              </Group>
+                            )
+                          }
+                        }
+
+                        // Нижний сегмент: стойка идёт от пола (0) до sillHeight
+                        // В координатах канваса: от wallBot-8-belowH до wallBot-8
+                        const belowRangeStart = h - insideOpening.sillHeight // от потолка до начала нижнего сегмента
+                        if (overlapZone.to > belowRangeStart) {
+                          const clipFrom = Math.max(overlapZone.from, belowRangeStart)
+                          const clipTo = Math.min(overlapZone.to, h)
+                          if (clipTo > clipFrom) {
+                            // Перевод в координаты нижнего сегмента (от wallBot-8 вверх)
+                            const toBottom = h - clipFrom   // расстояние от пола до верхней границы зоны
+                            const zY = wallBot - 8 - toBottom * scale
+                            const zH = (clipTo - clipFrom) * scale
+                            nodes.push(
+                              <Group key="oz_below">
+                                <Rect x={0} y={zY} width={studW} height={zH}
+                                  fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
+                                <Text x={studW + 3} y={zY + zH / 2 - 5}
+                                  text={`${Math.round(clipTo - clipFrom)}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
+                              </Group>
+                            )
+                          }
+                        }
+
+                        return nodes.length ? <>{nodes}</> : null
+                      })() : null
 
                       return (
                         <Group key={`s${pos}`} x={tx(pos) - studW / 2} y={0}>
@@ -595,11 +683,12 @@ export default function App() {
                             <Rect x={0} y={wallTop + 8} width={studW} height={aboveH}
                               fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
                           )}
-                          {/* Нижний сегмент — под подоконником (только для окон с sillHeight>0) */}
+                          {/* Нижний сегмент — под подоконником */}
                           {belowH > 0 && (
-                            <Rect x={0} y={wallBot - insideOpening.sillHeight * scale} width={studW} height={belowH}
+                            <Rect x={0} y={wallBot - 8 - belowH} width={studW} height={belowH}
                               fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
                           )}
+                          {overlapZoneNode}
                         </Group>
                       )
                     }
