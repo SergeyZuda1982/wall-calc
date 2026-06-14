@@ -517,9 +517,10 @@ export default function App() {
                   {/* Направляющая ПН — потолок */}
                   <Rect x={tx(0)} y={wallTop} width={l * scale} height={8} fill="#5a7080" />
 
-                  {/* Проёмы */}
-                  {snapOpenings.filter(o => o.width > 0).map(o => {
-                    // Координаты проёма: пол внизу (wallBot), высота идёт вверх
+                  {/* Проёмы — сортируем и рисуем без перекрытий */}
+                  {snapOpenings.filter(o => o.width > 0)
+                    .sort((a, b) => a.pos - b.pos)
+                    .map(o => {
                     const oBottom = wallBot - o.sillHeight * scale
                     const oTop = oBottom - o.height * scale
                     const oX = tx(o.pos), oW = o.width * scale
@@ -544,24 +545,66 @@ export default function App() {
                   {positions.map((pos) => {
                     const fixed = isFixed(pos)
                     const isDoor = openingStudPositions.has(pos)
-                    const isAboveOpening = snapOpenings.some(o => o.width > 0 && pos > o.pos && pos < o.pos + o.width)
                     const orientation = orientationMap.get(pos) ?? 'down'
 
-                    // Для стоек над проёмом — находим соответствующий проём
-                    const aboveOpening = snapOpenings.find(o => o.width > 0 && pos > o.pos && pos < o.pos + o.width)
-                    const sY = isAboveOpening && aboveOpening
-                      ? wallTop + 8
-                      : wallTop + 8
-                    const sH = isAboveOpening && aboveOpening
-                      ? (h - aboveOpening.height - aboveOpening.sillHeight) * scale - 6
-                      : (h - 16) * scale
+                    // Проём, внутри которого находится стойка (если есть)
+                    const insideOpening = snapOpenings.find(
+                      o => o.width > 0 && pos > o.pos && pos < o.pos + o.width
+                    )
 
                     // Цвет — оцинкованная сталь
-                    let fillColor: string, strokeColor = STEEL_STROKE
+                    let fillColor: string
                     if (isDoor) { fillColor = STEEL_DOOR }
                     else if (fixed) { fillColor = STEEL_EDGE }
                     else { fillColor = STEEL_NORMAL }
 
+                    // Зона нахлёста (только для полных стоек, h>3000)
+                    const overlapNode = !insideOpening && h > 3000 ? (() => {
+                      const kind = fixed
+                        ? (pos === 0
+                          ? ((form.abutment === 'both' || form.abutment === 'left') ? 'wall' : 'free')
+                          : ((form.abutment === 'both' || form.abutment === 'right') ? 'wall' : 'free'))
+                        : 'middle'
+                      const { overlapZone } = calcStudMaterial(h, kind as any, effectiveOverlap, orientation)
+                      if (!overlapZone) return null
+                      const baseY = wallTop + 8
+                      const zFrom = baseY + overlapZone.from * scale
+                      const zTo = baseY + overlapZone.to * scale
+                      const zH = zTo - zFrom
+                      const zoneMm = overlapZone.to - overlapZone.from
+                      return (
+                        <Group>
+                          <Rect x={0} y={zFrom} width={studW} height={zH}
+                            fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
+                          <Text x={studW + 3} y={zFrom + zH / 2 - 5}
+                            text={`${zoneMm}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
+                        </Group>
+                      )
+                    })() : null
+
+                    if (insideOpening) {
+                      // Стойка внутри проёма — рисуем ДВА сегмента:
+                      // верхний (от потолка до верха проёма) и нижний (от пола до подоконника)
+                      const aboveH = (h - insideOpening.height - insideOpening.sillHeight) * scale - 6
+                      const belowH = insideOpening.sillHeight * scale - 6
+
+                      return (
+                        <Group key={`s${pos}`} x={tx(pos) - studW / 2} y={0}>
+                          {/* Верхний сегмент — над проёмом */}
+                          {aboveH > 0 && (
+                            <Rect x={0} y={wallTop + 8} width={studW} height={aboveH}
+                              fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
+                          )}
+                          {/* Нижний сегмент — под подоконником (только для окон с sillHeight>0) */}
+                          {belowH > 0 && (
+                            <Rect x={0} y={wallBot - insideOpening.sillHeight * scale} width={studW} height={belowH}
+                              fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
+                          )}
+                        </Group>
+                      )
+                    }
+
+                    // Обычная полная стойка (от потолка до пола)
                     return (
                       <Group key={`s${pos}`} x={tx(pos) - studW / 2} y={0}
                         draggable={!fixed}
@@ -585,30 +628,9 @@ export default function App() {
                         onTouchStart={() => handleStudTouchStart(pos, fixed)}
                         onTouchEnd={() => handleStudTouchEnd()}
                         onTouchMove={() => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null } }}>
-                        <Rect x={0} y={sY} width={studW} height={sH}
-                          fill={fillColor} stroke={strokeColor} strokeWidth={1} cornerRadius={2} />
-                        {/* Зона нахлёста вместо цвета */}
-                        {!isAboveOpening && h > 3000 && (() => {
-                          const kind = fixed ? (pos === 0
-                            ? ((form.abutment === 'both' || form.abutment === 'left') ? 'wall' : 'free')
-                            : ((form.abutment === 'both' || form.abutment === 'right') ? 'wall' : 'free'))
-                            : isDoor ? 'middle' : 'middle'
-                          const { overlapZone } = calcStudMaterial(h, kind as any, effectiveOverlap, orientation)
-                          if (!overlapZone) return null
-                          const baseY = wallTop + 8
-                          const zFrom = baseY + overlapZone.from * scale
-                          const zTo = baseY + overlapZone.to * scale
-                          const zH = zTo - zFrom
-                          const zoneMm = overlapZone.to - overlapZone.from
-                          return (
-                            <Group>
-                              <Rect x={0} y={zFrom} width={studW} height={zH}
-                                fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
-                              <Text x={studW + 3} y={zFrom + zH / 2 - 5}
-                                text={`${zoneMm}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
-                            </Group>
-                          )
-                        })()}
+                        <Rect x={0} y={wallTop + 8} width={studW} height={(h - 16) * scale}
+                          fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
+                        {overlapNode}
                       </Group>
                     )
                   })}
