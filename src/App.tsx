@@ -735,6 +735,71 @@ export default function App() {
                 <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ГКЛ ({gklLayers} сл.):</td><td style={{ paddingBottom: 6 }}><b>{result.gklArea.toFixed(2)} м²</b></td></tr>
               </tbody>
             </table>
+
+            {/* ─── Раскрой ─── */}
+            {(() => {
+              const { pn, ps } = result.cutList
+              const roleLabel: Record<string, string> = {
+                floor: 'Пол', ceiling: 'Потолок', sill: 'Подоконник',
+                lintel: 'Перемычка', stud: 'Стойка', stud_part: 'Стойка (доп.)',
+              }
+              const roleColor: Record<string, string> = {
+                floor: '#e8f4ff', ceiling: '#e8f4ff', sill: '#fff8e8',
+                lintel: '#fff0e8', stud: '#f0ffe8', stud_part: '#f0ffe8',
+              }
+              const renderCutList = (cl: typeof pn, title: string) => (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#444', marginBottom: 6 }}>
+                    {title} — {cl.totalBars} шт, остаток {cl.totalWaste}мм
+                  </div>
+                  {cl.bars.map((bar, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, color: '#888', minWidth: 52 }}>Пруток {i + 1}:</span>
+                      <div style={{ display: 'flex', flex: 1, height: 22, border: '1px solid #ccc', borderRadius: 3, overflow: 'hidden' }}>
+                        {bar.pieces.map((p, j) => (
+                          <div key={j}
+                            title={p.piece.label}
+                            style={{
+                              width: `${(p.piece.length / 3000) * 100}%`,
+                              background: roleColor[p.piece.role] ?? '#eee',
+                              borderRight: '1px solid #bbb',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: 9, color: '#555', overflow: 'hidden', whiteSpace: 'nowrap',
+                            }}>
+                            {p.piece.length >= 200 ? `${roleLabel[p.piece.role]} ${p.piece.length}` : ''}
+                          </div>
+                        ))}
+                        {bar.waste > 0 && (
+                          <div style={{
+                            width: `${(bar.waste / 3000) * 100}%`,
+                            background: '#f5f5f5',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 9, color: '#aaa',
+                          }}>
+                            {bar.waste >= 200 ? `ост ${bar.waste}` : ''}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+              return (
+                <div style={{ marginTop: 16, padding: '12px 14px', background: '#fafafa', border: '1px solid #e0e0e0', borderRadius: 6 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#333', marginBottom: 4 }}>Раскрой (прутки 3000мм)</div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, marginBottom: 8 }}>
+                    {[['Пол/Потолок', '#e8f4ff'], ['Подоконник', '#fff8e8'], ['Перемычка', '#fff0e8'], ['Стойка', '#f0ffe8'], ['Остаток', '#f5f5f5']].map(([label, color]) => (
+                      <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ width: 12, height: 12, background: color, border: '1px solid #ccc', borderRadius: 2, display: 'inline-block' }} />
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                  {renderCutList(pn, 'ПН направляющий')}
+                  {renderCutList(ps, 'ПС стоечный')}
+                </div>
+              )
+            })()}
           </div>
         )}
       </>}

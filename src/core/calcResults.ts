@@ -1,6 +1,7 @@
 import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, AbutmentType } from '../types'
 import { calcStudMaterial, STUD_LENGTH } from './calcStudMaterial'
 import { buildOpeningStuds, mergeStuds } from './buildPositions'
+import { buildCutList, pnPieces, psPieces } from './cutList'
 
 /**
  * Проставляет ориентацию (up/down) каждой стойке.
@@ -136,6 +137,16 @@ export function calcResults(
     ? h - firstOpening.height - firstOpening.sillHeight
     : 0
 
+  // ─── Раскрой ─────────────────────────────────────────────────────────────
+
+  const pnCuts = pnPieces(l, activeOpenings)
+  const psCuts = psPieces(studInfos, h, overlap, activeOpenings)
+
+  const cutList = {
+    pn: buildCutList(pnCuts),
+    ps: buildCutList(psCuts),
+  }
+
   return {
     uwFloor:      (l - doorOpeningsWidth) / 1000,
     uwCeiling:    l / 1000,
@@ -148,5 +159,6 @@ export function calcResults(
     gklArea,
     needsOverlap: h > STUD_LENGTH,
     studInfos,
+    cutList,
   }
 }

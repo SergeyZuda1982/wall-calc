@@ -65,15 +65,16 @@ export interface WallInput {
 export interface CalcResult {
   uwFloor: number
   uwCeiling: number
-  uwSill: number          // суммарная длина направляющей под подоконниками окон, метры
-  lintel: number          // сумма перемычек над всеми проёмами, метры
+  uwSill: number
+  lintel: number
   cwTotal: number
   studsCount: number
   aboveStuds: number
-  aboveStudHeight: number // высота стоек над первым проёмом (для обратной совместимости)
+  aboveStudHeight: number
   gklArea: number
   needsOverlap: boolean
   studInfos: StudInfo[]
+  cutList: WallCutList
 }
 
 export interface DrawingSnap {
@@ -111,4 +112,23 @@ export interface LiningResult {
   extenders: number
   gklArea: number
   needsOverlap: boolean
+}
+
+// ─── Раскрой ─────────────────────────────────────────────────────────────────
+
+export interface CutPiece {
+  length: number
+  role: 'floor' | 'ceiling' | 'sill' | 'lintel' | 'stud' | 'stud_part'
+  label: string
+  mustBeWhole: boolean
+}
+
+export interface CutBar {
+  pieces: { piece: CutPiece; from: number }[]
+  waste: number
+}
+
+export interface WallCutList {
+  pn: { bars: CutBar[]; totalBars: number; totalWaste: number }
+  ps: { bars: CutBar[]; totalBars: number; totalWaste: number }
 }
