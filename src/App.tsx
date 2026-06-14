@@ -98,13 +98,18 @@ function addMaterials(a: MaterialMap, b: MaterialMap): MaterialMap {
 
 function fmtMeters(m: number): React.ReactNode {
   if (m <= 0) return <span style={{ color: '#aaa' }}>—</span>
-  const pcs = Math.ceil(m / PROFILE_LEN)
-  const rest = +(pcs * PROFILE_LEN - m).toFixed(2)
+  return <span>{m.toFixed(2)}&thinsp;м</span>
+}
+
+// Форматирует метраж с данными из раскроя (штуки и остаток из cutList, не ceil)
+function fmtCut(totalMm: number, bars: number, wasteMm: number): React.ReactNode {
+  if (totalMm <= 0) return <span style={{ color: '#aaa' }}>—</span>
+  const wasteM = (wasteMm / 1000).toFixed(2)
   return (
     <span>
-      {m.toFixed(2)}&thinsp;м
+      {(totalMm / 1000).toFixed(2)}&thinsp;м
       <span style={{ color: '#666', fontSize: 11 }}>
-        {' · '}{pcs}&thinsp;шт{rest > 0 && <> · ост&thinsp;{rest.toFixed(2)}&thinsp;м</>}
+        {' · '}{bars}&thinsp;шт{wasteMm > 0 && <> · ост&thinsp;{wasteM}&thinsp;м</>}
       </span>
     </span>
   )
@@ -725,14 +730,44 @@ export default function App() {
             )}
             <table style={{ borderCollapse: 'collapse', fontSize: 14 }}>
               <tbody>
-                <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН пол:</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.uwFloor)}</b></td></tr>
-                <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН потолок:</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.uwCeiling)}</b></td></tr>
-                {result.uwSill > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН подоконник:</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.uwSill)}</b></td></tr>}
-                {result.lintel > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Перемычки (ПН):</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.lintel)}</b></td></tr>}
-                <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Стоечный ПС:</td><td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.cwTotal)}</b></td></tr>
-                <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Стоек всего:</td><td style={{ paddingBottom: 6 }}><b>{result.studsCount} шт</b></td></tr>
-                {result.aboveStuds > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Над/под проёмами:</td><td style={{ paddingBottom: 6 }}><b>{result.aboveStuds} шт</b></td></tr>}
-                <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ГКЛ ({gklLayers} сл.):</td><td style={{ paddingBottom: 6 }}><b>{result.gklArea.toFixed(2)} м²</b></td></tr>
+                {(() => {
+                  const { pn, ps } = result.cutList
+                  // Суммарный метраж по ролям из раскроя ПН
+                  const pnMm = (role: string) => pn.bars.flatMap(b => b.pieces)
+                    .filter(p => p.piece.role === role)
+                    .reduce((s, p) => s + p.piece.length, 0)
+                  const floorMm   = pnMm('floor')
+                  const ceilMm    = pnMm('ceiling')
+                  const sillMm    = pnMm('sill')
+                  const lintelMm  = pnMm('lintel')
+                  const psMm      = ps.bars.flatMap(b => b.pieces).reduce((s, p) => s + p.piece.length, 0)
+
+                  // Штуки и остатки — из раскроя (не ceil!)
+                  // Для ПН все позиции берутся из одного cutList.pn
+                  // поэтому штуки/остаток показываем только для итоговой строки ПН
+                  return <>
+                    <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН пол:</td>
+                      <td style={{ paddingBottom: 6 }}><b>{fmtMeters(floorMm / 1000)}</b></td></tr>
+                    <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН потолок:</td>
+                      <td style={{ paddingBottom: 6 }}><b>{fmtMeters(ceilMm / 1000)}</b></td></tr>
+                    {sillMm > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ПН подоконник:</td>
+                      <td style={{ paddingBottom: 6 }}><b>{fmtMeters(sillMm / 1000)}</b></td></tr>}
+                    {lintelMm > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Перемычки (ПН):</td>
+                      <td style={{ paddingBottom: 6 }}><b>{fmtMeters(lintelMm / 1000)}</b></td></tr>}
+                    <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#888', fontSize: 12 }}>ПН итого:</td>
+                      <td style={{ paddingBottom: 6 }}>
+                        {fmtCut(floorMm + ceilMm + sillMm + lintelMm, pn.totalBars, pn.totalWaste)}
+                      </td></tr>
+                    <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Стоечный ПС:</td>
+                      <td style={{ paddingBottom: 6 }}><b>{fmtCut(psMm, ps.totalBars, ps.totalWaste)}</b></td></tr>
+                    <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Стоек всего:</td>
+                      <td style={{ paddingBottom: 6 }}><b>{result.studsCount} шт</b></td></tr>
+                    {result.aboveStuds > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Над/под проёмами:</td>
+                      <td style={{ paddingBottom: 6 }}><b>{result.aboveStuds} шт</b></td></tr>}
+                    <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ГКЛ ({gklLayers} сл.):</td>
+                      <td style={{ paddingBottom: 6 }}><b>{result.gklArea.toFixed(2)} м²</b></td></tr>
+                  </>
+                })()}
               </tbody>
             </table>
 
