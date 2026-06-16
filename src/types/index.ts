@@ -17,10 +17,10 @@ export type OpeningType = 'door' | 'window'
 export interface Opening {
   id: string
   type: OpeningType
-  pos: number         // мм от левого края
-  width: number       // мм
-  height: number      // мм
-  sillHeight: number  // мм от пола (0 для дверей, >0 для окон)
+  pos: number
+  width: number
+  height: number
+  sillHeight: number
 }
 
 // ─── Перегородка ────────────────────────────────────────────────────────────
@@ -29,12 +29,12 @@ export type WallType = 'c111' | 'c112'
 export type AbutmentType = 'both' | 'left' | 'right' | 'none'
 
 export type StudKind =
-  | 'wall'    // крайняя стойка, примыкает к стене
-  | 'free'    // крайняя стойка, свободный край (собирается коробом)
-  | 'middle'  // рядовая стойка из периодической сетки
-  | 'door'    // торцевая стойка дверного проёма (floor-to-ceiling, всегда up)
-  | 'window'  // торцевая стойка оконного проёма (floor-to-ceiling, всегда up)
-  | 'user'    // стойка добавлена монтажником вручную (двойной клик / addStud)
+  | 'wall'
+  | 'free'
+  | 'middle'
+  | 'door'
+  | 'window'
+  | 'user'
 
 export type StudOrientation = 'down' | 'up'
 
@@ -42,7 +42,7 @@ export interface StudInfo {
   pos: number
   kind: StudKind
   orientation: StudOrientation
-  isAbove: boolean       // стойка попадает внутрь проёма (над дверью / над/под окном)
+  isAbove: boolean
   openingId: string | null
 }
 
@@ -51,14 +51,11 @@ export interface WallInput {
   profileType: ProfileType
   profileThickness: ProfileThickness
   abutment: AbutmentType
-
   length: number
   height: number
   step: number
   firstStud: number
-
   openings: Opening[]
-
   customOverlap?: number | null
 }
 
@@ -93,14 +90,11 @@ export interface LiningInput {
   profileType: ProfileType
   profileThickness: ProfileThickness
   gklLayers: LiningLayers
-
   length: number
   height: number
   step: number
   hangerStep: number
-
   abutment: AbutmentType
-
   openings: Opening[]
 }
 
@@ -112,6 +106,7 @@ export interface LiningResult {
   extenders: number
   gklArea: number
   needsOverlap: boolean
+  cutList: LiningCutList   // ← новое
 }
 
 // ─── Раскрой ─────────────────────────────────────────────────────────────────
@@ -131,4 +126,11 @@ export interface CutBar {
 export interface WallCutList {
   pn: { bars: CutBar[]; totalBars: number; totalWaste: number }
   ps: { bars: CutBar[]; totalBars: number; totalWaste: number }
+}
+
+export interface LiningCutList {
+  pn: { bars: CutBar[]; totalBars: number; totalWaste: number }
+  // ps для С625/С626, pp для С623 — оба лежат в одном поле,
+  // тип профиля известен из LiningInput.liningType
+  stud: { bars: CutBar[]; totalBars: number; totalWaste: number }
 }

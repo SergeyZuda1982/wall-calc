@@ -8,6 +8,8 @@ import { MIN_GAP } from './core/buildPositions'
 import { useProjectStore } from './store/useProjectStore'
 import LiningCalc from './LiningCalc'
 import { calcStudMaterial } from './core/calcStudMaterial'
+import { calcProjectCutList } from './core/calcProjectCutList'
+import { BAR_LENGTH } from './core/cutList'
 
 // Цвета оцинкованной стали
 const STEEL_NORMAL   = '#b8c4cc'
@@ -899,6 +901,80 @@ export default function App() {
                 })}
               </tbody>
             </table>
+
+            {/* ─── Общий раскрой объекта ─── */}
+            {(() => {
+              const projectCut = calcProjectCutList(walls, linings)
+              const poolLabels: Record<string, string> = {
+                pn_50: 'ПН 50×40', pn_75: 'ПН 75×40', pn_100: 'ПН 100×40',
+                ps_50: 'ПС 50×50', ps_75: 'ПС 75×50', ps_100: 'ПС 100×50',
+                pp_60x27: 'ПП 60×27', pn_27x28: 'ПН 27×28',
+              }
+              const roleColor: Record<string, string> = {
+                floor: '#e8f4ff', ceiling: '#e8f4ff', sill: '#fff8e8',
+                lintel: '#fff0e8', stud: '#f0ffe8', stud_part: '#f0ffe8',
+              }
+              const roleLabel: Record<string, string> = {
+                floor: 'Пол', ceiling: 'Потолок', sill: 'Подоконник',
+                lintel: 'Перемычка', stud: 'Стойка', stud_part: 'Стойка доп.',
+              }
+              const pools = Object.entries(projectCut.pools)
+              if (pools.length === 0) return null
+              return (
+                <div style={{ marginTop: 16, borderTop: '2px solid #ccd' }}>
+                  <div style={{ padding: '10px 14px', background: '#f0f4ff', fontWeight: 600, fontSize: 13 }}>
+                    Раскрой объекта (прутки 3000мм) — с учётом остатков между конструкциями
+                  </div>
+                  <div style={{ padding: '8px 14px' }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, marginBottom: 8 }}>
+                      {[['Пол/Потолок', '#e8f4ff'], ['Подоконник', '#fff8e8'], ['Перемычка', '#fff0e8'], ['Стойка', '#f0ffe8'], ['Остаток', '#f5f5f5']].map(([label, color]) => (
+                        <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ width: 12, height: 12, background: color as string, border: '1px solid #ccc', borderRadius: 2, display: 'inline-block' }} />
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                    {pools.map(([poolKey, cl]) => (
+                      <div key={poolKey} style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#444', marginBottom: 4 }}>
+                          {poolLabels[poolKey] ?? poolKey} — {cl.totalBars} шт, остаток {(cl.totalWaste / 1000).toFixed(2)}м
+                        </div>
+                        {cl.bars.map((bar, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 3 }}>
+                            <span style={{ fontSize: 10, color: '#888', minWidth: 52 }}>Пруток {i + 1}:</span>
+                            <div style={{ display: 'flex', flex: 1, height: 20, border: '1px solid #ccc', borderRadius: 3, overflow: 'hidden' }}>
+                              {bar.pieces.map((p, j) => (
+                                <div key={j} title={p.piece.label} style={{
+                                  width: `${(p.piece.length / BAR_LENGTH) * 100}%`,
+                                  background: roleColor[p.piece.role] ?? '#eee',
+                                  borderRight: '1px solid #bbb',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  fontSize: 9, color: '#555', overflow: 'hidden', whiteSpace: 'nowrap',
+                                }}>
+                                  {p.piece.length >= 300 ? `${roleLabel[p.piece.role]} ${p.piece.length}` : ''}
+                                </div>
+                              ))}
+                              {bar.waste > 0 && (
+                                <div style={{
+                                  width: `${(bar.waste / BAR_LENGTH) * 100}%`,
+                                  background: '#f5f5f5',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  fontSize: 9, color: '#aaa',
+                                }}>
+                                  {bar.waste >= 300 ? `ост ${bar.waste}` : ''}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+
           </div>
         )
       })()}
