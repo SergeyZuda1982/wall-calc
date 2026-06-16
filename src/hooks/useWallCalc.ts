@@ -1,12 +1,13 @@
 import { useState, useRef } from 'react'
+import { CANVAS_W, PAD } from '../constants'
 import type { WallInput, CalcResult, DrawingSnap } from '../types'
 import { getProfile, DEFAULT_PROFILE } from '../data/profiles'
 import { getMaxHeight } from '../data/maxHeight'
 import { buildPositions, buildFromPhase } from '../core/buildPositions'
 import { calcResults } from '../core/calcResults'
 
-const CANVAS_W = 820
-const PAD = 60
+
+
 
 export interface UseWallCalcReturn {
   positions: number[]
@@ -154,4 +155,3 @@ export function useWallCalc(): UseWallCalcReturn {
   }
 }
 
-export { CANVAS_W, PAD }
