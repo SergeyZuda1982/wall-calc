@@ -72,6 +72,7 @@ export interface CalcResult {
   needsOverlap: boolean
   studInfos: StudInfo[]
   cutList: WallCutList
+  rawPieces: { pn: CutPiece[]; ps: CutPiece[] }
 }
 
 export interface DrawingSnap {
@@ -106,7 +107,8 @@ export interface LiningResult {
   extenders: number
   gklArea: number
   needsOverlap: boolean
-  cutList: LiningCutList   // ← новое
+  cutList: LiningCutList
+  rawPieces: { pn: CutPiece[]; stud: CutPiece[] }
 }
 
 // ─── Раскрой ─────────────────────────────────────────────────────────────────
@@ -130,7 +132,5 @@ export interface WallCutList {
 
 export interface LiningCutList {
   pn: { bars: CutBar[]; totalBars: number; totalWaste: number }
-  // ps для С625/С626, pp для С623 — оба лежат в одном поле,
-  // тип профиля известен из LiningInput.liningType
   stud: { bars: CutBar[]; totalBars: number; totalWaste: number }
 }
