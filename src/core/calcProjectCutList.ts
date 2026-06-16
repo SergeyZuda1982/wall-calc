@@ -1,11 +1,3 @@
-/**
- * Общий раскрой объекта.
- *
- * Собирает все куски ПН/ПС/ПП со всех перегородок и облицовок,
- * группирует по типоразмеру и прогоняет через buildCutList один раз.
- * Остатки от одной конструкции используются для другой.
- */
-
 import type { WallEntry, LiningEntry } from '../store/useProjectStore'
 import { buildCutList } from './cutList'
 import type { Piece, CutListResult } from './cutList'
@@ -29,10 +21,10 @@ function wallPieces(w: WallEntry): Partial<Record<ProfilePool, Piece[]>> {
   const pnKey: ProfilePool = prof === 'ps50' ? 'pn_50' : prof === 'ps75' ? 'pn_75' : 'pn_100'
   const psKey: ProfilePool = prof === 'ps50' ? 'ps_50' : prof === 'ps75' ? 'ps_75' : 'ps_100'
 
-  const pnPcs: Piece[] = result.cutList.pn.bars.flatMap(b => b.pieces.map(p => p.piece))
-  const psPcs: Piece[] = result.cutList.ps.bars.flatMap(b => b.pieces.map(p => p.piece))
-
-  return { [pnKey]: pnPcs, [psKey]: psPcs }
+  return {
+    [pnKey]: result.rawPieces.pn,
+    [psKey]: result.rawPieces.ps,
+  }
 }
 
 // ─── Куски из облицовки ──────────────────────────────────────────────────────
@@ -44,15 +36,18 @@ function liningPieces(l: LiningEntry): Partial<Record<ProfilePool, Piece[]>> {
   const isC623 = input.liningType === 'c623'
   const prof = input.profileType
 
-  const pnPcs: Piece[] = result.cutList.pn.bars.flatMap(b => b.pieces.map(p => p.piece))
-  const studPcs: Piece[] = result.cutList.stud.bars.flatMap(b => b.pieces.map(p => p.piece))
-
   if (isC623) {
-    return { pn_27x28: pnPcs, pp_60x27: studPcs }
+    return {
+      pn_27x28: result.rawPieces.pn,
+      pp_60x27: result.rawPieces.stud,
+    }
   } else {
     const pnKey: ProfilePool = prof === 'ps50' ? 'pn_50' : prof === 'ps75' ? 'pn_75' : 'pn_100'
     const psKey: ProfilePool = prof === 'ps50' ? 'ps_50' : prof === 'ps75' ? 'ps_75' : 'ps_100'
-    return { [pnKey]: pnPcs, [psKey]: studPcs }
+    return {
+      [pnKey]: result.rawPieces.pn,
+      [psKey]: result.rawPieces.stud,
+    }
   }
 }
 

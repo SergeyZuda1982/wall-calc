@@ -155,5 +155,6 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     gklArea,
     needsOverlap: h > STUD_LENGTH && !isC623,
     cutList,
+        rawPieces: { pn: pnPcs, stud: studPcs },  // ← исходные куски до раскроя
   }
 }

@@ -3,15 +3,6 @@ import { calcStudMaterial, STUD_LENGTH } from './calcStudMaterial'
 import { buildOpeningStuds, mergeStuds } from './buildPositions'
 import { buildCutList, pnPieces, psPieces } from './cutList'
 
-/**
- * Проставляет ориентацию (up/down) каждой стойке.
- *
- * Правила чередования:
- * - wall: всегда down
- * - door/window: всегда up (длинный кусок снизу, цельный до закладной)
- * - middle/user: чередуются down/up по порядку слева направо
- * - free: противоположная последней middle
- */
 function assignOrientations(
   studs: { pos: number; kind: StudKind }[]
 ): StudInfo[] {
@@ -32,7 +23,6 @@ function assignOrientations(
       lastMiddleOrientation = orientation
       middleCount++
     } else {
-      // free
       orientation = lastMiddleOrientation === 'down' ? 'up' : 'down'
     }
 
@@ -40,9 +30,6 @@ function assignOrientations(
   })
 }
 
-/**
- * Проставляет isAbove и openingId для стоек, попадающих внутрь проёма.
- */
 function assignOpeningContext(
   studInfos: StudInfo[],
   openings: Opening[],
@@ -72,17 +59,10 @@ export function calcResults(
 ): CalcResult {
   const activeOpenings = openings.filter(o => o.width > 0)
 
-  // Строим типизированные стойки через mergeStuds
-  // (positions уже содержат все нужные точки, но kind нам нужен из mergeStuds)
   const openingStuds = buildOpeningStuds(openings)
   const openingPositions = new Set(openingStuds.map(s => s.pos))
-
-  // Восстанавливаем grid из positions (убираем 0, l и стойки проёмов)
   const grid = positions.filter(p => p !== 0 && p !== l && !openingPositions.has(p))
-
   const merged = mergeStuds(grid, openingStuds, l, abutment as AbutmentType)
-
-  // Проставляем ориентацию и контекст проёма
   const withOrientation = assignOrientations(merged)
   const studInfos = assignOpeningContext(withOrientation, openings)
 
@@ -108,7 +88,6 @@ export function calcResults(
       cwTotal += aboveHeight(openingId) + belowHeight(openingId)
       aboveStuds++
     } else {
-      // door/window считаются как middle (полная стойка h+overlap)
       const calcKind: StudKind = (kind === 'door' || kind === 'window') ? 'middle' : kind
       cwTotal += calcStudMaterial(h, calcKind, overlap, orientation).length
     }
@@ -160,5 +139,6 @@ export function calcResults(
     needsOverlap: h > STUD_LENGTH,
     studInfos,
     cutList,
+    rawPieces: { pn: pnCuts, ps: psCuts },  // ← исходные куски до раскроя
   }
 }
