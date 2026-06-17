@@ -11,6 +11,12 @@ import LiningCalc from './LiningCalc'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
 import { BAR_LENGTH } from './core/cutList'
+import { useAuthStore } from './store/useAuthStore'
+import { useProjectsStore } from './store/useProjectsStore'
+import { useSupabaseSync } from './hooks/useSupabaseSync'
+import { AuthModal } from './components/AuthModal'
+import { ProjectsPanel } from './components/ProjectsPanel'
+import type { DbProject } from './lib/supabase'
 
 // Цвета оцинкованной стали
 const STEEL_NORMAL   = '#b8c4cc'
@@ -139,6 +145,35 @@ export default function App() {
     setProjectName, addWall, updateWall, removeWall, setActiveWall,
   } = useProjectStore()
 
+  // ─── Auth + облачные объекты ──────────────────────────────────────────────
+  const { user, loading: authLoading } = useAuthStore()
+  const { setActiveProject } = useProjectsStore()
+  const [activeProject, setActiveProjectLocal] = useState<DbProject | null>(null)
+  const { saveWall, deleteWall: deleteWallRemote, loadProject } = useSupabaseSync(activeProject?.id ?? null)
+
+  // При выборе объекта — загружаем его перегородки и облицовки
+  const handleSelectProject = async (project: DbProject) => {
+    setActiveProjectLocal(project)
+    setActiveProject(project.id)
+    setProjectName(project.name)
+    const data = await loadProject(project.id)
+    // Очищаем текущие и загружаем из базы
+    // (через прямое обновление стора)
+    const store = useProjectStore.getState()
+    // Сбрасываем
+    for (const w of store.walls) store.removeWall(w.id)
+    for (const l of store.linings) store.removeLining(l.id)
+    // Загружаем
+    for (const w of data.walls) {
+      store.addWall(w.input, w.result, w.positions ?? [])
+    }
+    for (const l of data.linings) {
+      store.addLining(l.input, l.result)
+    }
+  }
+
+  const [showProjects, setShowProjects] = useState(false)
+
   function set<K extends keyof WallInput>(key: K, value: WallInput[K]) {
     setForm(prev => ({ ...prev, [key]: value }))
   }
@@ -247,7 +282,50 @@ export default function App() {
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ padding: 24, fontFamily: 'sans-serif', maxWidth: 900 }}>
+    <div style={{ fontFamily: 'sans-serif', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+
+      {/* ─── Авторизация ─── */}
+      {!authLoading && !user && <AuthModal />}
+
+      {/* ─── Шапка ─── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 20px',
+        background: '#2c3e50', color: '#fff', borderBottom: '2px solid #1a252f', flexShrink: 0 }}>
+        <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: 0.5 }}>🧱 wall-calc</span>
+        {activeProject && (
+          <span style={{ fontSize: 13, color: '#afc', background: 'rgba(255,255,255,0.1)',
+            padding: '3px 10px', borderRadius: 20 }}>
+            📁 {activeProject.name}
+          </span>
+        )}
+        <div style={{ flex: 1 }} />
+        {user && (
+          <>
+            <button onClick={() => setShowProjects(p => !p)}
+              style={{ padding: '5px 14px', background: showProjects ? '#3a7bd5' : 'rgba(255,255,255,0.15)',
+                color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6,
+                cursor: 'pointer', fontSize: 13 }}>
+              📁 Объекты
+            </button>
+            <span style={{ fontSize: 12, color: '#aaa' }}>{user.email || user.phone}</span>
+            <button onClick={() => useAuthStore.getState().signOut()}
+              style={{ padding: '5px 12px', background: 'transparent', color: '#faa',
+                border: '1px solid rgba(255,100,100,0.4)', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
+              Выйти
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* ─── Тело ─── */}
+      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+
+        {/* Боковая панель объектов */}
+        {showProjects && user && (
+          <ProjectsPanel onSelect={p => { handleSelectProject(p); setShowProjects(false) }} activeId={activeProject?.id ?? null} />
+        )}
+
+        {/* Основной контент */}
+        <div style={{ flex: 1, padding: 24, maxWidth: 900, overflowY: 'auto' }}>
 
       {/* ─── Панель объекта ─── */}
       <div style={{ marginBottom: 20, padding: '12px 16px', background: '#f8f9ff', border: '1px solid #dde', borderRadius: 8 }}>
@@ -276,7 +354,7 @@ export default function App() {
               </select>
             </div>
             {activeWallId && (
-              <button onClick={() => { if (window.confirm('Удалить перегородку?')) removeWall(activeWallId) }}
+              <button onClick={() => { if (window.confirm('Удалить перегородку?')) { deleteWallRemote(activeWallId); removeWall(activeWallId) } }}
                 style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4 }}>
                 🗑
               </button>
@@ -454,8 +532,15 @@ export default function App() {
           </button>
           <button onClick={() => {
             if (result && positions.length) {
-              if (activeWallId) updateWall(activeWallId, form, result, positions)
-              else addWall(form, result, positions)
+              if (activeWallId) {
+                updateWall(activeWallId, form, result, positions)
+                const updated = useProjectStore.getState().walls.find(w => w.id === activeWallId)
+                if (updated) saveWall(updated)
+              } else {
+                addWall(form, result, positions)
+                const newest = useProjectStore.getState().walls.at(-1)
+                if (newest) saveWall(newest)
+              }
             }
           }} disabled={!result || hasOpeningConflict}
             style={{ padding: '10px 20px', fontSize: 15, cursor: (result && !hasOpeningConflict) ? 'pointer' : 'default',
@@ -979,6 +1064,8 @@ export default function App() {
           </div>
         )
       })()}
+        </div>  {/* /основной контент */}
+      </div>  {/* /тело */}
     </div>
   )
 }
