@@ -32,12 +32,19 @@ export const useProjectsStore = create<ProjectsStore>((set) => ({
   },
 
   createProject: async (name) => {
+    // user_id берём из текущей сессии — Supabase требует его явно при insert
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return null
+
     const { data, error } = await supabase
       .from('projects')
-      .insert({ name })
+      .insert({ name, user_id: user.id })
       .select()
       .single()
-    if (error || !data) return null
+    if (error || !data) {
+      console.error('createProject error:', error)
+      return null
+    }
     set(s => ({ projects: [data, ...s.projects] }))
     return data
   },

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
 import type { WallInput, Opening } from './types'
 import type { WallEntry, LiningEntry } from './store/useProjectStore'
@@ -11,12 +11,6 @@ import LiningCalc from './LiningCalc'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
 import { BAR_LENGTH } from './core/cutList'
-import { useAuthStore } from './store/useAuthStore'
-import { useProjectsStore } from './store/useProjectsStore'
-import { useSupabaseSync } from './hooks/useSupabaseSync'
-import { AuthModal } from './components/AuthModal'
-import { ProjectsPanel } from './components/ProjectsPanel'
-import type { DbProject } from './lib/supabase'
 
 // Цвета оцинкованной стали
 const STEEL_NORMAL   = '#b8c4cc'
@@ -142,43 +136,15 @@ export default function App() {
 
   const {
     projectName, walls, linings, activeWallId, activeLiningId,
-    setProjectName, addWall, updateWall, removeWall, setActiveWall,
+    addWall, updateWall, removeWall, setActiveWall,
     removeLining, setActiveLining,
   } = useProjectStore()
 
-  // ─── Auth + облачные объекты ──────────────────────────────────────────────
-  const { user, loading: authLoading } = useAuthStore()
-  const { setActiveProject, fetchProjects } = useProjectsStore()
-  const [activeProject, setActiveProjectLocal] = useState<DbProject | null>(null)
-  const { saveWall, deleteWall: deleteWallRemote, loadProject } = useSupabaseSync(activeProject?.id ?? null)
-
-  // При выборе объекта — загружаем его перегородки и облицовки
-  const handleSelectProject = async (project: DbProject) => {
-    setActiveProjectLocal(project)
-    setActiveProject(project.id)
-    setProjectName(project.name)
-    const data = await loadProject(project.id)
-    // Очищаем текущие и загружаем из базы
-    // (через прямое обновление стора)
-    const store = useProjectStore.getState()
-    // Сбрасываем
-    for (const w of store.walls) store.removeWall(w.id)
-    for (const l of store.linings) store.removeLining(l.id)
-    // Загружаем
-    for (const w of data.walls) {
-      store.addWall(w.input, w.result, w.positions ?? [])
-    }
-    for (const l of data.linings) {
-      store.addLining(l.input, l.result)
-    }
-  }
+  // ─── Объекты (localStorage) ───────────────────────────────────────────────
+  const { projects, activeProjectId, createProject, deleteProject, selectProject } = useProjectStore()
+  const activeProject = projects.find(p => p.id === activeProjectId) ?? null
 
   const [showProjects, setShowProjects] = useState(false)
-
-  // Загружаем список объектов при логине
-  useEffect(() => {
-    if (user) fetchProjects()
-  }, [user])
 
   function set<K extends keyof WallInput>(key: K, value: WallInput[K]) {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -290,9 +256,6 @@ export default function App() {
   return (
     <div style={{ fontFamily: 'sans-serif', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
 
-      {/* ─── Авторизация ─── */}
-      {!authLoading && !user && <AuthModal />}
-
       {/* ─── Шапка ─── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 20px',
         background: '#2c3e50', color: '#fff', borderBottom: '2px solid #1a252f', flexShrink: 0 }}>
@@ -304,30 +267,58 @@ export default function App() {
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {user && (
-          <>
-            <button onClick={() => setShowProjects(p => !p)}
-              style={{ padding: '5px 14px', background: showProjects ? '#3a7bd5' : 'rgba(255,255,255,0.15)',
-                color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6,
-                cursor: 'pointer', fontSize: 13 }}>
-              📁 Объекты
-            </button>
-            <span style={{ fontSize: 12, color: '#aaa' }}>{user.email || user.phone}</span>
-            <button onClick={() => useAuthStore.getState().signOut()}
-              style={{ padding: '5px 12px', background: 'transparent', color: '#faa',
-                border: '1px solid rgba(255,100,100,0.4)', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
-              Выйти
-            </button>
-          </>
-        )}
+        <button onClick={() => setShowProjects(p => !p)}
+          style={{ padding: '5px 14px', background: showProjects ? '#3a7bd5' : 'rgba(255,255,255,0.15)',
+            color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6,
+            cursor: 'pointer', fontSize: 13 }}>
+          📁 Объекты
+        </button>
       </div>
 
       {/* ─── Тело ─── */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
 
         {/* Боковая панель объектов */}
-        {showProjects && user && (
-          <ProjectsPanel onSelect={p => { handleSelectProject(p); setShowProjects(false) }} activeId={activeProject?.id ?? null} />
+        {showProjects && (
+          <div style={{ width: 220, background: '#f5f5f5', borderRight: '1px solid #ddd',
+            padding: 16, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#333', marginBottom: 4 }}>📁 Объекты</div>
+            {projects.length === 0 && (
+              <div style={{ fontSize: 12, color: '#999' }}>Нет объектов</div>
+            )}
+            {projects.map(p => (
+              <div key={p.id} onClick={() => { selectProject(p.id); setShowProjects(false) }}
+                style={{ padding: '7px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                  background: p.id === activeProjectId ? '#3a7bd5' : '#fff',
+                  color: p.id === activeProjectId ? '#fff' : '#333',
+                  border: '1px solid #ddd', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ flex: 1 }}>{p.name}</span>
+                <span onClick={e => { e.stopPropagation(); if (window.confirm('Удалить объект?')) deleteProject(p.id) }}
+                  style={{ color: p.id === activeProjectId ? '#fcc' : '#e05', fontSize: 12, cursor: 'pointer' }}>✕</span>
+              </div>
+            ))}
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <input id="new-project-name" placeholder="Название объекта"
+                style={{ padding: '6px 8px', border: '1px solid #ccc', borderRadius: 4, fontSize: 13 }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    const input = e.currentTarget
+                    const name = input.value.trim()
+                    if (name) { createProject(name); input.value = ''; setShowProjects(false) }
+                  }
+                }} />
+              <button onClick={() => {
+                const input = document.getElementById('new-project-name') as HTMLInputElement
+                const name = input?.value.trim() || 'Новый объект'
+                createProject(name)
+                if (input) input.value = ''
+                setShowProjects(false)
+              }} style={{ padding: '7px', background: '#3a7bd5', color: '#fff',
+                border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                + Новый объект
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Основной контент */}
@@ -375,7 +366,7 @@ export default function App() {
                     ))}
                   </select>
                   {activeWallId && (
-                    <button onClick={() => { if (window.confirm('Удалить перегородку?')) { deleteWallRemote(activeWallId); removeWall(activeWallId) } }}
+                    <button onClick={() => { if (window.confirm('Удалить перегородку?')) { removeWall(activeWallId) } }}
                       style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4 }}>
                       🗑
                     </button>
@@ -586,12 +577,10 @@ export default function App() {
             if (result && positions.length) {
               if (activeWallId) {
                 updateWall(activeWallId, form, result, positions)
-                const updated = useProjectStore.getState().walls.find(w => w.id === activeWallId)
-                if (updated) saveWall(updated)
+
               } else {
                 addWall(form, result, positions)
-                const newest = useProjectStore.getState().walls.at(-1)
-                if (newest) saveWall(newest)
+
               }
             }
           }} disabled={!result || hasOpeningConflict}
