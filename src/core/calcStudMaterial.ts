@@ -51,17 +51,22 @@ export function calcStudMaterial(
     return { length: totalLength, overlapZone }
   }
 
-  // free
-  const up = Math.min(overlap, part2 - MIN_OVERLAP_UP)
-  const actualUp = Math.max(0, up)
-  const totalLength = STUD_LENGTH + part2 + overlap + actualUp
+  // free — дополнительный соединительный профиль
+  // Два основных профиля (ПС1 и ПС2) = длина h каждый (как wall, без нахлёста).
+  // Дополнительный профиль наращивается с нахлёстом в обе стороны:
+  //   нахлёст снизу = overlap
+  //   нахлёст сверху = overlap если (h−3000) ≥ overlap, иначе 500мм
+  const overlapUp = part2 >= overlap ? overlap : MIN_OVERLAP_UP
+  const totalLength = STUD_LENGTH + part2 + overlap + overlapUp
 
   let overlapZone: { from: number; to: number }
   if (orientation === 'up') {
-    overlapZone = { from: STUD_LENGTH, to: STUD_LENGTH + overlap + actualUp }
+    // длинный снизу: зона от (3000−overlap) до (3000+overlapUp)
+    overlapZone = { from: STUD_LENGTH - overlap, to: STUD_LENGTH + overlapUp }
   } else {
+    // длинный сверху: стык на (h−3000)
     const jointH = h - STUD_LENGTH
-    overlapZone = { from: jointH - overlap, to: jointH + actualUp }
+    overlapZone = { from: jointH - overlap, to: jointH + overlapUp }
   }
 
   return { length: totalLength, overlapZone }
