@@ -174,8 +174,11 @@ export function psPieces(
     } else if (h <= BAR_LENGTH) {
       // Стойка целиком из одного куска
       pieces.push({ length: h, role: 'stud', label: `Стойка ${h}мм`, mustBeWhole: false })
+    } else if (stud.kind === 'wall') {
+      // Крайняя стойка wall — примыкает к конструкции, без нахлёста, один кусок длиной h
+      pieces.push({ length: h, role: 'stud', label: `Стойка пристенная ${h}мм`, mustBeWhole: false })
     } else {
-      // Стойка наращивается: два куска
+      // Стойка наращивается: два куска (middle, free, door, window)
       const part1 = BAR_LENGTH        // длинный кусок 3000мм
       const part2 = h - BAR_LENGTH + overlap  // короткий кусок с нахлёстом
       pieces.push({ length: part1, role: 'stud', label: `Стойка осн. ${part1}мм`, mustBeWhole: false })
