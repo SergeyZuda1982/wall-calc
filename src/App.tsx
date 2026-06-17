@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
 import type { WallInput, Opening } from './types'
 import type { WallEntry, LiningEntry } from './store/useProjectStore'
@@ -141,13 +141,14 @@ export default function App() {
   const lastTapPos = useRef<{ x: number; y: number } | null>(null)
 
   const {
-    projectName, walls, linings, activeWallId,
+    projectName, walls, linings, activeWallId, activeLiningId,
     setProjectName, addWall, updateWall, removeWall, setActiveWall,
+    removeLining, setActiveLining,
   } = useProjectStore()
 
   // ─── Auth + облачные объекты ──────────────────────────────────────────────
   const { user, loading: authLoading } = useAuthStore()
-  const { setActiveProject } = useProjectsStore()
+  const { setActiveProject, fetchProjects } = useProjectsStore()
   const [activeProject, setActiveProjectLocal] = useState<DbProject | null>(null)
   const { saveWall, deleteWall: deleteWallRemote, loadProject } = useSupabaseSync(activeProject?.id ?? null)
 
@@ -173,6 +174,11 @@ export default function App() {
   }
 
   const [showProjects, setShowProjects] = useState(false)
+
+  // Загружаем список объектов при логине
+  useEffect(() => {
+    if (user) fetchProjects()
+  }, [user])
 
   function set<K extends keyof WallInput>(key: K, value: WallInput[K]) {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -329,39 +335,85 @@ export default function App() {
 
       {/* ─── Панель объекта ─── */}
       <div style={{ marginBottom: 20, padding: '12px 16px', background: '#f8f9ff', border: '1px solid #dde', borderRadius: 8 }}>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+
+        {/* Строка: название объекта */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: activeProject ? 12 : 0 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: '#444', whiteSpace: 'nowrap' }}>Объект:</span>
-          <input value={projectName} onChange={e => setProjectName(e.target.value)}
-            placeholder="Название объекта / квартиры"
-            style={{ flex: 1, padding: '5px 8px', border: '1px solid #ccc', borderRadius: 4, fontSize: 13 }} />
+          {activeProject
+            ? <span style={{ fontSize: 14, fontWeight: 600, color: '#2c3e50' }}>{activeProject.name}</span>
+            : <span style={{ fontSize: 13, color: '#999' }}>— не выбран (нажмите «Объекты» в шапке)</span>
+          }
+          {activeProject && (
+            <button onClick={() => setShowProjects(p => !p)}
+              style={{ marginLeft: 'auto', padding: '3px 10px', fontSize: 12, cursor: 'pointer',
+                background: 'transparent', border: '1px solid #aaa', borderRadius: 4, color: '#555' }}>
+              Сменить
+            </button>
+          )}
         </div>
-        {walls.length > 0 ? (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <div style={{ flex: 1 }}>
-              <select value={activeWallId ?? ''} onChange={e => {
-                const id = e.target.value; if (!id) return
-                const w = walls.find(w => w.id === id)
-                if (w) { setActiveWall(w.id); setForm(w.input) }
-              }} style={{ width: '100%', padding: '6px 8px', fontSize: 13, border: '1px solid #ccc', borderRadius: 4 }}>
-                <option value="">— Выберите перегородку —</option>
-                {walls.map(w => (
-                  <option key={w.id} value={w.id}>
-                    {w.label} · {w.input.length}×{w.input.height} · {w.input.wallType.toUpperCase()} · {
-                      w.input.profileType === 'ps50' ? 'ПС50' : w.input.profileType === 'ps75' ? 'ПС75' : 'ПС100'
-                    }
-                  </option>
-                ))}
-              </select>
+
+        {/* Дропдауны перегородок и облицовок — только когда объект выбран */}
+        {activeProject && (
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {/* Перегородки */}
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>Перегородки объекта</div>
+              {walls.length > 0 ? (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <select value={activeWallId ?? ''} onChange={e => {
+                    const id = e.target.value; if (!id) return
+                    const w = walls.find(w => w.id === id)
+                    if (w) { setActiveWall(w.id); setForm(w.input); setActiveTab('wall') }
+                  }} style={{ flex: 1, padding: '6px 8px', fontSize: 13, border: '1px solid #ccc', borderRadius: 4 }}>
+                    <option value="">— Выберите перегородку —</option>
+                    {walls.map(w => (
+                      <option key={w.id} value={w.id}>
+                        {w.label} · {w.input.length}×{w.input.height} · {w.input.wallType.toUpperCase()} · {
+                          w.input.profileType === 'ps50' ? 'ПС50' : w.input.profileType === 'ps75' ? 'ПС75' : 'ПС100'
+                        }
+                      </option>
+                    ))}
+                  </select>
+                  {activeWallId && (
+                    <button onClick={() => { if (window.confirm('Удалить перегородку?')) { deleteWallRemote(activeWallId); removeWall(activeWallId) } }}
+                      style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4 }}>
+                      🗑
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontSize: 12, color: '#999' }}>Нет перегородок</p>
+              )}
             </div>
-            {activeWallId && (
-              <button onClick={() => { if (window.confirm('Удалить перегородку?')) { deleteWallRemote(activeWallId); removeWall(activeWallId) } }}
-                style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4 }}>
-                🗑
-              </button>
-            )}
+            {/* Облицовки */}
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>Облицовки объекта</div>
+              {linings.length > 0 ? (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <select value={activeLiningId ?? ''} onChange={e => {
+                    const id = e.target.value; if (!id) return
+                    const l = linings.find(l => l.id === id)
+                    if (l) { setActiveLining(l.id); setActiveTab('lining') }
+                  }} style={{ flex: 1, padding: '6px 8px', fontSize: 13, border: '1px solid #ccc', borderRadius: 4 }}>
+                    <option value="">— Выберите облицовку —</option>
+                    {linings.map(l => (
+                      <option key={l.id} value={l.id}>
+                        {l.label} · {l.input?.length}×{l.input?.height} · {l.input?.liningType?.toUpperCase()}
+                      </option>
+                    ))}
+                  </select>
+                  {activeLiningId && (
+                    <button onClick={() => { if (window.confirm('Удалить облицовку?')) { removeLining(activeLiningId) } }}
+                      style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4 }}>
+                      🗑
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontSize: 12, color: '#999' }}>Нет облицовок</p>
+              )}
+            </div>
           </div>
-        ) : (
-          <p style={{ margin: 0, fontSize: 12, color: '#999' }}>Рассчитайте перегородку и нажмите «Добавить в объект»</p>
         )}
       </div>
 
@@ -949,8 +1001,8 @@ export default function App() {
                 {itemRows.map(row => (
                   <tr key={row.id} onClick={() => {
                     if (row.type === 'wall') { const w = walls.find(w => w.id === row.id); if (w) { setActiveWall(w.id); setForm(w.input); setActiveTab('wall') } }
-                    else setActiveTab('lining')
-                  }} style={{ cursor: 'pointer', background: row.id === activeWallId ? '#e8f0ff' : 'transparent' }}>
+                    else { setActiveLining(row.id); setActiveTab('lining') }
+                  }} style={{ cursor: 'pointer', background: (row.type === 'wall' && row.id === activeWallId) || (row.type === 'lining' && row.id === activeLiningId) ? '#e8f0ff' : 'transparent' }}>
                     <td style={tdS}><b>{row.label}</b></td>
                     <td style={tdS}>{row.constructionType}</td>
                     {usedMaterials.map(k => {

@@ -45,7 +45,7 @@ export default function LiningCalc() {
   const basePositions = useRef<number[]>([])
   const gridShift = useRef(0)
 
-  const { linings, activeLiningId, addLining, updateLining, removeLining, setActiveLining } = useProjectStore()
+  const { linings, activeLiningId, addLining, updateLining, setActiveLining } = useProjectStore()
 
   function set<K extends keyof LiningInput>(key: K, value: LiningInput[K]) {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -141,20 +141,6 @@ export default function LiningCalc() {
 
   return (
     <div>
-      {linings.length > 0 && (
-        <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <select value={activeLiningId ?? ''} onChange={e => {
-            const l = linings.find(l => l.id === e.target.value)
-            if (l) { setActiveLining(l.id); setForm(l.input); setResult(l.result) }
-          }} style={{ flex: 1, padding: '6px 8px', fontSize: 13, border: '1px solid #ccc', borderRadius: 4 }}>
-            <option value="">— Выберите облицовку —</option>
-            {linings.map(l => <option key={l.id} value={l.id}>{l.label} · {l.input.length}×{l.input.height} · {l.input.liningType.toUpperCase()}</option>)}
-          </select>
-          {activeLiningId && <button onClick={() => { if (window.confirm('Удалить?')) removeLining(activeLiningId) }}
-            style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4 }}>🗑</button>}
-        </div>
-      )}
-
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <div style={{ flex: 2, minWidth: 200 }}>
           <label style={{ fontSize: 13 }}>Тип облицовки</label><br />
