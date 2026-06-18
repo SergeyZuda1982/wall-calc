@@ -63,8 +63,12 @@ export function calcStudMaterial(
   // Соединительный входит внутрь обоих: нахлёст overlap снизу + overlapUp сверху.
   // overlapUp = overlap если part2 ≥ overlap, иначе 500мм.
   const overlapUp = part2 >= overlap ? overlap : MIN_OVERLAP_UP
-  // Длина материала = основные два куска (h) + соединительный (part2 + overlap + overlapUp)
-  const totalLength = h + part2 + overlap + overlapUp
+  // Длина материала = два основных куска (3000 + part2) + соединительный (part2 + overlap + overlapUp)
+  // Итого: 3000 + part2 + part2 + overlap + overlapUp = STUD_LENGTH + 2*part2 + overlap + overlapUp
+  // Пример h=3600, overlap=750: 3000+600+600+750+500 = 5450... нет!
+  // Правильно: 3000 + 600 (торец) + (600+750+500) (соед.) = 4850
+  // То есть: STUD_LENGTH + part2 + overlap + overlapUp
+  const totalLength = STUD_LENGTH + part2 + overlap + overlapUp
 
   let overlapZone: { from: number; to: number }
   if (orientation === 'up') {
