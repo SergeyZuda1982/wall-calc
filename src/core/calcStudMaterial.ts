@@ -1,22 +1,24 @@
 import type { StudKind, StudOrientation } from '../types'
 
 export const STUD_LENGTH = 3000
-export const MIN_OVERLAP_UP = 100
+export const MIN_OVERLAP_UP = 500  // минимальный нахлёст сверху для free
 
 /**
  * Возвращает длину материала и зону нахлёста для одной стойки.
  *
- * Ориентация влияет только на положение зоны нахлёста (для визуализации):
+ * wall:   торец в торец, без нахлёста.
+ *         h ≤ 3000: один кусок h.
+ *         h > 3000: два куска (3000 + (h−3000)), зона нахлёста null.
  *
- * down: длинный кусок СВЕРХУ (от потолка), короткий снизу.
- *       Стык на высоте h−3000 от пола.
- *       Зона нахлёста: от (h−3000−overlap) до (h−3000) — ниже стыка.
+ * middle: наращивается с нахлёстом overlap в одну сторону.
+ *         Длина = h + overlap.
+ *         down: длинный СВЕРХУ, стык на h−3000, зона нахлёста ниже стыка.
+ *         up:   длинный СНИЗУ, стык на 3000,    зона нахлёста выше стыка.
  *
- * up:   длинный кусок СНИЗУ (от пола), короткий сверху.
- *       Стык на высоте 3000 от пола.
- *       Зона нахлёста: от 3000 до (3000+overlap) — выше стыка.
- *
- * Длина материала одинакова для обеих ориентаций.
+ * free:   торец в торец + соединительный кусок с нахлёстом в ОБЕ стороны.
+ *         Соединительный = (h−3000) + overlap + overlapUp.
+ *         overlapUp = overlap если (h−3000) ≥ overlap, иначе 500мм.
+ *         Итого длина материала = h + overlap + overlapUp.
  */
 export function calcStudMaterial(
   h: number,
@@ -25,25 +27,30 @@ export function calcStudMaterial(
   orientation: StudOrientation = 'up'
 ): { length: number; overlapZone: { from: number; to: number } | null } {
 
-  if (h <= STUD_LENGTH) {
-    return { length: h, overlapZone: null }
-  }
-
+  // ─── wall ────────────────────────────────────────────────────────────────
+  // Торец в торец, без нахлёста. Длина = h.
   if (kind === 'wall') {
     return { length: h, overlapZone: null }
   }
 
-  const part2 = h - STUD_LENGTH
+  // h ≤ 3000: любая стойка — один кусок
+  if (h <= STUD_LENGTH) {
+    return { length: h, overlapZone: null }
+  }
 
-  if (kind === 'middle' || kind === 'door') {
+  const part2 = h - STUD_LENGTH  // короткий кусок (остаток выше/ниже 3000)
+
+  // ─── middle / door / window ───────────────────────────────────────────────
+  // Нахлёст в одну сторону: длина = h + overlap
+  if (kind === 'middle' || kind === 'door' || kind === 'window') {
     const totalLength = h + overlap
 
     let overlapZone: { from: number; to: number }
     if (orientation === 'up') {
-      // длинный снизу, стык на 3000, зона выше стыка
+      // длинный снизу, стык на 3000, зона нахлёста выше стыка
       overlapZone = { from: STUD_LENGTH, to: STUD_LENGTH + overlap }
     } else {
-      // длинный сверху, стык на h−3000, зона ниже стыка
+      // длинный сверху, стык на h−3000, зона нахлёста ниже стыка
       const jointH = h - STUD_LENGTH
       overlapZone = { from: jointH - overlap, to: jointH }
     }
@@ -51,20 +58,20 @@ export function calcStudMaterial(
     return { length: totalLength, overlapZone }
   }
 
-  // free — дополнительный соединительный профиль
-  // Два основных профиля (ПС1 и ПС2) = длина h каждый (как wall, без нахлёста).
-  // Дополнительный профиль наращивается с нахлёстом в обе стороны:
-  //   нахлёст снизу = overlap
-  //   нахлёст сверху = overlap если (h−3000) ≥ overlap, иначе 500мм
+  // ─── free ─────────────────────────────────────────────────────────────────
+  // Два куска торец в торец (3000 + part2) + соединительный кусок.
+  // Соединительный входит внутрь обоих: нахлёст overlap снизу + overlapUp сверху.
+  // overlapUp = overlap если part2 ≥ overlap, иначе 500мм.
   const overlapUp = part2 >= overlap ? overlap : MIN_OVERLAP_UP
-  const totalLength = STUD_LENGTH + part2 + overlap + overlapUp
+  // Длина материала = основные два куска (h) + соединительный (part2 + overlap + overlapUp)
+  const totalLength = h + part2 + overlap + overlapUp
 
   let overlapZone: { from: number; to: number }
   if (orientation === 'up') {
-    // длинный снизу: зона от (3000−overlap) до (3000+overlapUp)
+    // стык на 3000, зона соединительного: (3000−overlap) до (3000+overlapUp)
     overlapZone = { from: STUD_LENGTH - overlap, to: STUD_LENGTH + overlapUp }
   } else {
-    // длинный сверху: стык на (h−3000)
+    // стык на h−3000
     const jointH = h - STUD_LENGTH
     overlapZone = { from: jointH - overlap, to: jointH + overlapUp }
   }

@@ -87,9 +87,6 @@ export function calcResults(
     if (isAbove && openingId) {
       cwTotal += aboveHeight(openingId) + belowHeight(openingId)
       aboveStuds++
-    } else if (kind === 'free') {
-      // free = 2 основных профиля (длина h каждый, без нахлёста) + 1 доп. профиль с нахлёстом в обе стороны
-      cwTotal += h * 2 + calcStudMaterial(h, 'free', overlap, orientation).length
     } else {
       const calcKind: StudKind = (kind === 'door' || kind === 'window') ? 'middle' : kind
       cwTotal += calcStudMaterial(h, calcKind, overlap, orientation).length

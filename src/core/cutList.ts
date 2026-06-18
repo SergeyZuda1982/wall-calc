@@ -178,18 +178,19 @@ export function psPieces(
       // Крайняя стойка wall — примыкает к конструкции, без нахлёста, один кусок длиной h
       pieces.push({ length: h, role: 'stud', label: `Стойка пристенная ${h}мм`, mustBeWhole: false })
     } else if (stud.kind === 'free') {
-      // Свободный край: 2 основных профиля (длина h, без нахлёста) + 1 доп. профиль с нахлёстом в обе стороны
-      pieces.push({ length: h, role: 'stud', label: `Стойка свободная 1 ${h}мм`, mustBeWhole: false })
-      pieces.push({ length: h, role: 'stud', label: `Стойка свободная 2 ${h}мм`, mustBeWhole: false })
+      // free: 3000 + part2 (торец в торец) + соединительный кусок (part2 + overlap + overlapUp)
       if (h <= BAR_LENGTH) {
-        // доп. профиль целиком
-        pieces.push({ length: h, role: 'stud', label: `Стойка соед. ${h}мм`, mustBeWhole: false })
+        pieces.push({ length: h, role: 'stud', label: `Стойка своб. ${h}мм`, mustBeWhole: false })
+        pieces.push({ length: h, role: 'stud_part', label: `Стойка соед. ${h}мм`, mustBeWhole: false })
       } else {
-        // доп. профиль наращивается
         const part2 = h - BAR_LENGTH
         const overlapUp = part2 >= overlap ? overlap : 500
-        pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка соед. осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
-        pieces.push({ length: part2 + overlap + overlapUp, role: 'stud_part', label: `Стойка соед. доп. ${part2 + overlap + overlapUp}мм`, mustBeWhole: false })
+        const connector = part2 + overlap + overlapUp
+        // Два основных куска торец в торец
+        pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка своб. осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
+        pieces.push({ length: part2, role: 'stud_part', label: `Стойка своб. доп. ${part2}мм`, mustBeWhole: false })
+        // Соединительный кусок
+        pieces.push({ length: connector, role: 'stud_part', label: `Стойка соед. ${connector}мм`, mustBeWhole: false })
       }
     } else {
       // Стойка наращивается: два куска (middle, free, door, window)
