@@ -175,8 +175,12 @@ export function psPieces(
       // Стойка целиком из одного куска
       pieces.push({ length: h, role: 'stud', label: `Стойка ${h}мм`, mustBeWhole: false })
     } else if (stud.kind === 'wall') {
-      // Крайняя стойка wall — примыкает к конструкции, без нахлёста, один кусок длиной h
-      pieces.push({ length: h, role: 'stud', label: `Стойка пристенная ${h}мм`, mustBeWhole: false })
+      // Крайняя стойка wall — примыкает к конструкции, без нахлёста, торец в торец.
+      // h здесь всегда > BAR_LENGTH (случай h<=BAR_LENGTH отработан выше для любого kind).
+      // Кусок не может быть длиннее прутка — режем на 3000 + остаток.
+      const rest = h - BAR_LENGTH
+      pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка пристенная осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
+      pieces.push({ length: rest, role: 'stud_part', label: `Стойка пристенная доп. ${rest}мм`, mustBeWhole: false })
     } else if (stud.kind === 'free') {
       // free: 3000 + part2 (торец в торец) + соединительный кусок (part2 + overlap + overlapUp)
       if (h <= BAR_LENGTH) {

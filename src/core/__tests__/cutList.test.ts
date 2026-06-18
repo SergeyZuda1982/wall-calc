@@ -174,4 +174,47 @@ describe('psPieces', () => {
     expect(pieces).toHaveLength(5)
     expect(pieces.every(p => p.length === 2700)).toBe(true)
   })
+
+  // ─── Регрессия: wall-стойка с h>3000 пропадала из раскроя ────────────────
+  // Баг: psPieces клала ОДИН кусок длиной h (>3000) в раскрой для kind='wall',
+  // а buildCutList тихо отбрасывает куски длиннее прутка (3000мм) —
+  // в итоге крайние wall-стойки исчезали из раскроя и из суммарного метража.
+
+  it('wall h>3000: два куска торец в торец (3000 + остаток), сумма = h', () => {
+    const studs = [{ kind: 'wall', isAbove: false, openingId: null, orientation: 'down' }]
+    const pieces = psPieces(studs, 3600, 750, [])
+    expect(pieces).toHaveLength(2)
+    expect(pieces.every(p => p.length <= BAR_LENGTH)).toBe(true)
+    expect(pieces.reduce((s, p) => s + p.length, 0)).toBe(3600)
+  })
+
+  it('никакой кусок psPieces не длиннее прутка (инвариант для всех kind)', () => {
+    const studs = [
+      { kind: 'wall', isAbove: false, openingId: null, orientation: 'down' },
+      { kind: 'wall', isAbove: false, openingId: null, orientation: 'down' },
+      { kind: 'middle', isAbove: false, openingId: null, orientation: 'up' },
+      { kind: 'free', isAbove: false, openingId: null, orientation: 'up' },
+      { kind: 'free', isAbove: false, openingId: null, orientation: 'down' },
+    ]
+    const pieces = psPieces(studs, 3600, 750, [])
+    expect(pieces.every(p => p.length <= BAR_LENGTH)).toBe(true)
+  })
+
+  it('сценарий пользователя: 6160×3600, both, overlap=750, 12 стоек — ни одна стойка не теряется', () => {
+    // 2 wall (3600 каждая) + 10 middle (3600+750=4350 каждая) = 7200 + 43500 = 50700мм
+    const studs = [
+      { kind: 'wall', isAbove: false, openingId: null, orientation: 'down' },
+      ...Array(10).fill({ kind: 'middle', isAbove: false, openingId: null, orientation: 'up' }),
+      { kind: 'wall', isAbove: false, openingId: null, orientation: 'down' },
+    ]
+    const pieces = psPieces(studs, 3600, 750, [])
+    const total = pieces.reduce((s, p) => s + p.length, 0)
+    expect(total).toBe(50700)
+
+    const cutResult = buildCutList(pieces)
+    // Сумма уложенных кусков + отходы должна равняться полному метражу закупленных прутков
+    const usedPlusWaste = cutResult.totalBars * BAR_LENGTH
+    const actuallyPlaced = pieces.reduce((s, p) => s + p.length, 0)
+    expect(usedPlusWaste).toBe(actuallyPlaced + cutResult.totalWaste)
+  })
 })
