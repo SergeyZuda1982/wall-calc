@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildCutList, pnPieces, psPieces, BAR_LENGTH } from '../cutList'
+import { calcStudMaterial } from '../calcStudMaterial'
 import type { Piece } from '../cutList'
 
 // ─── buildCutList ─────────────────────────────────────────────────────────────
@@ -216,5 +217,28 @@ describe('psPieces', () => {
     const usedPlusWaste = cutResult.totalBars * BAR_LENGTH
     const actuallyPlaced = pieces.reduce((s, p) => s + p.length, 0)
     expect(usedPlusWaste).toBe(actuallyPlaced + cutResult.totalWaste)
+  })
+
+  // ─── Регрессия: соединительный кусок free считался как part2+overlap+overlapUp (1850) ────
+  // вместо overlap+overlapUp (1250). Из-за этого сумма кусков раскроя (5450) расходилась
+  // с calcStudMaterial().length (4850) — раскрой требовал на 600мм больше металла, чем
+  // показывал итоговый метраж.
+
+  it('free h=3600 overlap=750: соединительный кусок = 1250мм (НЕ 1850)', () => {
+    const studs = [{ kind: 'free', isAbove: false, openingId: null, orientation: 'up' }]
+    const pieces = psPieces(studs, 3600, 750, [])
+    const connector = pieces.find(p => p.label.includes('соед.'))
+    expect(connector?.length).toBe(1250)
+  })
+
+  it('free: сумма кусков psPieces совпадает с calcStudMaterial().length для разных h/overlap', () => {
+    const cases: [number, number][] = [[3600, 750], [4200, 750], [3500, 500], [4500, 1000]]
+    for (const [h, overlap] of cases) {
+      const studs = [{ kind: 'free', isAbove: false, openingId: null, orientation: 'up' }]
+      const pieces = psPieces(studs, h, overlap, [])
+      const sum = pieces.reduce((s, p) => s + p.length, 0)
+      const { length } = calcStudMaterial(h, 'free', overlap, 'up')
+      expect(sum).toBe(length)
+    }
   })
 })

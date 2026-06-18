@@ -33,8 +33,20 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   const overlapMap: Record<string, number> = { ps50: 500, ps75: 750, ps100: 1000 }
   const overlap = overlapMap[input.profileType] ?? 750
 
-  function studLen(sh: number): number {
+  // Крайние стойки (pos===0 / pos===l) примыкают к существующей стене на стороне,
+  // отмеченной в abutment как "Стена" — там стойка цельная, торец в торец, без
+  // нахлёста (как wall-стойка в перегородке). Если сторона "Свободно" — оставляем
+  // как обычную стойку с нахлёстом (она всё равно непрерывно держится подвесами/
+  // кронштейнами на стене по всей высоте, в отличие от свободного края перегородки).
+  function edgeKind(pos: number): 'wall' | 'middle' {
+    if (pos === 0) return (input.abutment === 'both' || input.abutment === 'left') ? 'wall' : 'middle'
+    if (pos === l) return (input.abutment === 'both' || input.abutment === 'right') ? 'wall' : 'middle'
+    return 'middle'
+  }
+
+  function studLen(sh: number, kind: 'wall' | 'middle'): number {
     if (sh <= STUD_LENGTH || isC623) return sh
+    if (kind === 'wall') return sh // торец в торец, без нахлёста
     return sh + overlap
   }
 
@@ -59,7 +71,8 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   for (const pos of countablePositions) {
     const above = aboveHeight(pos)
     const sh = above !== null ? above : h
-    studTotal += studLen(sh)
+    const kind = above !== null ? 'middle' : edgeKind(pos)
+    studTotal += studLen(sh, kind)
     if (above !== null) aboveStuds++
 
     if (isC623) {
@@ -134,8 +147,13 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     } else if (isC623 || h <= STUD_LENGTH) {
       // С623 не наращивается; или высота вписывается в пруток
       studPcs.push({ length: h, role: 'stud', label: `Стойка ${h}мм`, mustBeWhole: false })
+    } else if (edgeKind(pos) === 'wall') {
+      // Крайняя стойка у стены — торец в торец, без нахлёста: 3000 + остаток
+      const rest = h - STUD_LENGTH
+      studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `Стойка пристенная осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
+      studPcs.push({ length: rest, role: 'stud_part', label: `Стойка пристенная доп. ${rest}мм`, mustBeWhole: false })
     } else {
-      // С625/С626, h > 3000 — два куска с нахлёстом
+      // Рядовая стойка, h > 3000 — два куска с нахлёстом
       studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `Стойка осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
       studPcs.push({ length: h - STUD_LENGTH + overlap, role: 'stud_part', label: `Стойка доп. ${h - STUD_LENGTH + overlap}мм`, mustBeWhole: false })
     }

@@ -182,14 +182,18 @@ export function psPieces(
       pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка пристенная осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
       pieces.push({ length: rest, role: 'stud_part', label: `Стойка пристенная доп. ${rest}мм`, mustBeWhole: false })
     } else if (stud.kind === 'free') {
-      // free: 3000 + part2 (торец в торец) + соединительный кусок (part2 + overlap + overlapUp)
+      // free: 3000 + part2 (торец в торец, основной столб высотой h) +
+      // соединительный кусок, перекрывающий стык на overlap вниз и overlapUp вверх.
+      // ВАЖНО: соединительный = overlap + overlapUp (НЕ part2 + overlap + overlapUp —
+      // это была ошибка: part2 уже учтён как отдельный кусок-столб выше).
+      // Сумма кусков (3000 + part2 + connector) должна совпадать с calcStudMaterial().length.
       if (h <= BAR_LENGTH) {
         pieces.push({ length: h, role: 'stud', label: `Стойка своб. ${h}мм`, mustBeWhole: false })
         pieces.push({ length: h, role: 'stud_part', label: `Стойка соед. ${h}мм`, mustBeWhole: false })
       } else {
         const part2 = h - BAR_LENGTH
         const overlapUp = part2 >= overlap ? overlap : 500
-        const connector = part2 + overlap + overlapUp
+        const connector = overlap + overlapUp
         // Два основных куска торец в торец
         pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка своб. осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
         pieces.push({ length: part2, role: 'stud_part', label: `Стойка своб. доп. ${part2}мм`, mustBeWhole: false })

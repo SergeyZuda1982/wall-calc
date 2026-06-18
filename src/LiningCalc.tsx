@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
 import type { LiningInput, LiningResult, Opening } from './types'
 import { calcLining } from './core/calcLining'
+import { calcStudMaterial } from './core/calcStudMaterial'
 import { getLiningMaxHeight } from './data/liningMaxHeight'
 import { useProjectStore } from './store/useProjectStore'
 
@@ -9,6 +10,7 @@ const CANVAS_W = 820
 const PAD = 60
 const TOP_PAD = 50
 const BOT_PAD = 30
+const OVERLAP_MAP: Record<string, number> = { ps50: 500, ps75: 750, ps100: 1000 }
 
 let _lidCounter = 1
 function newLid() { return `lop_${_lidCounter++}` }
@@ -65,6 +67,15 @@ export default function LiningCalc() {
   }
 
   const isC623 = form.liningType === 'c623'
+  const overlap = OVERLAP_MAP[form.profileType] ?? 750
+
+  // Та же логика, что и в calcLining.ts: крайняя стойка у стены ("Стена" в
+  // примыкании) — wall (без нахлёста), иначе обычная стойка с нахлёстом.
+  function edgeKind(pos: number): 'wall' | 'middle' {
+    if (pos === 0) return (form.abutment === 'both' || form.abutment === 'left') ? 'wall' : 'middle'
+    if (pos === snapL) return (form.abutment === 'both' || form.abutment === 'right') ? 'wall' : 'middle'
+    return 'middle'
+  }
   const availableProfiles = form.liningType === 'c626'
     ? [{ value: 'ps50', label: 'ПС 50×50' }, { value: 'ps75', label: 'ПС 75×50' }, { value: 'ps100', label: 'ПС 100×50' }]
     : [{ value: 'ps75', label: 'ПС 75×50' }, { value: 'ps100', label: 'ПС 100×50' }]
@@ -302,13 +313,38 @@ export default function LiningCalc() {
                   const prev = i === 0 ? 0 : arr[i - 1], dist = pos - prev
                   return <Text key={`td${pos}`} x={tx(prev) + (dist * scale / 2) - 10} y={wallTop - 18} text={`${dist}`} fontSize={8} fill="#888" />
                 })}
-                {positions.map(pos => {
+                {positions.map((pos, idx) => {
                   const isEdge = pos === 0 || pos === snapL
+                  const insideOpening = form.openings.find(
+                    o => o.width > 0 && pos > o.pos && pos < o.pos + o.width
+                  )
+                  const orientation = idx % 2 === 0 ? 'down' : 'up'
+                  const overlapNode = (!insideOpening && !isC623 && snapH > 3000) ? (() => {
+                    const kind = edgeKind(pos)
+                    const { overlapZone } = calcStudMaterial(snapH, kind, overlap, orientation)
+                    if (!overlapZone) return null
+                    const baseY = wallTop + 8
+                    const zFrom = baseY + overlapZone.from * scale
+                    const zTo = baseY + overlapZone.to * scale
+                    const zH = zTo - zFrom
+                    const zoneMm = overlapZone.to - overlapZone.from
+                    return (
+                      <Group key={`ov${pos}`}>
+                        <Rect x={tx(pos) - studW / 2} y={zFrom} width={studW} height={zH}
+                          fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
+                        <Text x={tx(pos) + studW / 2 + 3} y={zFrom + zH / 2 - 5}
+                          text={`${zoneMm}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
+                      </Group>
+                    )
+                  })() : null
                   return (
-                    <Rect key={`s${pos}`} x={tx(pos) - studW / 2} y={wallTop + 8}
-                      width={studW} height={snapH * scale - 16}
-                      fill={isEdge ? '#8a9aa4' : '#b8c4cc'} stroke="#5a7080" strokeWidth={1} cornerRadius={2}
-                      onDblClick={() => removeStud(pos)} />
+                    <Group key={`s${pos}`}>
+                      <Rect x={tx(pos) - studW / 2} y={wallTop + 8}
+                        width={studW} height={snapH * scale - 16}
+                        fill={isEdge ? '#8a9aa4' : '#b8c4cc'} stroke="#5a7080" strokeWidth={1} cornerRadius={2}
+                        onDblClick={() => removeStud(pos)} />
+                      {overlapNode}
+                    </Group>
                   )
                 })}
                 {positions.map((pos, i) => {
@@ -345,6 +381,67 @@ export default function LiningCalc() {
           {isC623 && <><p>Прямые подвесы: <b>{result.hangers} шт</b></p>{result.extenders > 0 && <p>Удлинители: <b>{result.extenders} шт</b></p>}</>}
           <p>ГКЛ ({gklLayersFixed ?? form.gklLayers} сл.): <b>{result.gklArea.toFixed(2)} м²</b></p>
           {hasInsulation && insulationArea && <p>Утеплитель: <b>{insulationArea} м²</b></p>}
+
+          {/* ─── Раскрой ─── */}
+          {(() => {
+            const { pn, stud } = result.cutList
+            const roleColor: Record<string, string> = {
+              floor: '#e8f4ff', ceiling: '#e8f4ff', sill: '#fff8e8',
+              lintel: '#fff0e8', stud: '#f0ffe8', stud_part: '#f0ffe8',
+            }
+            const renderCutList = (cl: typeof pn, title: string) => (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#444', marginBottom: 6 }}>
+                  {title} — {cl.totalBars} шт, остаток {cl.totalWaste}мм
+                </div>
+                {cl.bars.map((bar, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: '#888', minWidth: 52 }}>Пруток {i + 1}:</span>
+                    <div style={{ display: 'flex', flex: 1, height: 22, border: '1px solid #ccc', borderRadius: 3, overflow: 'hidden' }}>
+                      {bar.pieces.map((p, j) => (
+                        <div key={j}
+                          title={p.piece.label}
+                          style={{
+                            width: `${(p.piece.length / 3000) * 100}%`,
+                            background: roleColor[p.piece.role] ?? '#eee',
+                            borderRight: '1px solid #bbb',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 9, color: '#555', overflow: 'hidden', whiteSpace: 'nowrap',
+                          }}>
+                          {p.piece.length >= 200 ? p.piece.label : ''}
+                        </div>
+                      ))}
+                      {bar.waste > 0 && (
+                        <div style={{
+                          width: `${(bar.waste / 3000) * 100}%`,
+                          background: '#f5f5f5',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 9, color: '#aaa',
+                        }}>
+                          {bar.waste >= 200 ? `ост ${bar.waste}` : ''}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+            return (
+              <div style={{ marginTop: 16, padding: '12px 14px', background: '#fafafa', border: '1px solid #e0e0e0', borderRadius: 6 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#333', marginBottom: 4 }}>Раскрой (прутки 3000мм)</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, marginBottom: 8 }}>
+                  {[[guideLabel, '#e8f4ff'], ['Перемычка', '#fff0e8'], [studLabel, '#f0ffe8'], ['Остаток', '#f5f5f5']].map(([label, color]) => (
+                    <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ width: 12, height: 12, background: color, border: '1px solid #ccc', borderRadius: 2, display: 'inline-block' }} />
+                      {label}
+                    </span>
+                  ))}
+                </div>
+                {renderCutList(pn, `ПН ${guideLabel}`)}
+                {renderCutList(stud, studLabel)}
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>
