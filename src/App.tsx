@@ -726,26 +726,32 @@ export default function App() {
                     else if (fixed) { fillColor = STEEL_EDGE }
                     else { fillColor = STEEL_NORMAL }
 
-                    // Зона нахлёста (только для полных стоек, h>3000)
+                    // Зоны нахлёста (только для полных стоек, h>3000)
                     const overlapNode = !insideOpening && h > 3000 ? (() => {
                       const kind = fixed
                         ? (pos === 0
                           ? ((form.abutment === 'both' || form.abutment === 'left') ? 'wall' : 'free')
                           : ((form.abutment === 'both' || form.abutment === 'right') ? 'wall' : 'free'))
                         : 'middle'
-                      const { overlapZone } = calcStudMaterial(h, kind as any, effectiveOverlap, orientation)
-                      if (!overlapZone) return null
+                      const { overlapZones } = calcStudMaterial(h, kind as any, effectiveOverlap, orientation)
+                      if (!overlapZones.length) return null
                       const baseY = wallTop + 8
-                      const zFrom = baseY + overlapZone.from * scale
-                      const zTo = baseY + overlapZone.to * scale
-                      const zH = zTo - zFrom
-                      const zoneMm = overlapZone.to - overlapZone.from
                       return (
                         <Group>
-                          <Rect x={0} y={zFrom} width={studW} height={zH}
-                            fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
-                          <Text x={studW + 3} y={zFrom + zH / 2 - 5}
-                            text={`${zoneMm}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
+                          {overlapZones.map((zone, zi) => {
+                            const zFrom = baseY + zone.from * scale
+                            const zTo   = baseY + zone.to   * scale
+                            const zH    = zTo - zFrom
+                            const zoneMm = zone.to - zone.from
+                            return (
+                              <Group key={zi}>
+                                <Rect x={0} y={zFrom} width={studW} height={zH}
+                                  fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
+                                <Text x={studW + 3} y={zFrom + zH / 2 - 5}
+                                  text={`${zoneMm}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
+                              </Group>
+                            )
+                          })}
                         </Group>
                       )
                     })() : null

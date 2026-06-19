@@ -1,5 +1,6 @@
 import type { LiningInput, LiningResult } from '../types'
 import { buildCutList, BAR_LENGTH } from './cutList'
+import { middleStudTotalLength, middleStudPieceCount } from './calcStudMaterial'
 import type { Piece } from './cutList'
 
 const STUD_LENGTH = 3000
@@ -46,8 +47,9 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
 
   function studLen(sh: number, kind: 'wall' | 'middle'): number {
     if (sh <= STUD_LENGTH || isC623) return sh
-    if (kind === 'wall') return sh // торец в торец, без нахлёста
-    return sh + overlap
+    if (kind === 'wall') return sh  // торец в торец, без нахлёста, длина = h
+    // middle: n кусков с нахлёстом → h + (n-1)*overlap
+    return middleStudTotalLength(sh, overlap)
   }
 
   function aboveHeight(pos: number): number | null {
@@ -149,19 +151,32 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
       studPcs.push({ length: h, role: 'stud', label: `Стойка ${h}мм`, mustBeWhole: false })
     } else if (isC623) {
       // С623: ПП 60×27 на подвесах — стыкуется удлинителями, без нахлёста.
-      // Разбиваем торец в торец: 3000 + остаток.
-      const rest = h - STUD_LENGTH
-      studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `ПП 60×27 осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
-      studPcs.push({ length: rest, role: 'stud_part', label: `ПП 60×27 доп. ${rest}мм`, mustBeWhole: false })
+      // n = ceil(h/3000) кусков: (n-1) × 3000 + остаток
+      const nC623 = Math.ceil(h / STUD_LENGTH)
+      for (let i = 0; i < nC623 - 1; i++) {
+        studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `ПП 60×27 осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
+      }
+      const restC623 = h - (nC623 - 1) * STUD_LENGTH
+      studPcs.push({ length: restC623, role: 'stud_part', label: `ПП 60×27 доп. ${restC623}мм`, mustBeWhole: false })
     } else if (edgeKind(pos) === 'wall') {
-      // Крайняя стойка у стены — торец в торец, без нахлёста: 3000 + остаток
-      const rest = h - STUD_LENGTH
-      studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `Стойка пристенная осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
-      studPcs.push({ length: rest, role: 'stud_part', label: `Стойка пристенная доп. ${rest}мм`, mustBeWhole: false })
+      // Крайняя стойка у стены — торец в торец, без нахлёста
+      // n = ceil(h/3000) кусков: (n-1) × 3000 + остаток
+      const nWall = Math.ceil(h / STUD_LENGTH)
+      for (let i = 0; i < nWall - 1; i++) {
+        studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `Стойка пристенная осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
+      }
+      const restWall = h - (nWall - 1) * STUD_LENGTH
+      studPcs.push({ length: restWall, role: 'stud_part', label: `Стойка пристенная доп. ${restWall}мм`, mustBeWhole: false })
     } else {
-      // Рядовая стойка, h > 3000 — два куска с нахлёстом
-      studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `Стойка осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
-      studPcs.push({ length: h - STUD_LENGTH + overlap, role: 'stud_part', label: `Стойка доп. ${h - STUD_LENGTH + overlap}мм`, mustBeWhole: false })
+      // Рядовая стойка, h > 3000 — n кусков с нахлёстом
+      // n = 1 + ceil((h-3000)/step), step = 3000-overlap
+      const step = STUD_LENGTH - overlap
+      const n = middleStudPieceCount(h, overlap)
+      for (let i = 0; i < n - 1; i++) {
+        studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `Стойка осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
+      }
+      const lastLen = h - (n - 1) * step
+      studPcs.push({ length: lastLen, role: 'stud_part', label: `Стойка доп. ${lastLen}мм`, mustBeWhole: false })
     }
   }
 

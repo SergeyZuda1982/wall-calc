@@ -321,19 +321,25 @@ export default function LiningCalc() {
                   const orientation = idx % 2 === 0 ? 'down' : 'up'
                   const overlapNode = (!insideOpening && !isC623 && snapH > 3000) ? (() => {
                     const kind = edgeKind(pos)
-                    const { overlapZone } = calcStudMaterial(snapH, kind, overlap, orientation)
-                    if (!overlapZone) return null
+                    const { overlapZones } = calcStudMaterial(snapH, kind, overlap, orientation)
+                    if (!overlapZones.length) return null
                     const baseY = wallTop + 8
-                    const zFrom = baseY + overlapZone.from * scale
-                    const zTo = baseY + overlapZone.to * scale
-                    const zH = zTo - zFrom
-                    const zoneMm = overlapZone.to - overlapZone.from
                     return (
                       <Group key={`ov${pos}`}>
-                        <Rect x={tx(pos) - studW / 2} y={zFrom} width={studW} height={zH}
-                          fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
-                        <Text x={tx(pos) + studW / 2 + 3} y={zFrom + zH / 2 - 5}
-                          text={`${zoneMm}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
+                        {overlapZones.map((zone, zi) => {
+                          const zFrom = baseY + zone.from * scale
+                          const zTo   = baseY + zone.to   * scale
+                          const zH    = zTo - zFrom
+                          const zoneMm = zone.to - zone.from
+                          return (
+                            <Group key={zi}>
+                              <Rect x={tx(pos) - studW / 2} y={zFrom} width={studW} height={zH}
+                                fill="rgba(255,140,0,0.3)" stroke="#ff8c00" strokeWidth={1.5} dash={[4, 3]} />
+                              <Text x={tx(pos) + studW / 2 + 3} y={zFrom + zH / 2 - 5}
+                                text={`${zoneMm}мм`} fontSize={9} fill="#c05000" fontStyle="bold" />
+                            </Group>
+                          )
+                        })}
                       </Group>
                     )
                   })() : null

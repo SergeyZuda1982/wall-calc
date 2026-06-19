@@ -151,8 +151,13 @@ export function pnPieces(
 }
 
 /**
- * Формирует список кусков ПС для одной перегородки.
- * Каждая стойка — один или два куска (если h > 3000).
+ * Формирует список кусков ПС для одной перегородки (n-кусковая логика).
+ *
+ * wall:   торец в торец, без нахлёста. n = ceil(h/3000) кусков по ≤3000мм.
+ * middle: n кусков с нахлёстом. step=3000-overlap. n=1+ceil((h-3000)/step).
+ *         Куски: (n-1) × 3000мм + последний = h-(n-1)*step.
+ *         Суммарный материал = h + (n-1)*overlap.
+ * free:   два куска торец в торец (3000+part2) + соединительный (overlap+overlapUp).
  */
 export function psPieces(
   studInfos: { kind: string; isAbove: boolean; openingId: string | null; orientation: string }[],
@@ -161,51 +166,52 @@ export function psPieces(
   openings: { id: string; height: number; sillHeight: number }[]
 ): Piece[] {
   const pieces: Piece[] = []
+  const step = BAR_LENGTH - overlap  // чистый прирост высоты на кусок (middle)
 
   for (const stud of studInfos) {
     if (stud.isAbove && stud.openingId) {
-      // Стойка внутри проёма — два коротких куска (над и под)
+      // Стойка внутри проёма — куски над и под проёмом
       const o = openings.find(x => x.id === stud.openingId)
       if (!o) continue
       const aboveLen = h - o.height - o.sillHeight
       const belowLen = o.sillHeight
       if (aboveLen > 0) pieces.push({ length: aboveLen, role: 'stud_part', label: `Над проёмом ${aboveLen}мм`, mustBeWhole: false })
       if (belowLen > 0) pieces.push({ length: belowLen, role: 'stud_part', label: `Под подоконником ${belowLen}мм`, mustBeWhole: false })
+
     } else if (h <= BAR_LENGTH) {
-      // Стойка целиком из одного куска
+      // Любая стойка вписывается в один профиль
       pieces.push({ length: h, role: 'stud', label: `Стойка ${h}мм`, mustBeWhole: false })
+
     } else if (stud.kind === 'wall') {
-      // Крайняя стойка wall — примыкает к конструкции, без нахлёста, торец в торец.
-      // h здесь всегда > BAR_LENGTH (случай h<=BAR_LENGTH отработан выше для любого kind).
-      // Кусок не может быть длиннее прутка — режем на 3000 + остаток.
-      const rest = h - BAR_LENGTH
-      pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка пристенная осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
-      pieces.push({ length: rest, role: 'stud_part', label: `Стойка пристенная доп. ${rest}мм`, mustBeWhole: false })
-    } else if (stud.kind === 'free') {
-      // free: 3000 + part2 (торец в торец, основной столб высотой h) +
-      // соединительный кусок, перекрывающий стык на overlap вниз и overlapUp вверх.
-      // ВАЖНО: соединительный = overlap + overlapUp (НЕ part2 + overlap + overlapUp —
-      // это была ошибка: part2 уже учтён как отдельный кусок-столб выше).
-      // Сумма кусков (3000 + part2 + connector) должна совпадать с calcStudMaterial().length.
-      if (h <= BAR_LENGTH) {
-        pieces.push({ length: h, role: 'stud', label: `Стойка своб. ${h}мм`, mustBeWhole: false })
-        pieces.push({ length: h, role: 'stud_part', label: `Стойка соед. ${h}мм`, mustBeWhole: false })
-      } else {
-        const part2 = h - BAR_LENGTH
-        const overlapUp = part2 >= overlap ? overlap : 500
-        const connector = overlap + overlapUp
-        // Два основных куска торец в торец
-        pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка своб. осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
-        pieces.push({ length: part2, role: 'stud_part', label: `Стойка своб. доп. ${part2}мм`, mustBeWhole: false })
-        // Соединительный кусок
-        pieces.push({ length: connector, role: 'stud_part', label: `Стойка соед. ${connector}мм`, mustBeWhole: false })
+      // ── wall: торец в торец, без нахлёста ───────────────────────────────
+      // n = ceil(h/3000) кусков; (n-1) × 3000мм + последний кусок.
+      const nWall = Math.ceil(h / BAR_LENGTH)
+      for (let i = 0; i < nWall - 1; i++) {
+        pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка пристенная осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
       }
+      const lastWall = h - (nWall - 1) * BAR_LENGTH
+      pieces.push({ length: lastWall, role: 'stud_part', label: `Стойка пристенная доп. ${lastWall}мм`, mustBeWhole: false })
+
+    } else if (stud.kind === 'free') {
+      // ── free: столб торец в торец + соединительный кусок ────────────────
+      const part2 = h - BAR_LENGTH
+      const overlapUp = part2 >= overlap ? overlap : 500
+      const connector = overlap + overlapUp
+      pieces.push({ length: BAR_LENGTH, role: 'stud',      label: `Стойка своб. осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
+      pieces.push({ length: part2,      role: 'stud_part', label: `Стойка своб. доп. ${part2}мм`,      mustBeWhole: false })
+      pieces.push({ length: connector,  role: 'stud_part', label: `Стойка соед. ${connector}мм`,        mustBeWhole: false })
+
     } else {
-      // Стойка наращивается: два куска (middle, free, door, window)
-      const part1 = BAR_LENGTH        // длинный кусок 3000мм
-      const part2 = h - BAR_LENGTH + overlap  // короткий кусок с нахлёстом
-      pieces.push({ length: part1, role: 'stud', label: `Стойка осн. ${part1}мм`, mustBeWhole: false })
-      pieces.push({ length: part2, role: 'stud_part', label: `Стойка доп. ${part2}мм`, mustBeWhole: false })
+      // ── middle / door / window: n кусков с нахлёстом ────────────────────
+      // n = 1 + ceil((h-3000)/step), суммарный материал = h + (n-1)*overlap
+      const n = 1 + Math.ceil((h - BAR_LENGTH) / step)
+      // (n-1) полных кусков по 3000мм
+      for (let i = 0; i < n - 1; i++) {
+        pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
+      }
+      // Последний кусок = h - (n-1)*step
+      const lastMiddle = h - (n - 1) * step
+      pieces.push({ length: lastMiddle, role: 'stud_part', label: `Стойка доп. ${lastMiddle}мм`, mustBeWhole: false })
     }
   }
 

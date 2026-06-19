@@ -241,4 +241,71 @@ describe('psPieces', () => {
       expect(sum).toBe(length)
     }
   })
+
+  // ─── Регрессия n-кусковая логика для middle при h>5000 ───────────────────
+
+  it('middle h=5100, ПС100: 3 куска [3000,3000,1100], сумма=7100мм', () => {
+    const studs = [{ kind: 'middle', isAbove: false, openingId: null, orientation: 'up' }]
+    const pieces = psPieces(studs, 5100, 1000, [])
+    expect(pieces).toHaveLength(3)
+    expect(pieces[0].length).toBe(3000)
+    expect(pieces[1].length).toBe(3000)
+    expect(pieces[2].length).toBe(1100)
+    expect(pieces.reduce((s, p) => s + p.length, 0)).toBe(7100)
+  })
+
+  it('middle h=5000, ПС100: ровно 2 куска [3000,3000], сумма=6000мм', () => {
+    const studs = [{ kind: 'middle', isAbove: false, openingId: null, orientation: 'up' }]
+    const pieces = psPieces(studs, 5000, 1000, [])
+    expect(pieces).toHaveLength(2)
+    expect(pieces.reduce((s, p) => s + p.length, 0)).toBe(6000)
+  })
+
+  it('middle: сумма кусков = middleStudTotalLength для всех случаев', () => {
+    const cases: [number, number][] = [
+      [3600, 750], [5100, 1000], [5251, 750], [6000, 500], [5000, 1000]
+    ]
+    for (const [h, overlap] of cases) {
+      const studs = [{ kind: 'middle', isAbove: false, openingId: null, orientation: 'up' }]
+      const pieces = psPieces(studs, h, overlap, [])
+      const sum = pieces.reduce((s, p) => s + p.length, 0)
+      const expected = h + (pieces.length - 1) * overlap  // h + (n-1)*overlap
+      expect(sum).toBe(expected)
+      // Ни один кусок не длиннее 3000мм
+      expect(pieces.every(p => p.length <= BAR_LENGTH)).toBe(true)
+    }
+  })
+
+  it('wall h=5100: 2 куска торец в торец [3000,2100], сумма=5100мм', () => {
+    const studs = [{ kind: 'wall', isAbove: false, openingId: null, orientation: 'down' }]
+    const pieces = psPieces(studs, 5100, 1000, [])
+    expect(pieces).toHaveLength(2)
+    expect(pieces[0].length).toBe(3000)
+    expect(pieces[1].length).toBe(2100)
+    expect(pieces.reduce((s, p) => s + p.length, 0)).toBe(5100)
+  })
+
+  it('wall h=7000: 3 куска торец в торец [3000,3000,1000], сумма=7000мм', () => {
+    const studs = [{ kind: 'wall', isAbove: false, openingId: null, orientation: 'down' }]
+    const pieces = psPieces(studs, 7000, 1000, [])
+    expect(pieces).toHaveLength(3)
+    expect(pieces.every(p => p.length <= BAR_LENGTH)).toBe(true)
+    expect(pieces.reduce((s, p) => s + p.length, 0)).toBe(7000)
+  })
+
+  it('сценарий 6160×5100, ПС100, both, 12 стоек — корректный итоговый метраж', () => {
+    // 2 wall × 5100мм + 10 middle × 7100мм = 10200 + 71000 = 81200мм
+    const studs = [
+      { kind: 'wall',   isAbove: false, openingId: null, orientation: 'down' },
+      ...Array(10).fill({ kind: 'middle', isAbove: false, openingId: null, orientation: 'up' }),
+      { kind: 'wall',   isAbove: false, openingId: null, orientation: 'down' },
+    ]
+    const pieces = psPieces(studs, 5100, 1000, [])
+    const total = pieces.reduce((s, p) => s + p.length, 0)
+    expect(total).toBe(81200)
+    expect(pieces.every(p => p.length <= BAR_LENGTH)).toBe(true)
+    // Правильное число прутков: ceil(81200/3000) ≤ totalBars (FFD не хуже оптимума)
+    const cutResult = buildCutList(pieces)
+    expect(cutResult.totalBars).toBeGreaterThanOrEqual(Math.ceil(81200 / BAR_LENGTH))
+  })
 })
