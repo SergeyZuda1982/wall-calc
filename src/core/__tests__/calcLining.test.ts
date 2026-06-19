@@ -36,11 +36,23 @@ describe('calcLining — wall/middle краевых стоек (С625/С626)', (
     expect(res.stud).toBeCloseTo(51.45, 2)
   })
 
-  it('С623 — нахлёст и wall/middle не применяются (другая система), длина = h', () => {
-    const res = calcLining({ ...base, liningType: 'c623', profileType: 'ps75' }, positions12)
-    // countablePositions исключает 0 и l для С623 → 10 стоек по h=3600
-    expect(res.studsCount).toBe(10)
-    expect(res.stud).toBeCloseTo(36.00, 2)
+  it('С623 h<=3000: один кусок на стойку, без нахлёста и удлинителей в раскрое', () => {
+    const positions5 = [0, 600, 1200, 1800, 2400, 3000]
+    const res = calcLining({ ...base, liningType: 'c623', profileType: 'ps75', length: 3000, height: 2700 }, positions5)
+    expect(res.studsCount).toBe(4) // исключает 0 и 3000
+    expect(res.stud).toBeCloseTo(10.80, 2) // 4×2700
+    expect(res.rawPieces.stud.every(p => p.length <= 3000)).toBe(true)
+  })
+
+  it('С623 h>3000: стойки режутся торец в торец (3000+остаток), раскрой не пустой', () => {
+    const positions5 = [0, 600, 1200, 1800, 2400, 3000]
+    const res = calcLining({ ...base, liningType: 'c623', profileType: 'ps75', length: 3000, height: 3500 }, positions5)
+    expect(res.studsCount).toBe(4)
+    expect(res.stud).toBeCloseTo(14.00, 2) // 4×3500
+    // 4 стойки → 4×(3000+500) = 8 кусков, все ≤ 3000
+    expect(res.rawPieces.stud.length).toBe(8)
+    expect(res.rawPieces.stud.every(p => p.length <= 3000)).toBe(true)
+    expect(res.cutList.stud.totalBars).toBeGreaterThan(0)
   })
 
   it('раскрой ПС: сумма кусков studPcs совпадает с заявленным метражом stud', () => {
@@ -49,7 +61,7 @@ describe('calcLining — wall/middle краевых стоек (С625/С626)', (
     expect(sumMm).toBe(Math.round(res.stud * 1000))
   })
 
-  it('никакой кусок в раскрое стоек не длиннее прутка 3000мм', () => {
+  it('никакой кусок в раскрое стоек не длиннее профиля 3000мм', () => {
     const res = calcLining(base, positions12)
     expect(res.rawPieces.stud.every(p => p.length <= 3000)).toBe(true)
     expect(res.cutList.stud.totalBars).toBeGreaterThan(0)

@@ -918,7 +918,7 @@ export default function App() {
                   </div>
                   {cl.bars.map((bar, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 4 }}>
-                      <span style={{ fontSize: 11, color: '#888', minWidth: 52 }}>Пруток {i + 1}:</span>
+                      <span style={{ fontSize: 11, color: '#888', minWidth: 52 }}>Профиль {i + 1}:</span>
                       <div style={{ display: 'flex', flex: 1, height: 22, border: '1px solid #ccc', borderRadius: 3, overflow: 'hidden' }}>
                         {bar.pieces.map((p, j) => (
                           <div key={j}
@@ -1068,7 +1068,7 @@ export default function App() {
                         </div>
                         {cl.bars.map((bar, i) => (
                           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 3 }}>
-                            <span style={{ fontSize: 10, color: '#888', minWidth: 52 }}>Пруток {i + 1}:</span>
+                            <span style={{ fontSize: 10, color: '#888', minWidth: 52 }}>Профиль {i + 1}:</span>
                             <div style={{ display: 'flex', flex: 1, height: 20, border: '1px solid #ccc', borderRadius: 3, overflow: 'hidden' }}>
                               {bar.pieces.map((p, j) => (
                                 <div key={j} title={p.piece.label} style={{

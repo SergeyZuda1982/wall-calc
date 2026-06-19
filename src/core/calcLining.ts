@@ -144,9 +144,15 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
       if (o && o.sillHeight > 0) {
         studPcs.push({ length: o.sillHeight, role: 'stud_part', label: `Под подоконником ${o.sillHeight}мм`, mustBeWhole: false })
       }
-    } else if (isC623 || h <= STUD_LENGTH) {
-      // С623 не наращивается; или высота вписывается в пруток
+    } else if (h <= STUD_LENGTH) {
+      // Высота вписывается в один профиль — один кусок
       studPcs.push({ length: h, role: 'stud', label: `Стойка ${h}мм`, mustBeWhole: false })
+    } else if (isC623) {
+      // С623: ПП 60×27 на подвесах — стыкуется удлинителями, без нахлёста.
+      // Разбиваем торец в торец: 3000 + остаток.
+      const rest = h - STUD_LENGTH
+      studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `ПП 60×27 осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
+      studPcs.push({ length: rest, role: 'stud_part', label: `ПП 60×27 доп. ${rest}мм`, mustBeWhole: false })
     } else if (edgeKind(pos) === 'wall') {
       // Крайняя стойка у стены — торец в торец, без нахлёста: 3000 + остаток
       const rest = h - STUD_LENGTH
