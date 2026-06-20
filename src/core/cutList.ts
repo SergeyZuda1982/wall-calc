@@ -12,6 +12,8 @@
  *   если не нашли — берём новый пруток
  */
 
+import { splitFreeStud } from './calcStudMaterial'
+
 export const BAR_LENGTH = 3000 // мм
 
 export type PieceRole =
@@ -157,7 +159,8 @@ export function pnPieces(
  * middle: n кусков с нахлёстом. step=3000-overlap. n=1+ceil((h-3000)/step).
  *         Куски: (n-1) × 3000мм + последний = h-(n-1)*step.
  *         Суммарный материал = h + (n-1)*overlap.
- * free:   два куска торец в торец (3000+part2) + соединительный (overlap+overlapUp).
+ * free:   N основных кусков торец в торец (3000мм + короткий остаток) +
+ *         отдельный соединительный кусок НА КАЖДЫЙ стык (см. splitFreeStud).
  */
 export function psPieces(
   studInfos: { kind: string; isAbove: boolean; openingId: string | null; orientation: string }[],
@@ -193,13 +196,23 @@ export function psPieces(
       pieces.push({ length: lastWall, role: 'stud_part', label: `Стойка пристенная доп. ${lastWall}мм`, mustBeWhole: false })
 
     } else if (stud.kind === 'free') {
-      // ── free: столб торец в торец + соединительный кусок ────────────────
-      const part2 = h - BAR_LENGTH
-      const overlapUp = part2 >= overlap ? overlap : 500
-      const connector = overlap + overlapUp
-      pieces.push({ length: BAR_LENGTH, role: 'stud',      label: `Стойка своб. осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
-      pieces.push({ length: part2,      role: 'stud_part', label: `Стойка своб. доп. ${part2}мм`,      mustBeWhole: false })
-      pieces.push({ length: connector,  role: 'stud_part', label: `Стойка соед. ${connector}мм`,        mustBeWhole: false })
+      // ── free: N основных кусков торец в торец + соединительный на КАЖДЫЙ стык ──
+      // Используем ту же разбивку, что и calcStudMaterial (splitFreeStud), чтобы
+      // смета (cwTotal) и раскрой никогда не расходились.
+      const { mainPieces, connectorLengths } = splitFreeStud(h, overlap)
+
+      mainPieces.forEach((len, i) => {
+        pieces.push({
+          length: len,
+          role: i === 0 ? 'stud' : 'stud_part',
+          label: `Стойка своб. ${i === 0 ? 'осн.' : 'доп.'} ${len}мм`,
+          mustBeWhole: false,
+        })
+      })
+
+      connectorLengths.forEach(connector => {
+        pieces.push({ length: connector, role: 'stud_part', label: `Стойка соед. ${connector}мм`, mustBeWhole: false })
+      })
 
     } else {
       // ── middle / door / window: n кусков с нахлёстом ────────────────────

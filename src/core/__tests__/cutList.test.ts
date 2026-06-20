@@ -308,4 +308,60 @@ describe('psPieces', () => {
     const cutResult = buildCutList(pieces)
     expect(cutResult.totalBars).toBeGreaterThanOrEqual(Math.ceil(81200 / BAR_LENGTH))
   })
+
+  // ─── Регрессия: free-стойка на высоких перегородках (h≥5000) — соединительный
+  // кусок старой формулы (part2+overlap+overlapUp) превышал 3000мм и тихо
+  // выбрасывался buildCutList. Теперь — N соединительных кусков, по одному на
+  // каждый стык между основными 3000-кусками, каждый ≤3000мм.
+
+  it('free h=7000, overlap=750: ДВА стыка → ДВА отдельных соединительных куска по 1500мм', () => {
+    const studs = [{ kind: 'free', isAbove: false, openingId: null, orientation: 'up' }]
+    const pieces = psPieces(studs, 7000, 750, [])
+    const connectors = pieces.filter(p => p.label.includes('соед.'))
+    expect(connectors).toHaveLength(2)
+    expect(connectors.every(c => c.length === 1500)).toBe(true)
+    expect(pieces.every(p => p.length <= BAR_LENGTH)).toBe(true)
+    expect(pieces.reduce((s, p) => s + p.length, 0)).toBe(10000)
+  })
+
+  it('free h=9500, overlap=750: три стыка, последний короткий остаток (500<750) → 1250мм', () => {
+    const studs = [{ kind: 'free', isAbove: false, openingId: null, orientation: 'up' }]
+    const pieces = psPieces(studs, 9500, 750, [])
+    const connectors = pieces.filter(p => p.label.includes('соед.'))
+    expect(connectors).toHaveLength(3)
+    expect(connectors.map(c => c.length)).toEqual([1500, 1500, 1250])
+    expect(pieces.every(p => p.length <= BAR_LENGTH)).toBe(true)
+    expect(pieces.reduce((s, p) => s + p.length, 0)).toBe(13750)
+  })
+
+  it('free: ни один кусок не превышает прутка даже при очень больших h (регрессия старого бага)', () => {
+    const heights = [4500, 5000, 5500, 6000, 7000, 8000, 9500, 12000]
+    for (const h of heights) {
+      const studs = [{ kind: 'free', isAbove: false, openingId: null, orientation: 'up' }]
+      const pieces = psPieces(studs, h, 750, [])
+      expect(pieces.every(p => p.length <= BAR_LENGTH)).toBe(true)
+      // Раскрой не должен молча терять материал
+      const cutResult = buildCutList(pieces)
+      const placed = pieces.reduce((s, p) => s + p.length, 0)
+      expect(cutResult.totalBars * BAR_LENGTH).toBe(placed + cutResult.totalWaste)
+      // И сумма кусков раскроя должна совпадать со сметой
+      const { length } = calcStudMaterial(h, 'free', 750, 'up')
+      expect(placed).toBe(length)
+    }
+  })
+
+  it('сценарий 6160×7000, ПС75, none (две free), 12 стоек — материал не теряется', () => {
+    // 2 free × 10000мм (h=7000, overlap=750, 2 стыка) + 10 middle
+    const studs = [
+      { kind: 'free',   isAbove: false, openingId: null, orientation: 'down' },
+      ...Array(10).fill({ kind: 'middle', isAbove: false, openingId: null, orientation: 'up' }),
+      { kind: 'free',   isAbove: false, openingId: null, orientation: 'down' },
+    ]
+    const pieces = psPieces(studs, 7000, 750, [])
+    expect(pieces.every(p => p.length <= BAR_LENGTH)).toBe(true)
+    const cutResult = buildCutList(pieces)
+    const placed = pieces.reduce((s, p) => s + p.length, 0)
+    // Инвариант: ни один кусок не потерян молча
+    expect(cutResult.totalBars * BAR_LENGTH).toBe(placed + cutResult.totalWaste)
+  })
 })

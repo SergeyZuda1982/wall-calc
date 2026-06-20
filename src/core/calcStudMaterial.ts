@@ -30,6 +30,48 @@ export function middleStudTotalLength(h: number, overlap: number): number {
   return h + (n - 1) * overlap
 }
 
+export interface FreeStudSplit {
+  mainPieces: number[]       // основные куски торец в торец (3000мм + короткий остаток)
+  connectorLengths: number[] // соединительный кусок на каждый стык между mainPieces
+}
+
+/**
+ * Разбивает высоту free-стойки на основные куски (торец в торец, по 3000мм,
+ * последний может быть короче) и соединительные куски — по одному на каждый стык.
+ *
+ * На каждый стык между mainPieces[j] и mainPieces[j+1]:
+ *   - нахлёст слева = overlap (слева всегда полный 3000-кусок)
+ *   - нахлёст справа = overlap, если mainPieces[j+1] ≥ overlap, иначе MIN_OVERLAP_UP
+ *
+ * Используется и для расчёта метража (calcStudMaterial), и для раскроя (cutList/psPieces),
+ * чтобы смета и раскрой не расходились.
+ *
+ * Примеры (overlap=750):
+ *   h=3600 → main: 3000+600,           connectors: [1250]            (600<750 → правый=500)
+ *   h=4500 → main: 3000+1500,          connectors: [1500]
+ *   h=7000 → main: 3000+3000+1000,     connectors: [1500, 1500]
+ */
+export function splitFreeStud(h: number, overlap: number): FreeStudSplit {
+  const numFullBars = Math.floor((h - 1) / STUD_LENGTH)
+  const mainPieces: number[] = []
+  let remaining = h
+  for (let i = 0; i < numFullBars; i++) {
+    mainPieces.push(STUD_LENGTH)
+    remaining -= STUD_LENGTH
+  }
+  if (remaining > 0) mainPieces.push(remaining)
+
+  const connectorLengths: number[] = []
+  for (let j = 0; j < mainPieces.length - 1; j++) {
+    const rightPieceLen = mainPieces[j + 1]
+    const rightOverlap = rightPieceLen >= overlap ? overlap : MIN_OVERLAP_UP
+    const leftOverlap = overlap // слева всегда полный 3000-кусок
+    connectorLengths.push(leftOverlap + rightOverlap)
+  }
+
+  return { mainPieces, connectorLengths }
+}
+
 /**
  * Возвращает длину материала и зоны нахлёста для одной стойки.
  *
@@ -41,8 +83,8 @@ export function middleStudTotalLength(h: number, overlap: number): number {
  *   up:   длинный снизу — зона i начинается с (i+1)*step от низа стойки.
  *   down: длинный сверху — зона i начинается с (h−3000) − i*step от низа.
  *
- * free:   торец в торец + соединительный кусок.
- *   Длина = h + overlap + overlapUp.
+ * free:   несколько основных кусков по 3000мм (последний может быть короче) торец в торец,
+ *   плюс отдельный соединительный кусок НА КАЖДЫЙ стык между ними (см. splitFreeStud).
  */
 export function calcStudMaterial(
   h: number,
@@ -89,19 +131,28 @@ export function calcStudMaterial(
   }
 
   // ─── free ─────────────────────────────────────────────────────────────────
-  const part2 = h - STUD_LENGTH
-  const overlapUp = part2 >= overlap ? overlap : MIN_OVERLAP_UP
-  const totalLength = STUD_LENGTH + part2 + overlap + overlapUp
+  const { mainPieces, connectorLengths } = splitFreeStud(h, overlap)
 
-  let zoneFrom: number, zoneTo: number
-  if (orientation === 'up') {
-    zoneFrom = Math.max(0, STUD_LENGTH - overlap)
-    zoneTo   = Math.min(STUD_LENGTH + overlapUp, h)
-  } else {
-    const jointH = h - STUD_LENGTH
-    zoneFrom = Math.max(0, jointH - overlap)
-    zoneTo   = Math.min(jointH + overlapUp, h)
+  const overlapZones: { from: number; to: number }[] = []
+  let cursor = 0 // позиция стыка от низа (считаем при orientation 'up')
+  for (let j = 0; j < mainPieces.length - 1; j++) {
+    cursor += mainPieces[j]
+    const leftOverlap = overlap
+    const rightOverlap = connectorLengths[j] - leftOverlap
+    overlapZones.push({
+      from: Math.max(0, cursor - leftOverlap),
+      to: Math.min(cursor + rightOverlap, h),
+    })
   }
 
-  return { length: totalLength, overlapZones: [{ from: zoneFrom, to: zoneTo }] }
+  const mainTotal = mainPieces.reduce((a, b) => a + b, 0)
+  const connectorTotal = connectorLengths.reduce((a, b) => a + b, 0)
+  const totalLength = mainTotal + connectorTotal
+
+  // down: стойка смонтирована зеркально (длинный кусок сверху) — отражаем зоны относительно h
+  const finalZones = orientation === 'down'
+    ? overlapZones.map(z => ({ from: h - z.to, to: h - z.from })).reverse()
+    : overlapZones
+
+  return { length: totalLength, overlapZones: finalZones }
 }
