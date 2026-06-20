@@ -12,6 +12,7 @@ import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
 import { BAR_LENGTH } from './core/cutList'
 import ProfileEditor from './components/ProfileEditor'
+import { interpolateY, flatProfile, maxStudHeight } from './core/profileGeometry'
 
 // Цвета оцинкованной стали
 const STEEL_NORMAL   = '#b8c4cc'
@@ -211,11 +212,36 @@ export default function App() {
   const { l, h, openings: snapOpenings } = snap
   const scale = l > 0 ? (CANVAS_W - PAD * 2) / l : 1
   const TOP_PAD = 70, BOT_PAD = 50
-  const canvasH = l > 0 ? h * scale + TOP_PAD + BOT_PAD : 300
+
+  // Геометрия потолка/пола — ломаные линии (для плоской стены это просто 2 точки
+  // на одном уровне, и все формулы ниже сводятся к прежнему поведению с одним h).
+  const ceilingProfile = snap.ceilingProfile.length >= 2 ? snap.ceilingProfile : flatProfile(l, h)
+  const floorProfile = snap.floorProfile.length >= 2 ? snap.floorProfile : flatProfile(l, 0)
+  // refTop — самая высокая точка потолка по всей стене, на неё ставим TOP_PAD,
+  // refBottom — самая низкая точка пола, на неё ставим низ чертежа.
+  const refTop = Math.max(...ceilingProfile.map(p => p.y))
+  const refBottom = Math.min(...floorProfile.map(p => p.y))
+  // Пиксельный y потолка/пола в произвольной точке x (мм) по длине стены.
+  const wallTopAt = (pos: number) => TOP_PAD + (refTop - interpolateY(ceilingProfile, pos)) * scale
+  const wallBotAt = (pos: number) => TOP_PAD + (refTop - interpolateY(floorProfile, pos)) * scale
+
+  const canvasH = l > 0 ? (refTop - refBottom) * scale + TOP_PAD + BOT_PAD : 300
   const studW = Math.max(profileWidth * scale, 4)
   const tx = (mm: number) => PAD + mm * scale
-  const wallTop = TOP_PAD, wallBot = TOP_PAD + h * scale
+  // Уровень потолка/пола в x=0 — используется как опорный для вертикальной
+  // размерной стрелки слева и нескольких decorations, не привязанных к
+  // конкретной стойке.
+  const wallTop = wallTopAt(0), wallBot = wallBotAt(0)
   const gklLayers = form.wallType === 'c112' ? 2 : 1
+
+  // Точки полилинии направляющей (потолок или пол) на участке [fromX, toX],
+  // с изломами в точках перегиба профиля — поэтому уклон/ступень видны на
+  // самой направляющей, а не только в высоте стоек.
+  function railPoints(profile: typeof ceilingProfile, yAt: (pos: number) => number, fromX: number, toX: number): number[] {
+    const xs = new Set<number>([fromX, toX])
+    for (const p of profile) if (p.x > fromX && p.x < toX) xs.add(p.x)
+    return [...xs].sort((a, b) => a - b).flatMap(x => [tx(x), yAt(x)])
+  }
 
   function isFixed(pos: number) {
     if (pos === 0 || pos === l) return true
@@ -234,6 +260,13 @@ export default function App() {
   )
 
   const orientationMap = new Map((result?.studInfos ?? []).map(si => [si.pos, si.orientation]))
+  // Локальная высота каждой стойки — берём ИЗ РЕЗУЛЬТАТА РАСЧЁТА (studInfos),
+  // а не пересчитываем заново по профилю. Так чертёж гарантированно не может
+  // разойтись с цифрами в смете — это один и тот же источник данных.
+  const heightMap = new Map((result?.studInfos ?? []).map(si => [si.pos, si.height]))
+  // Худшая (максимальная) высота по всей геометрии — для текста предупреждения
+  // needsOverlap; для плоской стены совпадает с form.height, как и раньше.
+  const worstH = l > 0 ? maxStudHeight(ceilingProfile, floorProfile, l) : h
 
   // ─── Сводная ведомость ────────────────────────────────────────────────────
 
@@ -671,13 +704,31 @@ export default function App() {
                   <Text x={tx(l / 2) - 28} y={4} text={`${l} мм`} fontSize={11} fill="#333" fontStyle="bold" />
                   <Arrow points={[PAD - 22, wallTop + 8, PAD - 22, wallBot - 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
                   <Arrow points={[PAD - 22, wallBot - 8, PAD - 22, wallTop + 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
-                  <Text x={8} y={(wallTop + wallBot) / 2} text={`${h}`} fontSize={11} fill="#444" rotation={-90} />
+                  <Text x={8} y={(wallTop + wallBot) / 2} text={`${Math.round(interpolateY(ceilingProfile, 0) - interpolateY(floorProfile, 0))}`} fontSize={11} fill="#444" rotation={-90} />
 
-                  {/* Позиции рядовых стоек сверху */}
+                  {/* Вторая размерная стрелка справа — только если потолок/пол с уклоном
+                      (высота у правого края отличается от левого) */}
+                  {(() => {
+                    const hRight = interpolateY(ceilingProfile, l) - interpolateY(floorProfile, l)
+                    const hLeft = interpolateY(ceilingProfile, 0) - interpolateY(floorProfile, 0)
+                    if (Math.abs(hRight - hLeft) < 1) return null
+                    const xRight = tx(l) + 22
+                    const topR = wallTopAt(l), botR = wallBotAt(l)
+                    return (
+                      <>
+                        <Arrow points={[xRight, topR + 8, xRight, botR - 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
+                        <Arrow points={[xRight, botR - 8, xRight, topR + 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
+                        <Text x={xRight + 6} y={(topR + botR) / 2} text={`${Math.round(hRight)}`} fontSize={11} fill="#444" rotation={-90} />
+                      </>
+                    )
+                  })()}
+
+                  {/* Позиции рядовых стоек сверху — фиксированный уровень TOP_PAD,
+                      он всегда выше самой высокой точки потолка, скос не задевает */}
                   {[0, ...gridStuds].map((pos) => (
                     <Group key={`tp${pos}`}>
-                      <Line points={[tx(pos), wallTop - 6, tx(pos), wallTop - 18]} stroke="#666" strokeWidth={1} />
-                      <Text x={tx(pos) - 16} y={wallTop - 30} text={`${pos}`} fontSize={10} fill="#333" />
+                      <Line points={[tx(pos), TOP_PAD - 6, tx(pos), TOP_PAD - 18]} stroke="#666" strokeWidth={1} />
+                      <Text x={tx(pos) - 16} y={TOP_PAD - 30} text={`${pos}`} fontSize={10} fill="#333" />
                     </Group>
                   ))}
                   {[0, ...gridStuds].map((pos, i, arr) => {
@@ -685,42 +736,45 @@ export default function App() {
                     const prev = arr[i - 1], dist = pos - prev, mx = tx(prev) + (dist * scale) / 2
                     return (
                       <Group key={`td${pos}`}>
-                        <Line points={[tx(prev), wallTop - 8, tx(pos), wallTop - 8]} stroke="#aaa" strokeWidth={1} />
-                        <Text x={mx - 10} y={wallTop - 20} text={`${dist}`} fontSize={9} fill="#666" />
+                        <Line points={[tx(prev), TOP_PAD - 8, tx(pos), TOP_PAD - 8]} stroke="#aaa" strokeWidth={1} />
+                        <Text x={mx - 10} y={TOP_PAD - 20} text={`${dist}`} fontSize={9} fill="#666" />
                       </Group>
                     )
                   })}
 
-                  {/* Направляющие ПН — пол */}
+                  {/* Направляющие ПН — пол (следует профилю пола, с вырезами под двери) */}
                   {(() => {
                     // Вырезаем дверные проёмы из нижней направляющей
                     const doorOpenings = snapOpenings.filter(o => o.type === 'door' && o.width > 0)
+                    const floorY = (pos: number) => wallBotAt(pos) - 4 // центр 8px-линии на wallBot-8..wallBot
                     if (doorOpenings.length === 0) {
-                      return <Rect x={tx(0)} y={wallBot - 8} width={l * scale} height={8} fill="#5a7080" />
+                      return <Line points={railPoints(floorProfile, floorY, 0, l)} stroke="#5a7080" strokeWidth={8} lineCap="round" lineJoin="round" />
                     }
                     const segments: React.ReactNode[] = []
                     let cursor = 0
                     const sorted = [...doorOpenings].sort((a, b) => a.pos - b.pos)
                     for (const o of sorted) {
                       if (o.pos > cursor) segments.push(
-                        <Rect key={`fl${o.id}`} x={tx(cursor)} y={wallBot - 8} width={(o.pos - cursor) * scale} height={8} fill="#5a7080" />
+                        <Line key={`fl${o.id}`} points={railPoints(floorProfile, floorY, cursor, o.pos)} stroke="#5a7080" strokeWidth={8} lineCap="round" lineJoin="round" />
                       )
                       cursor = o.pos + o.width
                     }
                     if (cursor < l) segments.push(
-                      <Rect key="fl_end" x={tx(cursor)} y={wallBot - 8} width={(l - cursor) * scale} height={8} fill="#5a7080" />
+                      <Line key="fl_end" points={railPoints(floorProfile, floorY, cursor, l)} stroke="#5a7080" strokeWidth={8} lineCap="round" lineJoin="round" />
                     )
                     return <>{segments}</>
                   })()}
 
-                  {/* Направляющая ПН — потолок */}
-                  <Rect x={tx(0)} y={wallTop} width={l * scale} height={8} fill="#5a7080" />
+                  {/* Направляющая ПН — потолок (следует профилю потолка) */}
+                  <Line points={railPoints(ceilingProfile, pos => wallTopAt(pos) + 4, 0, l)}
+                    stroke="#5a7080" strokeWidth={8} lineCap="round" lineJoin="round" />
+
 
                   {/* Проёмы — сортируем и рисуем без перекрытий */}
                   {snapOpenings.filter(o => o.width > 0)
                     .sort((a, b) => a.pos - b.pos)
                     .map(o => {
-                    const oBottom = wallBot - o.sillHeight * scale
+                    const oBottom = wallBotAt(o.pos) - o.sillHeight * scale
                     const oTop = oBottom - o.height * scale
                     const oX = tx(o.pos), oW = o.width * scale
                     const color = o.type === 'door' ? '#ddeeff' : '#ffeedd'
@@ -745,6 +799,10 @@ export default function App() {
                     const fixed = isFixed(pos)
                     const isDoor = openingStudPositions.has(pos)
                     const orientation = orientationMap.get(pos) ?? 'down'
+                    // Локальная высота ИМЕННО этой стойки — из результата расчёта
+                    // (или, если расчёт почему-то не нашёл стойку, считаем по профилю).
+                    const localH = heightMap.get(pos) ?? (interpolateY(ceilingProfile, pos) - interpolateY(floorProfile, pos))
+                    const localTop = wallTopAt(pos), localBot = wallBotAt(pos)
 
                     // Проём, внутри которого находится стойка (если есть)
                     const insideOpening = snapOpenings.find(
@@ -757,16 +815,16 @@ export default function App() {
                     else if (fixed) { fillColor = STEEL_EDGE }
                     else { fillColor = STEEL_NORMAL }
 
-                    // Зоны нахлёста (только для полных стоек, h>3000)
-                    const overlapNode = !insideOpening && h > 3000 ? (() => {
+                    // Зоны нахлёста (только для полных стоек, localH>3000)
+                    const overlapNode = !insideOpening && localH > 3000 ? (() => {
                       const kind = fixed
                         ? (pos === 0
                           ? ((form.abutment === 'both' || form.abutment === 'left') ? 'wall' : 'free')
                           : ((form.abutment === 'both' || form.abutment === 'right') ? 'wall' : 'free'))
                         : 'middle'
-                      const { overlapZones } = calcStudMaterial(h, kind as any, effectiveOverlap, orientation)
+                      const { overlapZones } = calcStudMaterial(localH, kind as any, effectiveOverlap, orientation)
                       if (!overlapZones.length) return null
-                      const baseY = wallTop + 8
+                      const baseY = localTop + 8
                       return (
                         <Group>
                           {overlapZones.map((zone, zi) => {
@@ -793,17 +851,17 @@ export default function App() {
                       // нижний (от напольной направляющей вверх до подоконника)
                       // Оба куска — отрезки от целого профиля 3000мм, длина всегда < 3000мм,
                       // поэтому зоны нахлёста НЕ рисуем.
-                      const aboveH = (h - insideOpening.height - insideOpening.sillHeight) * scale - 8
+                      const aboveH = (localH - insideOpening.height - insideOpening.sillHeight) * scale - 8
                       const belowH = insideOpening.sillHeight * scale - 8
 
                       return (
                         <Group key={`s${pos}`} x={tx(pos) - studW / 2} y={0}>
                           {aboveH > 0 && (
-                            <Rect x={0} y={wallTop + 8} width={studW} height={aboveH}
+                            <Rect x={0} y={localTop + 8} width={studW} height={aboveH}
                               fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
                           )}
                           {belowH > 0 && (
-                            <Rect x={0} y={wallBot - 8 - belowH} width={studW} height={belowH}
+                            <Rect x={0} y={localBot - 8 - belowH} width={studW} height={belowH}
                               fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
                           )}
                         </Group>
@@ -834,7 +892,7 @@ export default function App() {
                         onTouchStart={() => handleStudTouchStart(pos, fixed)}
                         onTouchEnd={() => handleStudTouchEnd()}
                         onTouchMove={() => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null } }}>
-                        <Rect x={0} y={wallTop + 8} width={studW} height={(h - 16) * scale}
+                        <Rect x={0} y={localTop + 8} width={studW} height={(localH - 16) * scale}
                           fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
                         {overlapNode}
                       </Group>
@@ -844,11 +902,11 @@ export default function App() {
                   {/* Метки стоек проёмов снизу */}
                   {snapOpenings.filter(o => o.width > 0).flatMap(o =>
                     [o.pos, o.pos + o.width].map(pos => {
-                      const cx = tx(pos), cy = wallBot + 20
+                      const cx = tx(pos), localBot = wallBotAt(pos), cy = localBot + 20
                       const tooClose = gridStuds.some(g => Math.abs(g - pos) <= MIN_GAP)
                       return (
                         <Group key={`dl${o.id}_${pos}`}>
-                          <Line points={[cx, wallBot, cx, cy - 10]} stroke="#888" strokeWidth={1} dash={[3, 3]} />
+                          <Line points={[cx, localBot, cx, cy - 10]} stroke="#888" strokeWidth={1} dash={[3, 3]} />
                           <Rect x={cx - 18} y={cy - 10} width={36} height={20}
                             fill={tooClose ? '#ffe0d0' : '#fff'} stroke={tooClose ? '#e06030' : '#888'}
                             strokeWidth={1} cornerRadius={10} />
@@ -865,7 +923,8 @@ export default function App() {
                       gridStuds
                         .filter(g => Math.abs(g - doorPos) <= MIN_GAP && Math.abs(g - doorPos) > 0)
                         .map(g => {
-                          const x1 = tx(Math.min(g, doorPos)), x2 = tx(Math.max(g, doorPos)), my = wallBot + 42
+                          const x1 = tx(Math.min(g, doorPos)), x2 = tx(Math.max(g, doorPos))
+                          const my = Math.max(wallBotAt(g), wallBotAt(doorPos)) + 42
                           return (
                             <Group key={`warn${o.id}_${g}_${doorPos}`}>
                               <Line points={[x1, my, x2, my]} stroke="#e06030" strokeWidth={1.5} />
@@ -891,7 +950,7 @@ export default function App() {
             </p>
             {result.needsOverlap && (
               <div style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: 10, borderRadius: 6, marginBottom: 12 }}>
-                ⚠️ Высота {form.height} мм — промежуточные стойки наращиваются с перехлёстом {effectiveOverlap}мм
+                ⚠️ Высота {worstH} мм — промежуточные стойки наращиваются с перехлёстом {effectiveOverlap}мм
               </div>
             )}
             <table style={{ borderCollapse: 'collapse', fontSize: 14 }}>
