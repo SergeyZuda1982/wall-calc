@@ -62,13 +62,15 @@ export default function ProfileEditor({ label, yHint, points, length, baseY, onC
             <span style={{ fontSize: 11, color: '#999', width: 14, paddingBottom: 6 }}>{i + 1}</span>
             <div style={{ flex: 1 }}>
               <label style={{ fontSize: 10, color: '#888' }}>x — от начала стены (мм)</label><br />
-              <input type="number" value={p.x} disabled={xFixed}
+              <input type="number" value={p.x || ''} disabled={xFixed}
+                onFocus={e => e.currentTarget.select()}
                 onChange={e => updatePoint(i, { x: Number(e.target.value) })}
                 style={{ width: '100%', padding: '4px 6px', fontSize: 12, background: xFixed ? '#f0f0f0' : '#fff' }} />
             </div>
             <div style={{ flex: 1 }}>
               <label style={{ fontSize: 10, color: '#888' }}>y — {yHint} (мм)</label><br />
-              <input type="number" value={p.y}
+              <input type="number" value={p.y || ''}
+                onFocus={e => e.currentTarget.select()}
                 onChange={e => updatePoint(i, { y: Number(e.target.value) })}
                 style={{ width: '100%', padding: '4px 6px', fontSize: 12 }} />
             </div>
