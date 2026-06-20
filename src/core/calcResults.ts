@@ -1,15 +1,16 @@
-import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, AbutmentType } from '../types'
+import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, AbutmentType, EdgeProfile } from '../types'
 import { calcStudMaterial, STUD_LENGTH } from './calcStudMaterial'
-import { buildOpeningStuds, mergeStuds } from './buildPositions'
+import { buildOpeningStuds, mergeStuds, attachStudHeights } from './buildPositions'
 import { buildCutList, pnPieces, psPieces } from './cutList'
+import { integrateHeight, maxStudHeight, studHeightAt } from './profileGeometry'
 
 function assignOrientations(
-  studs: { pos: number; kind: StudKind }[]
+  studs: { pos: number; kind: StudKind; height: number }[]
 ): StudInfo[] {
   let middleCount = 0
   let lastMiddleOrientation: StudOrientation = 'down'
 
-  return studs.map(({ pos, kind }) => {
+  return studs.map(({ pos, kind, height }) => {
     let orientation: StudOrientation
 
     if (kind === 'wall') {
@@ -26,7 +27,7 @@ function assignOrientations(
       orientation = lastMiddleOrientation === 'down' ? 'up' : 'down'
     }
 
-    return { pos, kind, orientation, isAbove: false, openingId: null }
+    return { pos, kind, height, orientation, isAbove: false, openingId: null }
   })
 }
 
@@ -50,7 +51,8 @@ function assignOpeningContext(
 
 export function calcResults(
   positions: number[],
-  h: number,
+  ceilingProfile: EdgeProfile,
+  floorProfile: EdgeProfile,
   l: number,
   openings: Opening[],
   abutment: AbutmentType | string,
@@ -63,15 +65,16 @@ export function calcResults(
   const openingPositions = new Set(openingStuds.map(s => s.pos))
   const grid = positions.filter(p => p !== 0 && p !== l && !openingPositions.has(p))
   const merged = mergeStuds(grid, openingStuds, l, abutment as AbutmentType)
-  const withOrientation = assignOrientations(merged)
+  const withHeights = attachStudHeights(merged, ceilingProfile, floorProfile)
+  const withOrientation = assignOrientations(withHeights)
   const studInfos = assignOpeningContext(withOrientation, openings)
 
   // ─── Расчёт материала ────────────────────────────────────────────────────
 
-  function aboveHeight(openingId: string): number {
+  function aboveHeight(si: StudInfo, openingId: string): number {
     const o = activeOpenings.find(x => x.id === openingId)
     if (!o) return 0
-    return h - o.height - o.sillHeight
+    return si.height - o.height - o.sillHeight
   }
 
   function belowHeight(openingId: string): number {
@@ -83,13 +86,14 @@ export function calcResults(
   let cwTotal = 0
   let aboveStuds = 0
 
-  for (const { kind, isAbove, orientation, openingId } of studInfos) {
+  for (const si of studInfos) {
+    const { kind, isAbove, orientation, openingId, height } = si
     if (isAbove && openingId) {
-      cwTotal += aboveHeight(openingId) + belowHeight(openingId)
+      cwTotal += aboveHeight(si, openingId) + belowHeight(openingId)
       aboveStuds++
     } else {
       const calcKind: StudKind = (kind === 'door' || kind === 'window') ? 'middle' : kind
-      cwTotal += calcStudMaterial(h, calcKind, overlap, orientation).length
+      cwTotal += calcStudMaterial(height, calcKind, overlap, orientation).length
     }
   }
 
@@ -107,19 +111,23 @@ export function calcResults(
   const lintelTotal = activeOpenings.reduce((s, o) => s + (o.width + 400), 0)
 
   // ─── ГКЛ ─────────────────────────────────────────────────────────────────
+  // Площадь между потолком и полом интегрируется по всей длине стены
+  // (для плоской стены = l × h, как и раньше).
 
   const openingsArea = activeOpenings.reduce((s, o) => s + o.width * o.height, 0)
-  const gklArea = ((l * h - openingsArea) * 2 * gklLayers) / 1_000_000
+  const wallArea = integrateHeight(ceilingProfile, floorProfile, 0, l)
+  const gklArea = ((wallArea - openingsArea) * 2 * gklLayers) / 1_000_000
 
   const firstOpening = activeOpenings[0]
   const aboveStudHeight = firstOpening
-    ? h - firstOpening.height - firstOpening.sillHeight
+    ? studHeightAt(firstOpening.pos, ceilingProfile, floorProfile) - firstOpening.height - firstOpening.sillHeight
     : 0
 
   // ─── Раскрой ─────────────────────────────────────────────────────────────
 
+  const worstHeight = maxStudHeight(ceilingProfile, floorProfile, l)
   const pnCuts = pnPieces(l, activeOpenings)
-  const psCuts = psPieces(studInfos, h, overlap, activeOpenings)
+  const psCuts = psPieces(studInfos, worstHeight, overlap, activeOpenings)
 
   const cutList = {
     pn: buildCutList(pnCuts),
@@ -136,7 +144,7 @@ export function calcResults(
     aboveStuds,
     aboveStudHeight,
     gklArea,
-    needsOverlap: h > STUD_LENGTH,
+    needsOverlap: worstHeight > STUD_LENGTH,
     studInfos,
     cutList,
     rawPieces: { pn: pnCuts, ps: psCuts },  // ← исходные куски до раскроя

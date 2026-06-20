@@ -11,6 +11,7 @@ import LiningCalc from './LiningCalc'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
 import { BAR_LENGTH } from './core/cutList'
+import ProfileEditor from './components/ProfileEditor'
 
 // Цвета оцинкованной стали
 const STEEL_NORMAL   = '#b8c4cc'
@@ -479,6 +480,36 @@ export default function App() {
             <label style={{ fontSize: 13 }}>Высота (мм)</label><br />
             <input type="number" value={form.height || ''} onChange={e => set('height', Number(e.target.value))} style={{ width: '100%', padding: 7, marginTop: 2 }} />
           </div>
+        </div>
+
+        {/* ─── Геометрия потолка/пола (скос, ломаная, ступени) ─── */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 4 }}>
+            <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!form.ceilingProfile}
+                onChange={e => set('ceilingProfile', e.target.checked
+                  ? [{ x: 0, y: form.height }, { x: form.length, y: form.height }]
+                  : undefined)} />
+              Потолок с уклоном / ломаной линией
+            </label>
+            <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!form.floorProfile}
+                onChange={e => set('floorProfile', e.target.checked
+                  ? [{ x: 0, y: 0 }, { x: form.length, y: 0 }]
+                  : undefined)} />
+              Пол с уклоном / ступенями
+            </label>
+          </div>
+          {form.ceilingProfile && (
+            <ProfileEditor label="Потолок" yHint="высота потолка от пола"
+              points={form.ceilingProfile} length={form.length} baseY={form.height}
+              onChange={pts => set('ceilingProfile', pts)} />
+          )}
+          {form.floorProfile && (
+            <ProfileEditor label="Пол" yHint="уровень пола (0 = базовый)"
+              points={form.floorProfile} length={form.length} baseY={0}
+              onChange={pts => set('floorProfile', pts)} />
+          )}
         </div>
 
         {/* ─── Проёмы ─── */}

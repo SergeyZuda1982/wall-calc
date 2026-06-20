@@ -155,6 +155,11 @@ export function pnPieces(
 /**
  * Формирует список кусков ПС для одной перегородки (n-кусковая логика).
  *
+ * Каждая стойка может нести свою индивидуальную высоту (stud.height) — для
+ * перегородок с переменной геометрией потолка/пола (скос, ступени). Если у
+ * стойки нет .height, используется общий параметр h (обратная совместимость
+ * с плоской стеной и со старыми вызовами).
+ *
  * wall:   торец в торец, без нахлёста. n = ceil(h/3000) кусков по ≤3000мм.
  * middle: n кусков с нахлёстом. step=3000-overlap. n=1+ceil((h-3000)/step).
  *         Куски: (n-1) × 3000мм + последний = h-(n-1)*step.
@@ -163,7 +168,7 @@ export function pnPieces(
  *         отдельный соединительный кусок НА КАЖДЫЙ стык (см. splitFreeStud).
  */
 export function psPieces(
-  studInfos: { kind: string; isAbove: boolean; openingId: string | null; orientation: string }[],
+  studInfos: { kind: string; isAbove: boolean; openingId: string | null; orientation: string; height?: number }[],
   h: number,
   overlap: number,
   openings: { id: string; height: number; sillHeight: number }[]
@@ -172,34 +177,36 @@ export function psPieces(
   const step = BAR_LENGTH - overlap  // чистый прирост высоты на кусок (middle)
 
   for (const stud of studInfos) {
+    const studH = stud.height ?? h // индивидуальная высота стойки (или общая h для обратной совместимости)
+
     if (stud.isAbove && stud.openingId) {
       // Стойка внутри проёма — куски над и под проёмом
       const o = openings.find(x => x.id === stud.openingId)
       if (!o) continue
-      const aboveLen = h - o.height - o.sillHeight
+      const aboveLen = studH - o.height - o.sillHeight
       const belowLen = o.sillHeight
       if (aboveLen > 0) pieces.push({ length: aboveLen, role: 'stud_part', label: `Над проёмом ${aboveLen}мм`, mustBeWhole: false })
       if (belowLen > 0) pieces.push({ length: belowLen, role: 'stud_part', label: `Под подоконником ${belowLen}мм`, mustBeWhole: false })
 
-    } else if (h <= BAR_LENGTH) {
+    } else if (studH <= BAR_LENGTH) {
       // Любая стойка вписывается в один профиль
-      pieces.push({ length: h, role: 'stud', label: `Стойка ${h}мм`, mustBeWhole: false })
+      pieces.push({ length: studH, role: 'stud', label: `Стойка ${studH}мм`, mustBeWhole: false })
 
     } else if (stud.kind === 'wall') {
       // ── wall: торец в торец, без нахлёста ───────────────────────────────
       // n = ceil(h/3000) кусков; (n-1) × 3000мм + последний кусок.
-      const nWall = Math.ceil(h / BAR_LENGTH)
+      const nWall = Math.ceil(studH / BAR_LENGTH)
       for (let i = 0; i < nWall - 1; i++) {
         pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка пристенная осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
       }
-      const lastWall = h - (nWall - 1) * BAR_LENGTH
+      const lastWall = studH - (nWall - 1) * BAR_LENGTH
       pieces.push({ length: lastWall, role: 'stud_part', label: `Стойка пристенная доп. ${lastWall}мм`, mustBeWhole: false })
 
     } else if (stud.kind === 'free') {
       // ── free: N основных кусков торец в торец + соединительный на КАЖДЫЙ стык ──
       // Используем ту же разбивку, что и calcStudMaterial (splitFreeStud), чтобы
       // смета (cwTotal) и раскрой никогда не расходились.
-      const { mainPieces, connectorLengths } = splitFreeStud(h, overlap)
+      const { mainPieces, connectorLengths } = splitFreeStud(studH, overlap)
 
       mainPieces.forEach((len, i) => {
         pieces.push({
@@ -217,13 +224,13 @@ export function psPieces(
     } else {
       // ── middle / door / window: n кусков с нахлёстом ────────────────────
       // n = 1 + ceil((h-3000)/step), суммарный материал = h + (n-1)*overlap
-      const n = 1 + Math.ceil((h - BAR_LENGTH) / step)
+      const n = 1 + Math.ceil((studH - BAR_LENGTH) / step)
       // (n-1) полных кусков по 3000мм
       for (let i = 0; i < n - 1; i++) {
         pieces.push({ length: BAR_LENGTH, role: 'stud', label: `Стойка осн. ${BAR_LENGTH}мм`, mustBeWhole: false })
       }
       // Последний кусок = h - (n-1)*step
-      const lastMiddle = h - (n - 1) * step
+      const lastMiddle = studH - (n - 1) * step
       pieces.push({ length: lastMiddle, role: 'stud_part', label: `Стойка доп. ${lastMiddle}мм`, mustBeWhole: false })
     }
   }

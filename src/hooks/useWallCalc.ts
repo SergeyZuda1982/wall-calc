@@ -1,10 +1,11 @@
 import { useState, useRef } from 'react'
 import { CANVAS_W, PAD } from '../constants'
-import type { WallInput, CalcResult, DrawingSnap } from '../types'
+import type { WallInput, CalcResult, DrawingSnap, EdgeProfile } from '../types'
 import { getProfile, DEFAULT_PROFILE } from '../data/profiles'
 import { getMaxHeight } from '../data/maxHeight'
 import { buildPositions, buildFromPhase } from '../core/buildPositions'
 import { calcResults } from '../core/calcResults'
+import { normalizeProfile, maxStudHeight } from '../core/profileGeometry'
 
 
 
@@ -26,7 +27,7 @@ export interface UseWallCalcReturn {
 
 export function useWallCalc(): UseWallCalcReturn {
   const [positions, setPositions] = useState<number[]>([])
-  const [snap, setSnap] = useState<DrawingSnap>({ l: 0, h: 0, openings: [] })
+  const [snap, setSnap] = useState<DrawingSnap>({ l: 0, h: 0, openings: [], ceilingProfile: [], floorProfile: [] })
   const [result, setResult] = useState<CalcResult | null>(null)
   const [heightWarning, setHeightWarning] = useState<string | null>(null)
 
@@ -52,7 +53,7 @@ export function useWallCalc(): UseWallCalcReturn {
   function _update(next: number[], currentSnap: DrawingSnap) {
     setPositions(next)
     const res = calcResults(
-      next, currentSnap.h, currentSnap.l,
+      next, currentSnap.ceilingProfile, currentSnap.floorProfile, currentSnap.l,
       currentSnap.openings,
       abutmentRef.current, overlapRef.current,
       wallTypeRef.current === 'c112' ? 2 : 1,
@@ -77,11 +78,15 @@ export function useWallCalc(): UseWallCalcReturn {
     overlapRef.current = effectiveOverlap
     stepRef.current = s
 
+    const ceilingProfile: EdgeProfile = normalizeProfile(input.ceilingProfile, l, h)
+    const floorProfile: EdgeProfile = normalizeProfile(input.floorProfile, l, 0)
+    const worstH = maxStudHeight(ceilingProfile, floorProfile, l)
+
     const maxH = getMaxHeight(wallType, profileType, s, profileThickness)
-    if (maxH > 0 && h > maxH) {
+    if (maxH > 0 && worstH > maxH) {
       const thickLabel = profileThickness === '06' ? '0.6' : '0.7'
       setHeightWarning(
-        `⚠️ Высота ${(h / 1000).toFixed(2)}м превышает максимально допустимую ` +
+        `⚠️ Высота ${(worstH / 1000).toFixed(2)}м превышает максимально допустимую ` +
         `${(maxH / 1000).toFixed(2)}м по Кнауф для ${profileType.toUpperCase()}, ` +
         `шаг ${s}мм, профиль ${thickLabel}мм.`
       )
@@ -90,7 +95,7 @@ export function useWallCalc(): UseWallCalcReturn {
     }
 
     const { positions: studs, phase } = buildPositions(l, s, firstStud, openings)
-    const newSnap: DrawingSnap = { l, h, openings }
+    const newSnap: DrawingSnap = { l, h, openings, ceilingProfile, floorProfile }
 
     phaseRef.current = phase
     gridShiftRef.current = 0

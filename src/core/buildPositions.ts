@@ -1,4 +1,5 @@
-import type { Opening, StudKind, AbutmentType } from '../types'
+import type { Opening, StudKind, AbutmentType, EdgeProfile } from '../types'
+import { studHeightAt } from './profileGeometry'
 
 export const MIN_GAP = 150 // мм
 
@@ -97,6 +98,26 @@ export function mergeStuds(
   result.push({ pos: l, kind: rightKind })
 
   return result.sort((a, b) => a.pos - b.pos)
+}
+
+// ─── Шаг 4: высота каждой стойки по геометрии потолка/пола ─────────────────
+
+export interface MergedStudWithHeight extends MergedStud {
+  height: number // ceilingProfile(pos) − floorProfile(pos)
+}
+
+/**
+ * Сопоставляет каждой стойке индивидуальную высоту через интерполяцию
+ * по ломаным линиям потолка и пола. Для плоской стены (flatProfile) даёт
+ * одно и то же число для всех стоек — поведение полностью совместимо
+ * с прежней моделью "одна высота h на всю перегородку".
+ */
+export function attachStudHeights(
+  studs: MergedStud[],
+  ceilingProfile: EdgeProfile,
+  floorProfile: EdgeProfile,
+): MergedStudWithHeight[] {
+  return studs.map(s => ({ ...s, height: studHeightAt(s.pos, ceilingProfile, floorProfile) }))
 }
 
 // ─── Публичные функции сборки ────────────────────────────────────────────────

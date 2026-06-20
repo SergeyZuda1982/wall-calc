@@ -1,3 +1,15 @@
+// ─── Геометрия потолка/пола (переменная высота) ──────────────────────────────
+
+// x = позиция по длине стены от начала (мм), y = высота от условного нуля (мм)
+export interface ProfilePoint {
+  x: number
+  y: number
+}
+
+// Ломаная линия потолка или пола, минимум 2 точки, отсортирована по x от 0 до l.
+// Несколько точек с одинаковым x подряд = вертикальный перепад (ступень в полу).
+export type EdgeProfile = ProfilePoint[]
+
 // ─── Профили ────────────────────────────────────────────────────────────────
 
 export type ProfileType = 'ps50' | 'ps75' | 'ps100'
@@ -44,6 +56,7 @@ export interface StudInfo {
   orientation: StudOrientation
   isAbove: boolean
   openingId: string | null
+  height: number // локальная высота стойки (потолок−пол) в точке pos, мм
 }
 
 export interface WallInput {
@@ -57,6 +70,11 @@ export interface WallInput {
   firstStud: number
   openings: Opening[]
   customOverlap?: number | null
+  // Если заданы (≥2 точек) — переопределяют плоское height переменной геометрией
+  // (мансардный скос, ломаная линия, ступени пола). Если не заданы — стена плоская,
+  // как раньше (height используется как обычно).
+  ceilingProfile?: EdgeProfile
+  floorProfile?: EdgeProfile
 }
 
 export interface CalcResult {
@@ -79,6 +97,8 @@ export interface DrawingSnap {
   l: number
   h: number
   openings: Opening[]
+  ceilingProfile: EdgeProfile
+  floorProfile: EdgeProfile
 }
 
 // ─── Облицовка ──────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildPositions } from '../buildPositions'
 import { calcResults } from '../calcResults'
+import { flatProfile } from '../profileGeometry'
 import type { Opening } from '../../types'
 
 // ─── Хелпер ──────────────────────────────────────────────────────────────────
@@ -14,7 +15,7 @@ function calc(
   overlap = 500,
 ) {
   const { positions } = buildPositions(l, h, step, openings)
-  return calcResults(positions, h, l, openings, abutment, overlap)
+  return calcResults(positions, flatProfile(l, h), flatProfile(l, 0), l, openings, abutment, overlap)
 }
 
 // ─── Направляющие ПН ─────────────────────────────────────────────────────────
@@ -93,7 +94,7 @@ describe('calcResults — стойки ПС', () => {
   it('стойки внутри оконного проёма: isAbove=true', () => {
     const w: Opening = { id: 'w', type: 'window', pos: 1000, width: 1200, height: 1200, sillHeight: 900 }
     const { positions } = buildPositions(5000, 2700, 600, [w])
-    const r = calcResults(positions, 2700, 5000, [w], 'both', 500)
+    const r = calcResults(positions, flatProfile(5000, 2700), flatProfile(5000, 0), 5000, [w], 'both', 500)
     const above = r.studInfos.filter(s => s.isAbove)
     expect(above.length).toBeGreaterThanOrEqual(0) // может не быть рядовых внутри конкретного проёма
   })
@@ -109,14 +110,14 @@ describe('calcResults — ГКЛ', () => {
 
   it('С112 (2 слоя, 2 стороны): площадь = 4 × (l×h)', () => {
     const { positions } = buildPositions(3000, 2700, 600, [])
-    const r = calcResults(positions, 2700, 3000, [], 'both', 500, 2)
+    const r = calcResults(positions, flatProfile(3000, 2700), flatProfile(3000, 0), 3000, [], 'both', 500, 2)
     expect(r.gklArea).toBeCloseTo((3 * 2.7 * 4), 2)
   })
 
   it('площадь дверного проёма вычитается', () => {
     const d: Opening = { id: 'd', type: 'door', pos: 500, width: 900, height: 2100, sillHeight: 0 }
     const { positions } = buildPositions(5000, 2700, 600, [d])
-    const r = calcResults(positions, 2700, 5000, [d], 'both', 500, 1)
+    const r = calcResults(positions, flatProfile(5000, 2700), flatProfile(5000, 0), 5000, [d], 'both', 500, 1)
     const expected = ((5000 * 2700 - 900 * 2100) * 2) / 1_000_000
     expect(r.gklArea).toBeCloseTo(expected, 2)
   })
@@ -142,6 +143,61 @@ describe('calcResults — cutList', () => {
     const r = calc(3000, 2700, 600)
     const psTotalMm = r.rawPieces.ps.reduce((s, p) => s + p.length, 0)
     expect(Math.abs(psTotalMm - r.cwTotal * 1000)).toBeLessThan(1) // погрешность округления
+  })
+})
+
+// ─── Переменная геометрия: мансардный скос потолка ───────────────────────────
+
+describe('calcResults — переменная геометрия (ceilingProfile/floorProfile)', () => {
+  it('скошенный потолок: высота крайних стоек разная, средняя — между ними', () => {
+    // Длина 4000, шаг 2000 → стойки на 0, 2000, 4000. Потолок 2000→3000.
+    const ceiling = [{ x: 0, y: 2000 }, { x: 4000, y: 3000 }]
+    const floor = flatProfile(4000, 0)
+    const { positions } = buildPositions(4000, 2000, 0, [])
+    const r = calcResults(positions, ceiling, floor, 4000, [], 'both', 500)
+
+    const byPos = (p: number) => r.studInfos.find(s => s.pos === p)!
+    expect(byPos(0).height).toBe(2000)
+    expect(byPos(4000).height).toBe(3000)
+    expect(byPos(2000).height).toBeCloseTo(2500)
+  })
+
+  it('needsOverlap учитывает максимум по всей геометрии, а не точку x=0', () => {
+    // Низкий край < 3000, высокий > 3000 — needsOverlap должен быть true
+    const ceiling = [{ x: 0, y: 2500 }, { x: 4000, y: 3500 }]
+    const floor = flatProfile(4000, 0)
+    const { positions } = buildPositions(4000, 2000, 0, [])
+    const r = calcResults(positions, ceiling, floor, 4000, [], 'both', 500)
+    expect(r.needsOverlap).toBe(true)
+  })
+
+  it('плоский профиль через flatProfile даёт тот же cwTotal, что и старая модель с одним h', () => {
+    const L = 6160, H = 3600, OV = 750
+    const { positions } = buildPositions(L, 600, 0, [])
+    const flat = calcResults(positions, flatProfile(L, H), flatProfile(L, 0), L, [], 'both', OV)
+    expect(flat.cwTotal).toBeCloseTo(50.7, 2) // тот же эталон, что и в регрессии выше
+  })
+
+  it('ступень в полу: высота стойки за ступенью меньше на величину перепада', () => {
+    const ceiling = flatProfile(4000, 3000)
+    const floor = [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 300 }, { x: 4000, y: 300 }]
+    const { positions } = buildPositions(4000, 2000, 0, [])
+    const r = calcResults(positions, ceiling, floor, 4000, [], 'both', 500)
+
+    const before = r.studInfos.find(s => s.pos === 0)!
+    const after = r.studInfos.find(s => s.pos === 4000)!
+    expect(before.height).toBe(3000)
+    expect(after.height).toBe(2700)
+  })
+
+  it('гклArea для скошенного потолка считается интегралом (трапеция), не l×h', () => {
+    const ceiling = [{ x: 0, y: 2000 }, { x: 4000, y: 3000 }]
+    const floor = flatProfile(4000, 0)
+    const { positions } = buildPositions(4000, 2000, 0, [])
+    const r = calcResults(positions, ceiling, floor, 4000, [], 'both', 500, 1)
+    // площадь трапеции × 2 стороны / 1e6
+    const expected = ((2000 + 3000) / 2 * 4000 * 2) / 1_000_000
+    expect(r.gklArea).toBeCloseTo(expected, 2)
   })
 })
 
@@ -180,7 +236,7 @@ describe('регрессия: 6160×3600, ПС75, overlap=750', () => {
 
   function calcWith(abutment: string) {
     const { positions } = buildPositions(L, S, 0, [])
-    return calcResults(positions, H, L, [], abutment, OV)
+    return calcResults(positions, flatProfile(L, H), flatProfile(L, 0), L, [], abutment, OV)
   }
 
   it('both (Стена-Стена): cwTotal = 50.70 п.м.', () => {
@@ -209,19 +265,19 @@ describe('регрессия: cwTotal для разных примыканий, 
 
   it('both (Стена-Стена): 2×3600 + 10×4350 = 50700мм = 50.70 п.м.', () => {
     const { positions } = buildPositions(L, S, 0, [])
-    const r = calcResults(positions, H, L, [], 'both', OV)
+    const r = calcResults(positions, flatProfile(L, H), flatProfile(L, 0), L, [], 'both', OV)
     expect(r.cwTotal).toBeCloseTo(50.7, 2)
   })
 
   it('none (Отдельностоящая): 2×4850 + 10×4350 = 53200мм = 53.20 п.м.', () => {
     const { positions } = buildPositions(L, S, 0, [])
-    const r = calcResults(positions, H, L, [], 'none', OV)
+    const r = calcResults(positions, flatProfile(L, H), flatProfile(L, 0), L, [], 'none', OV)
     expect(r.cwTotal).toBeCloseTo(53.2, 2)
   })
 
   it('left (Стена-Свободно): 3600 + 4850 + 10×4350 = 51950мм = 51.95 п.м.', () => {
     const { positions } = buildPositions(L, S, 0, [])
-    const r = calcResults(positions, H, L, [], 'left', OV)
+    const r = calcResults(positions, flatProfile(L, H), flatProfile(L, 0), L, [], 'left', OV)
     expect(r.cwTotal).toBeCloseTo(51.95, 2)
   })
 })
