@@ -2,6 +2,7 @@ import type { LiningInput, LiningResult } from '../types'
 import { buildCutList, BAR_LENGTH } from './cutList'
 import { middleStudTotalLength, middleStudPieceCount } from './calcStudMaterial'
 import type { Piece } from './cutList'
+import { normalizeProfile, studHeightAt, integrateHeight, maxStudHeight } from './profileGeometry'
 
 const STUD_LENGTH = 3000
 
@@ -10,6 +11,12 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   const activeOpenings = openings.filter(o => o.width > 0)
 
   const isC623 = input.liningType === 'c623'
+
+  // ─── Геометрия (плоская стена по умолчанию, либо ломаные линии) ──────────
+  const ceilingProfile = normalizeProfile(input.ceilingProfile, l, h)
+  const floorProfile = normalizeProfile(input.floorProfile, l, 0)
+  const heightAt = (pos: number) => studHeightAt(pos, ceilingProfile, floorProfile)
+  const worstHeight = maxStudHeight(ceilingProfile, floorProfile, l)
 
   // ─── Направляющие ────────────────────────────────────────────────────────
   const doorOpeningsWidth = activeOpenings
@@ -20,11 +27,14 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   const ceilingRail = l
   const lintelTotal = activeOpenings.reduce((s, o) => s + (o.width + 400), 0)
 
+  // Боковые направляющие (С623) — на той стороне(ах), где облицовка примыкает
+  // к существующей стене (см. edgeKind ниже): pos=0 при abutment 'both'/'left',
+  // pos=l при abutment 'both'/'right'. Длина — локальная высота в этой точке.
   let guideRail = 0
   if (isC623) {
     let sideRail = 0
-    if (input.abutment === 'both')  sideRail = 2 * h
-    if (input.abutment === 'left' || input.abutment === 'right') sideRail = h
+    if (input.abutment === 'both' || input.abutment === 'left')  sideRail += heightAt(0)
+    if (input.abutment === 'both' || input.abutment === 'right') sideRail += heightAt(l)
     guideRail = (floorRail + ceilingRail + sideRail + lintelTotal) / 1000
   } else {
     guideRail = (floorRail + ceilingRail + lintelTotal) / 1000
@@ -55,7 +65,7 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   function aboveHeight(pos: number): number | null {
     for (const o of activeOpenings) {
       if (pos > o.pos && pos < o.pos + o.width) {
-        return h - o.height - o.sillHeight
+        return heightAt(pos) - o.height - o.sillHeight
       }
     }
     return null
@@ -72,7 +82,7 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
 
   for (const pos of countablePositions) {
     const above = aboveHeight(pos)
-    const sh = above !== null ? above : h
+    const sh = above !== null ? above : heightAt(pos)
     const kind = above !== null ? 'middle' : edgeKind(pos)
     studTotal += studLen(sh, kind)
     if (above !== null) aboveStuds++
@@ -84,7 +94,9 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   }
 
   // ─── ГКЛ ─────────────────────────────────────────────────────────────────
-  const wallArea = l * h
+  // Площадь между потолком и полом интегрируется по всей длине (для плоской
+  // стены = l × h, как и раньше).
+  const wallArea = integrateHeight(ceilingProfile, floorProfile, 0, l)
   const openingsArea = activeOpenings.reduce((s, o) => s + o.width * o.height, 0)
   const gklArea = ((wallArea - openingsArea) * gklLayers) / 1_000_000
 
@@ -109,13 +121,14 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     rem -= c
   }
 
-  // Боковые направляющие (только С623)
+  // Боковые направляющие (только С623) — те же стороны, что и в guideRail выше,
+  // каждая по локальной высоте в своей точке (0 или l).
   if (isC623) {
-    const sides = input.abutment === 'both' ? 2
-      : (input.abutment === 'left' || input.abutment === 'right') ? 1
-      : 0
-    for (let i = 0; i < sides; i++) {
-      rem = h
+    const sideAtZero = input.abutment === 'both' || input.abutment === 'left'
+    const sideAtL    = input.abutment === 'both' || input.abutment === 'right'
+    for (const sideHeight of [sideAtZero ? heightAt(0) : null, sideAtL ? heightAt(l) : null]) {
+      if (sideHeight === null) continue
+      rem = sideHeight
       while (rem > 0) {
         const c = Math.min(rem, BAR_LENGTH)
         pnPcs.push({ length: c, role: 'floor', label: `Боковая ${c}мм`, mustBeWhole: false })
@@ -135,6 +148,7 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
 
   for (const pos of countablePositions) {
     const above = aboveHeight(pos)
+    const sh = above !== null ? above : heightAt(pos)
 
     if (above !== null) {
       // Стойка попадает в зону проёма — только надпроёмная часть
@@ -146,36 +160,36 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
       if (o && o.sillHeight > 0) {
         studPcs.push({ length: o.sillHeight, role: 'stud_part', label: `Под подоконником ${o.sillHeight}мм`, mustBeWhole: false })
       }
-    } else if (h <= STUD_LENGTH) {
+    } else if (sh <= STUD_LENGTH) {
       // Высота вписывается в один профиль — один кусок
-      studPcs.push({ length: h, role: 'stud', label: `Стойка ${h}мм`, mustBeWhole: false })
+      studPcs.push({ length: sh, role: 'stud', label: `Стойка ${sh}мм`, mustBeWhole: false })
     } else if (isC623) {
       // С623: ПП 60×27 на подвесах — стыкуется удлинителями, без нахлёста.
       // n = ceil(h/3000) кусков: (n-1) × 3000 + остаток
-      const nC623 = Math.ceil(h / STUD_LENGTH)
+      const nC623 = Math.ceil(sh / STUD_LENGTH)
       for (let i = 0; i < nC623 - 1; i++) {
         studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `ПП 60×27 осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
       }
-      const restC623 = h - (nC623 - 1) * STUD_LENGTH
+      const restC623 = sh - (nC623 - 1) * STUD_LENGTH
       studPcs.push({ length: restC623, role: 'stud_part', label: `ПП 60×27 доп. ${restC623}мм`, mustBeWhole: false })
     } else if (edgeKind(pos) === 'wall') {
       // Крайняя стойка у стены — торец в торец, без нахлёста
       // n = ceil(h/3000) кусков: (n-1) × 3000 + остаток
-      const nWall = Math.ceil(h / STUD_LENGTH)
+      const nWall = Math.ceil(sh / STUD_LENGTH)
       for (let i = 0; i < nWall - 1; i++) {
         studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `Стойка пристенная осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
       }
-      const restWall = h - (nWall - 1) * STUD_LENGTH
+      const restWall = sh - (nWall - 1) * STUD_LENGTH
       studPcs.push({ length: restWall, role: 'stud_part', label: `Стойка пристенная доп. ${restWall}мм`, mustBeWhole: false })
     } else {
       // Рядовая стойка, h > 3000 — n кусков с нахлёстом
       // n = 1 + ceil((h-3000)/step), step = 3000-overlap
       const step = STUD_LENGTH - overlap
-      const n = middleStudPieceCount(h, overlap)
+      const n = middleStudPieceCount(sh, overlap)
       for (let i = 0; i < n - 1; i++) {
         studPcs.push({ length: STUD_LENGTH, role: 'stud', label: `Стойка осн. ${STUD_LENGTH}мм`, mustBeWhole: false })
       }
-      const lastLen = h - (n - 1) * step
+      const lastLen = sh - (n - 1) * step
       studPcs.push({ length: lastLen, role: 'stud_part', label: `Стойка доп. ${lastLen}мм`, mustBeWhole: false })
     }
   }
@@ -192,7 +206,7 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     hangers,
     extenders,
     gklArea,
-    needsOverlap: h > STUD_LENGTH && !isC623,
+    needsOverlap: worstHeight > STUD_LENGTH && !isC623,
     cutList,
         rawPieces: { pn: pnPcs, stud: studPcs },  // ← исходные куски до раскроя
   }

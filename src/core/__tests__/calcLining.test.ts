@@ -72,3 +72,52 @@ describe('calcLining — wall/middle краевых стоек (С625/С626)', (
     expect(res.stud).toBeCloseTo((2700 * 12) / 1000, 2)
   })
 })
+
+// ─── Переменная геометрия: мансардный скос потолка (облицовка) ──────────────
+
+describe('calcLining — переменная геометрия (ceilingProfile/floorProfile)', () => {
+  it('плоский профиль через flatProfile даёт тот же результат, что и старая модель с h', () => {
+    const ceilingProfile = [{ x: 0, y: 3600 }, { x: 6160, y: 3600 }]
+    const floorProfile = [{ x: 0, y: 0 }, { x: 6160, y: 0 }]
+    const res = calcLining({ ...base, ceilingProfile, floorProfile }, positions12)
+    expect(res.stud).toBeCloseTo(50.70, 2) // тот же эталон, что и в плоской регрессии выше
+  })
+
+  it('скошенный потолок: крайние стойки (wall) имеют разную длину по высоте в своей точке', () => {
+    const ceilingProfile = [{ x: 0, y: 2500 }, { x: 6160, y: 3600 }]
+    const floorProfile = [{ x: 0, y: 0 }, { x: 6160, y: 0 }]
+    const res = calcLining({ ...base, ceilingProfile, floorProfile }, positions12)
+    // Левый край (h=2500, ≤3000) — один кусок 2500мм, правый (h=3600) — наращивается
+    expect(res.rawPieces.stud[0].length).toBe(2500)
+    const lastPieces = res.rawPieces.stud.filter(p => p.length === 3000 || p.length > 0)
+    expect(lastPieces.length).toBeGreaterThan(0)
+  })
+
+  it('needsOverlap учитывает максимум по геометрии, а не высоту в x=0', () => {
+    const ceilingProfile = [{ x: 0, y: 2000 }, { x: 6160, y: 3600 }]
+    const floorProfile = [{ x: 0, y: 0 }, { x: 6160, y: 0 }]
+    const res = calcLining({ ...base, ceilingProfile, floorProfile }, positions12)
+    expect(res.needsOverlap).toBe(true) // правый край > 3000, хотя в x=0 высота всего 2000
+  })
+
+  it('С623: боковая направляющая считается по локальной высоте в своей точке (0 и l)', () => {
+    const ceilingProfile = [{ x: 0, y: 2000 }, { x: 3000, y: 3000 }]
+    const floorProfile = [{ x: 0, y: 0 }, { x: 3000, y: 0 }]
+    const positions5 = [0, 600, 1200, 1800, 2400, 3000]
+    const res = calcLining({
+      ...base, liningType: 'c623', profileType: 'ps75', length: 3000, height: 2500,
+      ceilingProfile, floorProfile,
+    }, positions5)
+    // Боковые: heightAt(0)=2000 (1 кусок) + heightAt(3000)=3000 (1 кусок) = 2 куска по 1 стороне каждый
+    const sideRailPieces = res.rawPieces.pn.filter(p => p.label.startsWith('Боковая'))
+    expect(sideRailPieces.map(p => p.length).sort((a, b) => a - b)).toEqual([2000, 3000])
+  })
+
+  it('гклArea для скошенного потолка считается интегралом (трапеция), не l×h', () => {
+    const ceilingProfile = [{ x: 0, y: 2000 }, { x: 4000, y: 3000 }]
+    const floorProfile = [{ x: 0, y: 0 }, { x: 4000, y: 0 }]
+    const res = calcLining({ ...base, length: 4000, ceilingProfile, floorProfile }, [0, 2000, 4000])
+    const expected = ((2000 + 3000) / 2 * 4000) / 1_000_000 // без ×2 — облицовка однослойная по площади (не считает обе стороны)
+    expect(res.gklArea).toBeCloseTo(expected, 2)
+  })
+})

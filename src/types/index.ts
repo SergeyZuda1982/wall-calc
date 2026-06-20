@@ -117,6 +117,8 @@ export interface LiningInput {
   hangerStep: number
   abutment: AbutmentType
   openings: Opening[]
+  ceilingProfile?: EdgeProfile
+  floorProfile?: EdgeProfile
 }
 
 export interface LiningResult {

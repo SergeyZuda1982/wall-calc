@@ -5,6 +5,8 @@ import { calcLining } from './core/calcLining'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { getLiningMaxHeight } from './data/liningMaxHeight'
 import { useProjectStore } from './store/useProjectStore'
+import { normalizeProfile, maxStudHeight, integrateHeight } from './core/profileGeometry'
+import ProfileEditor from './components/ProfileEditor'
 
 const CANVAS_W = 820
 const PAD = 60
@@ -43,6 +45,7 @@ export default function LiningCalc() {
   const [positions, setPositions] = useState<number[]>([])
   const [snapL, setSnapL] = useState(0)
   const [snapH, setSnapH] = useState(0)
+  const [snapWorstH, setSnapWorstH] = useState(0)
   const [shiftInput, setShiftInput] = useState('100')
   const basePositions = useRef<number[]>([])
   const gridShift = useRef(0)
@@ -113,10 +116,15 @@ export default function LiningCalc() {
 
   function calculate() {
     const input = { ...form, gklLayers: (gklLayersFixed ?? form.gklLayers) as 1 | 2 }
+
+    const ceilingProfile = normalizeProfile(form.ceilingProfile, form.length, form.height)
+    const floorProfile = normalizeProfile(form.floorProfile, form.length, 0)
+    const worstH = maxStudHeight(ceilingProfile, floorProfile, form.length)
+
     if (!isC623) {
       const maxH = getLiningMaxHeight(form.liningType, form.profileType, form.step)
-      if (maxH > 0 && form.height > maxH) {
-        setHeightWarning(`⚠️ Высота ${(form.height / 1000).toFixed(2)}м превышает максимум ${(maxH / 1000).toFixed(2)}м по Кнауф для ${form.liningType.toUpperCase()}, ПС${profileLabel}, шаг ${form.step}мм.`)
+      if (maxH > 0 && worstH > maxH) {
+        setHeightWarning(`⚠️ Высота ${(worstH / 1000).toFixed(2)}м превышает максимум ${(maxH / 1000).toFixed(2)}м по Кнауф для ${form.liningType.toUpperCase()}, ПС${profileLabel}, шаг ${form.step}мм.`)
       } else setHeightWarning(null)
     } else setHeightWarning(null)
 
@@ -126,7 +134,8 @@ export default function LiningCalc() {
     setPositions(studs)
     setSnapL(form.length)
     setSnapH(form.height)
-    setResult(calcLining({ ...input, length: form.length }, studs))
+    setSnapWorstH(worstH)
+    setResult(calcLining({ ...input, length: form.length, ceilingProfile, floorProfile }, studs))
   }
 
   function applyShift(delta: number) {
@@ -145,9 +154,15 @@ export default function LiningCalc() {
   const studW = Math.max(4, 50 * scale)
   const tx = (mm: number) => PAD + mm * scale
 
-  // Площадь утеплителя — вся стена минус проёмы
+  // Площадь утеплителя — вся стена минус проёмы (с учётом геометрии потолка/пола)
   const insulationArea = result
-    ? ((form.length * form.height - form.openings.filter(o => o.width > 0).reduce((s, o) => s + o.width * o.height, 0)) / 1_000_000).toFixed(2)
+    ? (() => {
+        const cp = normalizeProfile(form.ceilingProfile, form.length, form.height)
+        const fp = normalizeProfile(form.floorProfile, form.length, 0)
+        const area = integrateHeight(cp, fp, 0, form.length)
+        const openingsArea = form.openings.filter(o => o.width > 0).reduce((s, o) => s + o.width * o.height, 0)
+        return ((area - openingsArea) / 1_000_000).toFixed(2)
+      })()
     : null
 
   return (
@@ -211,6 +226,36 @@ export default function LiningCalc() {
           <label style={{ fontSize: 13 }}>Высота (мм)</label><br />
           <input type="number" value={form.height || ''} onChange={e => set('height', Number(e.target.value))} style={{ width: '100%', padding: 7, marginTop: 2 }} />
         </div>
+      </div>
+
+      {/* ─── Геометрия потолка/пола (скос, ломаная, ступени) ─── */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 4 }}>
+          <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!form.ceilingProfile}
+              onChange={e => set('ceilingProfile', e.target.checked
+                ? [{ x: 0, y: form.height }, { x: form.length, y: form.height }]
+                : undefined)} />
+            Потолок с уклоном / ломаной линией
+          </label>
+          <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!form.floorProfile}
+              onChange={e => set('floorProfile', e.target.checked
+                ? [{ x: 0, y: 0 }, { x: form.length, y: 0 }]
+                : undefined)} />
+            Пол с уклоном / ступенями
+          </label>
+        </div>
+        {form.ceilingProfile && (
+          <ProfileEditor label="Потолок" yHint="высота потолка от пола"
+            points={form.ceilingProfile} length={form.length} baseY={form.height}
+            onChange={pts => set('ceilingProfile', pts)} />
+        )}
+        {form.floorProfile && (
+          <ProfileEditor label="Пол" yHint="уровень пола (0 = базовый)"
+            points={form.floorProfile} length={form.length} baseY={0}
+            onChange={pts => set('floorProfile', pts)} />
+        )}
       </div>
 
       {/* ─── Проёмы ─── */}
@@ -378,7 +423,7 @@ export default function LiningCalc() {
           <p style={{ color: '#666', fontSize: 13 }}>{form.liningType.toUpperCase()} · {gklLayersFixed ?? form.gklLayers} сл. ГКЛ · {isC623 ? 'ПП 60×27' : `ПС ${profileLabel}×50`}</p>
           {result.needsOverlap && (
             <div style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: 10, borderRadius: 6, marginBottom: 12 }}>
-              ⚠️ Высота {form.height}мм — стойки наращиваются{isC623 ? ` · удлинители: ${result.extenders} шт` : ' с перехлёстом'}
+              ⚠️ Высота {snapWorstH}мм — стойки наращиваются{isC623 ? ` · удлинители: ${result.extenders} шт` : ' с перехлёстом'}
             </div>
           )}
           <p>ПН {guideLabel}: <b>{result.guideRail.toFixed(2)} м</b></p>
