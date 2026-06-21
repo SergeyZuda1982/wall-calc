@@ -1,4 +1,7 @@
-import type { ProfilePoint } from '../types'
+import { useState } from 'react'
+import type { ProfilePoint, ProfileTemplate } from '../types'
+import { interpolateY } from '../core/profileGeometry'
+import { useProjectStore } from '../store/useProjectStore'
 
 interface ProfileEditorProps {
   label: string
@@ -7,6 +10,13 @@ interface ProfileEditorProps {
   length: number      // длина стены l — для подстановки координат новой точки
   baseY: number       // y по умолчанию для новой точки
   onChange: (points: ProfilePoint[]) => void
+}
+
+function templateDims(t: ProfileTemplate): string {
+  if (t.shape.length < 2) return ''
+  const span = Math.round(t.shape[t.shape.length - 1].x - t.shape[0].x)
+  const depth = Math.round(Math.max(...t.shape.map(p => Math.abs(p.y))))
+  return `${span}×${depth}мм`
 }
 
 /**
@@ -18,6 +28,13 @@ interface ProfileEditorProps {
  * визуальный редактор точек добавится отдельным шагом.
  */
 export default function ProfileEditor({ label, yHint, points, length, baseY, onChange }: ProfileEditorProps) {
+  const { activeProjectId, profileTemplates, addProfileTemplate, removeProfileTemplate } = useProjectStore()
+
+  const [fromIdx, setFromIdx] = useState(0)
+  const [toIdx, setToIdx] = useState(points.length - 1)
+  const [selectedTplId, setSelectedTplId] = useState('')
+  const [insertX, setInsertX] = useState('')
+
   function updatePoint(i: number, patch: Partial<ProfilePoint>) {
     onChange(points.map((p, idx) => idx === i ? { ...p, ...patch } : p))
   }
@@ -43,6 +60,40 @@ export default function ProfileEditor({ label, yHint, points, length, baseY, onC
   function removePoint(i: number) {
     if (points.length <= 2) return // минимум 2 точки — начало и конец
     onChange(points.filter((_, idx) => idx !== i))
+  }
+
+  // ─── Шаблоны объекта (балка, ригель, ступени и т.п.) ───────────────────────
+  // Шаблон хранит ФОРМУ (смещения от первой точки выделения), а не абсолютные
+  // координаты — поэтому одну и ту же балку можно воткнуть в любую перегородку
+  // объекта, просто указав, где у неё начало на этой конкретной стене.
+
+  function saveSelectionAsTemplate() {
+    const from = Math.min(fromIdx, points.length - 1)
+    const to = Math.min(toIdx, points.length - 1)
+    if (to <= from) return
+    const sel = points.slice(from, to + 1)
+    const base = sel[0]
+    const name = window.prompt('Имя шаблона (например «Балка 600×400» или «Ригель»):')
+    if (!name) return
+    const shape = sel.map(p => ({ x: p.x - base.x, y: p.y - base.y }))
+    addProfileTemplate(name.trim(), shape)
+  }
+
+  function insertSelectedTemplate() {
+    const tpl = profileTemplates.find(t => t.id === selectedTplId)
+    const startX = Number(insertX)
+    if (!tpl || !tpl.shape.length || !Number.isFinite(startX)) return
+    const baseAtX = interpolateY(points, startX)
+    const newPts = tpl.shape.map(p => ({
+      x: Math.min(Math.max(Math.round(startX + p.x), 0), length),
+      y: Math.round(baseAtX + p.y),
+    }))
+    const spanFrom = newPts[0].x, spanTo = newPts[newPts.length - 1].x
+    // Убираем существующие точки строго внутри диапазона вставки — края (0/length
+    // и любые точки ровно на границе шаблона) остаются, сольются по сортировке.
+    const kept = points.filter(p => p.x <= spanFrom || p.x >= spanTo)
+    onChange([...kept, ...newPts].sort((a, b) => a.x - b.x))
+    setInsertX('')
   }
 
   return (
@@ -86,6 +137,81 @@ export default function ProfileEditor({ label, yHint, points, length, baseY, onC
       <p style={{ margin: '4px 0 0', fontSize: 11, color: '#999' }}>
         Точки сортируются по x при расчёте. Две точки с одинаковым x подряд = вертикальная ступень.
       </p>
+
+      {/* ─── Шаблоны объекта: балка/ригель/ступени и т.п. ─── */}
+      <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed #ddd' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>Шаблоны объекта</span>
+
+        {!activeProjectId && (
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: '#999' }}>
+            Доступно внутри объекта — выбери или создай объект, чтобы сохранять и переиспользовать формы (балки, ригели, ступени) между перегородками.
+          </p>
+        )}
+
+        {activeProjectId && (
+          <>
+            {profileTemplates.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+                <select value={selectedTplId} onChange={e => setSelectedTplId(e.target.value)}
+                  style={{ padding: '4px 6px', fontSize: 12, flex: '1 1 160px' }}>
+                  <option value="">— выбери шаблон —</option>
+                  {profileTemplates.map(t => (
+                    <option key={t.id} value={t.id}>{t.name} ({templateDims(t)})</option>
+                  ))}
+                </select>
+                <input type="number" placeholder="X начала, мм" value={insertX}
+                  onFocus={e => e.currentTarget.select()}
+                  onChange={e => setInsertX(e.target.value)}
+                  style={{ width: 110, padding: '4px 6px', fontSize: 12 }} />
+                <button type="button" onClick={insertSelectedTemplate} disabled={!selectedTplId || !insertX}
+                  style={{ padding: '4px 10px', fontSize: 12, cursor: (!selectedTplId || !insertX) ? 'default' : 'pointer',
+                    background: '#f0f4ff', border: '1px solid #aac', borderRadius: 4,
+                    color: (!selectedTplId || !insertX) ? '#aaa' : '#333' }}>
+                  Вставить
+                </button>
+              </div>
+            )}
+
+            {profileTemplates.length > 0 && (
+              <ul style={{ listStyle: 'none', padding: 0, margin: '6px 0 0', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {profileTemplates.map(t => (
+                  <li key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: '#666' }}>
+                    <span>{t.name} <span style={{ color: '#aaa' }}>({templateDims(t)})</span></span>
+                    <button type="button" onClick={() => removeProfileTemplate(t.id)}
+                      style={{ padding: '0 6px', fontSize: 11, cursor: 'pointer', background: 'none', border: 'none', color: '#e05' }}>
+                      🗑
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+              <span style={{ fontSize: 11, color: '#888' }}>Сохранить точки от</span>
+              <select value={Math.min(fromIdx, points.length - 1)} onChange={e => setFromIdx(Number(e.target.value))}
+                style={{ padding: '3px 4px', fontSize: 12 }}>
+                {points.map((_, i) => <option key={i} value={i}>{i + 1}</option>)}
+              </select>
+              <span style={{ fontSize: 11, color: '#888' }}>до</span>
+              <select value={Math.min(toIdx, points.length - 1)} onChange={e => setToIdx(Number(e.target.value))}
+                style={{ padding: '3px 4px', fontSize: 12 }}>
+                {points.map((_, i) => <option key={i} value={i}>{i + 1}</option>)}
+              </select>
+              <button type="button" onClick={saveSelectionAsTemplate} disabled={Math.min(toIdx, points.length - 1) <= Math.min(fromIdx, points.length - 1)}
+                style={{ padding: '3px 10px', fontSize: 12,
+                  cursor: Math.min(toIdx, points.length - 1) <= Math.min(fromIdx, points.length - 1) ? 'default' : 'pointer',
+                  background: '#f0fff4', border: '1px solid #9c9', borderRadius: 4,
+                  color: Math.min(toIdx, points.length - 1) <= Math.min(fromIdx, points.length - 1) ? '#aaa' : '#333' }}>
+                Сохранить как шаблон
+              </button>
+            </div>
+            <p style={{ margin: '4px 0 0', fontSize: 10, color: '#aaa' }}>
+              Выдели в таблице выше точки, образующие один вырез (например, спуск-низ-подъём балки), и сохрани как шаблон —
+              потом воткнёшь его в любую перегородку этого объекта по X начала.
+            </p>
+          </>
+        )}
+      </div>
     </div>
   )
 }

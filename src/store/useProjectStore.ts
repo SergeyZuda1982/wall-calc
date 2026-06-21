@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate } from '../types'
 
 const PROFILE_LETTER: Record<string, string> = {
   ps50: 'А', ps75: 'В', ps100: 'С',
@@ -26,6 +26,7 @@ export interface ProjectEntry {
   name: string
   walls: WallEntry[]
   linings: LiningEntry[]
+  profileTemplates: ProfileTemplate[]
   createdAt: string
 }
 
@@ -38,6 +39,7 @@ export interface ProjectStore {
   projectName: string
   walls: WallEntry[]
   linings: LiningEntry[]
+  profileTemplates: ProfileTemplate[]
   activeWallId: string | null
   activeLiningId: string | null
 
@@ -59,6 +61,11 @@ export interface ProjectStore {
   updateLining: (id: string, input: LiningInput, result: LiningResult | null) => void
   removeLining: (id: string) => void
   setActiveLining: (id: string | null) => void
+
+  // шаблоны профиля на объект (балки, ригели, ступени и т.п.)
+  addProfileTemplate: (name: string, shape: ProfileTemplate['shape']) => void
+  removeProfileTemplate: (id: string) => void
+  renameProfileTemplate: (id: string, name: string) => void
 }
 
 function emptyProject(name: string): ProjectEntry {
@@ -67,6 +74,7 @@ function emptyProject(name: string): ProjectEntry {
     name,
     walls: [],
     linings: [],
+    profileTemplates: [],
     createdAt: new Date().toISOString(),
   }
 }
@@ -78,6 +86,7 @@ function syncActive(projects: ProjectEntry[], activeProjectId: string | null) {
     projectName: p?.name ?? '',
     walls: p?.walls ?? [],
     linings: p?.linings ?? [],
+    profileTemplates: p?.profileTemplates ?? [],
   }
 }
 
@@ -89,6 +98,7 @@ export const useProjectStore = create<ProjectStore>()(
       projectName: '',
       walls: [],
       linings: [],
+      profileTemplates: [],
       activeWallId: null,
       activeLiningId: null,
 
@@ -217,6 +227,39 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       setActiveLining: (id) => set({ activeLiningId: id }),
+
+      // ─── Шаблоны профиля (балки, ригели, ступени и т.п.) ──────────────────
+
+      addProfileTemplate: (name, shape) => {
+        set(s => {
+          const tpl: ProfileTemplate = { id: `t_${Date.now()}_${Math.random().toString(36).slice(2)}`, name, shape }
+          const profileTemplates = [...s.profileTemplates, tpl]
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, profileTemplates } : p
+          )
+          return { profileTemplates, projects }
+        })
+      },
+
+      removeProfileTemplate: (id) => {
+        set(s => {
+          const profileTemplates = s.profileTemplates.filter(t => t.id !== id)
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, profileTemplates } : p
+          )
+          return { profileTemplates, projects }
+        })
+      },
+
+      renameProfileTemplate: (id, name) => {
+        set(s => {
+          const profileTemplates = s.profileTemplates.map(t => t.id === id ? { ...t, name } : t)
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, profileTemplates } : p
+          )
+          return { profileTemplates, projects }
+        })
+      },
     }),
     {
       name: 'wall-calc-projects', // ключ в localStorage
@@ -225,8 +268,11 @@ export const useProjectStore = create<ProjectStore>()(
         activeProjectId: s.activeProjectId,
       }),
       onRehydrateStorage: () => (state) => {
-        // После загрузки из localStorage синхронизируем плоские поля
+        // После загрузки из localStorage синхронизируем плоские поля.
+        // Старые сохранённые объекты могли быть созданы до появления
+        // profileTemplates — подстраховываемся дефолтом, чтобы не упасть.
         if (state) {
+          state.projects = state.projects.map(p => ({ ...p, profileTemplates: p.profileTemplates ?? [] }))
           const synced = syncActive(state.projects, state.activeProjectId)
           Object.assign(state, synced)
         }
