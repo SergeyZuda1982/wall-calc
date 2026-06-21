@@ -12,7 +12,7 @@ import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
 import { BAR_LENGTH } from './core/cutList'
 import ProfileEditor from './components/ProfileEditor'
-import { interpolateY, flatProfile, maxStudHeight } from './core/profileGeometry'
+import { interpolateY, flatProfile, maxStudHeight, integrateHeight } from './core/profileGeometry'
 
 // Цвета оцинкованной стали
 const STEEL_NORMAL   = '#b8c4cc'
@@ -126,6 +126,7 @@ export default function App() {
   const [form, setForm] = useState<WallInput>(DEFAULT_INPUT)
   const [shiftInput, setShiftInput] = useState('100')
   const [activeTab, setActiveTab] = useState<'wall' | 'lining'>('wall')
+  const [hasInsulation, setHasInsulation] = useState(false)
   const {
     positions, snap, result, heightWarning, profileWidth,
     calculate, onDragEnd, onRightDragEnd, shiftGrid, addStud, removeStud,
@@ -267,6 +268,16 @@ export default function App() {
   // Худшая (максимальная) высота по всей геометрии — для текста предупреждения
   // needsOverlap; для плоской стены совпадает с form.height, как и раньше.
   const worstH = l > 0 ? maxStudHeight(ceilingProfile, floorProfile, l) : h
+
+  // Площадь утеплителя — вся стена минус проёмы (с учётом геометрии потолка/пола),
+  // тот же приём, что и в облицовке: одна "сторона" площади, без удвоения на ГКЛ.
+  const insulationArea = (result && l > 0)
+    ? (() => {
+        const area = integrateHeight(ceilingProfile, floorProfile, 0, l)
+        const openingsArea = snapOpenings.filter(o => o.width > 0).reduce((s, o) => s + o.width * o.height, 0)
+        return ((area - openingsArea) / 1_000_000).toFixed(2)
+      })()
+    : null
 
   // ─── Сводная ведомость ────────────────────────────────────────────────────
 
@@ -617,6 +628,13 @@ export default function App() {
               {overlapWarning}
             </div>
           )}
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+            <input type="checkbox" checked={hasInsulation} onChange={e => setHasInsulation(e.target.checked)} />
+            Утеплитель
+          </label>
         </div>
 
         <div style={{ display: 'flex', gap: 10, marginBottom: hasOpeningConflict ? 8 : 20, flexWrap: 'wrap' }}>
@@ -991,6 +1009,8 @@ export default function App() {
                       <td style={{ paddingBottom: 6 }}><b>{result.aboveStuds} шт</b></td></tr>}
                     <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ГКЛ ({gklLayers} сл.):</td>
                       <td style={{ paddingBottom: 6 }}><b>{result.gklArea.toFixed(2)} м²</b></td></tr>
+                    {hasInsulation && insulationArea && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Утеплитель:</td>
+                      <td style={{ paddingBottom: 6 }}><b>{insulationArea} м²</b></td></tr>}
                   </>
                 })()}
               </tbody>
