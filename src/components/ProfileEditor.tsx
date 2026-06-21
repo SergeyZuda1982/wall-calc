@@ -35,6 +35,12 @@ export default function ProfileEditor({ label, yHint, points, length, baseY, onC
   const [selectedTplId, setSelectedTplId] = useState('')
   const [insertX, setInsertX] = useState('')
 
+  const [stairsStartX, setStairsStartX] = useState('')
+  const [stairsLen, setStairsLen] = useState('')
+  const [stairsH, setStairsH] = useState('')
+  const [stairsCount, setStairsCount] = useState('')
+  const [stairsDir, setStairsDir] = useState<'down' | 'up'>('down')
+
   function updatePoint(i: number, patch: Partial<ProfilePoint>) {
     onChange(points.map((p, idx) => idx === i ? { ...p, ...patch } : p))
   }
@@ -96,6 +102,38 @@ export default function ProfileEditor({ label, yHint, points, length, baseY, onC
     setInsertX('')
   }
 
+  // ─── Ступени (генератор) ────────────────────────────────────────────────
+  // Каждая ступень — проступь (горизонтальный отрезок длиной stairsLen) и
+  // подступенок (перепад stairsH). Перепад делаем на x+1мм от конца проступи,
+  // а не на том же x — иначе направляющая на canvas схлопнет точку и вместо
+  // вертикали нарисует наклонную линию (см. railPoints: уникальные x в Set).
+  // Конец предыдущей ступени = начало следующей, как и просили.
+
+  function generateStairs() {
+    const startX = Number(stairsStartX)
+    const stepLen = Number(stairsLen)
+    const stepH = Number(stairsH)
+    const count = Math.round(Number(stairsCount))
+    if (!Number.isFinite(startX) || !(stepLen > 0) || !(stepH > 0) || !(count >= 1)) return
+
+    const sign = stairsDir === 'up' ? 1 : -1
+    let curY = interpolateY(points, startX)
+    let canonicalX = startX
+    const generated: ProfilePoint[] = [{ x: Math.round(startX), y: Math.round(curY) }]
+    for (let i = 0; i < count; i++) {
+      canonicalX += stepLen
+      generated.push({ x: Math.round(canonicalX), y: Math.round(curY) })      // конец проступи
+      curY += sign * stepH
+      generated.push({ x: Math.round(canonicalX) + 1, y: Math.round(curY) })  // подступенок
+    }
+    const spanFrom = generated[0].x, spanTo = generated[generated.length - 1].x
+    const clamp = (x: number) => Math.min(Math.max(x, 0), length)
+    const kept = points.filter(p => p.x <= spanFrom || p.x >= spanTo)
+    const merged = [...kept, ...generated.map(p => ({ ...p, x: clamp(p.x) }))].sort((a, b) => a.x - b.x)
+    onChange(merged)
+    setStairsStartX(String(clamp(spanTo)))
+  }
+
   return (
     <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: '8px 10px', marginTop: 6, background: '#fafafe' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -137,6 +175,47 @@ export default function ProfileEditor({ label, yHint, points, length, baseY, onC
       <p style={{ margin: '4px 0 0', fontSize: 11, color: '#999' }}>
         Точки сортируются по x при расчёте. Две точки с одинаковым x подряд = вертикальная ступень.
       </p>
+
+      {/* ─── Ступени: генератор цепочки проступь+подступенок ─── */}
+      <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed #ddd' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>Ступени</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+          <input type="number" placeholder="X начала, мм" value={stairsStartX}
+            onFocus={e => e.currentTarget.select()}
+            onChange={e => setStairsStartX(e.target.value)}
+            style={{ width: 90, padding: '4px 6px', fontSize: 12 }} />
+          <input type="number" placeholder="Длина ступени, мм" value={stairsLen}
+            onFocus={e => e.currentTarget.select()}
+            onChange={e => setStairsLen(e.target.value)}
+            style={{ width: 110, padding: '4px 6px', fontSize: 12 }} />
+          <input type="number" placeholder="Высота ступени, мм" value={stairsH}
+            onFocus={e => e.currentTarget.select()}
+            onChange={e => setStairsH(e.target.value)}
+            style={{ width: 110, padding: '4px 6px', fontSize: 12 }} />
+          <input type="number" placeholder="Кол-во" value={stairsCount}
+            onFocus={e => e.currentTarget.select()}
+            onChange={e => setStairsCount(e.target.value)}
+            style={{ width: 70, padding: '4px 6px', fontSize: 12 }} />
+          <select value={stairsDir} onChange={e => setStairsDir(e.target.value as 'down' | 'up')}
+            style={{ padding: '4px 6px', fontSize: 12 }}>
+            <option value="down">вниз</option>
+            <option value="up">вверх</option>
+          </select>
+          <button type="button" onClick={generateStairs}
+            disabled={!stairsStartX || !stairsLen || !stairsH || !stairsCount}
+            style={{ padding: '4px 10px', fontSize: 12,
+              cursor: (!stairsStartX || !stairsLen || !stairsH || !stairsCount) ? 'default' : 'pointer',
+              background: '#f0f4ff', border: '1px solid #aac', borderRadius: 4,
+              color: (!stairsStartX || !stairsLen || !stairsH || !stairsCount) ? '#aaa' : '#333' }}>
+            Сгенерировать
+          </button>
+        </div>
+        <p style={{ margin: '4px 0 0', fontSize: 10, color: '#aaa' }}>
+          Каждая ступень: проступь stairsLen мм + перепад stairsH мм в выбранную сторону.
+          Конец ступени — начало следующей. После генерации «X начала» сам сдвинется на конец цепочки,
+          можно сразу продолжать (например, после лестничной площадки).
+        </p>
+      </div>
 
       {/* ─── Шаблоны объекта: балка/ригель/ступени и т.п. ─── */}
       <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed #ddd' }}>
