@@ -4,7 +4,8 @@ import type { WallInput, Opening } from './types'
 import type { WallEntry, LiningEntry } from './store/useProjectStore'
 import { PROFILES } from './data/profiles'
 import { useWallCalc } from './hooks/useWallCalc'
-import { CANVAS_W, PAD } from './constants'
+import { CANVAS_W as CANVAS_W_MAX, PAD } from './constants'
+import { useContainerWidth } from './hooks/useContainerWidth'
 import { MIN_GAP } from './core/buildPositions'
 import { useProjectStore } from './store/useProjectStore'
 import LiningCalc from './LiningCalc'
@@ -127,6 +128,7 @@ export default function App() {
   const [shiftInput, setShiftInput] = useState('100')
   const [activeTab, setActiveTab] = useState<'wall' | 'lining'>('wall')
   const [hasInsulation, setHasInsulation] = useState(false)
+  const [canvasWrapRef, CANVAS_W] = useContainerWidth(CANVAS_W_MAX, 48)
   const {
     positions, snap, result, heightWarning, profileWidth,
     calculate, onDragEnd, onRightDragEnd, shiftGrid, addStud, removeStud,
@@ -367,7 +369,7 @@ export default function App() {
         )}
 
         {/* Основной контент */}
-        <div style={{ flex: 1, padding: 24, maxWidth: 900, overflowY: 'auto' }}>
+        <div ref={canvasWrapRef} style={{ flex: 1, padding: 24, maxWidth: 900, overflowY: 'auto' }}>
 
       {/* ─── Панель объекта ─── */}
       <div style={{ marginBottom: 20, padding: '12px 16px', background: '#f8f9ff', border: '1px solid #dde', borderRadius: 8 }}>
@@ -465,7 +467,7 @@ export default function App() {
         ))}
       </div>
 
-      {activeTab === 'lining' && <LiningCalc />}
+      {activeTab === 'lining' && <LiningCalc canvasW={CANVAS_W} />}
 
       {activeTab === 'wall' && <>
         <h1 style={{ display: 'none' }}>Калькулятор перегородки</h1>
@@ -710,7 +712,8 @@ export default function App() {
 
             <div style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden' }}
               onContextMenu={e => e.preventDefault()}>
-              <Stage width={CANVAS_W} height={canvasH}>
+              <Stage width={CANVAS_W} height={canvasH}
+                ref={node => { if (node) node.container().style.touchAction = 'pan-y' }}>
                 <Layer>
                   <Rect x={0} y={0} width={CANVAS_W} height={canvasH} fill="#f8f8f8"
                     onDblClick={e => { const stage = e.target.getStage(); const pos = stage?.getPointerPosition(); if (pos) addStud(pos.x) }}

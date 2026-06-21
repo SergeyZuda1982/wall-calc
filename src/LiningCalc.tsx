@@ -8,7 +8,6 @@ import { useProjectStore } from './store/useProjectStore'
 import { normalizeProfile, maxStudHeight, integrateHeight, interpolateY } from './core/profileGeometry'
 import ProfileEditor from './components/ProfileEditor'
 
-const CANVAS_W = 820
 const PAD = 60
 const TOP_PAD = 50
 const BOT_PAD = 30
@@ -37,7 +36,8 @@ const DEFAULT_INPUT: LiningInput = {
   openings: [],
 }
 
-export default function LiningCalc() {
+export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
+  const CANVAS_W = canvasW
   const [form, setForm] = useState<LiningInput>(DEFAULT_INPUT)
   const [result, setResult] = useState<LiningResult | null>(null)
   const [heightWarning, setHeightWarning] = useState<string | null>(null)
@@ -372,7 +372,8 @@ export default function LiningCalc() {
             <button onClick={() => applyShift(Number(shiftInput))} style={{ padding: '4px 12px', fontSize: 14, cursor: 'pointer', background: '#fff', border: '1px solid #aaa', borderRadius: 4 }}>вправо →</button>
           </div>
           <div style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
-            <Stage width={CANVAS_W} height={canvasH}>
+            <Stage width={CANVAS_W} height={canvasH}
+              ref={node => { if (node) node.container().style.touchAction = 'pan-y' }}>
               <Layer>
                 <Rect x={0} y={0} width={CANVAS_W} height={canvasH} fill="#f8f8f8"
                   onDblClick={e => { const pos = e.target.getStage()?.getPointerPosition(); if (pos) addStud(pos.x) }} />
