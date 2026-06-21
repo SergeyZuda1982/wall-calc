@@ -913,7 +913,10 @@ export default function App() {
                         onTouchStart={() => handleStudTouchStart(pos, fixed)}
                         onTouchEnd={() => handleStudTouchEnd()}
                         onTouchMove={() => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null } }}>
-                        <Rect x={0} y={localTop + 8} width={studW} height={(localH - 16) * scale}
+                        {/* height: 16px-зазор должен вычитаться ПОСЛЕ перевода в пиксели, а не до —
+                            иначе при scale<1 (а он почти всегда <1) реально вычитается лишь
+                            16×scale px вместо 16px, и стойка протыкает нижнюю направляющую */}
+                        <Rect x={0} y={localTop + 8} width={studW} height={Math.max(0, localH * scale - 16)}
                           fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
                         {overlapNode}
                       </Group>
