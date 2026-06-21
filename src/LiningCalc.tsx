@@ -1,11 +1,11 @@
 import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
-import type { LiningInput, LiningResult, Opening } from './types'
+import type { LiningInput, LiningResult, Opening, EdgeProfile } from './types'
 import { calcLining } from './core/calcLining'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { getLiningMaxHeight } from './data/liningMaxHeight'
 import { useProjectStore } from './store/useProjectStore'
-import { normalizeProfile, maxStudHeight, integrateHeight } from './core/profileGeometry'
+import { normalizeProfile, maxStudHeight, integrateHeight, interpolateY } from './core/profileGeometry'
 import ProfileEditor from './components/ProfileEditor'
 
 const CANVAS_W = 820
@@ -46,6 +46,8 @@ export default function LiningCalc() {
   const [snapL, setSnapL] = useState(0)
   const [snapH, setSnapH] = useState(0)
   const [snapWorstH, setSnapWorstH] = useState(0)
+  const [snapCeilingProfile, setSnapCeilingProfile] = useState<EdgeProfile>([])
+  const [snapFloorProfile, setSnapFloorProfile] = useState<EdgeProfile>([])
   const [shiftInput, setShiftInput] = useState('100')
   const basePositions = useRef<number[]>([])
   const gridShift = useRef(0)
@@ -95,6 +97,17 @@ export default function LiningCalc() {
     return pos
   }
 
+  function snapInput() {
+    return {
+      ...form,
+      gklLayers: (gklLayersFixed ?? form.gklLayers) as 1 | 2,
+      length: snapL,
+      height: snapH,
+      ceilingProfile: snapCeilingProfile,
+      floorProfile: snapFloorProfile,
+    }
+  }
+
   function addStud(xpx: number) {
     if (!snapL) return
     const sc = (CANVAS_W - PAD * 2) / snapL
@@ -102,16 +115,14 @@ export default function LiningCalc() {
     if (mm <= 0 || mm >= snapL) return
     const next = [...new Set([...positions, mm])].sort((a, b) => a - b)
     setPositions(next)
-    const input = { ...form, gklLayers: (gklLayersFixed ?? form.gklLayers) as 1 | 2 }
-    setResult(calcLining(input, next))
+    setResult(calcLining(snapInput(), next))
   }
 
   function removeStud(pos: number) {
     if (pos === 0 || pos === snapL) return
     const next = positions.filter(p => p !== pos)
     setPositions(next)
-    const input = { ...form, gklLayers: (gklLayersFixed ?? form.gklLayers) as 1 | 2 }
-    setResult(calcLining(input, next))
+    setResult(calcLining(snapInput(), next))
   }
 
   function calculate() {
@@ -135,6 +146,8 @@ export default function LiningCalc() {
     setSnapL(form.length)
     setSnapH(form.height)
     setSnapWorstH(worstH)
+    setSnapCeilingProfile(ceilingProfile)
+    setSnapFloorProfile(floorProfile)
     setResult(calcLining({ ...input, length: form.length, ceilingProfile, floorProfile }, studs))
   }
 
@@ -146,13 +159,37 @@ export default function LiningCalc() {
       return np > 0 && np < snapL ? np : p
     }).filter((p, i, arr) => arr.indexOf(p) === i).sort((a, b) => a - b)
     setPositions(shifted)
+    if (snapL) setResult(calcLining(snapInput(), shifted))
   }
 
   const scale = snapL > 0 ? (CANVAS_W - PAD * 2) / snapL : 1
-  const canvasH = snapL > 0 ? snapH * scale + TOP_PAD + BOT_PAD + 20 : 200
-  const wallTop = TOP_PAD, wallBot = TOP_PAD + snapH * scale
+  // Геометрия потолка/пола облицовки — ломаные линии (как и в перегородке).
+  // Для плоской стены snapCeilingProfile/snapFloorProfile — это просто 2 точки
+  // на одном уровне, и все формулы ниже сводятся к прежнему поведению.
+  const refTop = snapCeilingProfile.length ? Math.max(...snapCeilingProfile.map(p => p.y)) : snapH
+  const refBottom = snapFloorProfile.length ? Math.min(...snapFloorProfile.map(p => p.y)) : 0
+  const wallTopAt = (pos: number) => TOP_PAD + (refTop - interpolateY(snapCeilingProfile, pos)) * scale
+  const wallBotAt = (pos: number) => TOP_PAD + (refTop - interpolateY(snapFloorProfile, pos)) * scale
+  const canvasH = snapL > 0 ? (refTop - refBottom) * scale + TOP_PAD + BOT_PAD + 20 : 200
+  const wallTop = wallTopAt(0), wallBot = wallBotAt(0)
   const studW = Math.max(4, 50 * scale)
   const tx = (mm: number) => PAD + mm * scale
+
+  // Точки полилинии направляющей (потолок или пол) на участке [fromX, toX],
+  // с изломами в точках перегиба профиля — уклон/ступень видны на самой
+  // направляющей, а не только в высоте стоек. Тот же приём, что и в App.tsx.
+  function railPoints(profile: EdgeProfile, yAt: (pos: number) => number, fromX: number, toX: number): number[] {
+    const xs = new Set<number>([fromX, toX])
+    for (const p of profile) if (p.x > fromX && p.x < toX) xs.add(p.x)
+    return [...xs].sort((a, b) => a - b).flatMap(x => [tx(x), yAt(x)])
+  }
+
+  // Локальная высота/тип/ориентация КАЖДОЙ стойки — из результата расчёта
+  // (result.studInfos), а не пересчитываются заново в компоненте. Так чертёж
+  // гарантированно не может разойтись со сметой — тот же приём, что и в App.tsx.
+  const heightMap = new Map((result?.studInfos ?? []).map(si => [si.pos, si.height]))
+  const kindMap = new Map((result?.studInfos ?? []).map(si => [si.pos, si.kind]))
+  const orientationMap = new Map((result?.studInfos ?? []).map(si => [si.pos, si.orientation]))
 
   // Площадь утеплителя — вся стена минус проёмы (с учётом геометрии потолка/пола)
   const insulationArea = result
@@ -344,31 +381,76 @@ export default function LiningCalc() {
                 <Text x={tx(snapL / 2) - 28} y={4} text={`${snapL} мм`} fontSize={11} fill="#333" fontStyle="bold" />
                 <Arrow points={[PAD - 22, wallTop + 8, PAD - 22, wallBot - 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
                 <Arrow points={[PAD - 22, wallBot - 8, PAD - 22, wallTop + 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
-                <Text x={8} y={(wallTop + wallBot) / 2} text={`${snapH}`} fontSize={11} fill="#444" rotation={-90} />
-                <Rect x={tx(0)} y={wallTop} width={snapL * scale} height={snapH * scale} fill="#e8f0e8" stroke="#aaa" strokeWidth={1} />
-                <Rect x={tx(0)} y={wallTop} width={snapL * scale} height={8} fill="#444" />
-                <Rect x={tx(0)} y={wallBot - 8} width={snapL * scale} height={8} fill="#444" />
+                <Text x={8} y={(wallTop + wallBot) / 2}
+                  text={`${Math.round(interpolateY(snapCeilingProfile, 0) - interpolateY(snapFloorProfile, 0))}`}
+                  fontSize={11} fill="#444" rotation={-90} />
+
+                {/* Вторая размерная стрелка справа — только если потолок/пол с уклоном
+                    (высота у правого края отличается от левого), как и в перегородке */}
+                {(() => {
+                  const hRight = interpolateY(snapCeilingProfile, snapL) - interpolateY(snapFloorProfile, snapL)
+                  const hLeft = interpolateY(snapCeilingProfile, 0) - interpolateY(snapFloorProfile, 0)
+                  if (Math.abs(hRight - hLeft) < 1) return null
+                  const xRight = tx(snapL) + 22
+                  const topR = wallTopAt(snapL), botR = wallBotAt(snapL)
+                  return (
+                    <Group>
+                      <Arrow points={[xRight, topR + 8, xRight, botR - 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
+                      <Arrow points={[xRight, botR - 8, xRight, topR + 8]} stroke="#666" fill="#666" strokeWidth={1} pointerLength={6} pointerWidth={4} />
+                      <Text x={xRight + 6} y={(topR + botR) / 2} text={`${Math.round(hRight)}`} fontSize={11} fill="#444" rotation={-90} />
+                    </Group>
+                  )
+                })()}
+
+                {/* Полотно облицовки — полигон по двум профилям (потолок сверху, пол снизу) */}
+                <Line
+                  points={[
+                    ...railPoints(snapCeilingProfile, wallTopAt, 0, snapL),
+                    ...(() => {
+                      const bottom = railPoints(snapFloorProfile, wallBotAt, 0, snapL)
+                      const rev: number[] = []
+                      for (let i = bottom.length - 2; i >= 0; i -= 2) rev.push(bottom[i], bottom[i + 1])
+                      return rev
+                    })(),
+                  ]}
+                  closed fill="#e8f0e8" stroke="#aaa" strokeWidth={1} />
+
+                {/* Направляющие — следуют профилю потолка/пола, отступ ±4px от
+                    линии профиля, чтобы 8px-обводка ложилась внутрь полотна
+                    (тот же приём, что и в App.tsx) */}
+                <Line points={railPoints(snapCeilingProfile, pos => wallTopAt(pos) + 4, 0, snapL)} stroke="#444" strokeWidth={8} lineCap="round" lineJoin="round" />
+                <Line points={railPoints(snapFloorProfile, pos => wallBotAt(pos) - 4, 0, snapL)} stroke="#444" strokeWidth={8} lineCap="round" lineJoin="round" />
+
+                {/* Позиции рядовых стоек сверху — фиксированный уровень TOP_PAD,
+                    он всегда выше самой высокой точки потолка, скос не задевает */}
                 {positions.filter(p => p !== 0 && p !== snapL).map(pos => (
                   <Group key={`tp${pos}`}>
-                    <Line points={[tx(pos), wallTop - 6, tx(pos), wallTop - 16]} stroke="#666" strokeWidth={1} />
-                    <Text x={tx(pos) - 14} y={wallTop - 28} text={`${pos}`} fontSize={9} fill="#333" />
+                    <Line points={[tx(pos), TOP_PAD - 6, tx(pos), TOP_PAD - 16]} stroke="#666" strokeWidth={1} />
+                    <Text x={tx(pos) - 14} y={TOP_PAD - 28} text={`${pos}`} fontSize={9} fill="#333" />
                   </Group>
                 ))}
                 {positions.filter(p => p !== 0 && p !== snapL).map((pos, i, arr) => {
                   const prev = i === 0 ? 0 : arr[i - 1], dist = pos - prev
-                  return <Text key={`td${pos}`} x={tx(prev) + (dist * scale / 2) - 10} y={wallTop - 18} text={`${dist}`} fontSize={8} fill="#888" />
+                  return <Text key={`td${pos}`} x={tx(prev) + (dist * scale / 2) - 10} y={TOP_PAD - 18} text={`${dist}`} fontSize={8} fill="#888" />
                 })}
-                {positions.map((pos, idx) => {
+                {positions.map((pos) => {
                   const isEdge = pos === 0 || pos === snapL
                   const insideOpening = form.openings.find(
                     o => o.width > 0 && pos > o.pos && pos < o.pos + o.width
                   )
-                  const orientation = idx % 2 === 0 ? 'down' : 'up'
-                  const overlapNode = (!insideOpening && !isC623 && snapH > 3000) ? (() => {
-                    const kind = edgeKind(pos)
-                    const { overlapZones } = calcStudMaterial(snapH, kind, overlap, orientation)
+                  // Локальная высота/ориентация именно этой стойки — из результата
+                  // расчёта; если расчёт почему-то ещё не успел её найти (например,
+                  // сразу после сдвига гребёнки), считаем по зафиксированному профилю.
+                  const localH = heightMap.get(pos)
+                    ?? (interpolateY(snapCeilingProfile, pos) - interpolateY(snapFloorProfile, pos))
+                  const orientation = orientationMap.get(pos) ?? (positions.indexOf(pos) % 2 === 0 ? 'down' : 'up')
+                  const localTop = wallTopAt(pos), localBot = wallBotAt(pos)
+                  const overlapNode = (!insideOpening && !isC623 && localH > 3000) ? (() => {
+                    const kind = kindMap.get(pos) ?? edgeKind(pos)
+                    const calcKind = (kind === 'door' || kind === 'window') ? 'middle' : kind
+                    const { overlapZones } = calcStudMaterial(localH, calcKind, overlap, orientation)
                     if (!overlapZones.length) return null
-                    const baseY = wallTop + 8
+                    const baseY = localTop + 8
                     return (
                       <Group key={`ov${pos}`}>
                         {overlapZones.map((zone, zi) => {
@@ -390,8 +472,8 @@ export default function LiningCalc() {
                   })() : null
                   return (
                     <Group key={`s${pos}`}>
-                      <Rect x={tx(pos) - studW / 2} y={wallTop + 8}
-                        width={studW} height={snapH * scale - 16}
+                      <Rect x={tx(pos) - studW / 2} y={localTop + 8}
+                        width={studW} height={(localBot - localTop) - 16}
                         fill={isEdge ? '#8a9aa4' : '#b8c4cc'} stroke="#5a7080" strokeWidth={1} cornerRadius={2}
                         onDblClick={() => removeStud(pos)} />
                       {overlapNode}
@@ -400,7 +482,8 @@ export default function LiningCalc() {
                 })}
                 {positions.map((pos, i) => {
                   if (i === 0) return null
-                  const prev = positions[i - 1], dist = pos - prev, mx = tx(prev) + (dist * scale / 2), dy = wallBot + 12
+                  const prev = positions[i - 1], dist = pos - prev, mx = tx(prev) + (dist * scale / 2)
+                  const dy = Math.max(wallBotAt(prev), wallBotAt(pos)) + 12
                   return (
                     <Group key={`d${pos}`}>
                       <Line points={[tx(prev), dy, tx(pos), dy]} stroke="#aaa" strokeWidth={1} />
@@ -413,6 +496,7 @@ export default function LiningCalc() {
               </Layer>
             </Stage>
           </div>
+
         </>
       )}
 

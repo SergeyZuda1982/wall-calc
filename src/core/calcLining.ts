@@ -1,4 +1,4 @@
-import type { LiningInput, LiningResult } from '../types'
+import type { LiningInput, LiningResult, StudInfo, StudKind } from '../types'
 import { buildCutList, BAR_LENGTH } from './cutList'
 import { middleStudTotalLength, middleStudPieceCount } from './calcStudMaterial'
 import type { Piece } from './cutList'
@@ -199,6 +199,33 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     stud: buildCutList(studPcs),
   }
 
+  // ─── studInfos ───────────────────────────────────────────────────────────
+  // Единый источник правды для отрисовки на canvas (как и в перегородке):
+  // высота КАЖДОЙ стойки берётся отсюда, а не пересчитывается заново в
+  // компоненте — чертёж физически не может разойтись со сметой.
+  // height — это ВСЯ локальная высота (потолок−пол) в точке pos, а не
+  // редуцированная "надпроёмная" длина (та считается отдельно в aboveHeight()
+  // выше и используется только для материала/раскроя).
+  const studInfos: StudInfo[] = positions.map((pos, idx) => {
+    const insideOpening = activeOpenings.find(o => pos > o.pos && pos < o.pos + o.width)
+    const onOpeningEdge = activeOpenings.find(o => pos === o.pos || pos === o.pos + o.width)
+    const kind: StudKind = insideOpening
+      ? insideOpening.type
+      : (pos === 0 || pos === l) ? edgeKind(pos) : 'middle'
+    // Чередование ориентации нахлёста — как и раньше в компоненте, просто
+    // по чётности индекса в массиве позиций (визуальный приём, не влияет
+    // на суммарный метраж, только на то, откуда "растёт" нахлёст).
+    const orientation = idx % 2 === 0 ? 'down' : 'up'
+    return {
+      pos,
+      kind,
+      height: heightAt(pos),
+      orientation,
+      isAbove: !!insideOpening,
+      openingId: insideOpening?.id ?? onOpeningEdge?.id ?? null,
+    }
+  })
+
   return {
     guideRail,
     stud: studTotal / 1000,
@@ -207,6 +234,7 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     extenders,
     gklArea,
     needsOverlap: worstHeight > STUD_LENGTH && !isC623,
+    studInfos,
     cutList,
         rawPieces: { pn: pnPcs, stud: studPcs },  // ← исходные куски до раскроя
   }

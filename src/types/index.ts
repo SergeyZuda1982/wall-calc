@@ -129,6 +129,7 @@ export interface LiningResult {
   extenders: number
   gklArea: number
   needsOverlap: boolean
+  studInfos: StudInfo[]
   cutList: LiningCutList
   rawPieces: { pn: CutPiece[]; stud: CutPiece[] }
 }
