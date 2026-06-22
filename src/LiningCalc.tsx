@@ -416,11 +416,17 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
                   ]}
                   closed fill="#e8f0e8" stroke="#aaa" strokeWidth={1} />
 
-                {/* Направляющие — следуют профилю потолка/пола, отступ ±4px от
-                    линии профиля, чтобы 8px-обводка ложилась внутрь полотна
-                    (тот же приём, что и в App.tsx) */}
-                <Line points={railPoints(snapCeilingProfile, pos => wallTopAt(pos) + 4, 0, snapL)} stroke="#444" strokeWidth={8} lineCap="round" lineJoin="round" />
-                <Line points={railPoints(snapFloorProfile, pos => wallBotAt(pos) - 4, 0, snapL)} stroke="#444" strokeWidth={8} lineCap="round" lineJoin="round" />
+                {/* Направляющие — следуют профилю потолка/пола — псевдо-3D (три слоя) */}
+                {[
+                  railPoints(snapCeilingProfile, pos => wallTopAt(pos) + 4, 0, snapL),
+                  railPoints(snapFloorProfile, pos => wallBotAt(pos) - 4, 0, snapL),
+                ].map((pts, i) => (
+                  <Group key={`rail${i}`}>
+                    <Line points={pts} stroke="#384f60" strokeWidth={9}   lineCap="round" lineJoin="round" />
+                    <Line points={pts} stroke="#6a8898" strokeWidth={5.5} lineCap="round" lineJoin="round" />
+                    <Line points={pts} stroke="#aec8d4" strokeWidth={2}   lineCap="round" lineJoin="round" />
+                  </Group>
+                ))}
 
                 {/* Позиции рядовых стоек сверху — фиксированный уровень TOP_PAD,
                     он всегда выше самой высокой точки потолка, скос не задевает */}
@@ -473,10 +479,18 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
                   })() : null
                   return (
                     <Group key={`s${pos}`}>
-                      <Rect x={tx(pos) - studW / 2} y={localTop + 8}
-                        width={studW} height={(localBot - localTop) - 16}
-                        fill={isEdge ? '#8a9aa4' : '#b8c4cc'} stroke="#5a7080" strokeWidth={1} cornerRadius={2}
-                        onDblClick={() => removeStud(pos)} />
+                      {(() => {
+                        const base  = isEdge ? '#8a9aa4' : '#b8c4cc'
+                        const hi    = isEdge ? '#a3b3bd' : '#d0dce4'
+                        const sh    = isEdge ? '#6c7c86' : '#9aa6ae'
+                        return <Rect x={tx(pos) - studW / 2} y={localTop + 8}
+                          width={studW} height={(localBot - localTop) - 16}
+                          fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+                          fillLinearGradientEndPoint={{ x: studW, y: 0 }}
+                          fillLinearGradientColorStops={[0, hi, 0.18, base, 0.82, base, 1, sh]}
+                          stroke="#5a7080" strokeWidth={1} cornerRadius={2}
+                          onDblClick={() => removeStud(pos)} />
+                      })()}
                       {overlapNode}
                     </Group>
                   )

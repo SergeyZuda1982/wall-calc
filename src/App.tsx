@@ -21,6 +21,15 @@ const STEEL_EDGE     = '#8a9aa4'
 const STEEL_DOOR     = '#7a8e99'
 const STEEL_STROKE   = '#5a7080'
 
+// Псевдо-3D: [highlight, shadow] для каждого цвета стойки
+const STUD_GRAD: Record<string, [string, string]> = {
+  [STEEL_NORMAL]: ['#d0dce4', '#9aa6ae'],
+  [STEEL_EDGE]:   ['#a3b3bd', '#6c7c86'],
+  [STEEL_DOOR]:   ['#93a7b2', '#5c707b'],
+}
+// Цвета слоёв псевдо-3D направляющей ПН
+const RAIL_DARK = '#384f60', RAIL_MID = '#6a8898', RAIL_LIGHT = '#aec8d4'
+
 const PROFILE_LEN = 3
 
 let _openingIdCounter = 1
@@ -763,32 +772,36 @@ export default function App() {
                     )
                   })}
 
-                  {/* Направляющие ПН — пол (следует профилю пола, с вырезами под двери) */}
+                  {/* Направляющие ПН — пол (следует профилю пола, с вырезами под двери) — псевдо-3D */}
                   {(() => {
-                    // Вырезаем дверные проёмы из нижней направляющей
                     const doorOpenings = snapOpenings.filter(o => o.type === 'door' && o.width > 0)
-                    const floorY = (pos: number) => wallBotAt(pos) - 4 // центр 8px-линии на wallBot-8..wallBot
-                    if (doorOpenings.length === 0) {
-                      return <Line points={railPoints(floorProfile, floorY, 0, l)} stroke="#5a7080" strokeWidth={8} lineCap="round" lineJoin="round" />
-                    }
+                    const floorY = (pos: number) => wallBotAt(pos) - 4
+                    const rail3D = (pts: number[], key: string) => (
+                      <Group key={key}>
+                        <Line points={pts} stroke={RAIL_DARK}  strokeWidth={9}   lineCap="round" lineJoin="round" />
+                        <Line points={pts} stroke={RAIL_MID}   strokeWidth={5.5} lineCap="round" lineJoin="round" />
+                        <Line points={pts} stroke={RAIL_LIGHT} strokeWidth={2}   lineCap="round" lineJoin="round" />
+                      </Group>
+                    )
+                    if (doorOpenings.length === 0) return rail3D(railPoints(floorProfile, floorY, 0, l), 'fl_all')
                     const segments: React.ReactNode[] = []
                     let cursor = 0
-                    const sorted = [...doorOpenings].sort((a, b) => a.pos - b.pos)
-                    for (const o of sorted) {
-                      if (o.pos > cursor) segments.push(
-                        <Line key={`fl${o.id}`} points={railPoints(floorProfile, floorY, cursor, o.pos)} stroke="#5a7080" strokeWidth={8} lineCap="round" lineJoin="round" />
-                      )
+                    for (const o of [...doorOpenings].sort((a, b) => a.pos - b.pos)) {
+                      if (o.pos > cursor) segments.push(rail3D(railPoints(floorProfile, floorY, cursor, o.pos), `fl${o.id}`))
                       cursor = o.pos + o.width
                     }
-                    if (cursor < l) segments.push(
-                      <Line key="fl_end" points={railPoints(floorProfile, floorY, cursor, l)} stroke="#5a7080" strokeWidth={8} lineCap="round" lineJoin="round" />
-                    )
+                    if (cursor < l) segments.push(rail3D(railPoints(floorProfile, floorY, cursor, l), 'fl_end'))
                     return <>{segments}</>
                   })()}
 
-                  {/* Направляющая ПН — потолок (следует профилю потолка) */}
-                  <Line points={railPoints(ceilingProfile, pos => wallTopAt(pos) + 4, 0, l)}
-                    stroke="#5a7080" strokeWidth={8} lineCap="round" lineJoin="round" />
+                  {/* Направляющая ПН — потолок (следует профилю потолка) — псевдо-3D */}
+                  {(() => { const pts = railPoints(ceilingProfile, pos => wallTopAt(pos) + 4, 0, l); return (
+                    <Group>
+                      <Line points={pts} stroke={RAIL_DARK}  strokeWidth={9}   lineCap="round" lineJoin="round" />
+                      <Line points={pts} stroke={RAIL_MID}   strokeWidth={5.5} lineCap="round" lineJoin="round" />
+                      <Line points={pts} stroke={RAIL_LIGHT} strokeWidth={2}   lineCap="round" lineJoin="round" />
+                    </Group>
+                  ) })()}
 
 
                   {/* Проёмы — сортируем и рисуем без перекрытий */}
@@ -877,14 +890,20 @@ export default function App() {
 
                       return (
                         <Group key={`s${pos}`} x={tx(pos) - studW / 2} y={0}>
-                          {aboveH > 0 && (
-                            <Rect x={0} y={localTop + 8} width={studW} height={aboveH}
-                              fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
-                          )}
-                          {belowH > 0 && (
-                            <Rect x={0} y={localBot - 8 - belowH} width={studW} height={belowH}
-                              fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
-                          )}
+                          {aboveH > 0 && (() => {
+                            const [hi, sh] = STUD_GRAD[fillColor] ?? [fillColor, fillColor]
+                            return <Rect x={0} y={localTop + 8} width={studW} height={aboveH}
+                              fillLinearGradientStartPoint={{ x: 0, y: 0 }} fillLinearGradientEndPoint={{ x: studW, y: 0 }}
+                              fillLinearGradientColorStops={[0, hi, 0.18, fillColor, 0.82, fillColor, 1, sh]}
+                              stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
+                          })()}
+                          {belowH > 0 && (() => {
+                            const [hi, sh] = STUD_GRAD[fillColor] ?? [fillColor, fillColor]
+                            return <Rect x={0} y={localBot - 8 - belowH} width={studW} height={belowH}
+                              fillLinearGradientStartPoint={{ x: 0, y: 0 }} fillLinearGradientEndPoint={{ x: studW, y: 0 }}
+                              fillLinearGradientColorStops={[0, hi, 0.18, fillColor, 0.82, fillColor, 1, sh]}
+                              stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
+                          })()}
                         </Group>
                       )
                     }
@@ -916,8 +935,13 @@ export default function App() {
                         {/* height: 16px-зазор должен вычитаться ПОСЛЕ перевода в пиксели, а не до —
                             иначе при scale<1 (а он почти всегда <1) реально вычитается лишь
                             16×scale px вместо 16px, и стойка протыкает нижнюю направляющую */}
-                        <Rect x={0} y={localTop + 8} width={studW} height={Math.max(0, localH * scale - 16)}
-                          fill={fillColor} stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
+                        {(() => {
+                          const [hi, sh] = STUD_GRAD[fillColor] ?? [fillColor, fillColor]
+                          return <Rect x={0} y={localTop + 8} width={studW} height={Math.max(0, localH * scale - 16)}
+                            fillLinearGradientStartPoint={{ x: 0, y: 0 }} fillLinearGradientEndPoint={{ x: studW, y: 0 }}
+                            fillLinearGradientColorStops={[0, hi, 0.18, fillColor, 0.82, fillColor, 1, sh]}
+                            stroke={STEEL_STROKE} strokeWidth={1} cornerRadius={2} />
+                        })()}
                         {overlapNode}
                       </Group>
                     )
