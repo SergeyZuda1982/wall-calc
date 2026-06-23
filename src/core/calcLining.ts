@@ -2,7 +2,7 @@ import type { LiningInput, LiningResult, StudInfo, StudKind } from '../types'
 import { buildCutList, BAR_LENGTH } from './cutList'
 import { middleStudTotalLength, middleStudPieceCount } from './calcStudMaterial'
 import type { Piece } from './cutList'
-import { normalizeProfile, studHeightAt, integrateHeight, maxStudHeight } from './profileGeometry'
+import { normalizeProfile, studHeightAt, integrateHeight, maxStudHeight, profilePathLength } from './profileGeometry'
 
 const STUD_LENGTH = 3000
 
@@ -19,12 +19,20 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   const worstHeight = maxStudHeight(ceilingProfile, floorProfile, l)
 
   // ─── Направляющие ────────────────────────────────────────────────────────
-  const doorOpeningsWidth = activeOpenings
-    .filter(o => o.type === 'door')
-    .reduce((s, o) => s + o.width, 0)
+  const doorOpenings = activeOpenings.filter(o => o.type === 'door')
 
-  const floorRail = l - doorOpeningsWidth
-  const ceilingRail = l
+  // Реальные длины направляющих по ломаной (учитывают скат потолка/пола)
+  const ceilingRail = profilePathLength(ceilingProfile, 0, l)
+  const floorRail = (() => {
+    let total = 0
+    let cursor = 0
+    for (const o of [...doorOpenings].sort((a, b) => a.pos - b.pos)) {
+      if (o.pos > cursor) total += profilePathLength(floorProfile, cursor, o.pos)
+      cursor = o.pos + o.width
+    }
+    if (cursor < l) total += profilePathLength(floorProfile, cursor, l)
+    return total
+  })()
   const lintelTotal = activeOpenings.reduce((s, o) => s + (o.width + 400), 0)
 
   // Боковые направляющие (С623) — на той стороне(ах), где облицовка примыкает

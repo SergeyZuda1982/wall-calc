@@ -109,3 +109,52 @@ export function integrateHeight(
   }
   return area
 }
+
+/**
+ * Реальная длина ломаной профиля (направляющей) от fromX до toX в мм.
+ * При скосе/ступенях возвращает гипотенузу, а не горизонтальную проекцию.
+ * Корректно считает вертикальные участки (ступени с dy при одинаковом x).
+ * Если профиль не задан (undefined или < 2 точек) — возвращает toX - fromX.
+ */
+export function profilePathLength(
+  profile: EdgeProfile | undefined,
+  fromX: number,
+  toX: number,
+): number {
+  if (!profile || profile.length < 2 || toX <= fromX) return Math.max(0, toX - fromX)
+
+  let length = 0
+
+  for (let i = 0; i < profile.length - 1; i++) {
+    const p1 = profile[i]
+    const p2 = profile[i + 1]
+
+    // Вертикальный участок (ступень): x не меняется, только y
+    if (p1.x === p2.x) {
+      if (p1.x >= fromX && p1.x <= toX) {
+        length += Math.abs(p2.y - p1.y)
+      }
+      continue
+    }
+
+    const segMinX = Math.min(p1.x, p2.x)
+    const segMaxX = Math.max(p1.x, p2.x)
+
+    // Сегмент полностью вне диапазона — пропускаем
+    if (segMaxX <= fromX || segMinX >= toX) continue
+
+    // Обрезаем до [fromX, toX]
+    const clipMin = Math.max(segMinX, fromX)
+    const clipMax = Math.min(segMaxX, toX)
+
+    // Интерполируем y на концах обрезанного отрезка
+    const t1 = (clipMin - p1.x) / (p2.x - p1.x)
+    const t2 = (clipMax - p1.x) / (p2.x - p1.x)
+    const y1 = p1.y + t1 * (p2.y - p1.y)
+    const y2 = p1.y + t2 * (p2.y - p1.y)
+
+    length += Math.sqrt((clipMax - clipMin) ** 2 + (y2 - y1) ** 2)
+  }
+
+  return length
+}

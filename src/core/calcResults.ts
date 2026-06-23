@@ -2,7 +2,7 @@ import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, Abutment
 import { calcStudMaterial, STUD_LENGTH } from './calcStudMaterial'
 import { buildOpeningStuds, mergeStuds, attachStudHeights } from './buildPositions'
 import { buildCutList, pnPieces, psPieces } from './cutList'
-import { integrateHeight, maxStudHeight, studHeightAt } from './profileGeometry'
+import { integrateHeight, maxStudHeight, studHeightAt, profilePathLength } from './profileGeometry'
 
 function assignOrientations(
   studs: { pos: number; kind: StudKind; height: number }[]
@@ -99,9 +99,7 @@ export function calcResults(
 
   // ─── Направляющие ────────────────────────────────────────────────────────
 
-  const doorOpeningsWidth = activeOpenings
-    .filter(o => o.type === 'door')
-    .reduce((s, o) => s + o.width, 0)
+  const doorOpenings = activeOpenings.filter(o => o.type === 'door')
 
   const SILL_TRACK_MARGIN = 200
   const sillTrackTotal = activeOpenings
@@ -126,7 +124,21 @@ export function calcResults(
   // ─── Раскрой ─────────────────────────────────────────────────────────────
 
   const worstHeight = maxStudHeight(ceilingProfile, floorProfile, l)
-  const pnCuts = pnPieces(l, activeOpenings)
+
+  // Реальные длины направляющих по ломаной профиля (учитывают скат)
+  const ceilPathLen = profilePathLength(ceilingProfile, 0, l)
+  const floorSegPathLen = (() => {
+    let total = 0
+    let cursor = 0
+    for (const o of [...doorOpenings].sort((a, b) => a.pos - b.pos)) {
+      if (o.pos > cursor) total += profilePathLength(floorProfile, cursor, o.pos)
+      cursor = o.pos + o.width
+    }
+    if (cursor < l) total += profilePathLength(floorProfile, cursor, l)
+    return total
+  })()
+
+  const pnCuts = pnPieces(l, activeOpenings, ceilingProfile, floorProfile)
   const psCuts = psPieces(studInfos, worstHeight, overlap, activeOpenings)
 
   const cutList = {
@@ -135,8 +147,8 @@ export function calcResults(
   }
 
   return {
-    uwFloor:      (l - doorOpeningsWidth) / 1000,
-    uwCeiling:    l / 1000,
+    uwFloor:      floorSegPathLen / 1000,
+    uwCeiling:    ceilPathLen / 1000,
     uwSill:       sillTrackTotal / 1000,
     lintel:       lintelTotal / 1000,
     cwTotal:      cwTotal / 1000,

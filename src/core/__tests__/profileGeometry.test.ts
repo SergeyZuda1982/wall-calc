@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   flatProfile, normalizeProfile, sortProfile,
-  interpolateY, studHeightAt, maxStudHeight, integrateHeight,
+  interpolateY, studHeightAt, maxStudHeight, integrateHeight, profilePathLength,
 } from '../profileGeometry'
 
 // ─── flatProfile / sortProfile ───────────────────────────────────────────────
@@ -142,5 +142,33 @@ describe('normalizeProfile', () => {
     const input = [{ x: 0, y: 0 }, { x: -100, y: 10 }, { x: 9000, y: 20 }, { x: 5000, y: 0 }]
     const result = normalizeProfile(input, 5000, 0)
     expect(result.every(p => p.x >= 0 && p.x <= 5000)).toBe(true)
+  })
+})
+
+describe('profilePathLength', () => {
+  it('плоский профиль → длина = горизонтальная проекция', () => {
+    const flat = [{ x: 0, y: 2700 }, { x: 5000, y: 2700 }]
+    expect(profilePathLength(flat, 0, 5000)).toBeCloseTo(5000)
+  })
+
+  it('скос 45° → длина = горизонталь × √2', () => {
+    // перепад 1000мм на 1000мм → гипотенуза = 1000√2
+    const sloped = [{ x: 0, y: 2000 }, { x: 1000, y: 3000 }]
+    expect(profilePathLength(sloped, 0, 1000)).toBeCloseTo(1000 * Math.SQRT2, 3)
+  })
+
+  it('ступень: горизонталь + вертикаль', () => {
+    // 0→1000 горизонталь (1000мм), 1000→1000 вертикаль (500мм), 1000→2000 горизонталь (1000мм)
+    const step = [{ x: 0, y: 2000 }, { x: 1000, y: 2000 }, { x: 1000, y: 2500 }, { x: 2000, y: 2500 }]
+    expect(profilePathLength(step, 0, 2000)).toBeCloseTo(2500, 1)
+  })
+
+  it('undefined профиль → горизонтальная проекция', () => {
+    expect(profilePathLength(undefined, 0, 4000)).toBeCloseTo(4000)
+  })
+
+  it('подотрезок внутри профиля', () => {
+    const flat = [{ x: 0, y: 2700 }, { x: 6000, y: 2700 }]
+    expect(profilePathLength(flat, 1000, 4000)).toBeCloseTo(3000)
   })
 })

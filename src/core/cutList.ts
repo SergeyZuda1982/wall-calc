@@ -13,6 +13,7 @@
  */
 
 import { splitFreeStud } from './calcStudMaterial'
+import { profilePathLength } from './profileGeometry'
 
 export const BAR_LENGTH = 3000 // мм
 
@@ -97,42 +98,53 @@ export function buildCutList(pieces: Piece[]): CutListResult {
 
 /**
  * Формирует список кусков ПН для одной перегородки.
+ * Опциональные профили потолка/пола позволяют считать реальную длину по скату,
+ * а не горизонтальную проекцию. Без профилей — поведение прежнее (плоская стена).
  */
 export function pnPieces(
   l: number,
-  openings: { type: 'door' | 'window'; pos: number; width: number; sillHeight: number }[]
+  openings: { type: 'door' | 'window'; pos: number; width: number; sillHeight: number }[],
+  ceilingProfile?: { x: number; y: number }[],
+  floorProfile?: { x: number; y: number }[],
 ): Piece[] {
   const pieces: Piece[] = []
   const activeOpenings = openings.filter(o => o.width > 0)
+
+  // Длина отрезка: реальная (гипотенуза) если задан профиль, горизонтальная иначе
+  const segLen = (prof: { x: number; y: number }[] | undefined, from: number, to: number) =>
+    profilePathLength(prof, from, to)
 
   // ─── Пол: стена минус дверные проёмы → отдельные куски ──────────────────
   const doorOpenings = activeOpenings
     .filter(o => o.type === 'door')
     .sort((a, b) => a.pos - b.pos)
 
-  const floorSegments: number[] = []
   let cursor = 0
   for (const o of doorOpenings) {
-    if (o.pos > cursor) floorSegments.push(o.pos - cursor)
+    if (o.pos > cursor) {
+      let remaining = segLen(floorProfile, cursor, o.pos)
+      while (remaining > 0) {
+        const cut = Math.min(remaining, BAR_LENGTH)
+        pieces.push({ length: Math.round(cut), role: 'floor', label: `Пол ${Math.round(cut)}мм`, mustBeWhole: false })
+        remaining -= cut
+      }
+    }
     cursor = o.pos + o.width
   }
-  if (cursor < l) floorSegments.push(l - cursor)
-
-  for (const seg of floorSegments) {
-    // Длинные сегменты разбиваем на куски по 3000мм
-    let remaining = seg
+  if (cursor < l) {
+    let remaining = segLen(floorProfile, cursor, l)
     while (remaining > 0) {
       const cut = Math.min(remaining, BAR_LENGTH)
-      pieces.push({ length: cut, role: 'floor', label: `Пол ${cut}мм`, mustBeWhole: false })
+      pieces.push({ length: Math.round(cut), role: 'floor', label: `Пол ${Math.round(cut)}мм`, mustBeWhole: false })
       remaining -= cut
     }
   }
 
-  // ─── Потолок: всегда полная длина стены ─────────────────────────────────
-  let ceilRemaining = l
+  // ─── Потолок: полная длина по профилю ────────────────────────────────────
+  let ceilRemaining = segLen(ceilingProfile, 0, l)
   while (ceilRemaining > 0) {
     const cut = Math.min(ceilRemaining, BAR_LENGTH)
-    pieces.push({ length: cut, role: 'ceiling', label: `Потолок ${cut}мм`, mustBeWhole: false })
+    pieces.push({ length: Math.round(cut), role: 'ceiling', label: `Потолок ${Math.round(cut)}мм`, mustBeWhole: false })
     ceilRemaining -= cut
   }
 
