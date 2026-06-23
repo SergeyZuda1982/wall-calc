@@ -265,3 +265,52 @@ export interface LiningCutList {
   pn: { bars: CutBar[]; totalBars: number; totalWaste: number }
   stud: { bars: CutBar[]; totalBars: number; totalWaste: number }
 }
+
+// ─── Раскрой ГСП (листы) ─────────────────────────────────────────────────────
+
+/** Один прямоугольный кусок листа на стене */
+export interface BoardPiece {
+  x: number        // левый край на стене (мм)
+  y: number        // нижний край от пола (мм)
+  w: number        // ширина (мм)
+  h: number        // высота (мм)
+  /** full — целый лист (1200×SL); width_cut — резан по ширине; height_cut — по высоте;
+   *  both_cut — по ширине и высоте; opening_void — проём (не закрывается листом) */
+  kind: 'full' | 'width_cut' | 'height_cut' | 'both_cut' | 'opening_void'
+  /** откуда взят материал */
+  source: 'new_sheet' | 'offcut'
+}
+
+/** Одна колонка раскроя */
+export interface BoardColumn {
+  x1: number
+  x2: number
+  /** куски листов (включая opening_void для визуализации) */
+  pieces: BoardPiece[]
+}
+
+/** Пригодный обрезок (кандидат в межперегородочный пул) */
+export interface BoardOffcut {
+  w: number    // ширина (мм)
+  h: number    // высота (мм)
+  spec: BoardSpec
+}
+
+/** Итог раскроя одного слоя обшивки одной стены */
+export interface BoardLayerLayout {
+  layer: 1 | 2
+  spec: BoardSpec
+  columns: BoardColumn[]
+  sheetsNeeded: number     // листов куплено
+  usedAreaM2: number       // площадь на стене м²
+  sheetAreaM2: number      // площадь купленных листов м²
+  offcutAreaM2: number     // площадь пригодных обрезков м²
+  wastePercent: number     // отходы %
+  usableOffcuts: BoardOffcut[]
+}
+
+/** Полный раскрой стены (оба слоя) */
+export interface BoardSheetResult {
+  layer1: BoardLayerLayout
+  layer2: BoardLayerLayout | null  // null при однослойке
+}

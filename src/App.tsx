@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
-import type { WallInput, Opening, PlywoodInsert } from './types'
+import type { WallInput, Opening, PlywoodInsert, BoardSheetResult } from './types'
 import { DEFAULT_BOARD_SPEC, boardLabel } from './types'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
 import type { WallEntry, LiningEntry } from './store/useProjectStore'
@@ -16,6 +16,8 @@ import { calcProjectCutList } from './core/calcProjectCutList'
 import { BAR_LENGTH } from './core/cutList'
 import ProfileEditor from './components/ProfileEditor'
 import { interpolateY, flatProfile, maxStudHeight, integrateHeight } from './core/profileGeometry'
+import { calcSheetLayout } from './core/calcSheetLayout'
+import SheetLayoutCanvas from './components/SheetLayoutCanvas'
 
 // Цвета оцинкованной стали
 const STEEL_NORMAL   = '#b8c4cc'
@@ -1179,7 +1181,61 @@ export default function App() {
               </tbody>
             </table>
 
-            {/* ─── Раскрой ─── */}
+            {/* ─── Раскрой листов ─── */}
+            {(() => {
+              if (!result) return null
+              const ceilP = form.ceilingProfile && form.ceilingProfile.length >= 2 ? form.ceilingProfile : flatProfile(form.length, form.height)
+              const floorP = form.floorProfile && form.floorProfile.length >= 2 ? form.floorProfile : flatProfile(form.length, 0)
+              const worstH = Math.round(maxStudHeight(ceilP, floorP, form.length))
+              const sheetLayout: BoardSheetResult = calcSheetLayout(
+                form.length,
+                worstH,
+                form.firstStud,
+                form.step,
+                gklLayers as 1 | 2,
+                form.openings,
+                form.layer1,
+                form.layer2,
+              )
+              const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
+              const activeLayout = sheetLayerTab === 1 ? sheetLayout.layer1 : sheetLayout.layer2
+              if (!activeLayout) return null
+
+              return (
+                <div style={{ marginTop: 20, background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, padding: 16 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                    <b style={{ fontSize: 14 }}>Раскрой листов</b>
+                    {gklLayers === 2 && (
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {([1, 2] as const).map(l => (
+                          <button key={l}
+                            onClick={() => setSheetLayerTab(l)}
+                            style={{
+                              padding: '3px 12px', fontSize: 12, borderRadius: 4, cursor: 'pointer',
+                              border: '1px solid #ccc',
+                              background: sheetLayerTab === l ? '#3a7bd5' : '#f5f5f5',
+                              color: sheetLayerTab === l ? '#fff' : '#333',
+                            }}>
+                            Слой {l}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <span style={{ fontSize: 12, color: '#888' }}>
+                      {boardLabel(activeLayout.spec)} · {activeLayout.spec.sheetWidth}×{activeLayout.spec.sheetLength}мм
+                    </span>
+                  </div>
+                  <SheetLayoutCanvas
+                    layout={activeLayout}
+                    wallL={form.length}
+                    wallH={worstH}
+                    canvasW={CANVAS_W}
+                  />
+                </div>
+              )
+            })()}
+
+            {/* ─── Раскрой профилей ─── */}
             {(() => {
               const { pn, ps } = result.cutList
               const roleLabel: Record<string, string> = {
