@@ -1,4 +1,5 @@
-import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, AbutmentType, EdgeProfile, BoardMaterial, PlywoodInsert } from '../types'
+import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, AbutmentType, EdgeProfile, BoardSpec, PlywoodInsert } from '../types'
+import { DEFAULT_BOARD_SPEC } from '../types'
 import { calcScrews } from './calcScrews'
 import { calcStudMaterial, STUD_LENGTH } from './calcStudMaterial'
 import { buildOpeningStuds, mergeStuds, attachStudHeights } from './buildPositions'
@@ -59,8 +60,8 @@ export function calcResults(
   abutment: AbutmentType | string,
   overlap: number,
   gklLayers: number = 1,
-  layer1: BoardMaterial = 'gkl',
-  layer2: BoardMaterial = 'gkl',
+  layer1: BoardSpec = DEFAULT_BOARD_SPEC,
+  layer2: BoardSpec = DEFAULT_BOARD_SPEC,
   plywoodInserts: PlywoodInsert[] = [],
 ): CalcResult {
   const activeOpenings = openings.filter(o => o.width > 0)

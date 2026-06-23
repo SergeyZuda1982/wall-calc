@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate } from '../types'
+import { migrateBoard, DEFAULT_BOARD_SPEC } from '../types'
 
 const PROFILE_LETTER: Record<string, string> = {
   ps50: 'А', ps75: 'В', ps100: 'С',
@@ -269,10 +270,31 @@ export const useProjectStore = create<ProjectStore>()(
       }),
       onRehydrateStorage: () => (state) => {
         // После загрузки из localStorage синхронизируем плоские поля.
-        // Старые сохранённые объекты могли быть созданы до появления
-        // profileTemplates — подстраховываемся дефолтом, чтобы не упасть.
+        // Миграция: старые объекты могли хранить layer1/layer2 как строку ('gkl')
+        // или без плоских полей profileTemplates / plywoodInserts.
         if (state) {
-          state.projects = state.projects.map(p => ({ ...p, profileTemplates: p.profileTemplates ?? [] }))
+          state.projects = state.projects.map(p => ({
+            ...p,
+            profileTemplates: p.profileTemplates ?? [],
+            walls: p.walls.map(w => ({
+              ...w,
+              input: {
+                ...w.input,
+                layer1: migrateBoard((w.input as any).layer1 ?? DEFAULT_BOARD_SPEC),
+                layer2: migrateBoard((w.input as any).layer2 ?? DEFAULT_BOARD_SPEC),
+                plywoodInserts: w.input.plywoodInserts ?? [],
+              },
+            })),
+            linings: p.linings.map(l => ({
+              ...l,
+              input: {
+                ...l.input,
+                layer1: migrateBoard((l.input as any).layer1 ?? DEFAULT_BOARD_SPEC),
+                layer2: migrateBoard((l.input as any).layer2 ?? DEFAULT_BOARD_SPEC),
+                plywoodInserts: l.input.plywoodInserts ?? [],
+              },
+            })),
+          }))
           const synced = syncActive(state.projects, state.activeProjectId)
           Object.assign(state, synced)
         }

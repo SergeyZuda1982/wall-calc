@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
-import type { WallInput, Opening, BoardMaterial, PlywoodInsert } from './types'
-import { BOARD_LABEL } from './types'
+import type { WallInput, Opening, PlywoodInsert } from './types'
+import { DEFAULT_BOARD_SPEC, boardLabel } from './types'
+import { BoardSpecSelector } from './components/BoardSpecSelector'
 import type { WallEntry, LiningEntry } from './store/useProjectStore'
 import { PROFILES } from './data/profiles'
 import { useWallCalc } from './hooks/useWallCalc'
@@ -54,8 +55,8 @@ const DEFAULT_INPUT: WallInput = {
   firstStud: 600,
   openings: [],
   customOverlap: null,
-  layer1: 'gkl',
-  layer2: 'gkl',
+  layer1: DEFAULT_BOARD_SPEC,
+  layer2: DEFAULT_BOARD_SPEC,
   plywoodInserts: [],
 }
 
@@ -494,22 +495,14 @@ export default function App() {
               <option value="c112">С112 — 2 слоя</option>
             </select>
           </div>
-          <div style={{ flex: 1, minWidth: 160 }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
             <label style={{ fontSize: 13 }}>{form.wallType === 'c112' ? '1-й слой' : 'Материал обшивки'}</label><br />
-            <select value={form.layer1} onChange={e => set('layer1', e.target.value as BoardMaterial)} style={{ width: '100%', padding: 7 }}>
-              {(['gkl','gvl','sapphire','aquamarine'] as BoardMaterial[]).map(m => (
-                <option key={m} value={m}>{BOARD_LABEL[m]}</option>
-              ))}
-            </select>
+            <BoardSpecSelector value={form.layer1} onChange={v => set('layer1', v)} />
           </div>
           {form.wallType === 'c112' && (
-            <div style={{ flex: 1, minWidth: 160 }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
               <label style={{ fontSize: 13 }}>2-й слой</label><br />
-              <select value={form.layer2} onChange={e => set('layer2', e.target.value as BoardMaterial)} style={{ width: '100%', padding: 7 }}>
-                {(['gkl','gvl','sapphire','aquamarine'] as BoardMaterial[]).map(m => (
-                  <option key={m} value={m}>{BOARD_LABEL[m]}</option>
-                ))}
-              </select>
+              <BoardSpecSelector value={form.layer2} onChange={v => set('layer2', v)} />
             </div>
           )}
           <div style={{ flex: 1, minWidth: 180 }}>
@@ -1095,7 +1088,7 @@ export default function App() {
           <div style={{ marginTop: 20, background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
             <h2 style={{ marginTop: 0 }}>Результат</h2>
             <p style={{ color: '#666', fontSize: 13 }}>
-              {form.wallType.toUpperCase()} · {gklLayers} слой ГКЛ · профиль {form.profileThickness === '06' ? '0.6' : '0.7'}мм
+              {form.wallType.toUpperCase()} · {gklLayers} сл. {boardLabel(form.layer1)}{gklLayers === 2 ? ` + ${boardLabel(form.layer2)}` : ''} · профиль {form.profileThickness === '06' ? '0.6' : '0.7'}мм
             </p>
             {result.needsOverlap && (
               <div style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: 10, borderRadius: 6, marginBottom: 12 }}>

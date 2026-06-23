@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
-import type { LiningInput, LiningResult, Opening, EdgeProfile, BoardMaterial, PlywoodInsert } from './types'
-import { BOARD_LABEL } from './types'
+import type { LiningInput, LiningResult, Opening, EdgeProfile, PlywoodInsert } from './types'
+import { DEFAULT_BOARD_SPEC, boardLabel } from './types'
+import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { calcLining } from './core/calcLining'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { getLiningMaxHeight } from './data/liningMaxHeight'
@@ -35,8 +36,8 @@ const DEFAULT_INPUT: LiningInput = {
   hangerStep: 1000,
   abutment: 'both',
   openings: [],
-  layer1: 'gkl',
-  layer2: 'gkl',
+  layer1: DEFAULT_BOARD_SPEC,
+  layer2: DEFAULT_BOARD_SPEC,
   plywoodInserts: [],
 }
 
@@ -235,22 +236,14 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
               <option value={1}>1 слой</option><option value={2}>2 слоя</option>
             </select>}
         </div>
-        <div style={{ flex: 1, minWidth: 150 }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
           <label style={{ fontSize: 13 }}>{(gklLayersFixed ?? form.gklLayers) === 2 ? '1-й слой' : 'Материал'}</label><br />
-          <select value={form.layer1} onChange={e => set('layer1', e.target.value as BoardMaterial)} style={{ width: '100%', padding: 7 }}>
-            {(['gkl','gvl','sapphire','aquamarine'] as BoardMaterial[]).map(m => (
-              <option key={m} value={m}>{BOARD_LABEL[m]}</option>
-            ))}
-          </select>
+          <BoardSpecSelector value={form.layer1} onChange={v => set('layer1', v)} />
         </div>
         {(gklLayersFixed ?? form.gklLayers) === 2 && (
-          <div style={{ flex: 1, minWidth: 150 }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
             <label style={{ fontSize: 13 }}>2-й слой</label><br />
-            <select value={form.layer2} onChange={e => set('layer2', e.target.value as BoardMaterial)} style={{ width: '100%', padding: 7 }}>
-              {(['gkl','gvl','sapphire','aquamarine'] as BoardMaterial[]).map(m => (
-                <option key={m} value={m}>{BOARD_LABEL[m]}</option>
-              ))}
-            </select>
+            <BoardSpecSelector value={form.layer2} onChange={v => set('layer2', v)} />
           </div>
         )}
         <div style={{ flex: 1, minWidth: 150 }}>
@@ -617,7 +610,7 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
       {result && (
         <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
           <h3 style={{ marginTop: 0 }}>Результат</h3>
-          <p style={{ color: '#666', fontSize: 13 }}>{form.liningType.toUpperCase()} · {gklLayersFixed ?? form.gklLayers} сл. ГКЛ · {isC623 ? 'ПП 60×27' : `ПС ${profileLabel}×50`}</p>
+          <p style={{ color: '#666', fontSize: 13 }}>{form.liningType.toUpperCase()} · {gklLayersFixed ?? form.gklLayers} сл. {boardLabel(form.layer1)}{(gklLayersFixed ?? form.gklLayers) === 2 ? ` + ${boardLabel(form.layer2)}` : ''} · {isC623 ? 'ПП 60×27' : `ПС ${profileLabel}×50`}</p>
           {result.needsOverlap && (
             <div style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: 10, borderRadius: 6, marginBottom: 12 }}>
               ⚠️ Высота {snapWorstH}мм — стойки наращиваются{isC623 ? ` · удлинители: ${result.extenders} шт` : ' с перехлёстом'}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { calcLining } from '../calcLining'
 import type { LiningInput } from '../../types'
+import { DEFAULT_BOARD_SPEC } from '../../types'
 
 const base: LiningInput = {
   liningType: 'c625',
@@ -13,8 +14,8 @@ const base: LiningInput = {
   hangerStep: 1000,
   abutment: 'both',
   openings: [],
-  layer1: 'gkl' as const,
-  layer2: 'gkl' as const,
+  layer1: DEFAULT_BOARD_SPEC,
+  layer2: DEFAULT_BOARD_SPEC,
   plywoodInserts: [],
 }
 

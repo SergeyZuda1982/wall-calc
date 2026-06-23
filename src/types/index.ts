@@ -23,8 +23,58 @@ export interface ProfileTemplate {
 
 // ─── Материал обшивки ────────────────────────────────────────────────────────
 
+// Базовый тип материала — используется как ключ пула раскроя и для типа самореза
 export type BoardMaterial = 'gkl' | 'gvl' | 'sapphire' | 'aquamarine'
 
+// Подтипы ГКЛ (ГВЛ/Сапфир/Аквамарин подтипов не имеют)
+export type GklSubtype = 'standard' | 'moisture' | 'fire' | 'moisture_fire'
+
+// Полная спецификация листового материала
+export interface BoardSpec {
+  material:    BoardMaterial
+  subtype:     GklSubtype | null  // null для ГВЛ / Сапфир / Аквамарин
+  thickness:   number             // мм: 9.5 | 10 | 12.5
+  sheetWidth:  number             // мм, всегда 1200 для RU-рынка
+  sheetLength: number             // мм: 2500 | 2700 | 3000
+}
+
+// Дефолт — ГКЛ обычный 12.5 × 1200 × 2500
+export const DEFAULT_BOARD_SPEC: BoardSpec = {
+  material:    'gkl',
+  subtype:     'standard',
+  thickness:   12.5,
+  sheetWidth:  1200,
+  sheetLength: 2500,
+}
+
+// Миграция старых значений (строка 'gkl') → BoardSpec
+// Используется в useProjectStore при rehydrate и в useWallCalc
+export function migrateBoard(val: BoardMaterial | BoardSpec | unknown): BoardSpec {
+  if (val && typeof val === 'object' && 'material' in (val as object)) {
+    return val as BoardSpec
+  }
+  const mat = (typeof val === 'string' ? val : 'gkl') as BoardMaterial
+  return { ...DEFAULT_BOARD_SPEC, material: mat }
+}
+
+// Человекочитаемая метка для BoardSpec
+// Примеры: «ГКЛВ 12.5», «ГВЛ 10», «Сапфир», «Аквамарин»
+export function boardLabel(spec: BoardSpec): string {
+  const { material, subtype, thickness, sheetLength } = spec
+  if (material === 'sapphire')   return 'Сапфир'
+  if (material === 'aquamarine') return 'Аквамарин'
+
+  let label = material === 'gvl' ? 'ГВЛ' : 'ГКЛ'
+  if (subtype === 'moisture')      label += 'В'
+  else if (subtype === 'fire')     label += 'О'
+  else if (subtype === 'moisture_fire') label += 'ВО'
+
+  label += ` ${thickness}`
+  if (sheetLength !== 2500) label += ` · ${sheetLength}`
+  return label
+}
+
+// Оставляем для обратной совместимости (используется в ведомости материалов)
 export const BOARD_LABEL: Record<BoardMaterial, string> = {
   gkl:        'ГКЛ',
   gvl:        'ГВЛ',
@@ -33,9 +83,9 @@ export const BOARD_LABEL: Record<BoardMaterial, string> = {
 }
 
 // Тип самореза по материалу листа
-export function screwCode(mat: BoardMaterial): 'TN' | 'MN' | 'XTN' {
-  if (mat === 'gkl') return 'TN'
-  if (mat === 'gvl') return 'MN'
+export function screwCode(spec: BoardSpec): 'TN' | 'MN' | 'XTN' {
+  if (spec.material === 'gkl') return 'TN'
+  if (spec.material === 'gvl') return 'MN'
   return 'XTN'
 }
 
@@ -125,8 +175,8 @@ export interface WallInput {
   // как раньше (height используется как обычно).
   ceilingProfile?: EdgeProfile
   floorProfile?: EdgeProfile
-  layer1: BoardMaterial        // материал 1-го слоя обшивки
-  layer2: BoardMaterial        // материал 2-го слоя (актуален только при c112)
+  layer1: BoardSpec        // спецификация 1-го слоя обшивки
+  layer2: BoardSpec        // спецификация 2-го слоя (актуален только при c112)
   plywoodInserts: PlywoodInsert[]
 }
 
@@ -173,8 +223,8 @@ export interface LiningInput {
   openings: Opening[]
   ceilingProfile?: EdgeProfile
   floorProfile?: EdgeProfile
-  layer1: BoardMaterial
-  layer2: BoardMaterial
+  layer1: BoardSpec
+  layer2: BoardSpec
   plywoodInserts: PlywoodInsert[]
 }
 

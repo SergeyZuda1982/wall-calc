@@ -13,7 +13,7 @@
  * — Не-Кнауф TN/MN/XTN: +20% (отображается в UI, не в этом модуле).
  */
 
-import type { StudInfo, Opening, PlywoodInsert, ScrewResult, BoardMaterial } from '../types'
+import type { StudInfo, Opening, PlywoodInsert, ScrewResult, BoardSpec } from '../types'
 import { screwCode } from '../types'
 import { middleStudPieceCount } from './calcStudMaterial'
 
@@ -58,21 +58,21 @@ function spliceCount(
 /**
  * Полный расчёт саморезов для одной стены/облицовки.
  *
- * @param studInfos    — стойки из calcResults / calcLining
- * @param openings     — все проёмы (с фильтрацией нулевых внутри)
- * @param layer1       — материал 1-го слоя
- * @param layer2       — материал 2-го слоя (тот же что layer1 если слой 1)
- * @param gklLayers    — 1 или 2
- * @param sides        — 2 для перегородки, 1 для облицовки
- * @param overlap      — нахлёст стоек (мм), нужен для подсчёта LN
+ * @param studInfos      — стойки из calcResults / calcLining
+ * @param openings       — все проёмы (с фильтрацией нулевых внутри)
+ * @param layer1         — спецификация 1-го слоя обшивки
+ * @param layer2         — спецификация 2-го слоя (тот же что layer1 если слой 1)
+ * @param gklLayers      — 1 или 2
+ * @param sides          — 2 для перегородки, 1 для облицовки
+ * @param overlap        — нахлёст стоек (мм), нужен для подсчёта LN
  * @param plywoodInserts — закладные из фанеры
  * @param studPositions  — позиции стоек в мм (для расчёта саморезов по дереву)
  */
 export function calcScrews(
   studInfos: StudInfo[],
   openings: Opening[],
-  layer1: BoardMaterial,
-  layer2: BoardMaterial,
+  layer1: BoardSpec,
+  layer2: BoardSpec,
   gklLayers: 1 | 2,
   sides: 1 | 2,
   overlap: number,
@@ -112,17 +112,12 @@ export function calcScrews(
   }
 
   // ─── TN/MN/XTN — к перемычкам ────────────────────────────────────────────
-  // Над дверью: 1 перемычка (ширина проёма)
-  // Окно: перемычка сверху + подоконная снизу (ширина проёма)
   for (const o of activeOpenings) {
-    // Количество саморезов вдоль перемычки с шагом 250 мм
     const n = Math.ceil(o.width / SCREW_STEP)
     if (o.type === 'door') {
-      // только верхняя перемычка
       count25 += n * sides
       if (gklLayers === 2) count35 += n * sides
     } else {
-      // верхняя + нижняя (подоконник)
       count25 += n * 2 * sides
       if (gklLayers === 2) count35 += n * 2 * sides
     }
@@ -136,8 +131,6 @@ export function calcScrews(
 
     for (const sPos of studPositions) {
       if (sPos < insLeft || sPos > insRight) continue
-      // Стойка попадает в зону закладной по горизонтали
-      // Количество саморезов по высоте закладной
       woodScrews += screwsByHeight(ins.height) * sides
     }
   }

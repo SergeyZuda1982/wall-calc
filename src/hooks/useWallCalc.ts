@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { CANVAS_W, PAD } from '../constants'
-import type { WallInput, CalcResult, DrawingSnap, EdgeProfile } from '../types'
+import type { WallInput, CalcResult, DrawingSnap, EdgeProfile, BoardSpec } from '../types'
+import { DEFAULT_BOARD_SPEC } from '../types'
 import { getProfile, DEFAULT_PROFILE } from '../data/profiles'
 import { getMaxHeight } from '../data/maxHeight'
 import { buildPositions, buildFromPhase } from '../core/buildPositions'
@@ -38,8 +39,8 @@ export function useWallCalc(): UseWallCalcReturn {
   const stepRef = useRef(600)
   const phaseRef = useRef(0)
   const gridShiftRef = useRef(0)
-  const layer1Ref = useRef<import('../types').BoardMaterial>('gkl')
-  const layer2Ref = useRef<import('../types').BoardMaterial>('gkl')
+  const layer1Ref = useRef<BoardSpec | null>(null)
+  const layer2Ref = useRef<BoardSpec | null>(null)
   const plywoodRef = useRef<import('../types').PlywoodInsert[]>([])
 
   // Стойки, которые нельзя удалить или двигать:
@@ -60,8 +61,8 @@ export function useWallCalc(): UseWallCalcReturn {
       currentSnap.openings,
       abutmentRef.current, overlapRef.current,
       wallTypeRef.current === 'c112' ? 2 : 1,
-      layer1Ref.current,
-      layer2Ref.current,
+      layer1Ref.current ?? DEFAULT_BOARD_SPEC,
+      layer2Ref.current ?? DEFAULT_BOARD_SPEC,
       plywoodRef.current,
     )
     setResult(res)
@@ -83,8 +84,8 @@ export function useWallCalc(): UseWallCalcReturn {
     wallTypeRef.current = wallType
     overlapRef.current = effectiveOverlap
     stepRef.current = s
-    layer1Ref.current = input.layer1 ?? 'gkl'
-    layer2Ref.current = input.layer2 ?? 'gkl'
+    layer1Ref.current = input.layer1
+    layer2Ref.current = input.layer2
     plywoodRef.current = input.plywoodInserts ?? []
 
     const ceilingProfile: EdgeProfile = normalizeProfile(input.ceilingProfile, l, h)
