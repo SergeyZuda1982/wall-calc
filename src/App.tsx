@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
-import type { WallInput, Opening } from './types'
+import type { WallInput, Opening, BoardMaterial, PlywoodInsert } from './types'
+import { BOARD_LABEL } from './types'
 import type { WallEntry, LiningEntry } from './store/useProjectStore'
 import { PROFILES } from './data/profiles'
 import { useWallCalc } from './hooks/useWallCalc'
@@ -53,6 +54,9 @@ const DEFAULT_INPUT: WallInput = {
   firstStud: 600,
   openings: [],
   customOverlap: null,
+  layer1: 'gkl',
+  layer2: 'gkl',
+  plywoodInserts: [],
 }
 
 // ─── Типы для сводной ведомости ──────────────────────────────────────────────
@@ -486,10 +490,28 @@ export default function App() {
           <div style={{ flex: 1, minWidth: 180 }}>
             <label style={{ fontSize: 13 }}>Тип перегородки</label><br />
             <select value={form.wallType} onChange={e => set('wallType', e.target.value as WallInput['wallType'])} style={{ width: '100%', padding: 7 }}>
-              <option value="c111">С111 — 1 слой ГКЛ</option>
-              <option value="c112">С112 — 2 слоя ГКЛ</option>
+              <option value="c111">С111 — 1 слой</option>
+              <option value="c112">С112 — 2 слоя</option>
             </select>
           </div>
+          <div style={{ flex: 1, minWidth: 160 }}>
+            <label style={{ fontSize: 13 }}>{form.wallType === 'c112' ? '1-й слой' : 'Материал обшивки'}</label><br />
+            <select value={form.layer1} onChange={e => set('layer1', e.target.value as BoardMaterial)} style={{ width: '100%', padding: 7 }}>
+              {(['gkl','gvl','sapphire','aquamarine'] as BoardMaterial[]).map(m => (
+                <option key={m} value={m}>{BOARD_LABEL[m]}</option>
+              ))}
+            </select>
+          </div>
+          {form.wallType === 'c112' && (
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <label style={{ fontSize: 13 }}>2-й слой</label><br />
+              <select value={form.layer2} onChange={e => set('layer2', e.target.value as BoardMaterial)} style={{ width: '100%', padding: 7 }}>
+                {(['gkl','gvl','sapphire','aquamarine'] as BoardMaterial[]).map(m => (
+                  <option key={m} value={m}>{BOARD_LABEL[m]}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div style={{ flex: 1, minWidth: 180 }}>
             <label style={{ fontSize: 13 }}>Толщина профиля</label><br />
             <select value={form.profileThickness} onChange={e => set('profileThickness', e.target.value as WallInput['profileThickness'])} style={{ width: '100%', padding: 7 }}>
@@ -646,6 +668,41 @@ export default function App() {
             <input type="checkbox" checked={hasInsulation} onChange={e => setHasInsulation(e.target.checked)} />
             Утеплитель
           </label>
+        </div>
+
+        {/* ─── Закладные из фанеры ─── */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Закладные (фанера)</span>
+            <button onClick={() => {
+              const newIns: PlywoodInsert = { id: `ply${Date.now()}`, x: 0, y: 800, width: 600, height: 400 }
+              set('plywoodInserts', [...(form.plywoodInserts ?? []), newIns])
+            }} style={{ fontSize: 12, padding: '3px 10px', cursor: 'pointer', border: '1px solid #aaa', borderRadius: 4, background: '#fff' }}>
+              + Добавить
+            </button>
+          </div>
+          {(form.plywoodInserts ?? []).map((ins, idx) => (
+            <div key={ins.id} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 8, padding: '8px 10px', background: '#fdf8ee', border: '1px solid #e8d99a', borderRadius: 6 }}>
+              <div><label style={{ fontSize: 11, color: '#666' }}>X от начала, мм</label><br />
+                <input type="number" value={ins.x} min={0} style={{ width: 90, padding: '5px 6px', fontSize: 13 }}
+                  onChange={e => { const v = [...(form.plywoodInserts??[])]; v[idx]={...ins,x:Number(e.target.value)}; set('plywoodInserts',v) }} />
+              </div>
+              <div><label style={{ fontSize: 11, color: '#666' }}>Y от пола, мм</label><br />
+                <input type="number" value={ins.y} min={0} style={{ width: 90, padding: '5px 6px', fontSize: 13 }}
+                  onChange={e => { const v = [...(form.plywoodInserts??[])]; v[idx]={...ins,y:Number(e.target.value)}; set('plywoodInserts',v) }} />
+              </div>
+              <div><label style={{ fontSize: 11, color: '#666' }}>Ширина, мм</label><br />
+                <input type="number" value={ins.width} min={1} style={{ width: 90, padding: '5px 6px', fontSize: 13 }}
+                  onChange={e => { const v = [...(form.plywoodInserts??[])]; v[idx]={...ins,width:Number(e.target.value)}; set('plywoodInserts',v) }} />
+              </div>
+              <div><label style={{ fontSize: 11, color: '#666' }}>Высота, мм</label><br />
+                <input type="number" value={ins.height} min={1} style={{ width: 90, padding: '5px 6px', fontSize: 13 }}
+                  onChange={e => { const v = [...(form.plywoodInserts??[])]; v[idx]={...ins,height:Number(e.target.value)}; set('plywoodInserts',v) }} />
+              </div>
+              <button onClick={() => set('plywoodInserts', (form.plywoodInserts??[]).filter((_,i)=>i!==idx))}
+                style={{ padding: '5px 10px', fontSize: 13, cursor: 'pointer', border: '1px solid #cc8888', borderRadius: 4, background: '#fff0f0', color: '#c00' }}>✕</button>
+            </div>
+          ))}
         </div>
 
         <div style={{ display: 'flex', gap: 10, marginBottom: hasOpeningConflict ? 8 : 20, flexWrap: 'wrap' }}>
@@ -983,6 +1040,50 @@ export default function App() {
                         })
                     )
                   )}
+                  {/* ─── Закладные из фанеры ─── */}
+                  {(snap.l > 0 && (form.plywoodInserts ?? []).length > 0) && (form.plywoodInserts ?? []).map(ins => {
+                    // Y на canvas: пол внизу, y=0 от пола вверх
+                    const floorY = wallBotAt(ins.x + ins.width / 2)
+                    const pxX = tx(ins.x)
+                    const pxY = floorY - (ins.y + ins.height) * scale
+                    const pxW = ins.width * scale
+                    const pxH = ins.height * scale
+                    if (pxW < 2 || pxH < 2) return null
+                    // Штриховка: диагональные линии через 12px
+                    const hatchLines: React.ReactNode[] = []
+                    const step = 12
+                    const total = pxW + pxH
+                    for (let d = 0; d < total; d += step) {
+                      const x1 = pxX + Math.min(d, pxW)
+                      const y1 = pxY + Math.max(0, d - pxW)
+                      const x2 = pxX + Math.max(0, d - pxH)
+                      const y2 = pxY + Math.min(d, pxH)
+                      hatchLines.push(<Line key={d} points={[x1,y1,x2,y2]} stroke="#a0622a" strokeWidth={0.8} opacity={0.5} />)
+                    }
+                    return (
+                      <Group key={ins.id}
+                        x={0} y={0}
+                        draggable
+                        onDragEnd={e => {
+                          const dx = e.target.x()
+                          const dy = e.target.y()
+                          const newXmm = Math.max(0, Math.min(snap.l - ins.width,
+                            Math.round((ins.x + dx / scale) / 10) * 10))
+                          const newYmm = Math.max(0, Math.round((ins.y - dy / scale) / 10) * 10)
+                          e.target.x(0); e.target.y(0)
+                          set('plywoodInserts', (form.plywoodInserts ?? []).map(i =>
+                            i.id === ins.id ? { ...i, x: newXmm, y: newYmm } : i
+                          ))
+                        }}
+                      >
+                        <Rect x={pxX} y={pxY} width={pxW} height={pxH}
+                          fill="rgba(180,120,60,0.18)" stroke="#a0622a" strokeWidth={1.5} cornerRadius={2} />
+                        {hatchLines}
+                        <Text x={pxX + 4} y={pxY + 4} text="фанера"
+                          fontSize={Math.max(9, Math.min(12, pxH * 0.25))} fill="#7a4a1a" />
+                      </Group>
+                    )
+                  })}
                 </Layer>
               </Stage>
             </div>
@@ -1041,6 +1142,45 @@ export default function App() {
                       <td style={{ paddingBottom: 6 }}><b>{result.gklArea.toFixed(2)} м²</b></td></tr>
                     {hasInsulation && insulationArea && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Утеплитель:</td>
                       <td style={{ paddingBottom: 6 }}><b>{insulationArea} м²</b></td></tr>}
+                    {/* ─── Саморезы ─── */}
+                    {(() => {
+                      const s = result.screws
+                      const plus20 = (n: number) => Math.ceil(n * 1.2)
+                      const rowStyle = { paddingRight: 16, paddingBottom: 4, color: '#555', fontSize: 13 }
+                      const tdStyle = { paddingBottom: 4, fontSize: 13 }
+                      const screwRows: React.ReactNode[] = []
+                      if (s.ln11 > 0) screwRows.push(
+                        <tr key="ln"><td style={rowStyle}>LN 11 (клопы):</td>
+                          <td style={tdStyle}><b>{s.ln11}</b> шт</td></tr>
+                      )
+                      if (s.count25 > 0) screwRows.push(
+                        <tr key="s25"><td style={rowStyle}>{s.code25} 25 мм:</td>
+                          <td style={tdStyle}>
+                            <b>{s.count25}</b><sup style={{fontSize:9,color:'#888'}}>*</sup> шт
+                            <span style={{color:'#aaa',margin:'0 4px'}}>〜</span>
+                            <b>{plus20(s.count25)}</b> шт
+                          </td></tr>
+                      )
+                      if (s.count35 > 0) screwRows.push(
+                        <tr key="s35"><td style={rowStyle}>{s.code35} 35 мм:</td>
+                          <td style={tdStyle}>
+                            <b>{s.count35}</b><sup style={{fontSize:9,color:'#888'}}>*</sup> шт
+                            <span style={{color:'#aaa',margin:'0 4px'}}>〜</span>
+                            <b>{plus20(s.count35)}</b> шт
+                          </td></tr>
+                      )
+                      if (s.woodScrews > 0) screwRows.push(
+                        <tr key="wood"><td style={rowStyle}>Саморезы по дереву:</td>
+                          <td style={tdStyle}><b>{s.woodScrews}</b> шт</td></tr>
+                      )
+                      if (screwRows.length === 0) return null
+                      return <>
+                        <tr><td colSpan={2} style={{paddingTop:6,paddingBottom:2,color:'#888',fontSize:11,borderTop:'1px solid #eee'}}>
+                          Саморезы (<sup style={{fontSize:9}}>*</sup> Кнауф · 〜 сторонний +20%)
+                        </td></tr>
+                        {screwRows}
+                      </>
+                    })()}
                   </>
                 })()}
               </tbody>

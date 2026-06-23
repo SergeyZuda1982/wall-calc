@@ -38,6 +38,9 @@ export function useWallCalc(): UseWallCalcReturn {
   const stepRef = useRef(600)
   const phaseRef = useRef(0)
   const gridShiftRef = useRef(0)
+  const layer1Ref = useRef<import('../types').BoardMaterial>('gkl')
+  const layer2Ref = useRef<import('../types').BoardMaterial>('gkl')
+  const plywoodRef = useRef<import('../types').PlywoodInsert[]>([])
 
   // Стойки, которые нельзя удалить или двигать:
   // - крайние (0, l)
@@ -57,6 +60,9 @@ export function useWallCalc(): UseWallCalcReturn {
       currentSnap.openings,
       abutmentRef.current, overlapRef.current,
       wallTypeRef.current === 'c112' ? 2 : 1,
+      layer1Ref.current,
+      layer2Ref.current,
+      plywoodRef.current,
     )
     setResult(res)
   }
@@ -77,6 +83,9 @@ export function useWallCalc(): UseWallCalcReturn {
     wallTypeRef.current = wallType
     overlapRef.current = effectiveOverlap
     stepRef.current = s
+    layer1Ref.current = input.layer1 ?? 'gkl'
+    layer2Ref.current = input.layer2 ?? 'gkl'
+    plywoodRef.current = input.plywoodInserts ?? []
 
     const ceilingProfile: EdgeProfile = normalizeProfile(input.ceilingProfile, l, h)
     const floorProfile: EdgeProfile = normalizeProfile(input.floorProfile, l, 0)

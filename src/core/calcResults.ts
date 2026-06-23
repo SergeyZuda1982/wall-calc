@@ -1,4 +1,5 @@
-import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, AbutmentType, EdgeProfile } from '../types'
+import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, AbutmentType, EdgeProfile, BoardMaterial, PlywoodInsert } from '../types'
+import { calcScrews } from './calcScrews'
 import { calcStudMaterial, STUD_LENGTH } from './calcStudMaterial'
 import { buildOpeningStuds, mergeStuds, attachStudHeights } from './buildPositions'
 import { buildCutList, pnPieces, psPieces } from './cutList'
@@ -57,7 +58,10 @@ export function calcResults(
   openings: Opening[],
   abutment: AbutmentType | string,
   overlap: number,
-  gklLayers: number = 1
+  gklLayers: number = 1,
+  layer1: BoardMaterial = 'gkl',
+  layer2: BoardMaterial = 'gkl',
+  plywoodInserts: PlywoodInsert[] = [],
 ): CalcResult {
   const activeOpenings = openings.filter(o => o.width > 0)
 
@@ -146,6 +150,18 @@ export function calcResults(
     ps: buildCutList(psCuts),
   }
 
+  const screws = calcScrews(
+    studInfos,
+    openings,
+    layer1,
+    layer2,
+    gklLayers as 1 | 2,
+    2, // перегородка — две стороны
+    overlap,
+    plywoodInserts,
+    positions,
+  )
+
   return {
     uwFloor:      floorSegPathLen / 1000,
     uwCeiling:    ceilPathLen / 1000,
@@ -159,6 +175,7 @@ export function calcResults(
     needsOverlap: worstHeight > STUD_LENGTH,
     studInfos,
     cutList,
-    rawPieces: { pn: pnCuts, ps: psCuts },  // ← исходные куски до раскроя
+    rawPieces: { pn: pnCuts, ps: psCuts },
+    screws,
   }
 }

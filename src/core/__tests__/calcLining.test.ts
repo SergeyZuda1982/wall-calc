@@ -13,6 +13,9 @@ const base: LiningInput = {
   hangerStep: 1000,
   abutment: 'both',
   openings: [],
+  layer1: 'gkl' as const,
+  layer2: 'gkl' as const,
+  plywoodInserts: [],
 }
 
 // Те же 12 позиций, что и в сценарии перегородки 6160×3600 (buildPositions),

@@ -1,4 +1,5 @@
 import type { LiningInput, LiningResult, StudInfo, StudKind } from '../types'
+import { calcScrews } from './calcScrews'
 import { buildCutList, BAR_LENGTH } from './cutList'
 import { middleStudTotalLength, middleStudPieceCount } from './calcStudMaterial'
 import type { Piece } from './cutList'
@@ -7,7 +8,7 @@ import { normalizeProfile, studHeightAt, integrateHeight, maxStudHeight, profile
 const STUD_LENGTH = 3000
 
 export function calcLining(input: LiningInput, positions: number[]): LiningResult {
-  const { length: l, height: h, hangerStep, gklLayers, openings } = input
+  const { length: l, height: h, hangerStep, gklLayers, openings, layer1, layer2, plywoodInserts } = input
   const activeOpenings = openings.filter(o => o.width > 0)
 
   const isC623 = input.liningType === 'c623'
@@ -234,6 +235,18 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     }
   })
 
+  const screws = calcScrews(
+    studInfos,
+    openings,
+    layer1,
+    layer2,
+    gklLayers as 1 | 2,
+    1, // облицовка — одна сторона
+    input.profileType === 'ps50' ? 500 : input.profileType === 'ps75' ? 750 : 1000,
+    plywoodInserts,
+    positions,
+  )
+
   return {
     guideRail,
     stud: studTotal / 1000,
@@ -244,6 +257,7 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     needsOverlap: worstHeight > STUD_LENGTH && !isC623,
     studInfos,
     cutList,
-        rawPieces: { pn: pnPcs, stud: studPcs },  // ← исходные куски до раскроя
+    rawPieces: { pn: pnPcs, stud: studPcs },
+    screws,
   }
 }

@@ -21,6 +21,45 @@ export interface ProfileTemplate {
   shape: ProfilePoint[]   // переиспользуем x/y как dx/dy
 }
 
+// ─── Материал обшивки ────────────────────────────────────────────────────────
+
+export type BoardMaterial = 'gkl' | 'gvl' | 'sapphire' | 'aquamarine'
+
+export const BOARD_LABEL: Record<BoardMaterial, string> = {
+  gkl:        'ГКЛ',
+  gvl:        'ГВЛ',
+  sapphire:   'Сапфир',
+  aquamarine: 'Аквамарин',
+}
+
+// Тип самореза по материалу листа
+export function screwCode(mat: BoardMaterial): 'TN' | 'MN' | 'XTN' {
+  if (mat === 'gkl') return 'TN'
+  if (mat === 'gvl') return 'MN'
+  return 'XTN'
+}
+
+// ─── Закладные из фанеры ─────────────────────────────────────────────────────
+
+export interface PlywoodInsert {
+  id: string
+  x: number      // горизонтальная позиция от начала стены, мм
+  y: number      // отступ от пола, мм
+  width: number  // ширина, мм
+  height: number // высота, мм
+}
+
+// ─── Результат расчёта саморезов ─────────────────────────────────────────────
+
+export interface ScrewResult {
+  ln11: number                          // клопы LN 11 мм
+  code25: 'TN' | 'MN' | 'XTN'         // тип самореза 25 мм (1-й слой)
+  count25: number                       // кол-во 25 мм (Кнауф)
+  code35: 'TN' | 'MN' | 'XTN' | null  // тип самореза 35 мм (2-й слой), null если 1 слой
+  count35: number                       // кол-во 35 мм (Кнауф), 0 если 1 слой
+  woodScrews: number                    // саморезы по дереву для фанеры
+}
+
 // ─── Профили ────────────────────────────────────────────────────────────────
 
 export type ProfileType = 'ps50' | 'ps75' | 'ps100'
@@ -86,6 +125,9 @@ export interface WallInput {
   // как раньше (height используется как обычно).
   ceilingProfile?: EdgeProfile
   floorProfile?: EdgeProfile
+  layer1: BoardMaterial        // материал 1-го слоя обшивки
+  layer2: BoardMaterial        // материал 2-го слоя (актуален только при c112)
+  plywoodInserts: PlywoodInsert[]
 }
 
 export interface CalcResult {
@@ -102,6 +144,7 @@ export interface CalcResult {
   studInfos: StudInfo[]
   cutList: WallCutList
   rawPieces: { pn: CutPiece[]; ps: CutPiece[] }
+  screws: ScrewResult
 }
 
 export interface DrawingSnap {
@@ -130,6 +173,9 @@ export interface LiningInput {
   openings: Opening[]
   ceilingProfile?: EdgeProfile
   floorProfile?: EdgeProfile
+  layer1: BoardMaterial
+  layer2: BoardMaterial
+  plywoodInserts: PlywoodInsert[]
 }
 
 export interface LiningResult {
@@ -143,6 +189,7 @@ export interface LiningResult {
   studInfos: StudInfo[]
   cutList: LiningCutList
   rawPieces: { pn: CutPiece[]; stud: CutPiece[] }
+  screws: ScrewResult
 }
 
 // ─── Раскрой ─────────────────────────────────────────────────────────────────
