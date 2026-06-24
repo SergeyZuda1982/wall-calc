@@ -46,9 +46,10 @@ function columnBoundaries(
   }
 
   // Края проёмов — разбиваем колонки на части
+  // pos = левый край проёма, правый = pos + width
   for (const op of openings.filter(o => o.width > 0)) {
-    const oL = op.pos - op.width / 2
-    const oR = op.pos + op.width / 2
+    const oL = op.pos
+    const oR = op.pos + op.width
     if (oL > 0 && oL < wallL) pts.add(Math.round(oL))
     if (oR > 0 && oR < wallL) pts.add(Math.round(oR))
   }
@@ -66,8 +67,8 @@ function voidZones(
 ): Array<[number, number]> {
   const voids: Array<[number, number]> = []
   for (const op of openings.filter(o => o.width > 0)) {
-    const oL = op.pos - op.width / 2
-    const oR = op.pos + op.width / 2
+    const oL = op.pos
+    const oR = op.pos + op.width
     // Строгая проверка: под-колонка должна полностью лежать внутри проёма
     if (x1 < oR && x2 > oL) {
       voids.push([op.sillHeight, op.sillHeight + op.height])

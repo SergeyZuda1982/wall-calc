@@ -135,6 +135,26 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
             stroke="#666" strokeWidth={0.5} dash={[4, 3]}
           />
 
+          {/* Горизонтальные линии стыков листов */}
+          {(() => {
+            const SL = layout.spec.sheetLength
+            const vOffset = layout.layer === 1 ? 0 : SL / 2
+            const jointY: number[] = []
+            // Повторяем логику zoneJoints для всей стены (z1=0)
+            let j = vOffset % SL  // 0 для слоя 1, SL/2 для слоя 2
+            while (j <= 0) j += SL  // для слоя 1: 0 → SL
+            while (j < wallH) { jointY.push(j); j += SL }
+            return jointY.map((yMm, idx) => (
+              <Line
+                key={`hj-${idx}`}
+                points={[tx(0), ty(yMm), tx(wallL), ty(yMm)]}
+                stroke="#333"
+                strokeWidth={1.5}
+                dash={[8, 5]}
+              />
+            ))
+          })()}
+
           {/* Контур стены */}
           <Rect
             x={tx(0)} y={V_PAD}
@@ -157,6 +177,12 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ display: 'inline-block', width: 16, height: 12, border: '1.5px dashed #e74c3c', borderRadius: 2 }} />
           из обрезков
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <svg width="16" height="12" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+            <line x1="0" y1="6" x2="16" y2="6" stroke="#333" strokeWidth="1.5" strokeDasharray="5 3" />
+          </svg>
+          стык листов
         </span>
       </div>
     </div>
