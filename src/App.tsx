@@ -143,6 +143,7 @@ export default function App() {
   const [form, setForm] = useState<WallInput>(DEFAULT_INPUT)
   const [shiftInput, setShiftInput] = useState('100')
   const [activeTab, setActiveTab] = useState<'wall' | 'lining'>('wall')
+  const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
   const [hasInsulation, setHasInsulation] = useState(false)
   const [canvasWrapRef, CANVAS_W] = useContainerWidth(CANVAS_W_MAX, 48)
   const {
@@ -1197,7 +1198,6 @@ export default function App() {
                 form.layer1,
                 form.layer2,
               )
-              const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
               const activeLayout = sheetLayerTab === 1 ? sheetLayout.layer1 : sheetLayout.layer2
               if (!activeLayout) return null
 
