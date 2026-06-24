@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
 import type { WallInput, Opening, PlywoodInsert, BoardSheetResult } from './types'
 import { DEFAULT_BOARD_SPEC, boardLabel } from './types'
@@ -149,12 +149,23 @@ export default function App() {
   const {
     positions, snap, result, heightWarning, profileWidth,
     calculate, onDragEnd, onRightDragEnd, shiftGrid, addStud, removeStud,
+    currentFirstStud, currentStep,
   } = useWallCalc()
 
   const rightDragStart = useRef<{ studPos: number; startXpx: number } | null>(null)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastTapTime = useRef<number>(0)
   const lastTapPos = useRef<{ x: number; y: number } | null>(null)
+
+  // Синхронизируем form.firstStud с актуальной фазой гребёнки.
+  // Это нужно чтобы:
+  // 1. calcSheetLayout всегда видел реальный firstStud (включая ручные сдвиги)
+  // 2. При повторном нажатии «рассчитать» позиция гребёнки сохранялась
+  useEffect(() => {
+    if (currentFirstStud > 0) {
+      setForm(prev => ({ ...prev, firstStud: currentFirstStud }))
+    }
+  }, [currentFirstStud])
 
   const {
     projectName, walls, linings, activeWallId, activeLiningId,
@@ -1191,8 +1202,8 @@ export default function App() {
               const sheetLayout: BoardSheetResult = calcSheetLayout(
                 form.length,
                 worstH,
-                form.firstStud,
-                form.step,
+                currentFirstStud || form.firstStud,
+                currentStep || form.step,
                 gklLayers as 1 | 2,
                 form.openings,
                 form.layer1,

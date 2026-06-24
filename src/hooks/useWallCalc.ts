@@ -17,6 +17,10 @@ export interface UseWallCalcReturn {
   result: CalcResult | null
   heightWarning: string | null
   profileWidth: number
+  /** Актуальная фаза сетки (firstStud после сдвигов). 0 до первого calculate(). */
+  currentFirstStud: number
+  /** Актуальный шаг сетки. 0 до первого calculate(). */
+  currentStep: number
 
   calculate: (input: WallInput) => void
   onDragEnd: (studPos: number, xpx: number) => void
@@ -31,6 +35,8 @@ export function useWallCalc(): UseWallCalcReturn {
   const [snap, setSnap] = useState<DrawingSnap>({ l: 0, h: 0, openings: [], ceilingProfile: [], floorProfile: [] })
   const [result, setResult] = useState<CalcResult | null>(null)
   const [heightWarning, setHeightWarning] = useState<string | null>(null)
+  const [currentFirstStud, setCurrentFirstStud] = useState(0)
+  const [currentStep, setCurrentStep] = useState(0)
 
   const profileRef = useRef(DEFAULT_PROFILE)
   const abutmentRef = useRef<string>('both')
@@ -109,6 +115,8 @@ export function useWallCalc(): UseWallCalcReturn {
 
     phaseRef.current = phase
     gridShiftRef.current = 0
+    setCurrentFirstStud(phase)
+    setCurrentStep(s)
     setSnap(newSnap)
     _update(studs, newSnap)
   }
@@ -144,7 +152,8 @@ export function useWallCalc(): UseWallCalcReturn {
   function _rebuildWithShift() {
     if (!snap.l) return
     const newPhase = phaseRef.current + gridShiftRef.current
-    const { positions: next } = buildFromPhase(snap.l, stepRef.current, newPhase, snap.openings)
+    const { positions: next, phase: actualPhase } = buildFromPhase(snap.l, stepRef.current, newPhase, snap.openings)
+    setCurrentFirstStud(actualPhase)
     _update(next, snap)
   }
 
@@ -166,6 +175,7 @@ export function useWallCalc(): UseWallCalcReturn {
   return {
     positions, snap, result, heightWarning,
     profileWidth: profileRef.current.width,
+    currentFirstStud, currentStep,
     calculate, onDragEnd, onRightDragEnd, shiftGrid, addStud, removeStud,
   }
 }
