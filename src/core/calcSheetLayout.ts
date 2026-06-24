@@ -3,11 +3,11 @@
  *
  * Правила (Кнауф, п.8.16 + Схема 4):
  * — Листы стоят вертикально, стык по оси стоечного профиля.
- * — Слой 1: первая колонка = firstStud мм (от Wall-стойки до первого ПС).
- * — Слой 2: сдвинут на шаг стоек (step). Первая колонка = (firstStud+step)%1200 || 1200.
- * — Всё что попадает в зону проёма → пул отходов (void).
- * — Пул обрезков: ширина 1200 (горизонтальный рез) или остаток по высоте.
- * — Переиспользование жадное: сначала подходящий обрезок, потом новый лист.
+ * — Слой 1: первая колонка = firstStud мм.
+ * — Слой 2: сдвинут по горизонтали на step, первая колонка = (firstStud+step)%1200 || 1200.
+ * — Горизонтальные стыки: слой 2 смещён вертикально на SL/2 (≥400мм разбег гарантирован).
+ * — Края проёмов добавляются в список границ колонок → нет ложных void-зон.
+ * — Переиспользование обрезков: жадный алгоритм (первый подходящий из пула).
  */
 
 import type {
@@ -19,30 +19,46 @@ const SHEET_W = 1200  // ширина листа всегда 1200 мм
 
 // ─── Вспомогательные ─────────────────────────────────────────────────────────
 
-/** Границы колонок для заданного слоя */
+/**
+ * Границы колонок:
+ * - шаговые точки по листу (firstStud, затем каждые 1200мм)
+ * - ПЛЮС левые и правые края всех проёмов
+ * → каждая под-колонка либо целиком внутри проёма, либо целиком снаружи
+ */
 function columnBoundaries(
   firstStud: number,
   step: number,
   wallL: number,
   layer: 1 | 2,
+  openings: Opening[],
 ): number[] {
   const firstW = layer === 1
     ? firstStud
     : (() => { const r = (firstStud + step) % SHEET_W; return r === 0 ? SHEET_W : r })()
 
-  const pts: number[] = [0]
-  if (firstW < wallL) {
-    pts.push(firstW)
+  const pts = new Set<number>([0, wallL])
+
+  // Шаговые границы листов
+  if (firstW > 0 && firstW < wallL) {
+    pts.add(firstW)
     let p = firstW
-    while (p + SHEET_W < wallL) { p += SHEET_W; pts.push(p) }
+    while (p + SHEET_W < wallL) { p += SHEET_W; pts.add(p) }
   }
-  if (pts[pts.length - 1] !== wallL) pts.push(wallL)
-  return pts
+
+  // Края проёмов — разбиваем колонки на части
+  for (const op of openings.filter(o => o.width > 0)) {
+    const oL = op.pos - op.width / 2
+    const oR = op.pos + op.width / 2
+    if (oL > 0 && oL < wallL) pts.add(Math.round(oL))
+    if (oR > 0 && oR < wallL) pts.add(Math.round(oR))
+  }
+
+  return [...pts].sort((a, b) => a - b)
 }
 
 /**
- * «Пустые» зоны в колонке [x1,x2] по высоте — то что занимают проёмы.
- * Возвращает массив [yBottom, yTop] — диапазоны куда лист класть НЕ надо.
+ * Высотные диапазоны [yBottom, yTop] где нужно оставить пустоту (проёмы).
+ * Применяется к под-колонке [x1, x2].
  */
 function voidZones(
   x1: number, x2: number,
@@ -52,17 +68,16 @@ function voidZones(
   for (const op of openings.filter(o => o.width > 0)) {
     const oL = op.pos - op.width / 2
     const oR = op.pos + op.width / 2
-    if (Math.max(x1, oL) >= Math.min(x2, oR)) continue  // нет перекрытия
-    const oBottom = op.sillHeight
-    const oTop    = op.sillHeight + op.height
-    voids.push([oBottom, oTop])
+    // Строгая проверка: под-колонка должна полностью лежать внутри проёма
+    if (x1 < oR && x2 > oL) {
+      voids.push([op.sillHeight, op.sillHeight + op.height])
+    }
   }
   return voids
 }
 
 /**
- * «Рабочие» зоны в колонке: [0, wallH] минус void-зоны.
- * Возвращает отсортированный массив [yBottom, yTop].
+ * Рабочие диапазоны [yBottom, yTop] — wallH минус void-зоны.
  */
 function workZones(
   wallH: number,
@@ -81,11 +96,28 @@ function workZones(
   return zones
 }
 
+/**
+ * Разбивает зону [z1, z2] на куски с учётом вертикального смещения слоя.
+ * Возвращает массив y-границ: [z1, joint1, joint2, ..., z2].
+ * Горизонтальные стыки листов попадают в точки vOffset, vOffset+SL, vOffset+2*SL...
+ */
+function zoneJoints(z1: number, z2: number, SL: number, vOffset: number): number[] {
+  const pts = [z1]
+  // Первый стык ≥ z1
+  let j = vOffset % SL  // нормализуем смещение
+  while (j <= z1) j += SL
+  while (j < z2) {
+    pts.push(j)
+    j += SL
+  }
+  pts.push(z2)
+  return pts
+}
+
 // ─── Жадный пул обрезков ─────────────────────────────────────────────────────
 
 interface PoolItem { w: number; h: number; used: boolean }
 
-/** Берём первый подходящий обрезок из пула (жадно, первое подходящее) */
 function takeFromPool(pool: PoolItem[], needW: number, needH: number): PoolItem | null {
   for (const item of pool) {
     if (!item.used && item.w >= needW && item.h >= needH) {
@@ -96,7 +128,7 @@ function takeFromPool(pool: PoolItem[], needW: number, needH: number): PoolItem 
   return null
 }
 
-// ─── Основной алгоритм ───────────────────────────────────────────────────────
+// ─── Основной алгоритм одного слоя ───────────────────────────────────────────
 
 function calcLayer(
   wallL: number,
@@ -108,40 +140,45 @@ function calcLayer(
   layer: 1 | 2,
 ): BoardLayerLayout {
   const SL = spec.sheetLength
+  // Слой 2 смещён на SL/2 по вертикали — горизонтальные стыки разнесены ≥400мм
+  const vOffset = layer === 1 ? 0 : SL / 2
 
-  const bounds  = columnBoundaries(firstStud, step, wallL, layer)
+  const bounds  = columnBoundaries(firstStud, step, wallL, layer, openings)
   const columns: BoardColumn[] = []
-
-  // Пул обрезков этой стены (жадное межколоночное переиспользование)
   const pool: PoolItem[] = []
 
   let sheetsNeeded = 0
-  let usedMm2      = 0     // площадь листов на стене
-  let sheetMm2     = 0     // площадь купленных листов
+  let usedMm2      = 0
+  let sheetMm2     = 0
 
   for (let i = 0; i < bounds.length - 1; i++) {
     const x1 = bounds[i]
     const x2 = bounds[i + 1]
-    const cw  = x2 - x1         // ширина колонки
+    const cw  = x2 - x1
 
     const voids = voidZones(x1, x2, openings)
     const work  = workZones(wallH, voids)
     const pieces: BoardPiece[] = []
 
-    // Void-зоны — добавляем как opening_void для Canvas
+    // Void-зоны → opening_void для Canvas
     for (const [vB, vT] of voids) {
       const clampB = Math.max(0, vB)
       const clampT = Math.min(wallH, vT)
       if (clampT > clampB) {
-        pieces.push({ x: x1, y: clampB, w: cw, h: clampT - clampB, kind: 'opening_void', source: 'new_sheet' })
+        pieces.push({
+          x: x1, y: clampB, w: cw, h: clampT - clampB,
+          kind: 'opening_void', source: 'new_sheet',
+        })
       }
     }
 
-    // Рабочие зоны — раскладываем листы
+    // Рабочие зоны → листы
     for (const [z1, z2] of work) {
-      let y = z1
-      while (y < z2) {
-        const ph = Math.min(SL, z2 - y)  // высота куска
+      const ys = zoneJoints(z1, z2, SL, vOffset)
+
+      for (let k = 0; k < ys.length - 1; k++) {
+        const py = ys[k]
+        const ph = ys[k + 1] - ys[k]
 
         // Пробуем взять из пула
         const fromPool = takeFromPool(pool, cw, ph)
@@ -149,31 +186,21 @@ function calcLayer(
         let source: BoardPiece['source']
         if (fromPool) {
           source = 'offcut'
-          // Остаток обрезка (если выше нужного) — добавляем обратно в пул
-          if (fromPool.h > ph) {
-            pool.push({ w: fromPool.w, h: fromPool.h - ph, used: false })
-          }
-          // Боковой остаток (если шире нужного) — в пул
-          if (fromPool.w > cw) {
-            pool.push({ w: fromPool.w - cw, h: ph, used: false })
-          }
+          // Кладём остатки обратно в пул
+          if (fromPool.h - ph >= 200) pool.push({ w: fromPool.w, h: fromPool.h - ph, used: false })
+          if (fromPool.w - cw >= 200) pool.push({ w: fromPool.w - cw, h: ph, used: false })
         } else {
           // Открываем новый лист
           source = 'new_sheet'
           sheetsNeeded++
           sheetMm2 += SHEET_W * SL
 
-          // Боковой обрезок (если колонка уже листа)
-          if (cw < SHEET_W) {
-            pool.push({ w: SHEET_W - cw, h: SL, used: false })
-          }
-          // Высотный обрезок (если кусок короче листа)
-          if (ph < SL) {
-            pool.push({ w: cw, h: SL - ph, used: false })
-          }
+          // Боковой обрезок
+          if (SHEET_W - cw >= 200) pool.push({ w: SHEET_W - cw, h: SL, used: false })
+          // Высотный обрезок
+          if (SL - ph >= 200)      pool.push({ w: cw, h: SL - ph, used: false })
         }
 
-        // Определяем вид куска
         const widthCut  = cw < SHEET_W
         const heightCut = ph < SL
         const kind: BoardPiece['kind'] =
@@ -182,38 +209,39 @@ function calcLayer(
           : heightCut           ? 'height_cut'
           : 'full'
 
-        pieces.push({ x: x1, y, w: cw, h: ph, kind, source })
+        pieces.push({ x: x1, y: py, w: cw, h: ph, kind, source })
         usedMm2 += cw * ph
-        y += ph
       }
     }
 
     columns.push({ x1, x2, pieces })
   }
 
-  // Неиспользованные обрезки из пула → usableOffcuts
+  // Неиспользованные обрезки → usableOffcuts
   const usableOffcuts: BoardOffcut[] = pool
     .filter(p => !p.used && p.w >= 200 && p.h >= 200)
     .map(p => ({ w: p.w, h: p.h, spec }))
 
-  const offcutMm2 = usableOffcuts.reduce((s, o) => s + o.w * o.h, 0)
-  const wasteMm2  = sheetMm2 - usedMm2
-  const wastePercent = sheetMm2 > 0 ? (wasteMm2 / sheetMm2) * 100 : 0
+  const offcutMm2    = usableOffcuts.reduce((s, o) => s + o.w * o.h, 0)
+  const wastePercent = sheetMm2 > 0
+    ? Math.max(0, (sheetMm2 - usedMm2) / sheetMm2 * 100)
+    : 0
 
   return {
     layer,
     spec,
     columns,
     sheetsNeeded,
-    usedAreaM2:    usedMm2    / 1e6,
-    sheetAreaM2:   sheetMm2   / 1e6,
-    offcutAreaM2:  offcutMm2  / 1e6,
-    wastePercent:  Math.round(wastePercent * 10) / 10,
+    usedAreaM2:   usedMm2    / 1e6,
+    sheetAreaM2:  sheetMm2   / 1e6,
+    offcutAreaM2: offcutMm2  / 1e6,
+    wastePercent: Math.round(wastePercent * 10) / 10,
     usableOffcuts,
   }
 }
 
-/** Публичная точка входа — считает раскрой для 1 или 2 слоёв */
+// ─── Публичная точка входа ────────────────────────────────────────────────────
+
 export function calcSheetLayout(
   wallL: number,
   wallH: number,
