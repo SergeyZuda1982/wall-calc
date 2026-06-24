@@ -5,7 +5,10 @@
  * — Листы стоят вертикально, стык по оси стоечного профиля.
  * — Слой 1: первая колонка = firstStud мм.
  * — Слой 2: сдвинут по горизонтали на step, первая колонка = (firstStud+step)%1200 || 1200.
- * — Горизонтальные стыки: слой 2 смещён вертикально на SL/2 (≥400мм разбег гарантирован).
+ * — Горизонтальные стыки: vOffset чередуется по колонкам (чётная/нечётная).
+ *   Соседние колонки одного слоя разнесены на SL/2.
+ *   Слой 1 vs слой 2 той же колонки — тоже SL/2.
+ *   Сторона А vs Б — задаётся sideIndex (0 или 1).
  * — Края проёмов добавляются в список границ колонок → нет ложных void-зон.
  * — Переиспользование обрезков: жадный алгоритм (первый подходящий из пула).
  */
@@ -139,10 +142,9 @@ function calcLayer(
   openings: Opening[],
   spec: BoardSpec,
   layer: 1 | 2,
+  sideIndex: 0 | 1,
 ): BoardLayerLayout {
   const SL = spec.sheetLength
-  // Слой 2 смещён на SL/2 по вертикали — горизонтальные стыки разнесены ≥400мм
-  const vOffset = layer === 1 ? 0 : SL / 2
 
   const bounds  = columnBoundaries(firstStud, step, wallL, layer, openings)
   const columns: BoardColumn[] = []
@@ -156,6 +158,16 @@ function calcLayer(
     const x1 = bounds[i]
     const x2 = bounds[i + 1]
     const cw  = x2 - x1
+
+    // vOffset чередуется по колонкам, слоям и сторонам стены.
+    // Формула гарантирует разбег SL/2 между:
+    //   - соседними колонками одного слоя
+    //   - слоем 1 и 2 одной колонки
+    //   - стороной А и Б одной колонки
+    const vOffset = ((i + (layer - 1) + sideIndex) % 2) * (SL / 2)
+
+    // Позиции горизонтальных стыков для этой колонки (для canvas)
+    const jointYs = zoneJoints(0, wallH, SL, vOffset).slice(1, -1)
 
     const voids = voidZones(x1, x2, openings)
     const work  = workZones(wallH, voids)
@@ -215,7 +227,7 @@ function calcLayer(
       }
     }
 
-    columns.push({ x1, x2, pieces })
+    columns.push({ x1, x2, pieces, jointYs })
   }
 
   // Неиспользованные обрезки → usableOffcuts
@@ -252,11 +264,12 @@ export function calcSheetLayout(
   openings: Opening[],
   layer1Spec: BoardSpec,
   layer2Spec: BoardSpec,
+  sideIndex: 0 | 1 = 0,
 ): BoardSheetResult {
   return {
-    layer1: calcLayer(wallL, wallH, firstStud, step, openings, layer1Spec, 1),
+    layer1: calcLayer(wallL, wallH, firstStud, step, openings, layer1Spec, 1, sideIndex),
     layer2: gklLayers === 2
-      ? calcLayer(wallL, wallH, firstStud, step, openings, layer2Spec, 2)
+      ? calcLayer(wallL, wallH, firstStud, step, openings, layer2Spec, 2, sideIndex)
       : null,
   }
 }

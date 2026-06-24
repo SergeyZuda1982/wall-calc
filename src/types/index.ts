@@ -287,6 +287,8 @@ export interface BoardColumn {
   x2: number
   /** куски листов (включая opening_void для визуализации) */
   pieces: BoardPiece[]
+  /** высоты горизонтальных стыков в мм от пола (для canvas) */
+  jointYs: number[]
 }
 
 /** Пригодный обрезок (кандидат в межперегородочный пул) */

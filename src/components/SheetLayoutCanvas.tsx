@@ -135,25 +135,18 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
             stroke="#666" strokeWidth={0.5} dash={[4, 3]}
           />
 
-          {/* Горизонтальные линии стыков листов */}
-          {(() => {
-            const SL = layout.spec.sheetLength
-            const vOffset = layout.layer === 1 ? 0 : SL / 2
-            const jointY: number[] = []
-            // Повторяем логику zoneJoints для всей стены (z1=0)
-            let j = vOffset % SL  // 0 для слоя 1, SL/2 для слоя 2
-            while (j <= 0) j += SL  // для слоя 1: 0 → SL
-            while (j < wallH) { jointY.push(j); j += SL }
-            return jointY.map((yMm, idx) => (
+          {/* Горизонтальные линии стыков — per-column, разная высота */}
+          {layout.columns.map((col, ci) =>
+            col.jointYs.map((yMm, ji) => (
               <Line
-                key={`hj-${idx}`}
-                points={[tx(0), ty(yMm), tx(wallL), ty(yMm)]}
+                key={`hj-${ci}-${ji}`}
+                points={[tx(col.x1), ty(yMm), tx(col.x2), ty(yMm)]}
                 stroke="#333"
                 strokeWidth={1.5}
                 dash={[8, 5]}
               />
             ))
-          })()}
+          )}
 
           {/* Контур стены */}
           <Rect
