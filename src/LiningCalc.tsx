@@ -1,7 +1,9 @@
 import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
-import type { LiningInput, LiningResult, Opening, EdgeProfile, PlywoodInsert } from './types'
+import type { LiningInput, LiningResult, Opening, EdgeProfile, PlywoodInsert, BoardSheetResult, BoardLayerLayout } from './types'
 import { DEFAULT_BOARD_SPEC, boardLabel } from './types'
+import { calcSheetLayout } from './core/calcSheetLayout'
+import SheetLayoutCanvas from './components/SheetLayoutCanvas'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { calcLining } from './core/calcLining'
 import { calcStudMaterial } from './core/calcStudMaterial'
@@ -54,6 +56,8 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
   const [snapCeilingProfile, setSnapCeilingProfile] = useState<EdgeProfile>([])
   const [snapFloorProfile, setSnapFloorProfile] = useState<EdgeProfile>([])
   const [shiftInput, setShiftInput] = useState('100')
+  const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
+  const [showOffcuts, setShowOffcuts] = useState(false)
   const basePositions = useRef<number[]>([])
   const gridShift = useRef(0)
 
@@ -722,6 +726,152 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
                 </div>
                 {renderCutList(pn, `ПН ${guideLabel}`)}
                 {renderCutList(stud, studLabel)}
+              </div>
+            )
+          })()}
+
+          {/* ─── Раскрой листов ─── */}
+          {(() => {
+            if (!snapL || !result) return null
+            const layers = gklLayersFixed ?? form.gklLayers
+            const firstStudForSheet = positions.find(p => p > 0 && p < snapL) ?? form.step
+            const sheetLayout: BoardSheetResult = calcSheetLayout(
+              snapL,
+              snapWorstH,
+              firstStudForSheet,
+              form.step,
+              layers as 1 | 2,
+              form.openings,
+              form.layer1,
+              form.layer2,
+              1, // облицовка — одна сторона
+            )
+
+            const layerLayouts: Record<number, BoardLayerLayout | null> = {
+              1: sheetLayout.layer1,
+              2: sheetLayout.layer2,
+            }
+            const activeLayout = layerLayouts[layers === 2 ? sheetLayerTab : 1]
+            if (!activeLayout) return null
+
+            const { totalSheetsNeeded, totalUsedAreaM2, totalSheetAreaM2, totalOffcutAreaM2, totalWastePercent } = sheetLayout
+
+            return (
+              <div style={{ marginTop: 20, background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, padding: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+                  <b style={{ fontSize: 14 }}>Раскрой листов</b>
+
+                  {/* Вкладки слоёв — только при 2 слоях */}
+                  {layers === 2 && (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {([1, 2] as const).map(l => (
+                        <button key={l}
+                          onClick={() => setSheetLayerTab(l)}
+                          style={{
+                            padding: '3px 12px', fontSize: 12, borderRadius: 4, cursor: 'pointer',
+                            border: '1px solid #ccc',
+                            background: sheetLayerTab === l ? '#3a7bd5' : '#f5f5f5',
+                            color: sheetLayerTab === l ? '#fff' : '#333',
+                          }}>
+                          Слой {l}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <span style={{ fontSize: 12, color: '#888' }}>
+                    {boardLabel(activeLayout.spec)} · {activeLayout.spec.sheetWidth}×{activeLayout.spec.sheetLength}мм
+                  </span>
+                </div>
+
+                {/* Статистика текущего слоя */}
+                <div style={{ fontSize: 12, color: '#555', marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
+                  <span>▲ Листов: <b>{activeLayout.sheetsNeeded}</b></span>
+                  <span>В работе: <b>{activeLayout.usedAreaM2.toFixed(2)} м²</b></span>
+                  <span>Куплено: <b>{activeLayout.sheetAreaM2.toFixed(2)} м²</b></span>
+                </div>
+
+                {/* Итоговая статистика по облицовке */}
+                <div style={{
+                  fontSize: 12, background: '#f0f7ff', border: '1px solid #b3d4ff',
+                  borderRadius: 6, padding: '6px 10px', marginBottom: 10,
+                  display: 'flex', flexWrap: 'wrap', gap: '6px 16px', color: '#1a4a8a',
+                }}>
+                  <b>Облицовка ({layers} сл. × общий пул):</b>
+                  <span>Листов: <b>{totalSheetsNeeded}</b></span>
+                  <span>В работе: <b>{totalUsedAreaM2.toFixed(2)} м²</b></span>
+                  <span>Куплено: <b>{totalSheetAreaM2.toFixed(2)} м²</b></span>
+                  <span>Финал. обрезки: <b>{totalOffcutAreaM2.toFixed(2)} м²</b></span>
+                  <span>Отходы: <b>{totalWastePercent}%</b></span>
+                </div>
+
+                <SheetLayoutCanvas
+                  layout={activeLayout}
+                  wallL={snapL}
+                  wallH={snapWorstH}
+                  canvasW={CANVAS_W}
+                />
+
+                {/* ── Панель остатков ── */}
+                {sheetLayout.finalOffcuts.length > 0 && (() => {
+                  const offcuts = [...sheetLayout.finalOffcuts]
+                    .sort((a, b) => b.w * b.h - a.w * a.h)
+                  const totalM2 = offcuts.reduce((s, o) => s + o.w * o.h, 0) / 1e6
+                  return (
+                    <div style={{ marginTop: 12 }}>
+                      <button
+                        onClick={() => setShowOffcuts(v => !v)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          background: 'none', border: '1px solid #ddd', borderRadius: 6,
+                          padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                          color: '#555', width: '100%', textAlign: 'left',
+                        }}>
+                        <span>🪚 Остатки: <b>{offcuts.length} шт</b>, <b>{totalM2.toFixed(2)} м²</b></span>
+                        <span style={{ marginLeft: 'auto' }}>{showOffcuts ? '▲' : '▼'}</span>
+                      </button>
+
+                      {showOffcuts && (
+                        <div style={{
+                          marginTop: 8, padding: 10, background: '#fafafa',
+                          border: '1px solid #eee', borderRadius: 6,
+                        }}>
+                          <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+                            Масштаб: 1px ≈ 15мм. Сортировка по площади.
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-end' }}>
+                            {offcuts.map((o, idx) => {
+                              const area = o.w * o.h
+                              const sc = Math.min(90 / o.h, 130 / o.w)
+                              const dw = Math.round(o.w * sc)
+                              const dh = Math.round(o.h * sc)
+                              const bg = area > 500000 ? '#4caf50'
+                                : area > 200000 ? '#26a69a'
+                                : area > 80000  ? '#42a5f5'
+                                : '#ff9800'
+                              return (
+                                <div key={idx} title={`${o.w}×${o.h}мм — ${(area/1e6).toFixed(3)} м²`}
+                                  style={{
+                                    width: dw, height: dh,
+                                    background: bg, borderRadius: 3, opacity: 0.85,
+                                    display: 'flex', flexDirection: 'column',
+                                    alignItems: 'center', justifyContent: 'center',
+                                    fontSize: Math.max(9, Math.min(11, dw / 6)),
+                                    color: '#fff', fontWeight: 600, lineHeight: 1.2,
+                                    cursor: 'default', flexShrink: 0,
+                                  }}>
+                                  <span>{o.w}</span>
+                                  <span>×</span>
+                                  <span>{o.h}</span>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             )
           })()}
