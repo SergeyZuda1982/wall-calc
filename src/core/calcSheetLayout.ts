@@ -22,9 +22,14 @@ const SHEET_W = 1200  // ширина листа всегда 1200 мм
 // ─── Вспомогательные ─────────────────────────────────────────────────────────
 
 /** Ширина первой колонки слоя */
-function firstColWidth(firstStud: number, step: number, layer: 1 | 2): number {
-  if (layer === 1) return firstStud
-  const r = (firstStud + step) % SHEET_W
+function firstColWidth(firstStud: number, step: number, layer: 1 | 2, sideIndex: 0 | 1): number {
+  // Ст.Б (sideIndex=1) смещается на один шаг стоек относительно Ст.А:
+  // вертикальные стыки противоположных сторон не должны совпадать (Кнауф п.8.16)
+  const base = sideIndex === 0
+    ? firstStud
+    : ((firstStud + step) % SHEET_W || SHEET_W)
+  if (layer === 1) return base === 0 ? SHEET_W : base
+  const r = (base + step) % SHEET_W
   return r === 0 ? SHEET_W : r
 }
 
@@ -186,8 +191,9 @@ function calcLayer(
     //     |k - j| = 0  →  diff = SL/2 = 1250мм  ✓
     //     |k - j| = 1  →  diff = SL/4 = 625мм   ✓  (≥ 400мм норматив)
     //   Соседние колонки одного слоя: diff = SL/4 = 625мм  ✓
-    //   Стороны А/Б перегородки (sideIndex 0/1): diff = SL/4  ✓
-    const firstW = firstColWidth(firstStud, step, layer)
+    //   Стороны А/Б: firstW для Б смещена на step → вертикальные стыки
+    //   А и Б смещены на step (600мм) ✓; sideIndex даёт доп. сдвиг vOffset.
+    const firstW = firstColWidth(firstStud, step, layer, sideIndex)
     const slot   = sheetSlot(x1, firstW)
     const vOffset = ((slot + (layer === 2 ? 2 : 0) + sideIndex) % 4) * (SL / 4)
 
