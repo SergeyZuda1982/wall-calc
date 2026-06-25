@@ -313,6 +313,16 @@ export interface BoardLayerLayout {
 
 /** Полный раскрой стены (оба слоя) */
 export interface BoardSheetResult {
+  /** Сторона А */
   layer1: BoardLayerLayout
-  layer2: BoardLayerLayout | null  // null при однослойке
+  layer2: BoardLayerLayout | null
+  /** Сторона Б (только для перегородок, sides=2) */
+  sideB_layer1: BoardLayerLayout | null
+  sideB_layer2: BoardLayerLayout | null
+  /** Суммарно по всем сторонам и слоям */
+  totalSheetsNeeded: number
+  totalUsedAreaM2: number
+  totalSheetAreaM2: number
+  totalOffcutAreaM2: number
+  totalWastePercent: number
 }

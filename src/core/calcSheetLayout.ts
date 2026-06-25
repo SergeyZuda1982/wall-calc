@@ -159,12 +159,13 @@ function calcLayer(
   spec: BoardSpec,
   layer: 1 | 2,
   sideIndex: 0 | 1,
+  sharedPool: PoolItem[],   // общий пул — передаётся снаружи и живёт через все слои/стороны
 ): BoardLayerLayout {
   const SL = spec.sheetLength
 
   const bounds  = columnBoundaries(firstStud, step, wallL, layer, openings)
   const columns: BoardColumn[] = []
-  const pool: PoolItem[] = []
+  const pool    = sharedPool   // алиас для читаемости
 
   let sheetsNeeded = 0
   let usedMm2      = 0
@@ -288,12 +289,43 @@ export function calcSheetLayout(
   openings: Opening[],
   layer1Spec: BoardSpec,
   layer2Spec: BoardSpec,
-  sideIndex: 0 | 1 = 0,
+  /** 1 = облицовка (одна сторона), 2 = перегородка (две стороны) */
+  sides: 1 | 2 = 1,
 ): BoardSheetResult {
+  // Один общий пул на все 4 экземпляра.
+  // Порядок: А/сл1 → А/сл2 → Б/сл1 → Б/сл2
+  // Обрезок из любого предыдущего слоя идёт в следующий.
+  const sharedPool: PoolItem[] = []
+
+  const args = (si: 0 | 1, layer: 1 | 2, spec: BoardSpec) =>
+    [wallL, wallH, firstStud, step, openings, spec, layer, si, sharedPool] as const
+
+  const l1A  = calcLayer(...args(0, 1, layer1Spec))
+  const l2A  = gklLayers === 2 ? calcLayer(...args(0, 2, layer2Spec)) : null
+  const l1B  = sides === 2 ? calcLayer(...args(1, 1, layer1Spec)) : null
+  const l2B  = sides === 2 && gklLayers === 2 ? calcLayer(...args(1, 2, layer2Spec)) : null
+
+  // Суммарная статистика
+  const all  = [l1A, l2A, l1B, l2B].filter((x): x is BoardLayerLayout => x !== null)
+  const totalSheetsNeeded = all.reduce((s, l) => s + l.sheetsNeeded, 0)
+  const totalUsedAreaM2   = all.reduce((s, l) => s + l.usedAreaM2,   0)
+  const totalSheetAreaM2  = all.reduce((s, l) => s + l.sheetAreaM2,  0)
+  // Финальные обрезки — остаток общего пула
+  const finalOffcuts = sharedPool.filter(p => !p.used && p.w >= 200 && p.h >= 200)
+  const totalOffcutAreaM2 = finalOffcuts.reduce((s, p) => s + p.w * p.h, 0) / 1e6
+  const totalWastePercent = totalSheetAreaM2 > 0
+    ? Math.round((totalSheetAreaM2 - totalUsedAreaM2) / totalSheetAreaM2 * 1000) / 10
+    : 0
+
   return {
-    layer1: calcLayer(wallL, wallH, firstStud, step, openings, layer1Spec, 1, sideIndex),
-    layer2: gklLayers === 2
-      ? calcLayer(wallL, wallH, firstStud, step, openings, layer2Spec, 2, sideIndex)
-      : null,
+    layer1: l1A,
+    layer2: l2A,
+    sideB_layer1: l1B,
+    sideB_layer2: l2B,
+    totalSheetsNeeded,
+    totalUsedAreaM2,
+    totalSheetAreaM2,
+    totalOffcutAreaM2,
+    totalWastePercent,
   }
 }

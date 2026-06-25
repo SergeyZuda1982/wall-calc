@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
-import type { WallInput, Opening, PlywoodInsert, BoardSheetResult } from './types'
+import type { WallInput, Opening, PlywoodInsert, BoardSheetResult, BoardLayerLayout } from './types'
 import { DEFAULT_BOARD_SPEC, boardLabel } from './types'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
 import type { WallEntry, LiningEntry } from './store/useProjectStore'
@@ -144,6 +144,7 @@ export default function App() {
   const [shiftInput, setShiftInput] = useState('100')
   const [activeTab, setActiveTab] = useState<'wall' | 'lining'>('wall')
   const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
+  const [sheetSideTab, setSheetSideTab] = useState<'A' | 'B'>('A')
   const [hasInsulation, setHasInsulation] = useState(false)
   const [canvasWrapRef, CANVAS_W] = useContainerWidth(CANVAS_W_MAX, 48)
   const {
@@ -1208,14 +1209,43 @@ export default function App() {
                 form.openings,
                 form.layer1,
                 form.layer2,
+                2,  // перегородка всегда 2 стороны
               )
-              const activeLayout = sheetLayerTab === 1 ? sheetLayout.layer1 : sheetLayout.layer2
+
+              // Активная раскладка по выбранным вкладкам
+              const sideLayouts = {
+                A: { 1: sheetLayout.layer1,       2: sheetLayout.layer2 },
+                B: { 1: sheetLayout.sideB_layer1, 2: sheetLayout.sideB_layer2 },
+              }
+              const activeLayout = (sideLayouts[sheetSideTab as 'A' | 'B'] as Record<number, BoardLayerLayout | null>)[sheetLayerTab]
               if (!activeLayout) return null
+
+              const { totalSheetsNeeded, totalUsedAreaM2, totalSheetAreaM2, totalOffcutAreaM2, totalWastePercent } = sheetLayout
+              const sidesCount = 2
+              const instancesCount = sidesCount * gklLayers
 
               return (
                 <div style={{ marginTop: 20, background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, padding: 16 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
                     <b style={{ fontSize: 14 }}>Раскрой листов</b>
+
+                    {/* Вкладки: Сторона А / Сторона Б */}
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {(['A', 'B'] as const).map(side => (
+                        <button key={side}
+                          onClick={() => setSheetSideTab(side)}
+                          style={{
+                            padding: '3px 12px', fontSize: 12, borderRadius: 4, cursor: 'pointer',
+                            border: '1px solid #ccc',
+                            background: sheetSideTab === side ? '#2d7d46' : '#f5f5f5',
+                            color: sheetSideTab === side ? '#fff' : '#333',
+                          }}>
+                          Ст. {side}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Вкладки: Слой 1 / Слой 2 */}
                     {gklLayers === 2 && (
                       <div style={{ display: 'flex', gap: 4 }}>
                         {([1, 2] as const).map(l => (
@@ -1232,10 +1262,34 @@ export default function App() {
                         ))}
                       </div>
                     )}
+
                     <span style={{ fontSize: 12, color: '#888' }}>
                       {boardLabel(activeLayout.spec)} · {activeLayout.spec.sheetWidth}×{activeLayout.spec.sheetLength}мм
                     </span>
                   </div>
+
+                  {/* Статистика текущего вида */}
+                  <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
+                    <span>▲ Листов: {activeLayout.sheetsNeeded}</span>
+                    <span style={{ margin: '0 8px' }}>В работе: {activeLayout.usedAreaM2.toFixed(2)} м²</span>
+                    <span style={{ marginRight: 8 }}>🧱 Куплено: {activeLayout.sheetAreaM2.toFixed(2)} м²</span>
+                    <span>🗑 Отходы: {activeLayout.wastePercent}% (обрезки {activeLayout.offcutAreaM2.toFixed(2)} м²)</span>
+                  </div>
+
+                  {/* Итоговая статистика по перегородке */}
+                  <div style={{
+                    fontSize: 12, background: '#f0f7ff', border: '1px solid #b3d4ff',
+                    borderRadius: 6, padding: '6px 10px', marginBottom: 10,
+                    display: 'flex', flexWrap: 'wrap', gap: '6px 16px', color: '#1a4a8a',
+                  }}>
+                    <b>Перегородка ({instancesCount} экз. × общий пул):</b>
+                    <span>Листов: <b>{totalSheetsNeeded}</b></span>
+                    <span>В работе: <b>{totalUsedAreaM2.toFixed(2)} м²</b></span>
+                    <span>Куплено: <b>{totalSheetAreaM2.toFixed(2)} м²</b></span>
+                    <span>Финал. обрезки: <b>{totalOffcutAreaM2.toFixed(2)} м²</b></span>
+                    <span>Отходы: <b>{totalWastePercent}%</b></span>
+                  </div>
+
                   <SheetLayoutCanvas
                     layout={activeLayout}
                     wallL={form.length}
