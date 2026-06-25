@@ -13,6 +13,7 @@ import { useProjectStore } from './store/useProjectStore'
 import LiningCalc from './LiningCalc'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
+import { calcProjectSheetLayout, buildSurfaceInputs } from './core/calcProjectSheetLayout'
 import { BAR_LENGTH } from './core/cutList'
 import ProfileEditor from './components/ProfileEditor'
 import { interpolateY, flatProfile, maxStudHeight, integrateHeight } from './core/profileGeometry'
@@ -146,6 +147,7 @@ export default function App() {
   const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
   const [sheetSideTab, setSheetSideTab] = useState<'A' | 'B'>('A')
   const [showOffcuts, setShowOffcuts] = useState(false)
+  const [showProjectOffcuts, setShowProjectOffcuts] = useState(false)
   const [hasInsulation, setHasInsulation] = useState(false)
   const [canvasWrapRef, CANVAS_W] = useContainerWidth(CANVAS_W_MAX, 48)
   const {
@@ -1557,6 +1559,110 @@ export default function App() {
                         ))}
                       </div>
                     ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* ─── Раскрой листов объекта ─── */}
+            {(() => {
+              const surfaces = buildSurfaceInputs(walls, linings)
+              if (surfaces.length === 0) return null
+              const proj = calcProjectSheetLayout(surfaces)
+              const offcuts = [...proj.finalOffcuts].sort((a, b) => b.w * b.h - a.w * a.h)
+              const offcutM2 = offcuts.reduce((s, o) => s + o.w * o.h / 1e6, 0)
+              return (
+                <div style={{ marginTop: 0, borderTop: '2px solid #ccd' }}>
+                  <div style={{ padding: '10px 14px', background: '#f0fff4', fontWeight: 600, fontSize: 13 }}>
+                    Раскрой листов объекта — с учётом остатков между конструкциями
+                  </div>
+                  <div style={{ padding: '8px 14px', overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: '#f5f5f5', color: '#555' }}>
+                          <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 600 }}>Конструкция</th>
+                          <th style={{ textAlign: 'right', padding: '4px 8px', fontWeight: 600 }}>Листов</th>
+                          <th style={{ textAlign: 'right', padding: '4px 8px', fontWeight: 600 }}>В работе, м²</th>
+                          <th style={{ textAlign: 'right', padding: '4px 8px', fontWeight: 600 }}>Куплено, м²</th>
+                          <th style={{ textAlign: 'right', padding: '4px 8px', fontWeight: 600 }}>Отходы</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {proj.surfaces.map(({ id, label, result: r }) => (
+                          <tr key={id} style={{ borderBottom: '1px solid #eee' }}>
+                            <td style={{ padding: '4px 8px', color: '#333' }}>{label}</td>
+                            <td style={{ padding: '4px 8px', textAlign: 'right' }}>{r.totalSheetsNeeded}</td>
+                            <td style={{ padding: '4px 8px', textAlign: 'right' }}>{r.totalUsedAreaM2.toFixed(2)}</td>
+                            <td style={{ padding: '4px 8px', textAlign: 'right' }}>{r.totalSheetAreaM2.toFixed(2)}</td>
+                            <td style={{ padding: '4px 8px', textAlign: 'right' }}>{r.totalWastePercent}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ background: '#f0fff4', fontWeight: 700, borderTop: '2px solid #b2dfdb' }}>
+                          <td style={{ padding: '5px 8px', color: '#1a4a2e' }}>ИТОГО</td>
+                          <td style={{ padding: '5px 8px', textAlign: 'right', color: '#1a4a2e' }}>{proj.totalSheetsNeeded}</td>
+                          <td style={{ padding: '5px 8px', textAlign: 'right', color: '#1a4a2e' }}>{proj.totalUsedAreaM2.toFixed(2)}</td>
+                          <td style={{ padding: '5px 8px', textAlign: 'right', color: '#1a4a2e' }}>{proj.totalSheetAreaM2.toFixed(2)}</td>
+                          <td style={{ padding: '5px 8px', textAlign: 'right', color: '#1a4a2e' }}>{proj.totalWastePercent}%</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+
+                    {offcuts.length > 0 && (
+                      <div style={{ marginTop: 12 }}>
+                        <button
+                          onClick={() => setShowProjectOffcuts(v => !v)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            background: 'none', border: '1px solid #ddd', borderRadius: 6,
+                            padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                            color: '#555', width: '100%', textAlign: 'left',
+                          }}>
+                          <span>🪚 Финальные остатки объекта: <b>{offcuts.length} шт</b>, <b>{offcutM2.toFixed(2)} м²</b></span>
+                          <span style={{ marginLeft: 'auto' }}>{showProjectOffcuts ? '▲' : '▼'}</span>
+                        </button>
+                        {showProjectOffcuts && (
+                          <div style={{
+                            marginTop: 8, padding: 10, background: '#fafafa',
+                            border: '1px solid #eee', borderRadius: 6,
+                          }}>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+                              Масштаб: 1px ≈ 15мм. Сортировка по площади.
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-end' }}>
+                              {offcuts.map((o, idx) => {
+                                const area = o.w * o.h
+                                const sc = Math.min(90 / o.h, 130 / o.w)
+                                const dw = Math.round(o.w * sc)
+                                const dh = Math.round(o.h * sc)
+                                const bg = area > 500000 ? '#4caf50'
+                                  : area > 200000 ? '#26a69a'
+                                  : area > 80000  ? '#42a5f5'
+                                  : '#ff9800'
+                                return (
+                                  <div key={idx}
+                                    title={`${o.w}×${o.h}мм — ${(area / 1e6).toFixed(3)} м²`}
+                                    style={{
+                                      width: dw, height: dh,
+                                      background: bg, borderRadius: 3, opacity: 0.85,
+                                      display: 'flex', flexDirection: 'column',
+                                      alignItems: 'center', justifyContent: 'center',
+                                      fontSize: Math.max(9, Math.min(11, dw / 6)),
+                                      color: '#fff', fontWeight: 600, lineHeight: 1.2,
+                                      cursor: 'default', flexShrink: 0,
+                                    }}>
+                                    <span>{o.w}</span>
+                                    <span>×</span>
+                                    <span>{o.h}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )

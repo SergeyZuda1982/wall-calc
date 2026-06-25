@@ -291,11 +291,13 @@ export function calcSheetLayout(
   layer2Spec: BoardSpec,
   /** 1 = облицовка (одна сторона), 2 = перегородка (две стороны) */
   sides: 1 | 2 = 1,
+  /** Начальный пул обрезков от предыдущих конструкций объекта */
+  initialPool: BoardOffcut[] = [],
 ): BoardSheetResult {
-  // Один общий пул на все 4 экземпляра.
+  // Один общий пул на все экземпляры этой конструкции + унаследованные обрезки.
   // Порядок: А/сл1 → А/сл2 → Б/сл1 → Б/сл2
-  // Обрезок из любого предыдущего слоя идёт в следующий.
-  const sharedPool: PoolItem[] = []
+  // Обрезок из любого предыдущего слоя/конструкции идёт в следующий.
+  const sharedPool: PoolItem[] = initialPool.map(o => ({ ...o, used: false }))
 
   const args = (si: 0 | 1, layer: 1 | 2, spec: BoardSpec) =>
     [wallL, wallH, firstStud, step, openings, spec, layer, si, sharedPool] as const
