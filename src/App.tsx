@@ -145,6 +145,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'wall' | 'lining'>('wall')
   const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
   const [sheetSideTab, setSheetSideTab] = useState<'A' | 'B'>('A')
+  const [showOffcuts, setShowOffcuts] = useState(false)
   const [hasInsulation, setHasInsulation] = useState(false)
   const [canvasWrapRef, CANVAS_W] = useContainerWidth(CANVAS_W_MAX, 48)
   const {
@@ -1268,12 +1269,11 @@ export default function App() {
                     </span>
                   </div>
 
-                  {/* Статистика текущего вида */}
-                  <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
-                    <span>▲ Листов: {activeLayout.sheetsNeeded}</span>
-                    <span style={{ margin: '0 8px' }}>В работе: {activeLayout.usedAreaM2.toFixed(2)} м²</span>
-                    <span style={{ marginRight: 8 }}>🧱 Куплено: {activeLayout.sheetAreaM2.toFixed(2)} м²</span>
-                    <span>🗑 Отходы: {activeLayout.wastePercent}% (обрезки {activeLayout.offcutAreaM2.toFixed(2)} м²)</span>
+                  {/* Статистика текущего вида (без обрезков — они в общем пуле) */}
+                  <div style={{ fontSize: 12, color: '#555', marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
+                    <span>▲ Листов: <b>{activeLayout.sheetsNeeded}</b></span>
+                    <span>В работе: <b>{activeLayout.usedAreaM2.toFixed(2)} м²</b></span>
+                    <span>Куплено: <b>{activeLayout.sheetAreaM2.toFixed(2)} м²</b></span>
                   </div>
 
                   {/* Итоговая статистика по перегородке */}
@@ -1296,6 +1296,67 @@ export default function App() {
                     wallH={worstH}
                     canvasW={CANVAS_W}
                   />
+
+                  {/* ── Панель остатков ── */}
+                  {sheetLayout.finalOffcuts.length > 0 && (() => {
+                    const offcuts = [...sheetLayout.finalOffcuts]
+                      .sort((a, b) => b.w * b.h - a.w * a.h)
+                    const totalM2 = offcuts.reduce((s, o) => s + o.w * o.h, 0) / 1e6
+                    return (
+                      <div style={{ marginTop: 12 }}>
+                        <button
+                          onClick={() => setShowOffcuts(v => !v)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            background: 'none', border: '1px solid #ddd', borderRadius: 6,
+                            padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                            color: '#555', width: '100%', textAlign: 'left',
+                          }}>
+                          <span>🪚 Остатки: <b>{offcuts.length} шт</b>, <b>{totalM2.toFixed(2)} м²</b></span>
+                          <span style={{ marginLeft: 'auto' }}>{showOffcuts ? '▲' : '▼'}</span>
+                        </button>
+
+                        {showOffcuts && (
+                          <div style={{
+                            marginTop: 8, padding: 10, background: '#fafafa',
+                            border: '1px solid #eee', borderRadius: 6,
+                          }}>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+                              Масштаб: 1px ≈ 15мм. Сортировка по площади.
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-end' }}>
+                              {offcuts.map((o, idx) => {
+                                const area = o.w * o.h
+                                const scale = Math.min(90 / o.h, 130 / o.w)
+                                const dw = Math.round(o.w * scale)
+                                const dh = Math.round(o.h * scale)
+                                const bg = area > 500000 ? '#4caf50'
+                                  : area > 200000 ? '#26a69a'
+                                  : area > 80000  ? '#42a5f5'
+                                  : '#ff9800'
+                                return (
+                                  <div key={idx} title={`${o.w}×${o.h}мм — ${(area/1e6).toFixed(3)} м²`}
+                                    style={{
+                                      width: dw, height: dh,
+                                      background: bg, borderRadius: 3, opacity: 0.85,
+                                      display: 'flex', flexDirection: 'column',
+                                      alignItems: 'center', justifyContent: 'center',
+                                      fontSize: Math.max(9, Math.min(11, dw / 6)),
+                                      color: '#fff', fontWeight: 600, lineHeight: 1.2,
+                                      cursor: 'default', flexShrink: 0,
+                                    }}>
+                                    <span>{o.w}</span>
+                                    <span>×</span>
+                                    <span>{o.h}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })()}

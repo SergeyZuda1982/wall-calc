@@ -325,4 +325,6 @@ export interface BoardSheetResult {
   totalSheetAreaM2: number
   totalOffcutAreaM2: number
   totalWastePercent: number
+  /** Финальные обрезки из общего пула (после всех слоёв) */
+  finalOffcuts: BoardOffcut[]
 }

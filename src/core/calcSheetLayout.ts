@@ -327,5 +327,6 @@ export function calcSheetLayout(
     totalSheetAreaM2,
     totalOffcutAreaM2,
     totalWastePercent,
+    finalOffcuts: finalOffcuts.map(p => ({ w: p.w, h: p.h, spec: layer1Spec })),
   }
 }

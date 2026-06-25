@@ -50,23 +50,8 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
   const tx = (mm: number) => PAD + mm * scale
   const ty = (mm: number) => V_PAD + (wallH - mm) * scale  // Y перевёрнут
 
-  // Статистика
-  const { sheetsNeeded, usedAreaM2, sheetAreaM2, offcutAreaM2, wastePercent } = layout
-
   return (
     <div>
-      {/* ── Статистика ── */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 10, fontSize: 13 }}>
-        <span>🗂 Листов: <b>{sheetsNeeded}</b></span>
-        <span>📐 В работе: <b>{usedAreaM2.toFixed(2)} м²</b></span>
-        <span>📦 Куплено: <b>{sheetAreaM2.toFixed(2)} м²</b></span>
-        <span style={{ color: wastePercent > 20 ? '#c0392b' : '#666' }}>
-          🗑 Отходы: <b>{wastePercent.toFixed(1)}%</b>
-          {offcutAreaM2 > 0 && ` (обрезки ${offcutAreaM2.toFixed(2)} м²)`}
-        </span>
-      </div>
-
-      {/* ── Canvas ── */}
       <Stage width={canvasW} height={canvasH}>
         <Layer>
           {/* Фон */}
