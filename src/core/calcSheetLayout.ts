@@ -55,10 +55,9 @@ function columnBoundaries(
   wallL: number,
   layer: 1 | 2,
   openings: Opening[],
+  sideIndex: 0 | 1 = 0,
 ): number[] {
-  const firstW = layer === 1
-    ? firstStud
-    : (() => { const r = (firstStud + step) % SHEET_W; return r === 0 ? SHEET_W : r })()
+  const firstW = firstColWidth(firstStud, step, layer, sideIndex)
 
   const pts = new Set<number>([0, wallL])
 
@@ -168,7 +167,7 @@ function calcLayer(
 ): BoardLayerLayout {
   const SL = spec.sheetLength
 
-  const bounds  = columnBoundaries(firstStud, step, wallL, layer, openings)
+  const bounds  = columnBoundaries(firstStud, step, wallL, layer, openings, sideIndex)
   const columns: BoardColumn[] = []
   const pool    = sharedPool   // алиас для читаемости
 
