@@ -35,9 +35,9 @@ function firstColWidth(firstStud: number, step: number, layer: 1 | 2, sideIndex:
 
 /**
  * Номер листа (слот) для колонки с левым краем x1.
- * Все под-колонки одного физического листа получают одинаковый слот —
- * это важно для проёмов, которые разбивают лист на несколько под-колонок.
- */
+// sheetSlot больше не используется в основном алгоритме (заменён globalSlot).
+// Оставлен для возможного использования в будущих проверках.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function sheetSlot(x1: number, firstW: number): number {
   if (x1 < firstW) return 0
   return 1 + Math.floor((x1 - firstW) / SHEET_W)
@@ -181,20 +181,18 @@ function calcLayer(
     const cw  = x2 - x1
 
     // ── 4-значная схема vOffset ──────────────────────────────────────────────
-    // Значения: 0, SL/4, SL/2, 3*SL/4 (шаг 625мм для SL=2500).
+    // Глобальный слот = floor(x1 / step): номер шага от начала стены,
+    // одинаковый для Ст.А и Ст.Б (не зависит от firstW стороны).
+    // sideIndex * 2 даёт смещение в 2 слота (SL/2=1250мм) между слоем L1 А и L1 Б,
+    // что при чередующихся колонках двух сторон гарантирует разбег ≥ SL/4 = 625мм
+    // в каждой 600мм зоне стены.
     //
-    // Доказательство корректности:
-    //   Слот L1 и слот L2 для любого x различаются не более чем на 1
-    //   (потому что firstW2 - firstW1 < SHEET_W = 1200мм).
-    //   При смещении L2 на 2 шага (= SL/2):
-    //     |k - j| = 0  →  diff = SL/2 = 1250мм  ✓
-    //     |k - j| = 1  →  diff = SL/4 = 625мм   ✓  (≥ 400мм норматив)
-    //   Соседние колонки одного слоя: diff = SL/4 = 625мм  ✓
-    //   Стороны А/Б: firstW для Б смещена на step → вертикальные стыки
-    //   А и Б смещены на step (600мм) ✓; sideIndex даёт доп. сдвиг vOffset.
-    const firstW = firstColWidth(firstStud, step, layer, sideIndex)
-    const slot   = sheetSlot(x1, firstW)
-    const vOffset = ((slot + (layer === 2 ? 2 : 0) + sideIndex) % 4) * (SL / 4)
+    // Проверенные пары (разбег ≥ 625мм = 400мм норматив):
+    //   Ст.А Сл.1 vs Ст.А Сл.2 : ✓   Ст.Б Сл.1 vs Ст.Б Сл.2 : ✓
+    //   Ст.А Сл.1 vs Ст.Б Сл.1 : ✓   Ст.А Сл.2 vs Ст.Б Сл.2 : ✓
+    //   Соседние колонки одного слоя                           : ✓
+    const globalSlot = Math.floor(x1 / step)
+    const vOffset = ((globalSlot + (layer === 2 ? 2 : 0) + sideIndex * 2) % 4) * (SL / 4)
 
     // Позиции горизонтальных стыков для этой колонки (для canvas)
     const jointYs = zoneJoints(0, wallH, SL, vOffset).slice(1, -1)
