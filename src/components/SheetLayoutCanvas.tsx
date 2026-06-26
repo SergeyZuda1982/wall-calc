@@ -10,7 +10,7 @@
  *   offcut-src  — рамка пунктиром        кусок взят из пула обрезков
  */
 
-import { Stage, Layer, Rect, Text, Line } from 'react-konva'
+import { Stage, Layer, Rect, Text, Line, Group } from 'react-konva'
 import type { BoardLayerLayout, BoardColumn, BoardPiece } from '../types'
 
 interface Props {
@@ -65,8 +65,40 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
               const pw = p.w * scale
               const ph = p.h * scale
 
+              // ── Проём: штриховка поверх клиппинга ──────────────────────
+              if (p.kind === 'opening_void') {
+                const step = 10
+                const diagLines: number[] = []
+                // Линии идут сверху-влево → вниз-вправо (45°), sweep по диагонали
+                for (let d = -ph; d < pw + step; d += step) {
+                  diagLines.push(px + d, py, px + d + ph, py + ph)
+                }
+                const cw = Math.max(1, pw - 2)
+                const ch = Math.max(1, ph - 2)
+                return (
+                  <Group key={`${ci}-${pi}`}
+                    clip={{ x: px + 1, y: py + 1, width: cw, height: ch }}>
+                    {/* Светлый фон проёма */}
+                    <Rect x={px + 1} y={py + 1} width={cw} height={ch}
+                      fill="#f0f0f0" opacity={0.9} />
+                    {/* Диагональные линии */}
+                    {diagLines.reduce<number[][]>((acc, _, i) =>
+                      i % 4 === 0 ? [...acc, diagLines.slice(i, i + 4)] : acc, []
+                    ).map((pts, li) => (
+                      <Line key={li} points={pts} stroke="#b0b0b0" strokeWidth={0.8} />
+                    ))}
+                    {/* Подпись «проём» если достаточно места */}
+                    {cw > 40 && ch > 18 && (
+                      <Text x={px + 3} y={py + ch / 2 - 6}
+                        width={cw - 6} text="проём"
+                        fontSize={9} fill="#999" align="center" />
+                    )}
+                  </Group>
+                )
+              }
+
+              // ── Обычный кусок ───────────────────────────────────────────
               const fill = COLORS[p.kind]
-              const isVoid = p.kind === 'opening_void'
               const isOffcut = p.source === 'offcut'
 
               return (
@@ -76,13 +108,13 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
                     width={Math.max(1, pw - 2)}
                     height={Math.max(1, ph - 2)}
                     fill={fill}
-                    opacity={isVoid ? 0.35 : 0.75}
+                    opacity={0.75}
                     stroke={isOffcut ? '#e74c3c' : '#fff'}
                     strokeWidth={isOffcut ? 1.5 : 0.5}
                     dash={isOffcut ? [3, 2] : undefined}
                   />
-                  {/* Размеры куска (если достаточно места) */}
-                  {!isVoid && pw > 30 && ph > 18 && (
+                  {/* Размеры куска */}
+                  {pw > 30 && ph > 18 && (
                     <Text
                       x={px + 3} y={py + ph / 2 - 8}
                       width={pw - 6}
@@ -152,6 +184,16 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
               {label}
             </span>
           ))}
+        {/* Проём — штриховка */}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <svg width="16" height="12" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+            <rect width="16" height="12" fill="#f0f0f0" />
+            {[0, 5, 10, 15, 20].map(d => (
+              <line key={d} x1={d - 12} y1={0} x2={d} y2={12} stroke="#b0b0b0" strokeWidth="1" />
+            ))}
+          </svg>
+          проём
+        </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ display: 'inline-block', width: 16, height: 12, border: '1.5px dashed #e74c3c', borderRadius: 2 }} />
           из обрезков
