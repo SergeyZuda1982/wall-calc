@@ -355,9 +355,23 @@ export interface PlanLine {
 export interface FloorPlan {
   scaleMmPerPx: number      // мм на пиксель (например 10 = 1px → 10мм)
   lines: PlanLine[]
+  contours: PlanContour[]
 }
 
 export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   scaleMmPerPx: 10,
   lines: [],
+  contours: [],
+}
+
+/** Активный вид на холсте */
+export type PlanView = 'top' | 'side'
+
+/** Замкнутый контур (периметр) */
+export interface PlanContour {
+  id: string
+  lineIds: string[]      // id линий в порядке обхода
+  areaM2: number         // площадь м²
+  type: PlanLineType     // тип конструкции
+  label: string
 }

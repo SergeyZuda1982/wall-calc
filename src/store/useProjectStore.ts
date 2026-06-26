@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN } from '../types'
 
 const PROFILE_LETTER: Record<string, string> = {
@@ -76,6 +76,10 @@ export interface ProjectStore {
   updatePlanLine: (id: string, patch: Partial<PlanLine>) => void
   removePlanLine: (id: string) => void
   clearFloorPlan: () => void
+  // контуры (замкнутые периметры)
+  addContour: (contour: Omit<PlanContour, 'id'>) => void
+  removeContour: (id: string) => void
+  updateContour: (id: string, patch: Partial<PlanContour>) => void
 }
 
 function emptyProject(name: string): ProjectEntry {
@@ -321,7 +325,42 @@ export const useProjectStore = create<ProjectStore>()(
 
       clearFloorPlan: () => {
         set(s => {
-          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines: [] }
+          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines: [], contours: [] }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      addContour: (contour) => {
+        set(s => {
+          const newContour: PlanContour = { ...contour, id: `pc_${Date.now()}_${Math.random().toString(36).slice(2)}` }
+          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
+          const floorPlan = { ...prev, contours: [...(prev.contours ?? []), newContour] }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      removeContour: (id) => {
+        set(s => {
+          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
+          const floorPlan = { ...prev, contours: (prev.contours ?? []).filter(c => c.id !== id) }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      updateContour: (id, patch) => {
+        set(s => {
+          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
+          const contours = (prev.contours ?? []).map(c => c.id === id ? { ...c, ...patch } : c)
+          const floorPlan = { ...prev, contours }
           const projects = s.projects.map(p =>
             p.id === s.activeProjectId ? { ...p, floorPlan } : p
           )
@@ -343,7 +382,9 @@ export const useProjectStore = create<ProjectStore>()(
           state.projects = state.projects.map(p => ({
             ...p,
             profileTemplates: p.profileTemplates ?? [],
-            floorPlan: p.floorPlan ?? { ...DEFAULT_FLOOR_PLAN, lines: [] },
+            floorPlan: p.floorPlan
+              ? { ...p.floorPlan, contours: p.floorPlan.contours ?? [] }
+              : { ...DEFAULT_FLOOR_PLAN, lines: [], contours: [] },
             walls: p.walls.map(w => ({
               ...w,
               input: {
