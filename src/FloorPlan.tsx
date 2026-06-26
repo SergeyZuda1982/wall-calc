@@ -305,6 +305,7 @@ export default function FloorPlan() {
     }
 
     if (mode === 'draw') {
+      setSelected(null)   // сброс выделения при клике на пустое место
       const pt = applySnap(pos.x, pos.y)
       if (!drawing) {
         setDrawing({ x1: pt.x, y1: pt.y })
@@ -331,6 +332,8 @@ export default function FloorPlan() {
     if (mode === 'contour') {
       setContourIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
     }
+    // В любом режиме — выбираем линию для панели внизу
+    if (mode !== 'contour') setSelected(id)
   }, [mode, lines])
 
   // @ts-ignore
@@ -428,13 +431,38 @@ export default function FloorPlan() {
         <div style={{ padding: 24, background: '#f9f9f9', border: '1px solid #eee', borderRadius: 8, color: '#888', textAlign: 'center' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📐</div>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Вид сбоку</div>
-          <div style={{ fontSize: 12 }}>Выберите конструкцию на виде сверху → нажмите "Вид сбоку"</div>
+          {!selectedLine && (
+            <div style={{ fontSize: 12 }}>
+              Перейдите на вид сверху, выберите конструкцию в режиме ✋ Двигать и нажмите "Вид сбоку →"
+            </div>
+          )}
           {selectedLine && HAS_SIDE_VIEW.includes(selectedLine.type) && (
-            <div style={{ marginTop: 16, padding: '10px 16px', background: '#fff', borderRadius: 6, border: `2px solid ${LINE_COLORS[selectedLine.type]}`, display: 'inline-block' }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: LINE_COLORS[selectedLine.type] }}>{selectedLine.label}</div>
-              <div style={{ fontSize: 12, color: '#555', marginTop: 4 }}>Длина: {fmtLen(selectedLine.lengthMm)}</div>
-              <button style={{ marginTop: 8, padding: '5px 14px', fontSize: 12, borderRadius: 5, border: 'none', background: LINE_COLORS[selectedLine.type], color: '#fff', cursor: 'pointer' }}>
-                Открыть расчёт →
+            <div style={{ marginTop: 8, padding: '14px 20px', background: '#fff', borderRadius: 8, border: `2px solid ${LINE_COLORS[selectedLine.type]}`, display: 'inline-block', textAlign: 'left' }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: LINE_COLORS[selectedLine.type], marginBottom: 4 }}>{selectedLine.label}</div>
+              <div style={{ fontSize: 13, color: '#555', marginBottom: 12 }}>Длина: <b>{fmtLen(selectedLine.lengthMm)}</b></div>
+              <div style={{ fontSize: 12, color: '#aaa', marginBottom: 12 }}>
+                Здесь будет профиль стены с высотами, проёмами и слоями ГКЛ — в разработке.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => setPlanView('top')}
+                  style={{ padding: '6px 14px', fontSize: 12, borderRadius: 5, border: '1px solid #ccc', background: '#f5f5f5', color: '#555', cursor: 'pointer' }}>
+                  ← Назад к плану
+                </button>
+                <button
+                  onClick={() => { removePlanLine(selectedLine.id); setSelected(null); setPlanView('top') }}
+                  style={{ padding: '6px 14px', fontSize: 12, borderRadius: 5, border: '1px solid #e57373', background: '#fff', color: '#e53935', cursor: 'pointer' }}>
+                  🗑 Удалить
+                </button>
+              </div>
+            </div>
+          )}
+          {selectedLine && !HAS_SIDE_VIEW.includes(selectedLine.type) && (
+            <div style={{ marginTop: 8, fontSize: 12 }}>
+              Для <b>{LINE_LABELS[selectedLine.type]}</b> вид сбоку недоступен.
+              <br />
+              <button onClick={() => setPlanView('top')} style={{ marginTop: 10, padding: '5px 14px', fontSize: 12, borderRadius: 5, border: '1px solid #ccc', background: '#f5f5f5', color: '#555', cursor: 'pointer' }}>
+                ← Назад к плану
               </button>
             </div>
           )}
@@ -639,7 +667,7 @@ export default function FloorPlan() {
         </div>
 
         {/* ── Панель выбранной линии ── */}
-        {selectedLine && mode === 'select' && (
+        {selectedLine && (
           <div style={{ marginTop: 8, padding: '10px 14px', background: '#fff', border: `2px solid ${LINE_COLORS[selectedLine.type]}`, borderRadius: 8, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: LINE_COLORS[selectedLine.type] }}>{LINE_LABELS[selectedLine.type]}</span>
             <span style={{ fontSize: 13 }}>{fmtLen(selectedLine.lengthMm)}</span>
@@ -663,7 +691,7 @@ export default function FloorPlan() {
               </button>
             )}
             <button onClick={() => { removePlanLine(selectedLine.id); setSelected(null) }}
-              style={{ marginLeft: 'auto', padding: '3px 10px', fontSize: 12, borderRadius: 4, border: '1px solid #e57373', background: '#fff', color: '#e53935', cursor: 'pointer' }}>
+              style={{ marginLeft: 'auto', padding: '4px 12px', fontSize: 12, borderRadius: 4, border: '1px solid #e57373', background: '#fff', color: '#e53935', cursor: 'pointer' }}>
               🗑 Удалить
             </button>
           </div>
