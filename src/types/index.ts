@@ -328,3 +328,36 @@ export interface BoardSheetResult {
   /** Финальные обрезки из общего пула (после всех слоёв) */
   finalOffcuts: BoardOffcut[]
 }
+
+// ─── План объекта (вид сверху) ───────────────────────────────────────────────
+
+/** Тип конструкции на плане */
+export type PlanLineType =
+  | 'wall_new'       // новая перегородка (красный)
+  | 'wall_lining'    // облицовка стены (синий)
+  | 'wall_existing'  // существующая стена (серый)
+  | 'ceiling'        // потолок (фиолетовый)
+  | 'floor'          // пол (коричневый)
+
+/** Одна линия на плане */
+export interface PlanLine {
+  id: string
+  x1: number; y1: number   // координаты на холсте (px)
+  x2: number; y2: number
+  type: PlanLineType
+  lengthMm: number          // длина в мм (вычисляется из масштаба)
+  label: string             // пользовательское имя ("Перегородка А1")
+  wallId?: string           // ссылка на WallEntry если привязана
+  liningId?: string         // ссылка на LiningEntry если привязана
+}
+
+/** План объекта */
+export interface FloorPlan {
+  scaleMmPerPx: number      // мм на пиксель (например 10 = 1px → 10мм)
+  lines: PlanLine[]
+}
+
+export const DEFAULT_FLOOR_PLAN: FloorPlan = {
+  scaleMmPerPx: 10,
+  lines: [],
+}

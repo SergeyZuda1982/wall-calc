@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate } from '../types'
-import { migrateBoard, DEFAULT_BOARD_SPEC } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine } from '../types'
+import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN } from '../types'
 
 const PROFILE_LETTER: Record<string, string> = {
   ps50: 'А', ps75: 'В', ps100: 'С',
@@ -28,6 +28,7 @@ export interface ProjectEntry {
   walls: WallEntry[]
   linings: LiningEntry[]
   profileTemplates: ProfileTemplate[]
+  floorPlan: FloorPlan
   createdAt: string
 }
 
@@ -41,6 +42,7 @@ export interface ProjectStore {
   walls: WallEntry[]
   linings: LiningEntry[]
   profileTemplates: ProfileTemplate[]
+  floorPlan: FloorPlan
   activeWallId: string | null
   activeLiningId: string | null
 
@@ -67,6 +69,13 @@ export interface ProjectStore {
   addProfileTemplate: (name: string, shape: ProfileTemplate['shape']) => void
   removeProfileTemplate: (id: string) => void
   renameProfileTemplate: (id: string, name: string) => void
+
+  // план объекта
+  setFloorPlanScale: (scaleMmPerPx: number) => void
+  addPlanLine: (line: Omit<PlanLine, 'id'>) => void
+  updatePlanLine: (id: string, patch: Partial<PlanLine>) => void
+  removePlanLine: (id: string) => void
+  clearFloorPlan: () => void
 }
 
 function emptyProject(name: string): ProjectEntry {
@@ -76,6 +85,7 @@ function emptyProject(name: string): ProjectEntry {
     walls: [],
     linings: [],
     profileTemplates: [],
+    floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
     createdAt: new Date().toISOString(),
   }
 }
@@ -88,6 +98,7 @@ function syncActive(projects: ProjectEntry[], activeProjectId: string | null) {
     walls: p?.walls ?? [],
     linings: p?.linings ?? [],
     profileTemplates: p?.profileTemplates ?? [],
+    floorPlan: p?.floorPlan ?? { ...DEFAULT_FLOOR_PLAN, lines: [] },
   }
 }
 
@@ -100,6 +111,7 @@ export const useProjectStore = create<ProjectStore>()(
       walls: [],
       linings: [],
       profileTemplates: [],
+      floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
       activeWallId: null,
       activeLiningId: null,
 
@@ -261,6 +273,61 @@ export const useProjectStore = create<ProjectStore>()(
           return { profileTemplates, projects }
         })
       },
+
+      // ─── План объекта ────────────────────────────────────────────────────
+
+      setFloorPlanScale: (scaleMmPerPx) => {
+        set(s => {
+          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), scaleMmPerPx }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      addPlanLine: (line) => {
+        set(s => {
+          const newLine: PlanLine = { ...line, id: `pl_${Date.now()}_${Math.random().toString(36).slice(2)}` }
+          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines: [...(s.floorPlan?.lines ?? []), newLine] }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      updatePlanLine: (id, patch) => {
+        set(s => {
+          const lines = (s.floorPlan?.lines ?? []).map(l => l.id === id ? { ...l, ...patch } : l)
+          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      removePlanLine: (id) => {
+        set(s => {
+          const lines = (s.floorPlan?.lines ?? []).filter(l => l.id !== id)
+          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      clearFloorPlan: () => {
+        set(s => {
+          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines: [] }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
     }),
     {
       name: 'wall-calc-projects', // ключ в localStorage
@@ -276,6 +343,7 @@ export const useProjectStore = create<ProjectStore>()(
           state.projects = state.projects.map(p => ({
             ...p,
             profileTemplates: p.profileTemplates ?? [],
+            floorPlan: p.floorPlan ?? { ...DEFAULT_FLOOR_PLAN, lines: [] },
             walls: p.walls.map(w => ({
               ...w,
               input: {
