@@ -284,12 +284,12 @@ export default function FloorPlan() {
 
   // ── MouseUp / TouchEnd — конец drag ──────────────────────────────────────
   const handlePointerUp = useCallback(() => {
-    if (dragRef.current && !dragMovedRef.current) {
-      // Это был клик, не drag — выбираем линию
+    if (dragRef.current && !dragMovedRef.current && mode === 'select') {
       setSelected(dragRef.current.id)
     }
     dragRef.current = null
-  }, [])
+    dragMovedRef.current = false
+  }, [mode])
 
   // ── Клик по холсту (только draw/scale/contour) ────────────────────────────
   const handleStageClick = useCallback((e: KonvaEventObject<MouseEvent | TouchEvent>) => {
@@ -447,7 +447,13 @@ export default function FloorPlan() {
         {/* ── Панель инструментов ── */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, alignItems: 'center' }}>
           {([['draw','✏️ Рисовать'],['select','✋ Двигать'],['contour','⬡ Периметр'],['scale','📐 Масштаб']] as [Mode,string][]).map(([m, label]) => (
-            <button key={m} onClick={() => { setMode(m); setDrawing(null); if (m !== 'select') setSelected(null) }}
+            <button key={m} onClick={() => {
+              setMode(m)
+              setDrawing(null)
+              dragRef.current = null
+              dragMovedRef.current = false
+              if (m !== 'select') setSelected(null)
+            }}
               style={{
                 padding: '5px 11px', fontSize: 12, borderRadius: 5, cursor: 'pointer', border: '1px solid #ccc',
                 background: mode === m ? '#3a7bd5' : '#f5f5f5',
