@@ -14,7 +14,7 @@
  *   floor         — коричневый(#6d4c41)  пол
  */
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Stage, Layer, Line, Circle, Text, Rect, Group } from 'react-konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
@@ -22,9 +22,8 @@ import type { PlanLine, PlanLineType } from './types'
 
 // ─── Константы ────────────────────────────────────────────────────────────────
 
-const CANVAS_W = 820
-const CANVAS_H = 560
-const SNAP_PX  = 12   // радиус притяжения к существующим точкам (px)
+const CANVAS_H  = 520
+const SNAP_PX   = 18   // радиус притяжения — чуть больше для пальца
 
 const LINE_COLORS: Record<PlanLineType, string> = {
   wall_new:      '#e53935',
@@ -96,6 +95,20 @@ export default function FloorPlan() {
   const lines      = floorPlan?.lines ?? []
   const scaleMmPx  = floorPlan?.scaleMmPerPx ?? 10
 
+  // Адаптивная ширина холста под экран
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [canvasW, setCanvasW] = useState(820)
+  useEffect(() => {
+    function update() {
+      if (containerRef.current) {
+        setCanvasW(containerRef.current.offsetWidth)
+      }
+    }
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+
   const [mode, setMode]           = useState<Mode>('draw')
   const [drawType, setDrawType]   = useState<PlanLineType>('wall_new')
   const [drawing, setDrawing]     = useState<{ x1: number; y1: number } | null>(null)
@@ -126,9 +139,25 @@ export default function FloorPlan() {
     return mm >= 1000 ? `${(mm / 1000).toFixed(2)}м` : `${mm}мм`
   }
 
-  // ── Клик по холсту ────────────────────────────────────────────────────────
-  const handleStageClick = useCallback((e: KonvaEventObject<MouseEvent>) => {
-    const pos = e.target.getStage()?.getPointerPosition()
+  // ── Универсальный обработчик позиции (mouse + touch) ─────────────────────
+  function getPos(e: KonvaEventObject<MouseEvent | TouchEvent>): { x: number; y: number } | null {
+    const stage = e.target.getStage()
+    if (!stage) return null
+    // Для touch берём первый палец
+    const te = e.evt as TouchEvent
+    if (te.touches && te.touches.length > 0) {
+      const rect = stage.container().getBoundingClientRect()
+      return {
+        x: te.touches[0].clientX - rect.left,
+        y: te.touches[0].clientY - rect.top,
+      }
+    }
+    return stage.getPointerPosition()
+  }
+
+  // ── Клик/тап по холсту ───────────────────────────────────────────────────
+  const handleStageClick = useCallback((e: KonvaEventObject<MouseEvent | TouchEvent>) => {
+    const pos = getPos(e)
     if (!pos) return
 
     // ── Режим масштаба ──
@@ -182,15 +211,27 @@ export default function FloorPlan() {
     setCursor({ x: snapped.x, y: snapped.y })
   }, [lines])
 
-  // ── Клик по линии (выбор) ─────────────────────────────────────────────────
-  const handleLineClick = useCallback((id: string, e: KonvaEventObject<MouseEvent>) => {
+  // ── Движение пальца (превью на touch) ────────────────────────────────────
+  const handleTouchMove = useCallback((e: KonvaEventObject<TouchEvent>) => {
+    const stage = e.target.getStage()
+    if (!stage) return
+    const te = e.evt as TouchEvent
+    if (!te.touches.length) return
+    const rect = stage.container().getBoundingClientRect()
+    const pos = {
+      x: te.touches[0].clientX - rect.left,
+      y: te.touches[0].clientY - rect.top,
+    }
+    const snapped = snapPoint(pos.x, pos.y, lines)
+    setCursor({ x: snapped.x, y: snapped.y })
+  }, [lines])
+
+  // ── Клик/тап по линии (выбор) ────────────────────────────────────────────
+  const handleLineClick = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.cancelBubble = true
     if (mode === 'select') {
       setSelected(id)
       setEditLabel(null)
-    }
-    if (mode === 'draw') {
-      // В режиме рисования клик на линию — игнорируем, пусть проходит к холсту
     }
   }, [mode])
 
@@ -295,25 +336,27 @@ export default function FloorPlan() {
       </div>
 
       {/* ── Холст ── */}
-      <div style={{ border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden', background: '#fafafa', cursor: mode === 'draw' ? 'crosshair' : 'default' }}>
+      <div ref={containerRef} style={{ border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden', background: '#fafafa', cursor: mode === 'draw' ? 'crosshair' : 'default', touchAction: 'none' }}>
         <Stage
           ref={stageRef}
-          width={CANVAS_W}
+          width={canvasW}
           height={CANVAS_H}
           onClick={handleStageClick}
+          onTap={handleStageClick}
           onMouseMove={handleMouseMove}
+          onTouchMove={handleTouchMove}
         >
           <Layer>
             {/* Фон */}
-            <Rect x={0} y={0} width={CANVAS_W} height={CANVAS_H} fill="#fafafa" />
+            <Rect x={0} y={0} width={canvasW} height={CANVAS_H} fill="#fafafa" />
 
             {/* Сетка */}
-            {Array.from({ length: Math.floor(CANVAS_W / 50) + 1 }, (_, i) => (
+            {Array.from({ length: Math.floor(canvasW / 50) + 1 }, (_, i) => (
               <Line key={`gv${i}`} points={[i * 50, 0, i * 50, CANVAS_H]}
                 stroke="#e8e8e8" strokeWidth={1} />
             ))}
             {Array.from({ length: Math.floor(CANVAS_H / 50) + 1 }, (_, i) => (
-              <Line key={`gh${i}`} points={[0, i * 50, CANVAS_W, i * 50]}
+              <Line key={`gh${i}`} points={[0, i * 50, canvasW, i * 50]}
                 stroke="#e8e8e8" strokeWidth={1} />
             ))}
 
@@ -328,13 +371,16 @@ export default function FloorPlan() {
               const lenLabel = mm >= 1000 ? `${(mm / 1000).toFixed(2)}м` : `${mm}мм`
 
               return (
-                <Group key={l.id} onClick={(e) => handleLineClick(l.id, e)}>
-                  {/* Широкая невидимая зона для клика */}
+                <Group key={l.id}
+                  onClick={(e) => handleLineClick(l.id, e)}
+                  onTap={(e) => handleLineClick(l.id, e)}
+                >
+                  {/* Широкая невидимая зона для клика/тапа */}
                   <Line
                     points={[l.x1, l.y1, l.x2, l.y2]}
                     stroke="transparent"
-                    strokeWidth={16}
-                    hitStrokeWidth={16}
+                    strokeWidth={24}
+                    hitStrokeWidth={24}
                   />
                   {/* Видимая линия */}
                   <Line
@@ -343,9 +389,9 @@ export default function FloorPlan() {
                     strokeWidth={isSelected ? lw + 2 : lw}
                     lineCap="round"
                   />
-                  {/* Точки концов */}
-                  <Circle x={l.x1} y={l.y1} radius={4} fill={color} />
-                  <Circle x={l.x2} y={l.y2} radius={4} fill={color} />
+                  {/* Точки концов — увеличены для удобства тапа */}
+                  <Circle x={l.x1} y={l.y1} radius={6} fill={color} />
+                  <Circle x={l.x2} y={l.y2} radius={6} fill={color} />
                   {/* Подпись длины */}
                   <Text
                     x={mx - 30} y={my - 16}
