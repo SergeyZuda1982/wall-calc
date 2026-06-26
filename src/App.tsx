@@ -1297,6 +1297,8 @@ export default function App() {
                     wallL={form.length}
                     wallH={worstH}
                     canvasW={CANVAS_W}
+                    firstStud={currentFirstStud || form.firstStud}
+                    step={currentStep || form.step}
                   />
 
                   {/* ── Панель остатков ── */}

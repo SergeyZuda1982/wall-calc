@@ -15,9 +15,11 @@ import type { BoardLayerLayout, BoardColumn, BoardPiece } from '../types'
 
 interface Props {
   layout: BoardLayerLayout
-  wallL: number   // мм
-  wallH: number   // мм
-  canvasW: number // px
+  wallL: number     // мм
+  wallH: number     // мм
+  canvasW: number   // px
+  firstStud?: number // мм — первая стойка (для шкалы шага профиля)
+  step?: number      // мм — шаг стоек
 }
 
 const PAD   = 40   // отступ слева/справа в px
@@ -39,16 +41,31 @@ const KIND_LABELS: Record<BoardPiece['kind'], string> = {
   opening_void: 'проём',
 }
 
-export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Props) {
+const STUD_RULER_H = 28  // px — высота шкалы стоек сверху
+
+export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW, firstStud, step }: Props) {
   const drawW = canvasW - PAD * 2
   const scaleX = wallL > 0 ? drawW / wallL : 1
   const scaleY = wallH > 0 ? (canvasW * 0.55) / wallH : 1
   const scale  = Math.min(scaleX, scaleY)
 
-  const canvasH = wallH * scale + V_PAD * 2 + 40  // +40 под легенду
+  const hasStudRuler = firstStud != null && step != null && step > 0
+  const rulerH = hasStudRuler ? STUD_RULER_H : 0
+
+  const canvasH = wallH * scale + V_PAD * 2 + 40 + rulerH
 
   const tx = (mm: number) => PAD + mm * scale
-  const ty = (mm: number) => V_PAD + (wallH - mm) * scale  // Y перевёрнут
+  const ty = (mm: number) => rulerH + V_PAD + (wallH - mm) * scale  // Y перевёрнут; ниже шкалы стоек
+
+  // Позиции стоек для шкалы
+  const studPositions: number[] = []
+  if (hasStudRuler) {
+    let x = firstStud!
+    while (x <= wallL) {
+      studPositions.push(x)
+      x += step!
+    }
+  }
 
   return (
     <div>
@@ -56,6 +73,51 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
         <Layer>
           {/* Фон */}
           <Rect x={0} y={0} width={canvasW} height={canvasH} fill="#f8f8f8" />
+
+          {/* ── Шкала стоек сверху ── */}
+          {hasStudRuler && (() => {
+            const minPxBetween = 28  // минимум px между метками чтобы не налезали
+            return (
+              <>
+                {/* Фон шкалы */}
+                <Rect x={0} y={0} width={canvasW} height={rulerH} fill="#f0f4f8" />
+                {/* Горизонтальная линия — граница шкалы */}
+                <Line points={[PAD, rulerH - 1, canvasW - PAD, rulerH - 1]} stroke="#aaa" strokeWidth={0.5} />
+                {/* Метка "ПС:" */}
+                <Text x={2} y={rulerH / 2 - 6} text="ПС:" fontSize={9} fill="#666" />
+
+                {studPositions.map((xMm, idx) => {
+                  const px = tx(xMm)
+                  // Проверяем минимальное расстояние от предыдущей метки
+                  const prevPx = idx > 0 ? tx(studPositions[idx - 1]) : -999
+                  const showLabel = px - prevPx >= minPxBetween
+
+                  return (
+                    <React.Fragment key={`stud-${idx}`}>
+                      {/* Вертикальная риска */}
+                      <Line
+                        points={[px, rulerH - 10, px, rulerH - 1]}
+                        stroke="#2d7d46"
+                        strokeWidth={1.5}
+                      />
+                      {/* Метка мм */}
+                      {showLabel && (
+                        <Text
+                          x={px - 20}
+                          y={rulerH - 22}
+                          width={40}
+                          text={`${xMm}`}
+                          fontSize={9}
+                          fill="#2d7d46"
+                          align="center"
+                        />
+                      )}
+                    </React.Fragment>
+                  )
+                })}
+              </>
+            )
+          })()}
 
           {/* Колонки и куски */}
           {layout.columns.map((col: BoardColumn, ci: number) => (
@@ -133,13 +195,13 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
           {layout.columns.map((col: BoardColumn, ci: number) => (
             <React.Fragment key={`col-${ci}`}>
               <Line
-                points={[tx(col.x1), V_PAD, tx(col.x1), V_PAD + wallH * scale]}
+                points={[tx(col.x1), rulerH + V_PAD, tx(col.x1), rulerH + V_PAD + wallH * scale]}
                 stroke="#666" strokeWidth={0.5} dash={[4, 3]}
               />
               {/* Подпись ширины колонки */}
               <Text
                 x={tx(col.x1) + 2}
-                y={V_PAD + wallH * scale + 4}
+                y={rulerH + V_PAD + wallH * scale + 4}
                 text={`${col.x2 - col.x1}`}
                 fontSize={9}
                 fill="#555"
@@ -148,7 +210,7 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
           ))}
           {/* Правая граница */}
           <Line
-            points={[tx(wallL), V_PAD, tx(wallL), V_PAD + wallH * scale]}
+            points={[tx(wallL), rulerH + V_PAD, tx(wallL), rulerH + V_PAD + wallH * scale]}
             stroke="#666" strokeWidth={0.5} dash={[4, 3]}
           />
 
@@ -167,7 +229,7 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW }: Pro
 
           {/* Контур стены */}
           <Rect
-            x={tx(0)} y={V_PAD}
+            x={tx(0)} y={rulerH + V_PAD}
             width={wallL * scale} height={wallH * scale}
             stroke="#333" strokeWidth={1.5} fill="transparent"
           />

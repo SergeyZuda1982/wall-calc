@@ -810,6 +810,8 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
                   wallL={snapL}
                   wallH={snapWorstH}
                   canvasW={CANVAS_W}
+                  firstStud={firstStudForSheet}
+                  step={form.step}
                 />
 
                 {/* ── Панель остатков ── */}
