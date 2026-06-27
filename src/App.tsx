@@ -503,7 +503,7 @@ export default function App() {
       {activeTab === 'lining' && <LiningCalc canvasW={CANVAS_W} />}
 
       {activeTab === 'plan' && (
-        <div style={{ padding: '16px 0' }}>
+        <div style={{ margin: '0 -24px', height: 'calc(100vh - 140px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <FloorPlan />
         </div>
       )}
