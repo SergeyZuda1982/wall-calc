@@ -6,11 +6,14 @@
  *   select  — выбор / перемещение линии целиком или за конец
  *   contour — выделение линий для периметра
  *   scale   — установка масштаба
+ *   erase   — мультиудаление (R): клик по линиям помечает их, Delete/кнопка удаляет всё
  *
  * Новое:
  *   - ⊾ Прямой угол: кнопка-тогл, снапает к 0°/90°/45°
  *   - // Параллельная: копирует выбранную линию со смещением
  *   - Перемещение: drag линии целиком или за концевую точку
+ *   - R → режим мультиудаления; клик по линиям → Delete или кнопка
+ *   - Фикс: Stage click не сбрасывает выделение при клике по линии
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react'
@@ -44,7 +47,7 @@ const LINE_WIDTH: Record<PlanLineType, number> = {
 }
 const HAS_SIDE_VIEW: PlanLineType[] = ['wall_new', 'wall_lining', 'floor']
 
-type Mode = 'draw' | 'select' | 'contour' | 'scale'
+type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -74,7 +77,6 @@ function snapOrtho(x1: number, y1: number, x: number, y: number): { x: number; y
   const dy = y - y1
   const angle = Math.atan2(dy, dx) * 180 / Math.PI
   const len   = Math.sqrt(dx * dx + dy * dy)
-  // Ближайший из 0, 45, 90, 135, 180, -135, -90, -45
   const snapped = Math.round(angle / 45) * 45
   const rad = snapped * Math.PI / 180
   return { x: x1 + Math.cos(rad) * len, y: y1 + Math.sin(rad) * len }
@@ -150,7 +152,7 @@ export default function FloorPlan() {
   const [planView, setPlanView]         = useState<PlanView>('top')
   const [mode, setMode]                 = useState<Mode>('draw')
   const [drawType, setDrawType]         = useState<PlanLineType>('wall_new')
-  const [orthoMode, setOrthoMode]       = useState(false)        // ⊾ прямой угол
+  const [orthoMode, setOrthoMode]       = useState(false)
   const [drawing, setDrawing]           = useState<{ x1: number; y1: number } | null>(null)
   const [cursor, setCursor]             = useState<{ x: number; y: number } | null>(null)
   const [selectedId, setSelected]       = useState<string | null>(null)
@@ -158,13 +160,19 @@ export default function FloorPlan() {
   const [contourType, setContourType]   = useState<PlanLineType>('ceiling')
   const [contourLabel, setContourLabel] = useState('')
 
+  // Мультиудаление
+  const [eraseIds, setEraseIds] = useState<string[]>([])
+
   // Параллельная линия
   const [showParallelDialog, setShowParallelDialog] = useState(false)
   const [parallelDist, setParallelDist]             = useState('100')
 
   // Перемещение (drag)
-  const dragRef = useRef<DragState>(null)
-  const dragMovedRef = useRef(false)  // отличаем клик от drag
+  const dragRef     = useRef<DragState>(null)
+  const dragMovedRef = useRef(false)
+
+  // Флаг: клик был по линии — Stage click должен игнорироваться
+  const lineWasClickedRef = useRef(false)
 
   // Масштаб
   const [scaleStep, setScaleStep]           = useState<0 | 1 | 2>(0)
@@ -185,6 +193,23 @@ export default function FloorPlan() {
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
   }, [])
+
+  // ── Переключение режима с очисткой состояния ──────────────────────────────
+  function switchMode(m: Mode) {
+    setMode(m)
+    setDrawing(null)
+    dragRef.current = null
+    dragMovedRef.current = false
+    if (m !== 'select') setSelected(null)
+    if (m !== 'erase') setEraseIds([])
+  }
+
+  // ── Подтвердить удаление выбранных линий ──────────────────────────────────
+  function confirmErase(ids: string[]) {
+    ids.forEach(id => removePlanLine(id))
+    setEraseIds([])
+    switchMode('select')
+  }
 
   // ── Позиция из события ────────────────────────────────────────────────────
   function getPos(e: KonvaEventObject<MouseEvent | TouchEvent>): { x: number; y: number } | null {
@@ -217,7 +242,6 @@ export default function FloorPlan() {
 
   // ── Движение (mouse + touch) ──────────────────────────────────────────────
   function handleMove(rawX: number, rawY: number) {
-    // Drag перемещения
     if (dragRef.current && mode === 'select') {
       const dr = dragRef.current
       const dx = rawX - dr.startPx
@@ -226,9 +250,7 @@ export default function FloorPlan() {
       dragMovedRef.current = true
 
       if (dr.kind === 'line') {
-        const s = snapPoint(
-          dr.origX1 + dx, dr.origY1 + dy, lines, dr.id
-        )
+        const s = snapPoint(dr.origX1 + dx, dr.origY1 + dy, lines, dr.id)
         const snapDx = s.snapped ? s.x - dr.origX1 : dx
         const snapDy = s.snapped ? s.y - dr.origY1 : dy
         const newX1 = dr.origX1 + snapDx
@@ -250,7 +272,6 @@ export default function FloorPlan() {
       }
       return
     }
-    // Превью при рисовании
     const pt = applySnap(rawX, rawY)
     setCursor({ x: pt.x, y: pt.y })
   }
@@ -291,9 +312,16 @@ export default function FloorPlan() {
     dragMovedRef.current = false
   }, [mode])
 
-  // ── Клик по холсту (только draw/scale/contour) ────────────────────────────
+  // ── Клик по холсту — ТОЛЬКО фон (lineWasClickedRef защищает от всплытия) ─
   const handleStageClick = useCallback((e: KonvaEventObject<MouseEvent | TouchEvent>) => {
-    if (dragMovedRef.current) return  // был drag — игнорируем
+    if (dragMovedRef.current) return
+
+    // Если перед этим click'ом был mousedown на линии — игнорируем Stage click
+    if (lineWasClickedRef.current) {
+      lineWasClickedRef.current = false
+      return
+    }
+
     const pos = getPos(e)
     if (!pos) return
 
@@ -305,7 +333,6 @@ export default function FloorPlan() {
     }
 
     if (mode === 'draw') {
-      setSelected(null)   // сброс выделения при клике на пустое место
       const pt = applySnap(pos.x, pos.y)
       if (!drawing) {
         setDrawing({ x1: pt.x, y1: pt.y })
@@ -320,20 +347,36 @@ export default function FloorPlan() {
       return
     }
 
-    if (mode === 'select') { setSelected(null) }
+    // Клик по пустому фону в select — сброс выделения
+    if (mode === 'select') setSelected(null)
+    // В erase режиме клик по пустому месту ничего не делает
   }, [mode, drawing, lines, scaleMmPx, drawType, scaleStep, orthoMode, addPlanLine])
 
   // ── Клик по линии ────────────────────────────────────────────────────────
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.cancelBubble = true
+    lineWasClickedRef.current = true  // Stage click должен проигнорировать это событие
+
     const pos = getPos(e)
     if (!pos) return
-    if (mode === 'select') startDragLine(id, 'line', pos.x, pos.y)
+
+    if (mode === 'erase') {
+      // Тоггл в списке на удаление
+      setEraseIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+      return
+    }
+
     if (mode === 'contour') {
       setContourIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+      return
     }
-    // В любом режиме — выбираем линию для панели внизу
-    if (mode !== 'contour') setSelected(id)
+
+    if (mode === 'select') {
+      startDragLine(id, 'line', pos.x, pos.y)
+    }
+
+    // draw / scale / select — выбираем для нижней панели
+    setSelected(id)
   }, [mode, lines])
 
   // @ts-ignore
@@ -346,10 +389,32 @@ export default function FloorPlan() {
 
   // ── Keyboard ──────────────────────────────────────────────────────────────
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { setDrawing(null); setSelected(null); setScaleStep(0); setScalePt1(null); setScalePt2(null) }
-    if (e.key === 'Delete' && selectedId) { removePlanLine(selectedId); setSelected(null) }
+    if (e.key === 'Escape') {
+      if (mode === 'erase') {
+        setEraseIds([])
+        switchMode('select')
+      } else {
+        setDrawing(null); setSelected(null); setScaleStep(0); setScalePt1(null); setScalePt2(null)
+      }
+    }
+    if (e.key === 'Delete') {
+      if (mode === 'erase' && eraseIds.length > 0) {
+        confirmErase(eraseIds)
+      } else if (selectedId) {
+        removePlanLine(selectedId)
+        setSelected(null)
+      }
+    }
+    if (e.key === 'r' || e.key === 'R') {
+      if (mode === 'erase') {
+        if (eraseIds.length > 0) confirmErase(eraseIds)
+        else switchMode('select')
+      } else {
+        switchMode('erase')
+      }
+    }
     if (e.key === 'Shift') setOrthoMode(true)
-  }, [selectedId, removePlanLine])
+  }, [selectedId, removePlanLine, mode, eraseIds])
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Shift') setOrthoMode(false)
@@ -362,7 +427,7 @@ export default function FloorPlan() {
     const areaM2 = polygonAreaM2(pts, scaleMmPx)
     const count = contours.filter(c => c.type === contourType).length + 1
     addContour({ lineIds: contourIds, areaM2, type: contourType, label: contourLabel.trim() || `${LINE_LABELS[contourType]} ${count}` })
-    setContourIds([]); setContourLabel(''); setMode('draw')
+    setContourIds([]); setContourLabel(''); switchMode('draw')
   }
 
   // ── Параллельная линия ────────────────────────────────────────────────────
@@ -372,7 +437,6 @@ export default function FloorPlan() {
     const distMm = parseFloat(parallelDist)
     if (!distMm || distMm <= 0) return
     const distPx = distMm / scaleMmPx
-    // Вектор нормали
     const dx = l.x2 - l.x1; const dy = l.y2 - l.y1
     const len = Math.sqrt(dx*dx + dy*dy)
     const nx = -dy / len * distPx; const ny = dx / len * distPx
@@ -395,7 +459,7 @@ export default function FloorPlan() {
     if (px < 1) return
     setFloorPlanScale(mm / px)
     setShowScaleDialog(false); setScaleStep(0); setScalePt1(null); setScalePt2(null); setScaleMmInput('')
-    setMode('draw')
+    switchMode('draw')
   }
 
   function contourCentroid(c: PlanContour) {
@@ -444,13 +508,11 @@ export default function FloorPlan() {
                 Здесь будет профиль стены с высотами, проёмами и слоями ГКЛ — в разработке.
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  onClick={() => setPlanView('top')}
+                <button onClick={() => setPlanView('top')}
                   style={{ padding: '6px 14px', fontSize: 12, borderRadius: 5, border: '1px solid #ccc', background: '#f5f5f5', color: '#555', cursor: 'pointer' }}>
                   ← Назад к плану
                 </button>
-                <button
-                  onClick={() => { removePlanLine(selectedLine.id); setSelected(null); setPlanView('top') }}
+                <button onClick={() => { removePlanLine(selectedLine.id); setSelected(null); setPlanView('top') }}
                   style={{ padding: '6px 14px', fontSize: 12, borderRadius: 5, border: '1px solid #e57373', background: '#fff', color: '#e53935', cursor: 'pointer' }}>
                   🗑 Удалить
                 </button>
@@ -474,18 +536,19 @@ export default function FloorPlan() {
 
         {/* ── Панель инструментов ── */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, alignItems: 'center' }}>
-          {([['draw','✏️ Рисовать'],['select','✋ Двигать'],['contour','⬡ Периметр'],['scale','📐 Масштаб']] as [Mode,string][]).map(([m, label]) => (
-            <button key={m} onClick={() => {
-              setMode(m)
-              setDrawing(null)
-              dragRef.current = null
-              dragMovedRef.current = false
-              if (m !== 'select') setSelected(null)
-            }}
+          {([
+            ['draw',    '✏️ Рисовать'],
+            ['select',  '✋ Двигать'],
+            ['erase',   '🗑 Удалять'],
+            ['contour', '⬡ Периметр'],
+            ['scale',   '📐 Масштаб'],
+          ] as [Mode, string][]).map(([m, label]) => (
+            <button key={m} onClick={() => switchMode(m)}
               style={{
-                padding: '5px 11px', fontSize: 12, borderRadius: 5, cursor: 'pointer', border: '1px solid #ccc',
-                background: mode === m ? '#3a7bd5' : '#f5f5f5',
-                color: mode === m ? '#fff' : '#333',
+                padding: '5px 11px', fontSize: 12, borderRadius: 5, cursor: 'pointer',
+                border: mode === m && m === 'erase' ? '1px solid #e53935' : '1px solid #ccc',
+                background: mode === m ? (m === 'erase' ? '#e53935' : '#3a7bd5') : '#f5f5f5',
+                color: mode === m ? '#fff' : (m === 'erase' ? '#e53935' : '#333'),
                 fontWeight: mode === m ? 600 : 400,
               }}>{label}</button>
           ))}
@@ -526,6 +589,37 @@ export default function FloorPlan() {
           </div>
         </div>
 
+        {/* ── Панель режима ERASE ── */}
+        {mode === 'erase' && (
+          <div style={{ marginBottom: 8, padding: '10px 14px', background: '#fff5f5', border: '1px solid #ffcdd2', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, color: '#c62828', marginBottom: 8, fontWeight: 600 }}>
+              🗑 Режим удаления — кликайте по линиям чтобы отметить
+              <span style={{ fontWeight: 400, marginLeft: 8, color: '#888' }}>R или Delete — удалить · Esc — отмена</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: '#555' }}>
+                {eraseIds.length === 0 ? 'Ни одной линии не выбрано' : `Выбрано: ${eraseIds.length} лин.`}
+              </span>
+              {eraseIds.length > 0 && (
+                <button onClick={() => confirmErase(eraseIds)}
+                  style={{ padding: '5px 16px', fontSize: 12, borderRadius: 5, border: 'none', background: '#e53935', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
+                  🗑 Удалить ({eraseIds.length})
+                </button>
+              )}
+              <button onClick={() => { setEraseIds([]); switchMode('select') }}
+                style={{ padding: '4px 10px', fontSize: 12, borderRadius: 5, cursor: 'pointer', border: '1px solid #ccc', background: '#fff', color: '#666' }}>
+                Отмена
+              </button>
+              {eraseIds.length > 0 && (
+                <button onClick={() => setEraseIds([])}
+                  style={{ padding: '4px 10px', fontSize: 12, borderRadius: 5, cursor: 'pointer', border: '1px solid #ccc', background: '#fff', color: '#666' }}>
+                  Снять всё
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ── Панель периметра ── */}
         {mode === 'contour' && (
           <div style={{ marginBottom: 8, padding: '10px 14px', background: '#f3f0ff', border: '1px solid #c5b8f5', borderRadius: 8 }}>
@@ -558,6 +652,7 @@ export default function FloorPlan() {
           {mode === 'draw'    &&  drawing && `👆 Кликните — конец линии.${orthoMode ? ' ⊾ 0°/45°/90°' : ''} Esc — отмена.`}
           {mode === 'select'  && !selectedId && '✋ Тяните линию чтобы переместить. Тяните за точку чтобы изменить.'}
           {mode === 'select'  &&  selectedId && '✋ Тяните. Или используйте кнопки ниже.'}
+          {mode === 'erase'   && '🗑 Кликайте линии для отметки · R или Delete — удалить · Esc — отмена'}
           {mode === 'contour' && '👆 Тапайте линии для выделения.'}
           {mode === 'scale'   && scaleStep === 0 && '📐 Кликните первую точку.'}
           {mode === 'scale'   && scaleStep === 1 && '📐 Кликните вторую точку.'}
@@ -565,7 +660,9 @@ export default function FloorPlan() {
 
         {/* ── Холст ── */}
         <div ref={containerRef}
-          style={{ border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden', background: '#fafafa', cursor: mode === 'draw' ? 'crosshair' : mode === 'select' ? 'grab' : 'default', touchAction: 'none' }}>
+          style={{ border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden', background: '#fafafa',
+            cursor: mode === 'draw' ? 'crosshair' : mode === 'select' ? 'grab' : mode === 'erase' ? 'pointer' : 'default',
+            touchAction: 'none' }}>
           <Stage ref={stageRef} width={canvasW} height={CANVAS_H}
             onClick={handleStageClick} onTap={handleStageClick}
             onMouseMove={handleMouseMove} onTouchMove={handleTouchMove}
@@ -574,10 +671,10 @@ export default function FloorPlan() {
               <Rect x={0} y={0} width={canvasW} height={CANVAS_H} fill="#fafafa" />
               {/* Сетка */}
               {Array.from({ length: Math.floor(canvasW / 50) + 1 }, (_, i) => (
-                <Line key={`gv${i}`} points={[i*50,0,i*50,CANVAS_H]} stroke="#ebebeb" strokeWidth={1} />
+                <Line key={`gv${i}`} points={[i*50,0,i*50,CANVAS_H]} stroke="#ebebeb" strokeWidth={1} listening={false} />
               ))}
               {Array.from({ length: Math.floor(CANVAS_H / 50) + 1 }, (_, i) => (
-                <Line key={`gh${i}`} points={[0,i*50,canvasW,i*50]} stroke="#ebebeb" strokeWidth={1} />
+                <Line key={`gh${i}`} points={[0,i*50,canvasW,i*50]} stroke="#ebebeb" strokeWidth={1} listening={false} />
               ))}
 
               {/* Контуры */}
@@ -588,10 +685,10 @@ export default function FloorPlan() {
                 const centroid = contourCentroid(c)
                 return (
                   <Group key={c.id}>
-                    <Line points={pts.flatMap(p => [p.x, p.y])} closed fill={color+'22'} stroke={color} strokeWidth={1.5} dash={[6,3]} />
+                    <Line points={pts.flatMap(p => [p.x, p.y])} closed fill={color+'22'} stroke={color} strokeWidth={1.5} dash={[6,3]} listening={false} />
                     {centroid && <>
-                      <Text x={centroid.x-60} y={centroid.y-16} width={120} text={c.label} fontSize={11} fill={color} align="center" fontStyle="bold" />
-                      <Text x={centroid.x-60} y={centroid.y-2}  width={120} text={fmtArea(c.areaM2)} fontSize={13} fill={color} align="center" fontStyle="bold" />
+                      <Text x={centroid.x-60} y={centroid.y-16} width={120} text={c.label} fontSize={11} fill={color} align="center" fontStyle="bold" listening={false} />
+                      <Text x={centroid.x-60} y={centroid.y-2}  width={120} text={fmtArea(c.areaM2)} fontSize={13} fill={color} align="center" fontStyle="bold" listening={false} />
                     </>}
                   </Group>
                 )
@@ -599,24 +696,34 @@ export default function FloorPlan() {
 
               {/* Линии */}
               {lines.map(l => {
-                const isSelected = l.id === selectedId
-                const inContour  = contourIds.includes(l.id)
-                const color      = LINE_COLORS[l.type]
-                const lw         = LINE_WIDTH[l.type]
-                const mx         = (l.x1 + l.x2) / 2
-                const my         = (l.y1 + l.y2) / 2
-                const stroke     = inContour ? '#ff9800' : isSelected ? '#ff5722' : color
+                const isSelected  = l.id === selectedId
+                const inContour   = contourIds.includes(l.id)
+                const inErase     = eraseIds.includes(l.id)
+                const color       = LINE_COLORS[l.type]
+                const lw          = LINE_WIDTH[l.type]
+                const mx          = (l.x1 + l.x2) / 2
+                const my          = (l.y1 + l.y2) / 2
+                const stroke = inErase ? '#e53935' : inContour ? '#ff9800' : isSelected ? '#ff5722' : color
+                const strokeWidth = inErase ? lw + 3 : inContour ? lw + 3 : isSelected ? lw + 2 : lw
+
                 return (
                   <Group key={l.id}
+                    opacity={inErase ? 0.55 : 1}
                     onMouseDown={e => handleLinePointerDown(l.id, e)}
                     onTouchStart={e => handleLinePointerDown(l.id, e)}>
                     {/* Широкая зона хита */}
                     <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke="transparent" strokeWidth={24} hitStrokeWidth={24} />
                     {/* Видимая линия */}
-                    <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke={stroke} strokeWidth={inContour ? lw+3 : isSelected ? lw+2 : lw} lineCap="round" />
-                    {/* Метка длины */}
-                    <Text x={mx-30} y={my-16} width={60} text={fmtLen(l.lengthMm)} fontSize={10} fill={stroke} align="center" fontStyle="bold" />
-                    {/* Концевые точки (drag-ручки) — только у выбранной */}
+                    <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke={stroke} strokeWidth={strokeWidth} lineCap="round" listening={false} />
+                    {/* Иконка ✕ у линий помеченных на удаление */}
+                    {inErase && (
+                      <Text x={mx - 9} y={my - 10} text="✕" fontSize={18} fill="#e53935" fontStyle="bold" listening={false} />
+                    )}
+                    {/* Метка длины (только если не в erase) */}
+                    {!inErase && (
+                      <Text x={mx-30} y={my-16} width={60} text={fmtLen(l.lengthMm)} fontSize={10} fill={stroke} align="center" fontStyle="bold" listening={false} />
+                    )}
+                    {/* Концевые точки (drag-ручки) — только у выбранной в select */}
                     {isSelected && mode === 'select' ? <>
                       <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={color} strokeWidth={2}
                         onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
@@ -625,8 +732,8 @@ export default function FloorPlan() {
                         onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }}
                         onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }} />
                     </> : <>
-                      <Circle x={l.x1} y={l.y1} radius={5} fill={stroke} />
-                      <Circle x={l.x2} y={l.y2} radius={5} fill={stroke} />
+                      <Circle x={l.x1} y={l.y1} radius={5} fill={stroke} listening={false} />
+                      <Circle x={l.x2} y={l.y2} radius={5} fill={stroke} listening={false} />
                     </>}
                   </Group>
                 )
@@ -636,11 +743,11 @@ export default function FloorPlan() {
               {mode === 'draw' && drawing && previewPt && (
                 <>
                   <Line points={[drawing.x1,drawing.y1,previewX2,previewY2]}
-                    stroke={LINE_COLORS[drawType]} strokeWidth={LINE_WIDTH[drawType]} dash={[6,4]} opacity={0.6} lineCap="round" />
+                    stroke={LINE_COLORS[drawType]} strokeWidth={LINE_WIDTH[drawType]} dash={[6,4]} opacity={0.6} lineCap="round" listening={false} />
                   {previewLabel(previewX2, previewY2) && (
                     <Text x={(drawing.x1+previewX2)/2-30} y={(drawing.y1+previewY2)/2-16}
                       width={60} text={previewLabel(previewX2,previewY2)}
-                      fontSize={10} fill={LINE_COLORS[drawType]} align="center" fontStyle="bold" />
+                      fontSize={10} fill={LINE_COLORS[drawType]} align="center" fontStyle="bold" listening={false} />
                   )}
                 </>
               )}
@@ -648,26 +755,26 @@ export default function FloorPlan() {
               {/* Курсор снапа */}
               {cursor && mode === 'draw' && (
                 <Circle x={cursor.x} y={cursor.y} radius={6}
-                  stroke={LINE_COLORS[drawType]} strokeWidth={1.5} fill="rgba(255,255,255,0.7)" />
+                  stroke={LINE_COLORS[drawType]} strokeWidth={1.5} fill="rgba(255,255,255,0.7)" listening={false} />
               )}
 
               {/* Точки масштаба */}
-              {scalePt1 && <Circle x={scalePt1.x} y={scalePt1.y} radius={7} fill="#ff9800" />}
+              {scalePt1 && <Circle x={scalePt1.x} y={scalePt1.y} radius={7} fill="#ff9800" listening={false} />}
               {scalePt2 && <>
-                <Circle x={scalePt2.x} y={scalePt2.y} radius={7} fill="#ff9800" />
-                <Line points={[scalePt1!.x,scalePt1!.y,scalePt2.x,scalePt2.y]} stroke="#ff9800" strokeWidth={2} dash={[4,3]} />
+                <Circle x={scalePt2.x} y={scalePt2.y} radius={7} fill="#ff9800" listening={false} />
+                <Line points={[scalePt1!.x,scalePt1!.y,scalePt2.x,scalePt2.y]} stroke="#ff9800" strokeWidth={2} dash={[4,3]} listening={false} />
               </>}
 
               {/* Точки снапа */}
               {mode === 'draw' && allPoints.map((pt,i) => (
-                <Circle key={i} x={pt.x} y={pt.y} radius={3} fill="transparent" stroke="#bbb" strokeWidth={1} />
+                <Circle key={i} x={pt.x} y={pt.y} radius={3} fill="transparent" stroke="#bbb" strokeWidth={1} listening={false} />
               ))}
             </Layer>
           </Stage>
         </div>
 
-        {/* ── Панель выбранной линии ── */}
-        {selectedLine && (
+        {/* ── Панель выбранной линии (select / draw) ── */}
+        {selectedLine && mode !== 'erase' && mode !== 'contour' && (
           <div style={{ marginTop: 8, padding: '10px 14px', background: '#fff', border: `2px solid ${LINE_COLORS[selectedLine.type]}`, borderRadius: 8, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: LINE_COLORS[selectedLine.type] }}>{LINE_LABELS[selectedLine.type]}</span>
             <span style={{ fontSize: 13 }}>{fmtLen(selectedLine.lengthMm)}</span>
@@ -678,7 +785,6 @@ export default function FloorPlan() {
               ))}
             </select>
 
-            {/* Параллельная */}
             <button onClick={() => setShowParallelDialog(true)}
               style={{ padding: '4px 10px', fontSize: 12, borderRadius: 5, border: '1px solid #3a7bd5', background: '#fff', color: '#3a7bd5', cursor: 'pointer' }}>
               // Параллельная
