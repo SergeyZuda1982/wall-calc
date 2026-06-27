@@ -145,24 +145,29 @@ function genLabel(type: PlanLineType, lines: PlanLine[]): string {
 
 // ─── Стили ───────────────────────────────────────────────────────────────────
 
-const LEFT_W = 200
-const RIGHT_W = 320
+const LEFT_W = 220
+const RIGHT_W = 300
 
 const leftPanelStyle: React.CSSProperties = {
   width: LEFT_W,
   minWidth: LEFT_W,
+  maxWidth: LEFT_W,
+  flexShrink: 0,
   background: '#1e2433',
   color: '#cdd6f4',
   display: 'flex',
   flexDirection: 'column',
   gap: 0,
   overflowY: 'auto',
+  overflowX: 'hidden',
   borderRight: '1px solid #2a3045',
 }
 
 const rightPanelStyle: React.CSSProperties = {
   width: RIGHT_W,
   minWidth: RIGHT_W,
+  maxWidth: RIGHT_W,
+  flexShrink: 0,
   background: '#fff',
   borderLeft: '1px solid #e0e4ee',
   display: 'flex',
@@ -814,12 +819,18 @@ export default function FloorPlan() {
                           <Line points={[...p1, ...p2.slice().reverse()]} closed fill={fill} stroke="none" listening={false} />
                           <Line points={p1} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
                           <Line points={p2} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
-                          {/* Размерная линия */}
-                          <Text x={mx-40} y={my-10} width={80} text={fmtLen(l.lengthMm)} fontSize={10}
-                            fill={stroke} align="center" fontStyle="bold" listening={false} />
-                          {/* Метка */}
-                          <Text x={mx-20} y={my+2} width={40} text={l.label} fontSize={11}
-                            fill={stroke} align="center" fontStyle="bold" listening={false} />
+                          {/* Метка на холсте: имя + длина в одну строку если линия длинная */}
+                          {len > 60 ? (
+                            <>
+                              <Text x={mx-40} y={my-11} width={80} text={l.label} fontSize={10}
+                                fill={stroke} align="center" fontStyle="bold" listening={false} />
+                              <Text x={mx-40} y={my+1} width={80} text={fmtLen(l.lengthMm)} fontSize={9}
+                                fill={stroke + 'cc'} align="center" listening={false} />
+                            </>
+                          ) : (
+                            <Text x={mx-30} y={my-8} width={60} text={l.label} fontSize={9}
+                              fill={stroke} align="center" fontStyle="bold" listening={false} />
+                          )}
                           {isSelected && mode === 'select' ? <>
                             <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
                               onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
@@ -847,14 +858,20 @@ export default function FloorPlan() {
                         {inErase && (
                           <Text x={mx-9} y={my-10} text="✕" fontSize={18} fill="#e53935" fontStyle="bold" listening={false} />
                         )}
-                        {!inErase && (
-                          <>
-                            <Text x={mx-40} y={my-18} width={80} text={fmtLen(l.lengthMm)} fontSize={10}
+                        {!inErase && (() => {
+                          const linePx = Math.sqrt((l.x2-l.x1)**2 + (l.y2-l.y1)**2)
+                          return linePx > 60 ? (
+                            <>
+                              <Text x={mx-40} y={my-18} width={80} text={l.label} fontSize={10}
+                                fill={stroke} align="center" fontStyle="bold" listening={false} />
+                              <Text x={mx-40} y={my-6} width={80} text={fmtLen(l.lengthMm)} fontSize={9}
+                                fill={stroke + 'cc'} align="center" listening={false} />
+                            </>
+                          ) : (
+                            <Text x={mx-30} y={my-16} width={60} text={l.label} fontSize={9}
                               fill={stroke} align="center" fontStyle="bold" listening={false} />
-                            <Text x={mx-20} y={my-6} width={40} text={l.label} fontSize={11}
-                              fill={stroke} align="center" fontStyle="bold" listening={false} />
-                          </>
-                        )}
+                          )
+                        })()}
                         {isSelected && mode === 'select' ? <>
                           <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
                             onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
@@ -1012,12 +1029,16 @@ export default function FloorPlan() {
               </div>
             </div>
 
-            {/* Статус */}
-            <div style={{ padding: '10px 16px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: statusColor(getStatus(selectedId!)) === '#4caf50' ? '#4caf50' : '#bbb', fontSize: 18 }}>
-                ●
-              </span>
+            {/* Статус + цвет типа */}
+            <div style={{ padding: '10px 16px 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: LINE_COLORS[selectedLine.type], fontSize: 16 }}>●</span>
               <span style={{ fontSize: 13, fontWeight: 600, color: '#1e2433' }}>{selectedLine.label}</span>
+              <span style={{ fontSize: 11, color: '#888', marginLeft: 4 }}>
+                {LINE_LABELS_SHORT[selectedLine.type]}
+              </span>
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: '#aaa' }}>
+                {fmtLen(selectedLine.lengthMm)}
+              </span>
             </div>
 
             {/* Вкладки */}
@@ -1043,31 +1064,21 @@ export default function FloorPlan() {
 
               {rightTab === 'construction' && (
                 <>
-                  {/* Тип материала */}
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: '#888', marginBottom: 6, fontWeight: 600 }}>Тип материала</div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {['ГКЛ', 'Блок', 'Кирпич'].map(mat => (
-                        <button key={mat}
-                          onClick={() => {
-                            const materialMap: Record<string, string> = { 'ГКЛ': 'gkl', 'Блок': 'gasblock', 'Кирпич': 'brick' }
-                            updatePlanLine(selectedLine.id, { spec: { material: materialMap[mat] } })
-                          }}
-                          style={{
-                            flex: 1, padding: '8px 4px', fontSize: 12, fontWeight: 600,
-                            border: `2px solid ${selectedLine.spec?.material === { 'ГКЛ': 'gkl', 'Блок': 'gasblock', 'Кирпич': 'brick' }[mat] ? '#3a7bd5' : '#dde'}`,
-                            borderRadius: 6, cursor: 'pointer',
-                            background: selectedLine.spec?.material === { 'ГКЛ': 'gkl', 'Блок': 'gasblock', 'Кирпич': 'brick' }[mat] ? '#eef2ff' : '#fff',
-                            color: selectedLine.spec?.material === { 'ГКЛ': 'gkl', 'Блок': 'gasblock', 'Кирпич': 'brick' }[mat] ? '#3a7bd5' : '#555',
-                          }}>
-                          ▧ {mat}
-                        </button>
+                  {/* Тип конструкции — смена через дропдаун */}
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Тип конструкции</div>
+                    <select value={selectedLine.type}
+                      onChange={e => updatePlanLine(selectedLine.id, { type: e.target.value as PlanLineType, spec: undefined })}
+                      style={{ width: '100%', fontSize: 12, padding: '6px 8px', border: '1px solid #dde', borderRadius: 5, background: '#fff' }}>
+                      {(Object.entries(LINE_LABELS_SHORT) as [PlanLineType, string][]).map(([t, label]) => (
+                        <option key={t} value={t}>{label}</option>
                       ))}
-                    </div>
+                    </select>
                   </div>
 
-                  {/* Детальный селектор конструкции */}
+                  {/* Детальный каскадный селектор — из таксономии для данного типа */}
                   <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #f0f0f0' }}>
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Конструкция / материал</div>
                     <ConstructionSpecSelector
                       planType={selectedLine.type}
                       value={selectedLine.spec}
@@ -1076,76 +1087,50 @@ export default function FloorPlan() {
                     />
                   </div>
 
-                  {/* Параметры */}
-                  {[
-                    ['Тип системы', 'C112'],
-                    ['Толщина', '75 мм'],
-                    ['Шаг стоек', '600 мм'],
-                    ['Высота', '3000 мм'],
-                  ].map(([label, value]) => (
-                    <div key={label} style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '7px 0', borderBottom: '1px solid #f8f8f8',
-                    }}>
-                      <span style={{ fontSize: 12, color: '#555' }}>{label}</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#1e2433' }}>{value}</span>
-                        <span style={{ color: '#ccc', fontSize: 12 }}>▾</span>
+                  {/* Информация о выбранной конструкции */}
+                  {selectedLine.spec?.material && (() => {
+                    const specMat = selectedLine.spec.material
+                    const specSub = selectedLine.spec.subtype
+                    const typeColor = LINE_COLORS[selectedLine.type]
+                    return (
+                      <div style={{ padding: '10px 12px', background: typeColor + '10', borderRadius: 6, marginBottom: 12, border: `1px solid ${typeColor}30` }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: typeColor }}>
+                          {LINE_LABELS_SHORT[selectedLine.type]}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#555', marginTop: 3 }}>
+                          Материал: <b>{specMat}</b>
+                          {specSub && <span> · {specSub}</span>}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>
+                          Длина: <b>{fmtLen(selectedLine.lengthMm)}</b>
+                          {' · '}Площадь: <b>{calcLineArea(selectedLine).toFixed(2)} м²</b>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })()}
 
-                  {/* Обшивка */}
-                  <div style={{ padding: '7px 0', borderBottom: '1px solid #f8f8f8' }}>
-                    <div style={{ fontSize: 12, color: '#555', marginBottom: 4 }}>Обшивка</div>
-                    <select style={{ width: '100%', fontSize: 12, padding: '5px 8px', border: '1px solid #dde', borderRadius: 5 }}>
-                      <option>ГКЛ 12.5 мм (2 слоя)</option>
-                      <option>ГКЛ 12.5 мм (1 слой)</option>
-                      <option>ГВЛ 10 мм</option>
-                    </select>
+                  {/* Имя конструкции */}
+                  <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600 }}>Название</div>
+                    <input
+                      value={selectedLine.label}
+                      onChange={e => updatePlanLine(selectedLine.id, { label: e.target.value })}
+                      style={{ width: '100%', fontSize: 12, padding: '6px 8px', border: '1px solid #dde', borderRadius: 5, boxSizing: 'border-box' as const }}
+                    />
                   </div>
 
-                  {/* Утеплитель */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
-                    <span style={{ fontSize: 12, color: '#555' }}>Утеплитель</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{
-                        width: 40, height: 22, borderRadius: 11, background: '#3a7bd5',
-                        position: 'relative', cursor: 'pointer',
-                      }}>
-                        <div style={{
-                          width: 18, height: 18, borderRadius: 9, background: '#fff',
-                          position: 'absolute', right: 2, top: 2,
-                          boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-                        }} />
-                      </div>
-                    </div>
-                  </div>
-                  <select style={{ width: '100%', fontSize: 12, padding: '5px 8px', border: '1px solid #dde', borderRadius: 5, marginBottom: 10 }}>
-                    <option>Минвата 50 мм</option>
-                    <option>Минвата 100 мм</option>
-                    <option>Пенополистирол</option>
-                  </select>
-
-                  {/* Тип линии */}
-                  <div style={{ padding: '7px 0' }}>
-                    <div style={{ fontSize: 11, color: '#888', marginBottom: 6, fontWeight: 600 }}>Тип конструкции</div>
-                    <select value={selectedLine.type}
-                      onChange={e => updatePlanLine(selectedLine.id, { type: e.target.value as PlanLineType, spec: undefined })}
-                      style={{ width: '100%', fontSize: 12, padding: '5px 8px', border: '1px solid #dde', borderRadius: 5 }}>
-                      {(Object.entries(LINE_LABELS_SHORT) as [PlanLineType, string][]).map(([t, label]) => (
-                        <option key={t} value={t}>{label}</option>
-                      ))}
-                    </select>
+                  {/* Пустое поле для будущих параметров */}
+                  <div style={{ fontSize: 11, color: '#aaa', textAlign: 'center', padding: '8px 0' }}>
+                    Дополнительные параметры будут доступны после выбора конструкции
                   </div>
                 </>
               )}
 
               {rightTab === 'finish' && (
                 <div style={{ padding: '10px 0' }}>
-                  <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>Следующий слой: Отделка</div>
-                  <div style={{ padding: 12, background: '#f5f7fb', borderRadius: 8, fontSize: 12, color: '#555' }}>
-                    Выберите тип отделки для этой перегородки
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>Отделка для: <b>{selectedLine.label}</b></div>
+                  <div style={{ padding: 12, background: '#f5f7fb', borderRadius: 8, fontSize: 12, color: '#888', textAlign: 'center' }}>
+                    Выберите тип отделки для этой конструкции
                   </div>
                   <button style={{
                     marginTop: 12, width: '100%', padding: '8px', fontSize: 12,
@@ -1159,30 +1144,42 @@ export default function FloorPlan() {
 
               {rightTab === 'materials' && (
                 <div>
-                  <div style={{ fontSize: 11, color: '#888', marginBottom: 8, fontWeight: 600 }}>Расчёт материалов</div>
-                  {[
-                    ['Профиль ПС 75/50', '55.80 п.м'],
-                    ['Профиль ПН 75/40', '12.32 п.м'],
-                    ['Перемычки', '6.00 п.м'],
-                    ['ГКЛ 12.5 (2 слоя)', '37.12 м²'],
-                    ['Саморезы TN 3,5×25', '1280 шт.'],
-                    ['Дюбель-гвозди 6×40', '48 шт.'],
-                    ['Утеплитель (минвата)', '15.48 м²'],
-                  ].map(([label, value]) => (
-                    <div key={label} style={{
-                      display: 'flex', justifyContent: 'space-between',
-                      padding: '6px 0', borderBottom: '1px solid #f5f5f5', fontSize: 12,
-                    }}>
-                      <span style={{ color: '#555' }}>{label}</span>
-                      <span style={{ fontWeight: 600, color: '#1e2433' }}>{value}</span>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 10, fontWeight: 600 }}>
+                    Параметры для расчёта
+                  </div>
+                  <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
+                    Длина: <b>{fmtLen(selectedLine.lengthMm)}</b>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
+                    Площадь (при h=3000): <b>{calcLineArea(selectedLine).toFixed(2)} м²</b>
+                  </div>
+                  {selectedLine.spec?.material ? (
+                    <div style={{ padding: 10, background: '#f5f7fb', borderRadius: 6, fontSize: 12, color: '#888' }}>
+                      Нажмите «Открыть полный расчёт» для детальной спецификации материалов
                     </div>
-                  ))}
+                  ) : (
+                    <div style={{ padding: 10, background: '#fff3e0', borderRadius: 6, fontSize: 12, color: '#e67e22', border: '1px solid #ffe0b2' }}>
+                      ⚠️ Сначала выберите конструкцию на вкладке «Конструкция»
+                    </div>
+                  )}
                 </div>
               )}
 
               {rightTab === 'calc' && (
-                <div style={{ fontSize: 12, color: '#888', padding: '10px 0' }}>
-                  Откройте полный расчёт для просмотра детальной спецификации.
+                <div style={{ fontSize: 12, color: '#888', padding: '10px 0', textAlign: 'center' }}>
+                  <div style={{ fontSize: 32, marginBottom: 8 }}>↗</div>
+                  <div style={{ color: '#555', marginBottom: 12 }}>
+                    Откройте полный расчёт для просмотра детальной спецификации
+                  </div>
+                  <button
+                    style={{
+                      width: '100%', padding: '10px', fontSize: 13, fontWeight: 600,
+                      color: '#fff', background: '#3a7bd5', border: 'none',
+                      borderRadius: 6, cursor: 'pointer',
+                    }}
+                    onClick={() => {}}>
+                    Открыть полный расчёт ↗
+                  </button>
                 </div>
               )}
             </div>
