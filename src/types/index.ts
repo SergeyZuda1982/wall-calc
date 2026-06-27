@@ -339,6 +339,12 @@ export type PlanLineType =
   | 'ceiling'        // потолок (фиолетовый)
   | 'floor'          // пол (коричневый)
 
+/** Конструктивная спецификация линии — выбирается каскадно */
+export interface PlanLineSpec {
+  material: string    // level 1: 'gkl' | 'brick' | 'armstrong' | etc.
+  subtype?: string    // level 2: толщина, слои, подтип
+}
+
 /** Одна линия на плане */
 export interface PlanLine {
   id: string
@@ -347,6 +353,7 @@ export interface PlanLine {
   type: PlanLineType
   lengthMm: number          // длина в мм (вычисляется из масштаба)
   label: string             // пользовательское имя ("Перегородка А1")
+  spec?: PlanLineSpec       // конструктивная спецификация (материал / подтип)
   wallId?: string           // ссылка на WallEntry если привязана
   liningId?: string         // ссылка на LiningEntry если привязана
 }
@@ -374,4 +381,5 @@ export interface PlanContour {
   areaM2: number         // площадь м²
   type: PlanLineType     // тип конструкции
   label: string
+  spec?: PlanLineSpec    // конструктивная спецификация (для заливки контура)
 }

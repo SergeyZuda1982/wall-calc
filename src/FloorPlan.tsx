@@ -20,7 +20,9 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { Stage, Layer, Line, Circle, Text, Rect, Group } from 'react-konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
-import type { PlanLine, PlanLineType, PlanView, PlanContour } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour } from './types'
+import { getLineVisual, getSpecAbbr, getContourFill } from './data/constructionTaxonomy'
+import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -159,6 +161,7 @@ export default function FloorPlan() {
   const [contourIds, setContourIds]     = useState<string[]>([])
   const [contourType, setContourType]   = useState<PlanLineType>('ceiling')
   const [contourLabel, setContourLabel] = useState('')
+  const [contourSpec, setContourSpec]   = useState<PlanLineSpec | undefined>(undefined)
 
   // Мультиудаление
   const [eraseIds, setEraseIds] = useState<string[]>([])
@@ -426,8 +429,8 @@ export default function FloorPlan() {
     const pts = extractContourPoints(contourIds, lines)
     const areaM2 = polygonAreaM2(pts, scaleMmPx)
     const count = contours.filter(c => c.type === contourType).length + 1
-    addContour({ lineIds: contourIds, areaM2, type: contourType, label: contourLabel.trim() || `${LINE_LABELS[contourType]} ${count}` })
-    setContourIds([]); setContourLabel(''); switchMode('draw')
+    addContour({ lineIds: contourIds, areaM2, type: contourType, label: contourLabel.trim() || `${LINE_LABELS[contourType]} ${count}`, spec: contourSpec })
+    setContourIds([]); setContourLabel(''); setContourSpec(undefined); switchMode('draw')
   }
 
   // ── Параллельная линия ────────────────────────────────────────────────────
@@ -626,7 +629,7 @@ export default function FloorPlan() {
             <div style={{ fontSize: 12, color: '#5e35b1', marginBottom: 8, fontWeight: 600 }}>⬡ Тапайте по линиям чтобы выделить периметр</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               {(Object.entries(LINE_LABELS) as [PlanLineType, string][]).map(([t, label]) => (
-                <button key={t} onClick={() => setContourType(t)}
+                <button key={t} onClick={() => { setContourType(t); setContourSpec(undefined) }}
                   style={{ padding: '3px 9px', fontSize: 11, borderRadius: 4, cursor: 'pointer', border: `2px solid ${LINE_COLORS[t]}`, background: contourType === t ? LINE_COLORS[t] : '#fff', color: contourType === t ? '#fff' : LINE_COLORS[t] }}>
                   {label}
                 </button>
@@ -642,6 +645,15 @@ export default function FloorPlan() {
                 <button onClick={() => setContourIds([])}
                   style={{ padding: '4px 9px', fontSize: 11, borderRadius: 4, cursor: 'pointer', border: '1px solid #ccc', background: '#fff', color: '#666' }}>Сбросить</button>
               )}
+            </div>
+            {/* Спецификация конструкции контура */}
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #ddd6fe' }}>
+              <ConstructionSpecSelector
+                planType={contourType}
+                value={contourSpec}
+                onChange={setContourSpec}
+                compact
+              />
             </div>
           </div>
         )}
@@ -683,12 +695,22 @@ export default function FloorPlan() {
                 if (pts.length < 3) return null
                 const color    = LINE_COLORS[c.type]
                 const centroid = contourCentroid(c)
+                // Заливка по спецификации или дефолтная
+                const specFill = c.spec
+                  ? getContourFill(c.type, c.spec.material, c.spec.subtype)
+                  : null
+                const fillColor = specFill ?? (color + '18')
                 return (
                   <Group key={c.id}>
-                    <Line points={pts.flatMap(p => [p.x, p.y])} closed fill={color+'22'} stroke={color} strokeWidth={1.5} dash={[6,3]} listening={false} />
+                    <Line points={pts.flatMap(p => [p.x, p.y])} closed fill={fillColor} stroke={color} strokeWidth={1.5} dash={[6,3]} listening={false} />
                     {centroid && <>
-                      <Text x={centroid.x-60} y={centroid.y-16} width={120} text={c.label} fontSize={11} fill={color} align="center" fontStyle="bold" listening={false} />
-                      <Text x={centroid.x-60} y={centroid.y-2}  width={120} text={fmtArea(c.areaM2)} fontSize={13} fill={color} align="center" fontStyle="bold" listening={false} />
+                      <Text x={centroid.x-70} y={centroid.y-18} width={140} text={c.label} fontSize={11} fill={color} align="center" fontStyle="bold" listening={false} />
+                      <Text x={centroid.x-70} y={centroid.y-3}  width={140} text={fmtArea(c.areaM2)} fontSize={13} fill={color} align="center" fontStyle="bold" listening={false} />
+                      {c.spec?.material && (
+                        <Text x={centroid.x-70} y={centroid.y+14} width={140}
+                          text={[c.spec.material, c.spec.subtype].filter(Boolean).join(' · ')}
+                          fontSize={10} fill={color + 'aa'} align="center" listening={false} />
+                      )}
                     </>}
                   </Group>
                 )
@@ -696,39 +718,94 @@ export default function FloorPlan() {
 
               {/* Линии */}
               {lines.map(l => {
-                const isSelected  = l.id === selectedId
-                const inContour   = contourIds.includes(l.id)
-                const inErase     = eraseIds.includes(l.id)
-                const color       = LINE_COLORS[l.type]
-                const lw          = LINE_WIDTH[l.type]
-                const mx          = (l.x1 + l.x2) / 2
-                const my          = (l.y1 + l.y2) / 2
-                const stroke = inErase ? '#e53935' : inContour ? '#ff9800' : isSelected ? '#ff5722' : color
-                const strokeWidth = inErase ? lw + 3 : inContour ? lw + 3 : isSelected ? lw + 2 : lw
+                const isSelected = l.id === selectedId
+                const inContour  = contourIds.includes(l.id)
+                const inErase    = eraseIds.includes(l.id)
+                const baseColor  = LINE_COLORS[l.type]
 
+                // Визуальный стиль из спецификации
+                const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
+                const specColor = vis.colorOverride ?? baseColor
+                const stroke    = inErase ? '#e53935' : inContour ? '#ff9800' : isSelected ? '#ff5722' : specColor
+                const dash      = (inErase || inContour || isSelected) ? undefined : (vis.dash ?? undefined)
+
+                const mx = (l.x1 + l.x2) / 2
+                const my = (l.y1 + l.y2) / 2
+
+                // Аббревиатура материала для подписи
+                const abbr = getSpecAbbr(l.type, l.spec?.material, l.spec?.subtype)
+                const labelText = inErase ? '' : abbr
+                  ? `${abbr} ${fmtLen(l.lengthMm)}`
+                  : fmtLen(l.lengthMm)
+
+                // ── Двойные линии (стены с толщиной) ──────────────────────
+                const thicknessPx = vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
+                const dx = l.x2 - l.x1, dy = l.y2 - l.y1
+                const len = Math.sqrt(dx*dx + dy*dy)
+                const useDouble = thicknessPx > 3 && len > 0 && !inErase
+
+                if (useDouble) {
+                  const half = thicknessPx / 2
+                  const nx = -dy / len * half
+                  const ny =  dx / len * half
+                  const hitW = Math.max(28, thicknessPx + 8)
+                  // точки двух параллельных линий
+                  const p1 = [l.x1+nx, l.y1+ny, l.x2+nx, l.y2+ny]
+                  const p2 = [l.x1-nx, l.y1-ny, l.x2-nx, l.y2-ny]
+                  // полигон для заливки
+                  const fill = isSelected ? stroke + '30' : inContour ? '#ff980022' : vis.fillColor
+
+                  return (
+                    <Group key={l.id}
+                      onMouseDown={e => handleLinePointerDown(l.id, e)}
+                      onTouchStart={e => handleLinePointerDown(l.id, e)}>
+                      {/* Хит-зона по центру */}
+                      <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke="transparent" strokeWidth={hitW} hitStrokeWidth={hitW} />
+                      {/* Заливка сечения */}
+                      <Line points={[...p1, ...p2.slice().reverse()]} closed fill={fill} stroke="none" listening={false} />
+                      {/* Две параллельные линии */}
+                      <Line points={p1} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
+                      <Line points={p2} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
+                      {/* Подпись по центру */}
+                      <Text x={mx-36} y={my-9} width={72} text={labelText} fontSize={10}
+                        fill={stroke} align="center" fontStyle="bold" listening={false} />
+                      {/* Ручки концов */}
+                      {isSelected && mode === 'select' ? <>
+                        <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
+                          onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
+                          onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }} />
+                        <Circle x={l.x2} y={l.y2} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
+                          onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }}
+                          onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }} />
+                      </> : <>
+                        <Circle x={l.x1} y={l.y1} radius={5} fill={stroke} listening={false} />
+                        <Circle x={l.x2} y={l.y2} radius={5} fill={stroke} listening={false} />
+                      </>}
+                    </Group>
+                  )
+                }
+
+                // ── Одиночная линия ───────────────────────────────────────
+                const sw = inErase ? vis.strokeWidth + 3 : inContour ? vis.strokeWidth + 2 : isSelected ? vis.strokeWidth + 2 : vis.strokeWidth
                 return (
                   <Group key={l.id}
                     opacity={inErase ? 0.55 : 1}
                     onMouseDown={e => handleLinePointerDown(l.id, e)}
                     onTouchStart={e => handleLinePointerDown(l.id, e)}>
-                    {/* Широкая зона хита */}
                     <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke="transparent" strokeWidth={24} hitStrokeWidth={24} />
-                    {/* Видимая линия */}
-                    <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke={stroke} strokeWidth={strokeWidth} lineCap="round" listening={false} />
-                    {/* Иконка ✕ у линий помеченных на удаление */}
+                    <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke={stroke} strokeWidth={sw} lineCap="round" dash={dash} listening={false} />
                     {inErase && (
-                      <Text x={mx - 9} y={my - 10} text="✕" fontSize={18} fill="#e53935" fontStyle="bold" listening={false} />
+                      <Text x={mx-9} y={my-10} text="✕" fontSize={18} fill="#e53935" fontStyle="bold" listening={false} />
                     )}
-                    {/* Метка длины (только если не в erase) */}
                     {!inErase && (
-                      <Text x={mx-30} y={my-16} width={60} text={fmtLen(l.lengthMm)} fontSize={10} fill={stroke} align="center" fontStyle="bold" listening={false} />
+                      <Text x={mx-36} y={my-16} width={72} text={labelText} fontSize={10}
+                        fill={stroke} align="center" fontStyle="bold" listening={false} />
                     )}
-                    {/* Концевые точки (drag-ручки) — только у выбранной в select */}
                     {isSelected && mode === 'select' ? <>
-                      <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={color} strokeWidth={2}
+                      <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
                         onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
                         onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }} />
-                      <Circle x={l.x2} y={l.y2} radius={9} fill="#fff" stroke={color} strokeWidth={2}
+                      <Circle x={l.x2} y={l.y2} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
                         onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }}
                         onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }} />
                     </> : <>
@@ -775,31 +852,41 @@ export default function FloorPlan() {
 
         {/* ── Панель выбранной линии (select / draw) ── */}
         {selectedLine && mode !== 'erase' && mode !== 'contour' && (
-          <div style={{ marginTop: 8, padding: '10px 14px', background: '#fff', border: `2px solid ${LINE_COLORS[selectedLine.type]}`, borderRadius: 8, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: LINE_COLORS[selectedLine.type] }}>{LINE_LABELS[selectedLine.type]}</span>
-            <span style={{ fontSize: 13 }}>{fmtLen(selectedLine.lengthMm)}</span>
-            <select value={selectedLine.type} onChange={e => updatePlanLine(selectedLine.id, { type: e.target.value as PlanLineType })}
-              style={{ fontSize: 12, padding: '3px 6px', borderRadius: 4, border: '1px solid #ccc' }}>
-              {(Object.entries(LINE_LABELS) as [PlanLineType, string][]).map(([t, label]) => (
-                <option key={t} value={t}>{label}</option>
-              ))}
-            </select>
-
-            <button onClick={() => setShowParallelDialog(true)}
-              style={{ padding: '4px 10px', fontSize: 12, borderRadius: 5, border: '1px solid #3a7bd5', background: '#fff', color: '#3a7bd5', cursor: 'pointer' }}>
-              // Параллельная
-            </button>
-
-            {HAS_SIDE_VIEW.includes(selectedLine.type) && (
-              <button onClick={() => setPlanView('side')}
-                style={{ padding: '4px 12px', fontSize: 12, borderRadius: 5, border: 'none', background: LINE_COLORS[selectedLine.type], color: '#fff', cursor: 'pointer' }}>
-                📐 Вид сбоку →
+          <div style={{ marginTop: 8, padding: '10px 14px', background: '#fff', border: `2px solid ${LINE_COLORS[selectedLine.type]}`, borderRadius: 8 }}>
+            {/* Строка 1: тип, длина, кнопки */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: LINE_COLORS[selectedLine.type] }}>{LINE_LABELS[selectedLine.type]}</span>
+              <span style={{ fontSize: 13 }}>{fmtLen(selectedLine.lengthMm)}</span>
+              <select value={selectedLine.type} onChange={e => updatePlanLine(selectedLine.id, { type: e.target.value as PlanLineType, spec: undefined })}
+                style={{ fontSize: 12, padding: '3px 6px', borderRadius: 4, border: '1px solid #ccc' }}>
+                {(Object.entries(LINE_LABELS) as [PlanLineType, string][]).map(([t, label]) => (
+                  <option key={t} value={t}>{label}</option>
+                ))}
+              </select>
+              <button onClick={() => setShowParallelDialog(true)}
+                style={{ padding: '4px 10px', fontSize: 12, borderRadius: 5, border: '1px solid #3a7bd5', background: '#fff', color: '#3a7bd5', cursor: 'pointer' }}>
+                // Параллельная
               </button>
-            )}
-            <button onClick={() => { removePlanLine(selectedLine.id); setSelected(null) }}
-              style={{ marginLeft: 'auto', padding: '4px 12px', fontSize: 12, borderRadius: 4, border: '1px solid #e57373', background: '#fff', color: '#e53935', cursor: 'pointer' }}>
-              🗑 Удалить
-            </button>
+              {HAS_SIDE_VIEW.includes(selectedLine.type) && (
+                <button onClick={() => setPlanView('side')}
+                  style={{ padding: '4px 12px', fontSize: 12, borderRadius: 5, border: 'none', background: LINE_COLORS[selectedLine.type], color: '#fff', cursor: 'pointer' }}>
+                  📐 Вид сбоку →
+                </button>
+              )}
+              <button onClick={() => { removePlanLine(selectedLine.id); setSelected(null) }}
+                style={{ marginLeft: 'auto', padding: '4px 12px', fontSize: 12, borderRadius: 4, border: '1px solid #e57373', background: '#fff', color: '#e53935', cursor: 'pointer' }}>
+                🗑 Удалить
+              </button>
+            </div>
+            {/* Строка 2: спецификация конструкции */}
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${LINE_COLORS[selectedLine.type]}30` }}>
+              <ConstructionSpecSelector
+                planType={selectedLine.type}
+                value={selectedLine.spec}
+                onChange={spec => updatePlanLine(selectedLine.id, { spec })}
+                compact
+              />
+            </div>
           </div>
         )}
 
