@@ -251,11 +251,12 @@ export default function FloorPlan() {
   const {
     floorPlan, addPlanLine, updatePlanLine, removePlanLine,
     setFloorPlanScale, clearFloorPlan,
-    addContour,
+    addContour, addRoom,
   } = useProjectStore()
 
   const lines     = floorPlan?.lines    ?? []
   const contours  = floorPlan?.contours ?? []
+  const rooms     = floorPlan?.rooms    ?? []
   const scaleMmPx = floorPlan?.scaleMmPerPx ?? 10
 
   // ── UI-состояние ──────────────────────────────────────────────────────────
@@ -277,6 +278,9 @@ export default function FloorPlan() {
   const [hoveredId, setHoveredId]       = useState<string | null>(null)
   const [snapActive, setSnapActive]     = useState(false)
   const [inspectorId, setInspectorId]   = useState<string | null>(null)
+  // Цепочка рисования периметра
+  const [chainStartPt, setChainStartPt] = useState<{ x: number; y: number } | null>(null)
+  const [chainLineIds, setChainLineIds] = useState<string[]>([])
 
   const dragRef      = useRef<DragState>(null)
   const dragMovedRef = useRef(false)
@@ -306,6 +310,8 @@ export default function FloorPlan() {
   function switchMode(m: Mode) {
     setMode(m)
     setDrawing(null)
+    setChainStartPt(null)
+    setChainLineIds([])
     dragRef.current = null
     dragMovedRef.current = false
     if (m !== 'select') setSelected(null)
@@ -378,11 +384,17 @@ export default function FloorPlan() {
       return
     }
     const snappedInfo = snapPoint(rawX, rawY, lines)
-    const pt = (orthoMode && drawing && !snappedInfo.snapped)
-      ? snapOrtho(drawing.x1, drawing.y1, snappedInfo.x, snappedInfo.y)
-      : snappedInfo
+    // В draw-режиме: дополнительно проверяем снап к началу цепочки (замыкание)
+    const snapToChainStart =
+      mode === 'draw' && drawing && chainStartPt &&
+      dist(rawX, rawY, chainStartPt.x, chainStartPt.y) <= SNAP_PX
+    const pt = snapToChainStart
+      ? { x: chainStartPt!.x, y: chainStartPt!.y, snapped: true }
+      : (orthoMode && drawing && !snappedInfo.snapped)
+        ? snapOrtho(drawing.x1, drawing.y1, snappedInfo.x, snappedInfo.y)
+        : snappedInfo
     setCursor({ x: pt.x, y: pt.y })
-    setSnapActive(snappedInfo.snapped)
+    setSnapActive(snappedInfo.snapped || !!snapToChainStart)
   }
 
   const handleMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
@@ -437,14 +449,59 @@ export default function FloorPlan() {
 
     if (mode === 'draw') {
       const pt = applySnap(pos.x, pos.y)
+
+      // Проверка: курсор снапнулся к началу цепочки → замыкание
+      const closingChain =
+        drawing && chainStartPt &&
+        dist(pt.x, pt.y, chainStartPt.x, chainStartPt.y) <= SNAP_PX
+
       if (!drawing) {
+        // Начало новой линии — запоминаем стартовую точку цепочки
         setDrawing({ x1: pt.x, y1: pt.y })
+        if (!chainStartPt) setChainStartPt({ x: pt.x, y: pt.y })
+      } else if (closingChain) {
+        // Замыкание: добавляем последний отрезок до startPt
+        const d = dist(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y)
+        if (d >= 5) {
+          const lengthMm = lineLengthMm(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y, scaleMmPx)
+          const label = genLabel(drawType, lines)
+          addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: chainStartPt!.x, y2: chainStartPt!.y, type: drawType, lengthMm, label })
+        }
+        // После addPlanLine lines ещё не обновились — используем chainLineIds + новая линия
+        // Собираем все id цепочки через setTimeout (после ре-рендера)
+        const finalLineIds = [...chainLineIds]
+        // Создаём помещение если это wall_existing
+        if (drawType === 'wall_existing' && finalLineIds.length >= 2) {
+          setTimeout(() => {
+            // Берём актуальные линии из store
+            const allLines = useProjectStore.getState().floorPlan?.lines ?? []
+            const chainLines = finalLineIds.map(id => allLines.find(l => l.id === id)).filter(Boolean) as PlanLine[]
+            // Добавляем замыкающую линию (последняя добавленная)
+            const lastLine = allLines[allLines.length - 1]
+            const roomLines = lastLine ? [...chainLines, lastLine] : chainLines
+            const pts = roomLines.map(l => ({ x: l.x1, y: l.y1 }))
+            const area = polygonAreaM2(pts, scaleMmPx)
+            const perimeter = roomLines.reduce((s, l) => s + l.lengthMm, 0)
+            const count = (useProjectStore.getState().floorPlan?.rooms ?? []).length + 1
+            addRoom({ lineIds: roomLines.map(l => l.id), areaM2: area, perimeterMm: perimeter, label: `Помещение ${count}` })
+          }, 0)
+        }
+        // Сброс цепочки
+        setDrawing(null)
+        setChainStartPt(null)
+        setChainLineIds([])
       } else {
         const d = dist(drawing.x1, drawing.y1, pt.x, pt.y)
-        if (d < 5) { setDrawing(null); return }
+        if (d < 5) { setDrawing(null); setChainStartPt(null); setChainLineIds([]); return }
         const lengthMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
         const label = genLabel(drawType, lines)
+        // Добавляем линию и запоминаем её id через setTimeout
         addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label })
+        setTimeout(() => {
+          const allLines = useProjectStore.getState().floorPlan?.lines ?? []
+          const newLine = allLines[allLines.length - 1]
+          if (newLine) setChainLineIds(prev => [...prev, newLine.id])
+        }, 0)
         setDrawing({ x1: pt.x, y1: pt.y })
       }
       return
@@ -819,6 +876,29 @@ export default function FloorPlan() {
                     <Line key={`gh${i}`} points={[0,i*50,canvasW,i*50]} stroke="#ebebeb" strokeWidth={1} listening={false} />
                   ))}
 
+                  {/* Помещения (замкнутые периметры wall_existing) */}
+                  {rooms.map(room => {
+                    const roomLines = room.lineIds
+                      .map(id => lines.find(l => l.id === id))
+                      .filter(Boolean) as PlanLine[]
+                    if (roomLines.length < 3) return null
+                    const pts = roomLines.map(l => ({ x: l.x1, y: l.y1 }))
+                    const flatPts = pts.flatMap(p => [p.x, p.y])
+                    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length
+                    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
+                    return (
+                      <Group key={room.id} listening={false}>
+                        <Line points={flatPts} closed fill="rgba(120,144,156,0.08)" stroke="none" listening={false} />
+                        <Text x={cx - 70} y={cy - 18} width={140}
+                          text={room.label} fontSize={11} fill="#78909c" align="center" fontStyle="bold" listening={false} />
+                        <Text x={cx - 70} y={cy - 2} width={140}
+                          text={`${room.areaM2.toFixed(1)} м²`} fontSize={13} fill="#78909c" align="center" fontStyle="bold" listening={false} />
+                        <Text x={cx - 70} y={cy + 16} width={140}
+                          text={`П: ${(room.perimeterMm / 1000).toFixed(1)} м`} fontSize={9} fill="#90a4ae" align="center" listening={false} />
+                      </Group>
+                    )
+                  })}
+
                   {/* Контуры */}
                   {contours.map(c => {
                     const pts = extractContourPoints(c.lineIds, lines)
@@ -1019,6 +1099,12 @@ export default function FloorPlan() {
                     <Circle x={scalePt2.x} y={scalePt2.y} radius={7} fill="#ff9800" listening={false} />
                     <Line points={[scalePt1!.x,scalePt1!.y,scalePt2.x,scalePt2.y]} stroke="#ff9800" strokeWidth={2} dash={[4,3]} listening={false} />
                   </>}
+
+                  {/* Стартовая точка цепочки — зелёный кружок замыкания */}
+                  {mode === 'draw' && chainStartPt && drawing && (
+                    <Circle x={chainStartPt.x} y={chainStartPt.y} radius={7}
+                      stroke="#4caf50" strokeWidth={2} fill="rgba(76,175,80,0.2)" listening={false} />
+                  )}
 
                   {/* Точки снапа — только в draw-режиме и только не-активные */}
                   {mode === 'draw' && allPoints.map((pt, i) => (

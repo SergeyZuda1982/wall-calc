@@ -360,15 +360,17 @@ export interface PlanLine {
 
 /** План объекта */
 export interface FloorPlan {
-  scaleMmPerPx: number      // мм на пиксель (например 10 = 1px → 10мм)
+  scaleMmPerPx: number
   lines: PlanLine[]
   contours: PlanContour[]
+  rooms: Room[]
 }
 
 export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   scaleMmPerPx: 10,
   lines: [],
   contours: [],
+  rooms: [],
 }
 
 /** Активный вид на холсте */
@@ -377,9 +379,22 @@ export type PlanView = 'top' | 'side'
 /** Замкнутый контур (периметр) */
 export interface PlanContour {
   id: string
-  lineIds: string[]      // id линий в порядке обхода
-  areaM2: number         // площадь м²
-  type: PlanLineType     // тип конструкции
+  lineIds: string[]
+  areaM2: number
+  type: PlanLineType
   label: string
-  spec?: PlanLineSpec    // конструктивная спецификация (для заливки контура)
+  spec?: PlanLineSpec
+}
+
+/**
+ * Помещение — замкнутый периметр из wall_existing линий.
+ * Создаётся автоматически когда последняя точка цепочки снапается к первой.
+ */
+export interface Room {
+  id: string
+  lineIds: string[]      // id линий периметра в порядке обхода
+  areaM2: number         // площадь пола/потолка (формула Гаусса)
+  perimeterMm: number    // периметр в мм
+  label: string          // "Помещение 1", "Кухня" и т.д.
+  templateName?: string  // для будущих шаблонов (ЖК)
 }

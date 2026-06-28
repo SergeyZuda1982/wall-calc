@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN } from '../types'
 
 const PROFILE_LETTER: Record<string, string> = {
@@ -80,6 +80,10 @@ export interface ProjectStore {
   addContour: (contour: Omit<PlanContour, 'id'>) => void
   removeContour: (id: string) => void
   updateContour: (id: string, patch: Partial<PlanContour>) => void
+  // помещения
+  addRoom: (room: Omit<Room, 'id'>) => void
+  removeRoom: (id: string) => void
+  updateRoom: (id: string, patch: Partial<Room>) => void
 }
 
 function emptyProject(name: string): ProjectEntry {
@@ -361,6 +365,41 @@ export const useProjectStore = create<ProjectStore>()(
           const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
           const contours = (prev.contours ?? []).map(c => c.id === id ? { ...c, ...patch } : c)
           const floorPlan = { ...prev, contours }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      addRoom: (room) => {
+        set(s => {
+          const newRoom: Room = { ...room, id: `rm_${Date.now()}_${Math.random().toString(36).slice(2)}` }
+          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
+          const floorPlan = { ...prev, rooms: [...(prev.rooms ?? []), newRoom] }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      removeRoom: (id) => {
+        set(s => {
+          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
+          const floorPlan = { ...prev, rooms: (prev.rooms ?? []).filter(r => r.id !== id) }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      updateRoom: (id, patch) => {
+        set(s => {
+          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
+          const rooms = (prev.rooms ?? []).map(r => r.id === id ? { ...r, ...patch } : r)
+          const floorPlan = { ...prev, rooms }
           const projects = s.projects.map(p =>
             p.id === s.activeProjectId ? { ...p, floorPlan } : p
           )
