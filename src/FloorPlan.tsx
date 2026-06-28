@@ -459,49 +459,54 @@ export default function FloorPlan() {
         // Начало новой линии — запоминаем стартовую точку цепочки
         setDrawing({ x1: pt.x, y1: pt.y })
         if (!chainStartPt) setChainStartPt({ x: pt.x, y: pt.y })
+
       } else if (closingChain) {
-        // Замыкание: добавляем последний отрезок до startPt
+        // Замыкание: добавляем последний отрезок до chainStartPt (если нужен)
         const d = dist(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y)
+        let allLineIds = [...chainLineIds]
+
         if (d >= 5) {
+          // Пользователь не дошёл до начала — добавляем замыкающую линию
           const lengthMm = lineLengthMm(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y, scaleMmPx)
           const label = genLabel(drawType, lines)
-          addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: chainStartPt!.x, y2: chainStartPt!.y, type: drawType, lengthMm, label })
+          const closingId = addPlanLine({
+            x1: drawing.x1, y1: drawing.y1,
+            x2: chainStartPt!.x, y2: chainStartPt!.y,
+            type: drawType, lengthMm, label,
+          })
+          allLineIds = [...allLineIds, closingId]
         }
-        // После addPlanLine lines ещё не обновились — используем chainLineIds + новая линия
-        // Собираем все id цепочки через setTimeout (после ре-рендера)
-        const finalLineIds = [...chainLineIds]
-        // Создаём помещение если это wall_existing
-        if (drawType === 'wall_existing' && finalLineIds.length >= 2) {
+
+        // Создаём помещение из wall_existing-цепочки
+        if (drawType === 'wall_existing' && allLineIds.length >= 3) {
+          const finalIds = allLineIds
           setTimeout(() => {
-            // Берём актуальные линии из store
-            const allLines = useProjectStore.getState().floorPlan?.lines ?? []
-            const chainLines = finalLineIds.map(id => allLines.find(l => l.id === id)).filter(Boolean) as PlanLine[]
-            // Добавляем замыкающую линию (последняя добавленная)
-            const lastLine = allLines[allLines.length - 1]
-            const roomLines = lastLine ? [...chainLines, lastLine] : chainLines
-            const pts = roomLines.map(l => ({ x: l.x1, y: l.y1 }))
-            const area = polygonAreaM2(pts, scaleMmPx)
+            const storeLines = useProjectStore.getState().floorPlan?.lines ?? []
+            const roomLines = finalIds
+              .map(id => storeLines.find(l => l.id === id))
+              .filter(Boolean) as PlanLine[]
+            if (roomLines.length < 3) return
+            // Строим упорядоченный полигон через extractContourPoints
+            const pts = extractContourPoints(finalIds, storeLines)
+            const area = polygonAreaM2(pts.length >= 3 ? pts : roomLines.map(l => ({ x: l.x1, y: l.y1 })), scaleMmPx)
             const perimeter = roomLines.reduce((s, l) => s + l.lengthMm, 0)
             const count = (useProjectStore.getState().floorPlan?.rooms ?? []).length + 1
-            addRoom({ lineIds: roomLines.map(l => l.id), areaM2: area, perimeterMm: perimeter, label: `Помещение ${count}` })
+            addRoom({ lineIds: finalIds, areaM2: area, perimeterMm: perimeter, label: `Помещение ${count}` })
           }, 0)
         }
-        // Сброс цепочки
+
         setDrawing(null)
         setChainStartPt(null)
         setChainLineIds([])
+
       } else {
         const d = dist(drawing.x1, drawing.y1, pt.x, pt.y)
         if (d < 5) { setDrawing(null); setChainStartPt(null); setChainLineIds([]); return }
         const lengthMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
         const label = genLabel(drawType, lines)
-        // Добавляем линию и запоминаем её id через setTimeout
-        addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label })
-        setTimeout(() => {
-          const allLines = useProjectStore.getState().floorPlan?.lines ?? []
-          const newLine = allLines[allLines.length - 1]
-          if (newLine) setChainLineIds(prev => [...prev, newLine.id])
-        }, 0)
+        // Синхронно получаем id и добавляем в цепочку
+        const newId = addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label })
+        setChainLineIds(prev => [...prev, newId])
         setDrawing({ x1: pt.x, y1: pt.y })
       }
       return

@@ -72,7 +72,7 @@ export interface ProjectStore {
 
   // план объекта
   setFloorPlanScale: (scaleMmPerPx: number) => void
-  addPlanLine: (line: Omit<PlanLine, 'id'>) => void
+  addPlanLine: (line: Omit<PlanLine, 'id'>) => string
   updatePlanLine: (id: string, patch: Partial<PlanLine>) => void
   removePlanLine: (id: string) => void
   clearFloorPlan: () => void
@@ -295,14 +295,16 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       addPlanLine: (line) => {
+        const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2)}`
         set(s => {
-          const newLine: PlanLine = { ...line, id: `pl_${Date.now()}_${Math.random().toString(36).slice(2)}` }
+          const newLine: PlanLine = { ...line, id }
           const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines: [...(s.floorPlan?.lines ?? []), newLine] }
           const projects = s.projects.map(p =>
             p.id === s.activeProjectId ? { ...p, floorPlan } : p
           )
           return { floorPlan, projects }
         })
+        return id
       },
 
       updatePlanLine: (id, patch) => {
