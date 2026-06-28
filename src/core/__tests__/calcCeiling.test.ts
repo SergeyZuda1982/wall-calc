@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { calcCeiling } from '../calcCeiling'
-import type { CeilingSpec } from '../../data/ceilingData'
+import type { CeilingSpecFull } from '../../data/ceilingData'
 
 // Помещение 4000×5000мм = 20м², периметр 18м
-const BASE: CeilingSpec & { roomLengthMm: number; roomWidthMm: number; sheetLengthMm: number } = {
+const BASE: CeilingSpecFull = {
   type: 'p112',
   layers: 1,
   material: 'gsp',
@@ -203,8 +203,9 @@ describe('calcCeilingSheetLayout — раскрой 5000×4000мм', () => {
 })
 
 describe('calcCeilingSheetLayout — раскрой 2500×2400мм (квадрат из 2 целых листов)', () => {
-  const res = calcCeiling({ ...BASE, roomLengthMm: 2500, roomWidthMm: 2400,
-    areaSqm: 6, perimeterM: 9.8 })
+  const spec206: CeilingSpecFull = { ...BASE, roomLengthMm: 2500, roomWidthMm: 2400, sheetLengthMm: 2500,
+    areaSqm: 6, perimeterM: 9.8 }
+  const res = calcCeiling(spec206)
   const layout = res.sheetLayout!
 
   // Лист 1200×2500: длинная (2500) по длине = 1 колонка (целая)
