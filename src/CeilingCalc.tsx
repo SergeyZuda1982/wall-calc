@@ -432,14 +432,17 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
   shiftMm: number
   type: CeilingType
 }) {
-  // Отступы: сверху больше — там шкала профилей
-  const PAD_LEFT = 44   // для подписи высоты
-  const PAD_TOP  = 36   // для шкалы шага профилей
+  const PAD_LEFT = 48   // место для подписи ширины слева
+  const PAD_TOP  = 38   // место для шкалы профилей сверху
   const PAD_BOT  = 8
+  const PAD_RIGHT = 8
+
+  // Доступная ширина для самого чертежа
+  const drawW = canvasW - PAD_LEFT - PAD_RIGHT
 
   const scale = Math.min(
-    (canvasW - PAD_LEFT - 8) / layout.roomLengthMm,
-    380 / layout.roomWidthMm,
+    drawW / layout.roomLengthMm,
+    360 / layout.roomWidthMm,
   )
   const W = layout.roomLengthMm * scale
   const H = layout.roomWidthMm * scale
@@ -510,42 +513,52 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
 
   return (
     <Stage width={canvasW} height={canvasH}>
-      <Layer offsetX={PAD_LEFT} offsetY={PAD_TOP}>
+      <Layer x={PAD_LEFT} y={PAD_TOP}>
 
         {/* ── Шкала шага основных профилей (над холстом) ── */}
-        {/* Общая стрелка-линия по всей ширине */}
-        <Line points={[0, -PAD_TOP + 8, W, -PAD_TOP + 8]}
-          stroke={COLORS.profileMain} strokeWidth={1} opacity={0.5}
+        <Line points={[0, -PAD_TOP + 10, W, -PAD_TOP + 10]}
+          stroke={COLORS.profileMain} strokeWidth={1} opacity={0.4}
         />
-        {/* Засечки и подписи пролётов */}
         {spanLabels.map((s, i) => (
           <Group key={`span${i}`}>
-            {/* Левая засечка */}
-            <Line points={[s.x, -PAD_TOP + 4, s.x, -PAD_TOP + 12]}
+            <Line points={[s.x, -PAD_TOP + 5, s.x, -PAD_TOP + 15]}
               stroke={COLORS.profileMain} strokeWidth={1.5}
             />
-            {/* Правая засечка */}
-            <Line points={[s.x + s.w, -PAD_TOP + 4, s.x + s.w, -PAD_TOP + 12]}
+            <Line points={[s.x + s.w, -PAD_TOP + 5, s.x + s.w, -PAD_TOP + 15]}
               stroke={COLORS.profileMain} strokeWidth={1.5}
             />
-            {/* Подпись по центру пролёта */}
             <Text
-              x={s.x} y={-PAD_TOP + 13}
+              x={s.x} y={-PAD_TOP + 16}
               width={s.w} align="center"
               text={s.label}
               fontSize={10} fill={COLORS.profileMain} fontStyle="bold"
             />
           </Group>
         ))}
-        {/* Накопительные позиции профилей над рисками */}
+        {/* Накопительные позиции над рисками */}
         {profilePosMm.map((p, i) => (
           <Text key={`pos${i}`}
-            x={p.px - 16} y={-PAD_TOP + 1}
-            width={32} align="center"
+            x={p.px - 18} y={-PAD_TOP + 1}
+            width={36} align="center"
             text={`${p.x}`}
             fontSize={9} fill={COLORS.textMuted}
           />
         ))}
+
+        {/* Подпись ширины слева (вертикально) */}
+        <Text
+          x={-PAD_LEFT + 4} y={H / 2 + 30}
+          text={`${layout.roomWidthMm} мм`}
+          fontSize={11} fill={COLORS.textMuted}
+          rotation={-90}
+        />
+        {/* Подпись длины сверху по центру */}
+        <Text
+          x={W / 2 - 30} y={-PAD_TOP + 1}
+          width={60} align="center"
+          text={`${layout.roomLengthMm} мм`}
+          fontSize={10} fill={COLORS.textMuted}
+        />
 
         {/* ── Холст помещения ── */}
         <Rect x={0} y={0} width={W} height={H} fill="#f0f4f8" stroke={COLORS.profileMain} strokeWidth={2} />
@@ -584,13 +597,6 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
             />
           </Group>
         ))}
-
-        {/* Подпись ширины помещения слева */}
-        <Text x={-PAD_LEFT + 2} y={H / 2}
-          text={`${layout.roomWidthMm} мм`}
-          fontSize={11} fill={COLORS.textMuted} rotation={-90}
-          offsetY={-4}
-        />
 
         {/* Рамка поверх всего */}
         <Rect x={0} y={0} width={W} height={H}
