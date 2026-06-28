@@ -47,6 +47,8 @@ export interface CeilingSheetLayout {
   cutSheets: number
   /** Остатки: список обрезков [ширина, длина] */
   offcuts: [number, number][]
+  /** Листы повёрнуты — длинная сторона вдоль ширины помещения */
+  rotated?: boolean
 }
 
 export interface CeilingCalcResult {
@@ -242,9 +244,30 @@ export function calcCeiling(spec: CeilingSpec): CeilingCalcResult {
 // ─── Раскрой листов для потолка ──────────────────────────────────────────────
 
 /**
- * Простой раскрой: листы укладываются поперёк несущих профилей (b=500мм).
- * Пользователь вводит длину и ширину — из них считаем.
- * Листы 1200×2500мм по умолчанию.
+ * Вспомогательная функция: считает раскрой для одной ориентации листа.
+ * axisL — размер помещения вдоль длинной стороны листа (sheetL)
+ * axisW — размер помещения вдоль короткой стороны листа (sheetW)
+ */
+function calcLayoutVariant(axisL: number, axisW: number, sheetL: number, sheetW: number) {
+  const colCount = Math.ceil(axisL / sheetL)
+  const rowCount = Math.ceil(axisW / sheetW)
+  const totalSheets = rowCount * colCount
+  const lastColRemainder = axisL % sheetL
+  const lastRowRemainder = axisW % sheetW
+  const fullCols = lastColRemainder === 0 ? colCount : colCount - 1
+  const fullRows = lastRowRemainder === 0 ? rowCount : rowCount - 1
+  const fullSheets = fullRows * fullCols
+  const cutSheets = totalSheets - fullSheets
+  // Площадь отходов (для выбора лучшего варианта)
+  const wasteArea = cutSheets * sheetL * sheetW
+  return { colCount, rowCount, totalSheets, fullSheets, cutSheets,
+    lastColRemainder, lastRowRemainder, wasteArea }
+}
+
+/**
+ * Раскрой листов потолка с автовыбором ориентации.
+ * Считаем оба варианта (лист вдоль длины / вдоль ширины) и берём лучший:
+ * меньше листов → меньше отходов → удобнее монтаж.
  */
 export function calcCeilingSheetLayout(spec: CeilingSpec): CeilingSheetLayout | null {
   const full = spec as CeilingSpecFull
@@ -252,43 +275,43 @@ export function calcCeilingSheetLayout(spec: CeilingSpec): CeilingSheetLayout | 
 
   const { roomLengthMm, roomWidthMm, sheetLengthMm = 2500, stepC } = full
 
-  const sheetW = 1200  // ширина листа всегда 1200мм
-  const sheetL = sheetLengthMm
+  const sheetL = sheetLengthMm  // длинная сторона листа
+  const sheetW = 1200            // короткая сторона листа
 
   const stepA = getHangerStep(spec.type, stepC)
-  const stepB = STEP_B  // 500мм — шаг несущих профилей
+  const stepB = STEP_B
 
-  // Лист лежит: длинная сторона (sheetL=2500) вдоль длины помещения (X)
-  //             короткая сторона (sheetW=1200) поперёк, вдоль ширины (Y)
-  // Колонки (X) — по длине помещения, шаг = sheetL
-  // Ряды    (Y) — по ширине помещения, шаг = sheetW
+  // Вариант А: длинная сторона листа вдоль длины помещения (X)
+  const varA = calcLayoutVariant(roomLengthMm, roomWidthMm, sheetL, sheetW)
+  // Вариант Б: длинная сторона листа вдоль ширины помещения (Y → X на холсте)
+  const varB = calcLayoutVariant(roomWidthMm, roomLengthMm, sheetL, sheetW)
 
-  const colCount = Math.ceil(roomLengthMm / sheetL)
-  const rowCount = Math.ceil(roomWidthMm / sheetW)
+  // Выбираем лучший: сначала по кол-ву листов, при равенстве — по отходам
+  const useRotated = varB.totalSheets < varA.totalSheets ||
+    (varB.totalSheets === varA.totalSheets && varB.wasteArea < varA.wasteArea)
 
-  const totalSheets = rowCount * colCount
+  const best = useRotated ? varB : varA
 
-  const lastColRemainder = roomLengthMm % sheetL
-  const lastRowRemainder = roomWidthMm % sheetW
-
-  const fullCols = lastColRemainder === 0 ? colCount : colCount - 1
-  const fullRows = lastRowRemainder === 0 ? rowCount : rowCount - 1
-
-  const fullSheets = fullRows * fullCols
-  const cutSheets = totalSheets - fullSheets
+  // Если лист повёрнут — на холсте длинная сторона идёт вдоль Y (ширины),
+  // поэтому меняем местами axisL/axisW для правильного рендера
+  const renderLengthMm = useRotated ? roomWidthMm : roomLengthMm
+  const renderWidthMm  = useRotated ? roomLengthMm : roomWidthMm
+  const renderSheetL   = sheetL  // длинная сторона листа всегда по X холста
+  const renderSheetW   = sheetW  // короткая по Y
 
   // Обрезки
   const offcuts: [number, number][] = []
+  const { lastColRemainder, lastRowRemainder, colCount, rowCount } = best
   if (lastColRemainder > 0) {
     const rowsInRightCol = lastRowRemainder > 0 ? rowCount - 1 : rowCount
     for (let r = 0; r < rowsInRightCol; r++) {
-      offcuts.push([lastColRemainder, sheetW])
+      offcuts.push([lastColRemainder, renderSheetW])
     }
   }
   if (lastRowRemainder > 0) {
     const colsInBottomRow = lastColRemainder > 0 ? colCount - 1 : colCount
     for (let c = 0; c < colsInBottomRow; c++) {
-      offcuts.push([sheetL, lastRowRemainder])
+      offcuts.push([renderSheetL, lastRowRemainder])
     }
     if (lastColRemainder > 0) {
       offcuts.push([lastColRemainder, lastRowRemainder])
@@ -296,18 +319,22 @@ export function calcCeilingSheetLayout(spec: CeilingSpec): CeilingSheetLayout | 
   }
 
   return {
-    roomWidthMm,
-    roomLengthMm,
+    // Для холста всегда показываем помещение как roomLengthMm × roomWidthMm
+    // но листы могут быть повёрнуты
+    roomWidthMm:  useRotated ? renderWidthMm  : roomWidthMm,
+    roomLengthMm: useRotated ? renderLengthMm : roomLengthMm,
     stepC,
     stepB,
     stepA,
-    sheetW,
-    sheetL,
-    rowCount,
-    colCount,
-    totalSheets,
-    fullSheets,
-    cutSheets,
+    sheetW: renderSheetW,
+    sheetL: renderSheetL,
+    rowCount:    best.rowCount,
+    colCount:    best.colCount,
+    totalSheets: best.totalSheets,
+    fullSheets:  best.fullSheets,
+    cutSheets:   best.cutSheets,
     offcuts,
+    /** true если листы повёрнуты (длинная сторона вдоль ширины помещения) */
+    rotated: useRotated,
   }
 }

@@ -202,23 +202,17 @@ describe('calcCeilingSheetLayout — раскрой 5000×4000мм', () => {
   })
 })
 
-describe('calcCeilingSheetLayout — раскрой 2500×2400мм (квадрат из 2 целых листов)', () => {
-  const spec206: CeilingSpecFull = { ...BASE, roomLengthMm: 2500, roomWidthMm: 2400, sheetLengthMm: 2500,
-    areaSqm: 6, perimeterM: 9.8 }
-  const res = calcCeiling(spec206)
+describe('calcCeilingSheetLayout — раскрой 2500×2400мм (автоориентация → 2 целых)', () => {
+  const spec: CeilingSpecFull = { ...BASE, roomLengthMm: 2500, roomWidthMm: 2400,
+    sheetLengthMm: 2500, areaSqm: 6, perimeterM: 9.8 }
+  const res = calcCeiling(spec)
   const layout = res.sheetLayout!
 
-  // Лист 1200×2500: длинная (2500) по длине = 1 колонка (целая)
-  // Короткая (1200) по ширине: ceil(2400/1200) = 2 ряда (оба целые)
-  it('colCount = 1 (2500/2500)', () => {
-    expect(layout.colCount).toBe(1)
-  })
-
-  it('rowCount = 2 (2400/1200)', () => {
-    expect(layout.rowCount).toBe(2)
-  })
-
-  it('totalSheets = 2', () => {
+  // Оба варианта:
+  // Вариант А (длина 2500 по X): ceil(2500/2500)=1 кол × ceil(2400/1200)=2 ряда = 2 листа, 0 резаных
+  // Вариант Б (ширина 2400 по X): ceil(2400/2500)=1 кол × ceil(2500/1200)=3 ряда = 3 листа, 1 резаный
+  // → выбираем Вариант А: 2 листа, не повёрнут
+  it('totalSheets = 2 (автовыбор лучшей ориентации)', () => {
     expect(layout.totalSheets).toBe(2)
   })
 
@@ -228,5 +222,36 @@ describe('calcCeilingSheetLayout — раскрой 2500×2400мм (квадра
 
   it('cutSheets = 0', () => {
     expect(layout.cutSheets).toBe(0)
+  })
+
+  it('rotated = false (лист вдоль длины 2500мм)', () => {
+    expect(layout.rotated).toBeFalsy()
+  })
+})
+
+describe('calcCeilingSheetLayout — раскрой 2400×2500мм (автоориентация разворачивает лист)', () => {
+  // Те же размеры но переставлены местами
+  const spec: CeilingSpecFull = { ...BASE, roomLengthMm: 2400, roomWidthMm: 2500,
+    sheetLengthMm: 2500, areaSqm: 6, perimeterM: 9.8 }
+  const res = calcCeiling(spec)
+  const layout = res.sheetLayout!
+
+  // Вариант А (длина 2400 по X): ceil(2400/2500)=1 кол × ceil(2500/1200)=3 ряда = 3 листа
+  // Вариант Б (ширина 2500 по X): ceil(2500/2500)=1 кол × ceil(2400/1200)=2 ряда = 2 листа ✓
+  // → выбираем Вариант Б: повёрнут
+  it('totalSheets = 2 (автоповорот экономит лист)', () => {
+    expect(layout.totalSheets).toBe(2)
+  })
+
+  it('fullSheets = 2', () => {
+    expect(layout.fullSheets).toBe(2)
+  })
+
+  it('cutSheets = 0', () => {
+    expect(layout.cutSheets).toBe(0)
+  })
+
+  it('rotated = true (повёрнут для экономии)', () => {
+    expect(layout.rotated).toBe(true)
   })
 })

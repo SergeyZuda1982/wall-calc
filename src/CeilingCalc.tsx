@@ -306,8 +306,15 @@ export default function CeilingCalc() {
             {result.sheetLayout && form.roomLengthMm > 0 && form.roomWidthMm > 0 && (
               <div style={{ background: COLORS.panel, borderRadius: 10, border: `1px solid ${COLORS.border}`, padding: 16 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <div style={{ fontWeight: 600, fontSize: 15, color: COLORS.text }}>
-                    Раскладка листов
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 15, color: COLORS.text }}>
+                      Раскладка листов
+                    </div>
+                    {result.sheetLayout?.rotated && (
+                      <div style={{ fontSize: 12, color: COLORS.warning, marginTop: 2 }}>
+                        ↺ Листы повёрнуты — длинная сторона вдоль ширины помещения
+                      </div>
+                    )}
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <span style={{ fontSize: 12, color: COLORS.textMuted }}>Сдвиг:</span>
