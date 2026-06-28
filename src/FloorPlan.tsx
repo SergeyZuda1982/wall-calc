@@ -132,6 +132,61 @@ function fmtLen(mm: number) {
   return mm >= 1000 ? `${(mm / 1000).toFixed(2)}м` : `${mm}мм`
 }
 
+/**
+ * Размерная линия в чертёжном стиле (засечки, длина в мм).
+ * offsetPx — расстояние от оси линии до размерной линии.
+ */
+function DimLineShapes({ x1, y1, x2, y2, lengthMm, offsetPx, dimColor }: {
+  x1: number; y1: number; x2: number; y2: number
+  lengthMm: number; offsetPx: number; dimColor: string
+}) {
+  const dx = x2 - x1, dy = y2 - y1
+  const len = Math.sqrt(dx*dx + dy*dy)
+  if (len < 24) return null
+  // Правая нормаль: (dy/len, -dx/len) → для горизонтальных линий указывает вверх
+  const nx = dy / len, ny = -dx / len
+  const d1x = x1 + nx * offsetPx, d1y = y1 + ny * offsetPx
+  const d2x = x2 + nx * offsetPx, d2y = y2 + ny * offsetPx
+  // Засечки ±5px вдоль направления линии
+  const tx = dx / len * 5, ty = dy / len * 5
+  const mx = (d1x + d2x) / 2, my = (d1y + d2y) / 2
+  return (
+    <>
+      <Line points={[d1x, d1y, d2x, d2y]} stroke={dimColor} strokeWidth={1} listening={false} />
+      <Line points={[d1x - tx, d1y - ty, d1x + tx, d1y + ty]} stroke={dimColor} strokeWidth={1} listening={false} />
+      <Line points={[d2x - tx, d2y - ty, d2x + tx, d2y + ty]} stroke={dimColor} strokeWidth={1} listening={false} />
+      <Text x={mx - 30} y={my - 13} width={60} text={`${lengthMm}`} fontSize={9} fill={dimColor} align="center" listening={false} />
+    </>
+  )
+}
+
+/** Генерирует список [x1,y1,x2,y2] для 45° штриховки внутри AABB прямоугольника. */
+function calcHatch(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx2: number, dy2: number, step: number): number[][] {
+  const minX = Math.min(ax, bx, cx, dx2)
+  const maxX = Math.max(ax, bx, cx, dx2)
+  const minY = Math.min(ay, by, cy, dy2)
+  const maxY = Math.max(ay, by, cy, dy2)
+  const result: number[][] = []
+  // Линии x − y = c (45° к горизонтали, направление ↘)
+  for (let c = minX - maxY - step; c <= maxX - minY + step; c += step) {
+    const pts: [number, number][] = []
+    const tryAdd = (x: number, y: number) => {
+      if (x >= minX - 0.5 && x <= maxX + 0.5 && y >= minY - 0.5 && y <= maxY + 0.5)
+        pts.push([x, y])
+    }
+    tryAdd(minX, minX - c)
+    tryAdd(maxX, maxX - c)
+    tryAdd(minY + c, minY)
+    tryAdd(maxY + c, maxY)
+    const unique: [number, number][] = []
+    for (const p of pts) {
+      if (!unique.some(u => Math.abs(u[0] - p[0]) < 0.5 && Math.abs(u[1] - p[1]) < 0.5)) unique.push(p)
+    }
+    if (unique.length >= 2) result.push([unique[0][0], unique[0][1], unique[1][0], unique[1][1]])
+  }
+  return result
+}
+
 // Генерация имени конструкции (П-1, П-2, О-1...)
 const TYPE_PREFIX: Record<PlanLineType, string> = {
   wall_new: 'П', wall_lining: 'О', wall_existing: 'С', ceiling: 'Пт', floor: 'Пл',
@@ -219,6 +274,8 @@ export default function FloorPlan() {
   const [showParallelDialog, setShowParallelDialog] = useState(false)
   const [parallelDist, setParallelDist]             = useState('100')
   const [rightTab, setRightTab]         = useState<'construction' | 'finish' | 'materials' | 'calc'>('construction')
+  const [hoveredId, setHoveredId]       = useState<string | null>(null)
+  const [snapActive, setSnapActive]     = useState(false)
 
   const dragRef      = useRef<DragState>(null)
   const dragMovedRef = useRef(false)
@@ -319,8 +376,12 @@ export default function FloorPlan() {
       }
       return
     }
-    const pt = applySnap(rawX, rawY)
+    const snappedInfo = snapPoint(rawX, rawY, lines)
+    const pt = (orthoMode && drawing && !snappedInfo.snapped)
+      ? snapOrtho(drawing.x1, drawing.y1, snappedInfo.x, snappedInfo.y)
+      : snappedInfo
     setCursor({ x: pt.x, y: pt.y })
+    setSnapActive(snappedInfo.snapped)
   }
 
   const handleMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
@@ -821,25 +882,60 @@ export default function FloorPlan() {
                       return (
                         <Group key={l.id}
                           onMouseDown={e => handleLinePointerDown(l.id, e)}
-                          onTouchStart={e => handleLinePointerDown(l.id, e)}>
+                          onTouchStart={e => handleLinePointerDown(l.id, e)}
+                          onMouseEnter={() => setHoveredId(l.id)}
+                          onMouseLeave={() => setHoveredId(null)}>
                           <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke="transparent" strokeWidth={hitW} hitStrokeWidth={hitW} />
                           {/* Заливка — замкнутый прямоугольник A→B→C→D */}
                           <Line points={[ax,ay, bx,by, cx,cy, dx2,dy2]} closed fill={fill} stroke="none" listening={false} />
+                          {/* Штриховка существующих конструкций */}
+                          {l.type === 'wall_existing' && (() => {
+                            const hatch = calcHatch(ax, ay, bx, by, cx, cy, dx2, dy2, 8)
+                            return (
+                              <Group clipFunc={(ctx: any) => {
+                                ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by)
+                                ctx.lineTo(cx, cy); ctx.lineTo(dx2, dy2); ctx.closePath()
+                              }} listening={false}>
+                                {hatch.map((pts, i) => (
+                                  <Line key={i} points={pts} stroke="#78909c" strokeWidth={0.8} opacity={0.5} listening={false} />
+                                ))}
+                              </Group>
+                            )
+                          })()}
                           {/* Две параллельных линии (стороны стены) */}
                           <Line points={[ax,ay, bx,by]} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
                           <Line points={[dx2,dy2, cx,cy]} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
-                          {/* Метка на холсте: имя + длина в одну строку если линия длинная */}
-                          {len > 60 ? (
-                            <>
-                              <Text x={mx-40} y={my-11} width={80} text={l.label} fontSize={10}
+                          {/* Метка: внутри тела если толстая стена, иначе над линией */}
+                          {(() => {
+                            const lineAngle = Math.atan2(dy, dx) * 180 / Math.PI
+                            const rot = (lineAngle > 90 || lineAngle < -90) ? lineAngle + 180 : lineAngle
+                            if (thicknessPx >= 18) {
+                              return (
+                                <Group x={mx} y={my} rotation={rot} listening={false}>
+                                  <Text x={-35} y={-7} width={70} text={l.label} fontSize={10}
+                                    fill={stroke} align="center" fontStyle="bold" listening={false} />
+                                </Group>
+                              )
+                            }
+                            return len > 60 ? (
+                              <>
+                                <Text x={mx-40} y={my-11} width={80} text={l.label} fontSize={10}
+                                  fill={stroke} align="center" fontStyle="bold" listening={false} />
+                                <Text x={mx-40} y={my+1} width={80} text={fmtLen(l.lengthMm)} fontSize={9}
+                                  fill={stroke + 'cc'} align="center" listening={false} />
+                              </>
+                            ) : (
+                              <Text x={mx-30} y={my-8} width={60} text={l.label} fontSize={9}
                                 fill={stroke} align="center" fontStyle="bold" listening={false} />
-                              <Text x={mx-40} y={my+1} width={80} text={fmtLen(l.lengthMm)} fontSize={9}
-                                fill={stroke + 'cc'} align="center" listening={false} />
-                            </>
-                          ) : (
-                            <Text x={mx-30} y={my-8} width={60} text={l.label} fontSize={9}
-                              fill={stroke} align="center" fontStyle="bold" listening={false} />
+                            )
+                          })()}
+                          {/* Размерная линия над стеной */}
+                          {!inErase && (
+                            <DimLineShapes x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+                              lengthMm={l.lengthMm} offsetPx={half + 14}
+                              dimColor={isSelected ? stroke : '#999'} />
                           )}
+                          {/* Кружки на концах: drag-handle при select, hover-точки при наведении */}
                           {isSelected && mode === 'select' ? <>
                             <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
                               onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
@@ -847,10 +943,10 @@ export default function FloorPlan() {
                             <Circle x={l.x2} y={l.y2} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
                               onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }}
                               onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }} />
-                          </> : <>
+                          </> : hoveredId === l.id ? <>
                             <Circle x={l.x1} y={l.y1} radius={5} fill={stroke} listening={false} />
                             <Circle x={l.x2} y={l.y2} radius={5} fill={stroke} listening={false} />
-                          </>}
+                          </> : null}
                         </Group>
                       )
                     }
@@ -861,7 +957,9 @@ export default function FloorPlan() {
                       <Group key={l.id}
                         opacity={inErase ? 0.55 : 1}
                         onMouseDown={e => handleLinePointerDown(l.id, e)}
-                        onTouchStart={e => handleLinePointerDown(l.id, e)}>
+                        onTouchStart={e => handleLinePointerDown(l.id, e)}
+                        onMouseEnter={() => setHoveredId(l.id)}
+                        onMouseLeave={() => setHoveredId(null)}>
                         <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke="transparent" strokeWidth={24} hitStrokeWidth={24} />
                         <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke={stroke} strokeWidth={sw} lineCap="round" dash={dash} listening={false} />
                         {inErase && (
@@ -881,6 +979,13 @@ export default function FloorPlan() {
                               fill={stroke} align="center" fontStyle="bold" listening={false} />
                           )
                         })()}
+                        {/* Размерная линия */}
+                        {!inErase && (
+                          <DimLineShapes x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+                            lengthMm={l.lengthMm} offsetPx={sw / 2 + 14}
+                            dimColor={isSelected ? stroke : '#999'} />
+                        )}
+                        {/* Кружки: drag-handle при select, hover-точки при наведении */}
                         {isSelected && mode === 'select' ? <>
                           <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
                             onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
@@ -888,10 +993,10 @@ export default function FloorPlan() {
                           <Circle x={l.x2} y={l.y2} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
                             onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }}
                             onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }} />
-                        </> : <>
+                        </> : hoveredId === l.id ? <>
                           <Circle x={l.x1} y={l.y1} radius={5} fill={stroke} listening={false} />
                           <Circle x={l.x2} y={l.y2} radius={5} fill={stroke} listening={false} />
-                        </>}
+                        </> : null}
                       </Group>
                     )
                   })}
@@ -911,8 +1016,13 @@ export default function FloorPlan() {
 
                   {/* Курсор снапа */}
                   {cursor && mode === 'draw' && (
-                    <Circle x={cursor.x} y={cursor.y} radius={6}
-                      stroke={LINE_COLORS[drawType]} strokeWidth={1.5} fill="rgba(255,255,255,0.7)" listening={false} />
+                    snapActive ? (
+                      <Circle x={cursor.x} y={cursor.y} radius={8}
+                        stroke="#4caf50" strokeWidth={2} fill="rgba(76,175,80,0.15)" listening={false} />
+                    ) : (
+                      <Circle x={cursor.x} y={cursor.y} radius={6}
+                        stroke={LINE_COLORS[drawType]} strokeWidth={1.5} fill="rgba(255,255,255,0.7)" listening={false} />
+                    )
                   )}
 
                   {/* Точки масштаба */}
@@ -922,9 +1032,10 @@ export default function FloorPlan() {
                     <Line points={[scalePt1!.x,scalePt1!.y,scalePt2.x,scalePt2.y]} stroke="#ff9800" strokeWidth={2} dash={[4,3]} listening={false} />
                   </>}
 
-                  {/* Точки снапа */}
-                  {mode === 'draw' && allPoints.map((pt,i) => (
-                    <Circle key={i} x={pt.x} y={pt.y} radius={3} fill="transparent" stroke="#bbb" strokeWidth={1} listening={false} />
+                  {/* Точки снапа — только в draw-режиме и только не-активные */}
+                  {mode === 'draw' && allPoints.map((pt, i) => (
+                    <Circle key={i} x={pt.x} y={pt.y} radius={3}
+                      fill="transparent" stroke="#bbb" strokeWidth={1} listening={false} />
                   ))}
                 </Layer>
               </Stage>
