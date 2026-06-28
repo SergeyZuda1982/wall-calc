@@ -810,8 +810,12 @@ export default function FloorPlan() {
                       const nx = -dy / len * half
                       const ny =  dx / len * half
                       const hitW = Math.max(28, thicknessPx + 8)
-                      const p1 = [l.x1+nx, l.y1+ny, l.x2+nx, l.y2+ny]
-                      const p2 = [l.x1-nx, l.y1-ny, l.x2-nx, l.y2-ny]
+                      // Четыре угла прямоугольника по часовой стрелке:
+                      // A(x1+nx,y1+ny) → B(x2+nx,y2+ny) → C(x2-nx,y2-ny) → D(x1-nx,y1-ny)
+                      const ax = l.x1+nx, ay = l.y1+ny
+                      const bx = l.x2+nx, by = l.y2+ny
+                      const cx = l.x2-nx, cy = l.y2-ny
+                      const dx2 = l.x1-nx, dy2 = l.y1-ny
                       const fill = isSelected ? stroke + '30' : inContour ? '#ff980022' : vis.fillColor
 
                       return (
@@ -819,9 +823,11 @@ export default function FloorPlan() {
                           onMouseDown={e => handleLinePointerDown(l.id, e)}
                           onTouchStart={e => handleLinePointerDown(l.id, e)}>
                           <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke="transparent" strokeWidth={hitW} hitStrokeWidth={hitW} />
-                          <Line points={[...p1, ...p2.slice().reverse()]} closed fill={fill} stroke="none" listening={false} />
-                          <Line points={p1} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
-                          <Line points={p2} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
+                          {/* Заливка — замкнутый прямоугольник A→B→C→D */}
+                          <Line points={[ax,ay, bx,by, cx,cy, dx2,dy2]} closed fill={fill} stroke="none" listening={false} />
+                          {/* Две параллельных линии (стороны стены) */}
+                          <Line points={[ax,ay, bx,by]} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
+                          <Line points={[dx2,dy2, cx,cy]} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
                           {/* Метка на холсте: имя + длина в одну строку если линия длинная */}
                           {len > 60 ? (
                             <>
