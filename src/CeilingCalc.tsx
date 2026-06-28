@@ -1,62 +1,56 @@
 /**
  * CeilingCalc.tsx — вкладка «Потолки»
- * Расчёт подвесных потолков КНАУФ: П112, П113, П131, П19
+ * Пошаговый конструктор каркаса П112 (П212)
+ * Шаги: 1-ПН периметр → 2-Подвесы+Основные ПП → 3-Несущие ПП+Крабы → 4-Зашить ГКЛ
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Line, Text, Group } from 'react-konva'
-import type { CeilingSpec, CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep } from './data/ceilingData'
+import type { CeilingSpecFull } from './data/ceilingData'
 import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS } from './data/ceilingData'
+import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
-import type { CeilingCalcResult, CeilingSheetLayout } from './core/calcCeiling'
+import type { CeilingCalcResult } from './core/calcCeiling'
 
-// ─── Константы ────────────────────────────────────────────────────────────────
+// ─── Цвета ───────────────────────────────────────────────────────────────────
 
-const COLORS = {
-  bg:          '#f7f8fa',
-  panel:       '#ffffff',
-  border:      '#e0e4ea',
-  accent:      '#3a7bd5',
-  accentLight: '#e8f0fc',
-  text:        '#1a1f2e',
-  textMuted:   '#6b7280',
-  success:     '#2d7d46',
-  warning:     '#b45309',
-  error:       '#c0392b',
-  // Цвета холста
-  grid:        '#e8ecf0',
-  profile:     '#78909c',
-  profileMain: '#455a64',
-  sheet:       'rgba(144,202,249,0.25)',
-  sheetBorder: '#1e88e5',
-  sheetCut:    'rgba(255,183,77,0.3)',
-  sheetCutBorder: '#fb8c00',
-  hanger:      '#e53935',
+const C = {
+  bg:           '#f4f5f7',
+  panel:        '#ffffff',
+  border:       '#dde1e8',
+  accent:       '#2563eb',
+  accentLight:  '#eff6ff',
+  text:         '#111827',
+  muted:        '#6b7280',
+  success:      '#16a34a',
+  warning:      '#d97706',
+  // Профили
+  pn:           '#607d8b',   // ПН 28×27 — синевато-серый
+  ppMain:       '#37474f',   // Основной ПП — тёмный
+  ppBearing:    '#546e7a',   // Несущий ПП — чуть светлее
+  hanger:       '#e53935',   // Подвес
+  crab:         '#f57c00',   // Краб (соединитель)
+  sheetFill:    'rgba(144,202,249,0.22)',
+  sheetBorder:  '#1e88e5',
+  sheetCutFill: 'rgba(255,183,77,0.28)',
+  sheetCutBorder:'#fb8c00',
+  scaleLine:    '#90a4ae',
+  scaleText:    '#546e7a',
 }
 
-const INPUT_STYLE: React.CSSProperties = {
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 6,
-  padding: '6px 10px',
-  fontSize: 14,
-  color: COLORS.text,
-  background: '#fff',
-  width: '100%',
-  boxSizing: 'border-box',
-}
+// ─── Шаги монтажа ────────────────────────────────────────────────────────────
 
-const SELECT_STYLE: React.CSSProperties = { ...INPUT_STYLE }
+type Step = 1 | 2 | 3 | 4
+const STEPS: { id: Step; label: string; desc: string }[] = [
+  { id: 1, label: 'ПН 28×27',        desc: 'Периметральный профиль' },
+  { id: 2, label: 'Подвесы + ПП',    desc: 'Основные профили вдоль длины' },
+  { id: 3, label: 'Несущие ПП',      desc: 'Поперёк + крабы' },
+  { id: 4, label: 'Зашить ГКЛ',      desc: 'Раскладка листов' },
+]
 
-const LABEL_STYLE: React.CSSProperties = {
-  fontSize: 12,
-  color: COLORS.textMuted,
-  marginBottom: 4,
-  display: 'block',
-}
+// ─── Дефолтная форма ─────────────────────────────────────────────────────────
 
-// ─── Дефолтные значения ───────────────────────────────────────────────────────
-
-const DEFAULT_SPEC: CeilingSpec & { roomLengthMm: number; roomWidthMm: number; sheetLengthMm: number } = {
+const DEF: CeilingSpecFull = {
   type: 'p112',
   layers: 1,
   material: 'gsp',
@@ -69,595 +63,579 @@ const DEFAULT_SPEC: CeilingSpec & { roomLengthMm: number; roomWidthMm: number; s
   sheetLengthMm: 2500,
 }
 
-// ─── Компонент ────────────────────────────────────────────────────────────────
+// ─── Стили ───────────────────────────────────────────────────────────────────
+
+const inp: React.CSSProperties = {
+  border: `1px solid ${C.border}`, borderRadius: 6,
+  padding: '6px 10px', fontSize: 14, color: C.text,
+  background: '#fff', width: '100%', boxSizing: 'border-box',
+}
+const sel: React.CSSProperties = { ...inp }
+const lbl: React.CSSProperties = {
+  fontSize: 12, color: C.muted, marginBottom: 3, display: 'block',
+}
+
+// ─── Компонент ───────────────────────────────────────────────────────────────
 
 export default function CeilingCalc() {
-  const [form, setForm] = useState(DEFAULT_SPEC)
+  const [form, setForm] = useState<CeilingSpecFull>(DEF)
+  const [step, setStep] = useState<Step>(1)
+  const [shiftMainMm, setShiftMainMm]       = useState(0)   // сдвиг основных ПП по X
+  const [shiftBearingMm, setShiftBearingMm] = useState(0)   // сдвиг несущих ПП по Y
   const [result, setResult] = useState<CeilingCalcResult | null>(null)
-  const [shiftMm, setShiftMm] = useState(0)  // сдвиг раскладки листов
-  const [shiftInput, setShiftInput] = useState('0')
-  const [showOffcuts, setShowOffcuts] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLDivElement>(null)
   const [canvasW, setCanvasW] = useState(600)
 
-  // Следим за шириной контейнера холста
   useEffect(() => {
-    if (!containerRef.current) return
-    const ro = new ResizeObserver(entries => {
-      setCanvasW(entries[0].contentRect.width || 600)
-    })
-    ro.observe(containerRef.current)
+    if (!canvasRef.current) return
+    const ro = new ResizeObserver(e => setCanvasW(e[0].contentRect.width || 600))
+    ro.observe(canvasRef.current)
     return () => ro.disconnect()
   }, [])
 
-  // Пересчёт при изменении формы
-  const recalc = useCallback((f: typeof form) => {
-    if (f.areaSqm <= 0) { setResult(null); return }
-    const spec = { ...f } as CeilingSpec & { roomLengthMm: number; roomWidthMm: number; sheetLengthMm: number }
-    setResult(calcCeiling(spec))
-  }, [])
-
-  function setField<K extends keyof typeof form>(key: K, value: typeof form[K]) {
+  function setField<K extends keyof CeilingSpecFull>(key: K, val: CeilingSpecFull[K]) {
     setForm(prev => {
-      const next = { ...prev, [key]: value }
-
-      // При изменении длины/ширины — пересчитываем площадь и периметр
+      const next = { ...prev, [key]: val }
       if (key === 'roomLengthMm' || key === 'roomWidthMm') {
-        const l = key === 'roomLengthMm' ? (value as number) : prev.roomLengthMm
-        const w = key === 'roomWidthMm' ? (value as number) : prev.roomWidthMm
+        const l = key === 'roomLengthMm' ? (val as number) : prev.roomLengthMm
+        const w = key === 'roomWidthMm'  ? (val as number) : prev.roomWidthMm
         if (l > 0 && w > 0) {
-          next.areaSqm = Math.round(l * w / 1000000 * 100) / 100
+          next.areaSqm   = Math.round(l * w / 1e6 * 100) / 100
           next.perimeterM = Math.round((l + w) * 2 / 1000 * 100) / 100
         }
       }
-
-      recalc(next)
+      if (next.areaSqm > 0) setResult(calcCeiling(next))
       return next
     })
   }
 
-  // Ручное изменение площади/периметра (для нестандартных форм)
-  function setAreaManual(val: number) {
-    setForm(prev => {
-      const next = { ...prev, areaSqm: val }
-      recalc(next)
-      return next
-    })
-  }
-  function setPerimeterManual(val: number) {
-    setForm(prev => {
-      const next = { ...prev, perimeterM: val }
-      recalc(next)
-      return next
-    })
+  // Материалы по шагам — накопительно
+  const mats = result?.materials ?? []
+  const stepMats: Record<Step, string[]> = {
+    1: ['ПН 28×27', 'Лента уплотнительная 30мм', 'Дюбель для ПН 28×27'],
+    2: ['Профиль ПП 60×27', 'Подвес прямой ПП 60×27', 'Шуруп LN (крепление в подвесе)', 'Дюбель анкерный', 'Удлинитель ПП 60×27'],
+    3: ['Соединитель двухуровневый ПП 60×27'],
+    4: ['ГСП', 'ГВЛ', 'Шуруп TN', 'Шуруп MN', 'Шпаклёвка', 'Лента армирующая', 'Лента разделительная', 'Грунтовка'],
   }
 
-  const isNonStandard = form.roomLengthMm > 0 && form.roomWidthMm > 0 &&
-    Math.abs(form.areaSqm - form.roomLengthMm * form.roomWidthMm / 1e6) > 0.05
-  void isNonStandard
+  const visibleMats = mats.filter(m =>
+    Object.entries(stepMats)
+      .filter(([s]) => +s <= step)
+      .some(([, names]) => names.some(n => m.name.includes(n)))
+  )
+
+  const hasRoom = form.roomLengthMm > 0 && form.roomWidthMm > 0
 
   return (
-    <div style={{ display: 'flex', gap: 16, minHeight: 600, background: COLORS.bg, padding: 16 }}>
+    <div style={{ display: 'flex', gap: 14, minHeight: 600, background: C.bg, padding: 14 }}>
 
-      {/* ── Левая панель: форма ввода ── */}
-      <div style={{ width: 280, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* ── Левая панель ── */}
+      <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
 
         {/* Тип потолка */}
-        <Section title="Тип потолка">
+        <Card title="ТИП ПОТОЛКА">
           {(Object.keys(CEILING_TYPE_LABELS) as CeilingType[]).map(t => (
             <button key={t} onClick={() => setField('type', t)} style={{
               display: 'block', width: '100%', textAlign: 'left',
-              padding: '8px 10px', marginBottom: 4, borderRadius: 6, fontSize: 13,
-              border: `1.5px solid ${form.type === t ? COLORS.accent : COLORS.border}`,
-              background: form.type === t ? COLORS.accentLight : '#fff',
-              color: form.type === t ? COLORS.accent : COLORS.text,
-              fontWeight: form.type === t ? 600 : 400,
-              cursor: 'pointer',
+              padding: '7px 10px', marginBottom: 3, borderRadius: 6, fontSize: 12,
+              border: `1.5px solid ${form.type === t ? C.accent : C.border}`,
+              background: form.type === t ? C.accentLight : '#fff',
+              color: form.type === t ? C.accent : C.text,
+              fontWeight: form.type === t ? 600 : 400, cursor: 'pointer',
             }}>
-              {t === 'p112' && '▦ '}
-              {t === 'p113' && '▤ '}
-              {t === 'p131' && '▥ '}
-              {t === 'p19' && '✦ '}
               {CEILING_TYPE_LABELS[t].split(' — ')[0]}
-              <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 400, marginTop: 2 }}>
+              <span style={{ display: 'block', fontSize: 10, color: C.muted, fontWeight: 400 }}>
                 {CEILING_TYPE_LABELS[t].split(' — ')[1]}
-              </div>
+              </span>
             </button>
           ))}
-        </Section>
+        </Card>
 
-        {/* Размеры помещения */}
-        <Section title="Размеры помещения">
-          <Row2>
-            <Field label="Длина, мм">
-              <input style={INPUT_STYLE} type="number" min={0} step={100}
-                value={form.roomLengthMm || ''}
-                onChange={e => setField('roomLengthMm', +e.target.value)}
-              />
-            </Field>
-            <Field label="Ширина, мм">
-              <input style={INPUT_STYLE} type="number" min={0} step={100}
-                value={form.roomWidthMm || ''}
-                onChange={e => setField('roomWidthMm', +e.target.value)}
-              />
-            </Field>
-          </Row2>
-
-          <div style={{ marginTop: 8, padding: '8px 10px', background: COLORS.accentLight, borderRadius: 6, fontSize: 13 }}>
-            <div>Площадь: <b>{form.areaSqm > 0 ? form.areaSqm.toFixed(2) : '—'} м²</b></div>
-            <div>Периметр: <b>{form.perimeterM > 0 ? form.perimeterM.toFixed(2) : '—'} м</b></div>
+        {/* Размеры */}
+        <Card title="РАЗМЕРЫ ПОМЕЩЕНИЯ">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+            <div>
+              <label style={lbl}>Длина, мм</label>
+              <input style={inp} type="number" min={0} step={100}
+                value={form.roomLengthMm || ''} onChange={e => setField('roomLengthMm', +e.target.value)} />
+            </div>
+            <div>
+              <label style={lbl}>Ширина, мм</label>
+              <input style={inp} type="number" min={0} step={100}
+                value={form.roomWidthMm || ''} onChange={e => setField('roomWidthMm', +e.target.value)} />
+            </div>
           </div>
-
-          {/* Для нестандартных форм — ручной ввод */}
-          <div style={{ marginTop: 8, fontSize: 12, color: COLORS.textMuted }}>
-            Г-образный, трапеция или другая форма — введите вручную:
+          {hasRoom && (
+            <div style={{ padding: '7px 10px', background: C.accentLight, borderRadius: 6, fontSize: 13 }}>
+              <div>Площадь: <b>{form.areaSqm.toFixed(2)} м²</b></div>
+              <div>Периметр: <b>{form.perimeterM.toFixed(2)} м</b></div>
+            </div>
+          )}
+          <div style={{ marginTop: 8, fontSize: 11, color: C.muted }}>Нестандартная форма — вручную:</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+            <div>
+              <label style={lbl}>Площадь, м²</label>
+              <input style={inp} type="number" min={0} step={0.1}
+                value={form.areaSqm || ''} onChange={e => {
+                  const v = +e.target.value
+                  setForm(prev => { const n = { ...prev, areaSqm: v }; if (v > 0) setResult(calcCeiling(n)); return n })
+                }} />
+            </div>
+            <div>
+              <label style={lbl}>Периметр, м</label>
+              <input style={inp} type="number" min={0} step={0.1}
+                value={form.perimeterM || ''} onChange={e => {
+                  const v = +e.target.value
+                  setForm(prev => { const n = { ...prev, perimeterM: v }; if (n.areaSqm > 0) setResult(calcCeiling(n)); return n })
+                }} />
+            </div>
           </div>
-          <Row2>
-            <Field label="Площадь, м²">
-              <input style={INPUT_STYLE} type="number" min={0} step={0.1}
-                value={form.areaSqm || ''}
-                onChange={e => setAreaManual(+e.target.value)}
-              />
-            </Field>
-            <Field label="Периметр, м">
-              <input style={INPUT_STYLE} type="number" min={0} step={0.1}
-                value={form.perimeterM || ''}
-                onChange={e => setPerimeterManual(+e.target.value)}
-              />
-            </Field>
-          </Row2>
-        </Section>
+        </Card>
 
         {/* Параметры конструкции */}
         {form.type !== 'p19' && (
-          <Section title="Параметры конструкции">
-            <Row2>
-              <Field label="Слоёв ГКЛ">
-                <select style={SELECT_STYLE} value={form.layers}
-                  onChange={e => setField('layers', +e.target.value as CeilingLayers)}>
+          <Card title="ПАРАМЕТРЫ">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+              <div>
+                <label style={lbl}>Слоёв ГКЛ</label>
+                <select style={sel} value={form.layers} onChange={e => setField('layers', +e.target.value as CeilingLayers)}>
                   <option value={1}>1 слой</option>
                   <option value={2}>2 слоя</option>
                 </select>
-              </Field>
-              <Field label="Материал">
-                <select style={SELECT_STYLE} value={form.material}
-                  onChange={e => setField('material', e.target.value as CeilingMaterial)}>
+              </div>
+              <div>
+                <label style={lbl}>Материал</label>
+                <select style={sel} value={form.material} onChange={e => setField('material', e.target.value as CeilingMaterial)}>
                   <option value="gsp">ГСП (ГКЛ)</option>
                   <option value="gvl">ГВЛ</option>
                 </select>
-              </Field>
-            </Row2>
-            <Row2>
-              <Field label="Толщина, мм">
-                <select style={SELECT_STYLE} value={form.thickness}
-                  onChange={e => setField('thickness', +e.target.value as CeilingSheetThickness)}>
+              </div>
+              <div>
+                <label style={lbl}>Толщина, мм</label>
+                <select style={sel} value={form.thickness} onChange={e => setField('thickness', +e.target.value as CeilingSheetThickness)}>
                   <option value={9.5}>9.5</option>
                   <option value={12.5}>12.5</option>
                 </select>
-              </Field>
-              <Field label="Шаг профилей (c)">
-                <select style={SELECT_STYLE} value={form.stepC}
-                  onChange={e => setField('stepC', +e.target.value as CeilingStep)}>
-                  {CEILING_STEP_OPTIONS.map(s => (
-                    <option key={s} value={s}>{s} мм</option>
-                  ))}
+              </div>
+              <div>
+                <label style={lbl}>Шаг осн. (c)</label>
+                <select style={sel} value={form.stepC} onChange={e => setField('stepC', +e.target.value as CeilingStep)}>
+                  {CEILING_STEP_OPTIONS.map(s => <option key={s} value={s}>{s} мм</option>)}
                 </select>
-              </Field>
-            </Row2>
-            <Field label="Длина листа, мм">
-              <select style={SELECT_STYLE}
-                value={(form as typeof DEFAULT_SPEC).sheetLengthMm}
-                onChange={e => setField('sheetLengthMm' as keyof typeof form, +e.target.value as never)}>
+              </div>
+            </div>
+            <div>
+              <label style={lbl}>Длина листа, мм</label>
+              <select style={sel} value={form.sheetLengthMm} onChange={e => setField('sheetLengthMm', +e.target.value)}>
                 <option value={2500}>2500</option>
                 <option value={2700}>2700</option>
                 <option value={3000}>3000</option>
               </select>
-            </Field>
-          </Section>
+            </div>
+          </Card>
         )}
 
-        {/* Подсказки по типу */}
-        {form.type !== 'p19' && (
-          <div style={{ padding: '10px 12px', background: '#fffbeb', border: `1px solid #fcd34d`, borderRadius: 8, fontSize: 12, color: '#78350f' }}>
-            {form.type === 'p112' && <>
-              <b>П112</b> — два уровня профилей ПП 60×27.<br />
-              Основные + несущие соединяются двухуровневым крабом.<br />
-              Шаг несущих b = 500мм (поперечный монтаж).
-            </>}
-            {form.type === 'p113' && <>
-              <b>П113</b> — один уровень ПП 60×27.<br />
-              Профили соединяются одноуровневым крабом.<br />
-              По периметру — ПН 28×27. Для низких помещений.
-            </>}
-            {form.type === 'p131' && <>
-              <b>П131</b> — каркас из профилей ПС/ПН.<br />
-              Без подвесов к перекрытию.<br />
-              Только для узких помещений (до 4.25м).
-            </>}
-          </div>
+        {/* Управление сдвигом — появляется на шаге 2 и 3 */}
+        {hasRoom && step >= 2 && (
+          <Card title="СДВИГ ГРЕБЁНКИ">
+            {step >= 2 && (
+              <div style={{ marginBottom: 8 }}>
+                <label style={lbl}>Основные ПП (вдоль X), мм</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button style={shiftBtn} onClick={() => setShiftMainMm(v => Math.max(0, v - 50))}>← −50</button>
+                  <input style={{ ...inp, width: 70, textAlign: 'center' }} type="number"
+                    value={shiftMainMm} onChange={e => setShiftMainMm(+e.target.value)} />
+                  <button style={shiftBtn} onClick={() => setShiftMainMm(v => v + 50)}>+50 →</button>
+                </div>
+              </div>
+            )}
+            {step >= 3 && (
+              <div>
+                <label style={lbl}>Несущие ПП (вдоль Y), мм</label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button style={shiftBtn} onClick={() => setShiftBearingMm(v => Math.max(0, v - 50))}>↑ −50</button>
+                  <input style={{ ...inp, width: 70, textAlign: 'center' }} type="number"
+                    value={shiftBearingMm} onChange={e => setShiftBearingMm(+e.target.value)} />
+                  <button style={shiftBtn} onClick={() => setShiftBearingMm(v => v + 50)}>+50 ↓</button>
+                </div>
+              </div>
+            )}
+          </Card>
         )}
       </div>
 
-      {/* ── Правая часть: визуализация + спецификация ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* ── Правая часть ── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
 
         {form.type === 'p19' ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: COLORS.panel, borderRadius: 10, border: `1px solid ${COLORS.border}`, padding: 40, textAlign: 'center' }}>
+            background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, padding: 40, textAlign: 'center' }}>
             <div>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>✦</div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: COLORS.text, marginBottom: 8 }}>П19 — многоуровневый потолок</div>
-              <div style={{ color: COLORS.textMuted, fontSize: 14 }}>
-                Расчёт выполняется по индивидуальному дизайнерскому проекту.<br />
-                Функция будет доступна в следующих версиях.
-              </div>
+              <div style={{ fontSize: 36, marginBottom: 10 }}>✦</div>
+              <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 6 }}>П19 — многоуровневый потолок</div>
+              <div style={{ color: C.muted, fontSize: 13 }}>Расчёт по индивидуальному проекту. В разработке.</div>
             </div>
           </div>
-        ) : result ? (
+        ) : (
           <>
-            {/* Предупреждения */}
-            {result.warnings.length > 0 && (
-              <div style={{ padding: '10px 14px', background: '#fef3c7', border: `1px solid #fcd34d`, borderRadius: 8, fontSize: 13, color: '#92400e' }}>
-                {result.warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
+            {/* Шаги монтажа */}
+            <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, padding: '10px 14px' }}>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {STEPS.map(s => (
+                  <button key={s.id} onClick={() => setStep(s.id)} style={{
+                    flex: 1, padding: '8px 4px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                    background: step === s.id ? C.accent : step > s.id ? '#dcfce7' : C.bg,
+                    color: step === s.id ? '#fff' : step > s.id ? C.success : C.muted,
+                    fontWeight: step === s.id ? 700 : 500, fontSize: 12, transition: 'all 0.15s',
+                  }}>
+                    <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 2 }}>Шаг {s.id}</div>
+                    <div>{s.label}</div>
+                    <div style={{ fontSize: 10, opacity: 0.7, marginTop: 1 }}>{s.desc}</div>
+                  </button>
+                ))}
               </div>
-            )}
-
-            {/* Визуализация раскладки */}
-            {result.sheetLayout && form.roomLengthMm > 0 && form.roomWidthMm > 0 && (
-              <div style={{ background: COLORS.panel, borderRadius: 10, border: `1px solid ${COLORS.border}`, padding: 16 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 15, color: COLORS.text }}>
-                      Раскладка листов
-                    </div>
-                    {result.sheetLayout?.rotated && (
-                      <div style={{ fontSize: 12, color: COLORS.warning, marginTop: 2 }}>
-                        ↺ Листы повёрнуты — длинная сторона вдоль ширины помещения
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>Сдвиг:</span>
-                    <input
-                      type="number" min={0} max={1200} step={50}
-                      value={shiftInput}
-                      onChange={e => { setShiftInput(e.target.value); setShiftMm(+e.target.value) }}
-                      style={{ ...INPUT_STYLE, width: 80 }}
-                    />
-                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>мм</span>
-                  </div>
-                </div>
-                <div ref={containerRef}>
-                  <CeilingCanvas
-                    layout={result.sheetLayout}
-                    canvasW={canvasW}
-                    shiftMm={shiftMm}
-                    type={form.type}
-                  />
-                </div>
-                {/* Легенда */}
-                <div style={{ display: 'flex', gap: 16, marginTop: 10, fontSize: 12 }}>
-                  <LegendItem color={COLORS.sheetBorder} bg={COLORS.sheet} label="Целый лист" />
-                  <LegendItem color={COLORS.sheetCutBorder} bg={COLORS.sheetCut} label="Резаный лист" />
-                  <LegendItem color={COLORS.profileMain} bg={COLORS.profile} label="Основной профиль" />
-                  {form.type !== 'p131' && (
-                    <LegendItem color={COLORS.hanger} bg="rgba(229,57,53,0.15)" label="Подвес" />
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Итоги по листам */}
-            {result.sheetLayout && (
-              <div style={{ display: 'flex', gap: 10 }}>
-                <StatCard label="Всего листов" value={result.sheetLayout.totalSheets * form.layers} unit="шт" />
-                <StatCard label="Целых" value={result.sheetLayout.fullSheets * form.layers} unit="шт" color={COLORS.success} />
-                <StatCard label="Резаных" value={result.sheetLayout.cutSheets * form.layers} unit="шт" color={COLORS.warning} />
-                <StatCard label="Площадь" value={form.areaSqm.toFixed(2)} unit="м²" />
-              </div>
-            )}
-
-            {/* Спецификация материалов */}
-            <div style={{ background: COLORS.panel, borderRadius: 10, border: `1px solid ${COLORS.border}`, overflow: 'hidden' }}>
-              <div style={{ padding: '12px 16px', borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600, fontSize: 15, color: COLORS.text }}>
-                Спецификация материалов
-              </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-                <thead>
-                  <tr style={{ background: COLORS.bg }}>
-                    <th style={TH}>Наименование</th>
-                    <th style={{ ...TH, textAlign: 'center', width: 80 }}>Ед.</th>
-                    <th style={{ ...TH, textAlign: 'right', width: 90 }}>Кол-во</th>
-                    <th style={{ ...TH, textAlign: 'right', width: 90 }}>На м²</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.materials.map((m, i) => (
-                    <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}`, background: i % 2 === 0 ? '#fff' : COLORS.bg }}>
-                      <td style={TD}>{m.name}</td>
-                      <td style={{ ...TD, textAlign: 'center', color: COLORS.textMuted }}>{m.unit}</td>
-                      <td style={{ ...TD, textAlign: 'right', fontWeight: 600 }}>{m.qty}</td>
-                      <td style={{ ...TD, textAlign: 'right', color: COLORS.textMuted }}>
-                        {m.ratePerSqm != null ? m.ratePerSqm.toFixed(1) : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
 
-            {/* Обрезки */}
-            {result.sheetLayout && result.sheetLayout.offcuts.length > 0 && (
-              <div style={{ background: COLORS.panel, borderRadius: 10, border: `1px solid ${COLORS.border}`, overflow: 'hidden' }}>
-                <button
-                  onClick={() => setShowOffcuts(!showOffcuts)}
-                  style={{ width: '100%', padding: '12px 16px', border: 'none', background: 'none',
-                    textAlign: 'left', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: COLORS.text,
-                    display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Обрезки ({result.sheetLayout.offcuts.length} шт)</span>
-                  <span>{showOffcuts ? '▲' : '▼'}</span>
-                </button>
-                {showOffcuts && (
-                  <div style={{ padding: '0 16px 12px' }}>
-                    {result.sheetLayout.offcuts.map(([w, l], i) => (
-                      <div key={i} style={{ fontSize: 13, color: COLORS.textMuted, padding: '2px 0' }}>
-                        {w} × {l} мм
-                      </div>
-                    ))}
+            {/* Холст */}
+            <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, padding: 12 }}>
+              {!hasRoom ? (
+                <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: C.muted, flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontSize: 32 }}>📐</div>
+                  <div style={{ fontSize: 15, fontWeight: 500 }}>Введите размеры помещения</div>
+                </div>
+              ) : (
+                <div ref={canvasRef}>
+                  <CeilingCanvas
+                    form={form}
+                    step={step}
+                    canvasW={canvasW}
+                    shiftMainMm={shiftMainMm}
+                    shiftBearingMm={shiftBearingMm}
+                    layout={result?.sheetLayout ?? null}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Легенда */}
+            {hasRoom && (
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', padding: '6px 2px' }}>
+                <LegItem color={C.pn} label="ПН 28×27 (периметр)" />
+                {step >= 2 && <LegItem color={C.ppMain} label="Осн. ПП 60×27" />}
+                {step >= 2 && <LegItem color={C.hanger} label="Подвес" dot />}
+                {step >= 3 && <LegItem color={C.ppBearing} label="Несущий ПП 60×27" />}
+                {step >= 3 && <LegItem color={C.crab} label="Краб" dot />}
+                {step >= 4 && <LegItem color={C.sheetBorder} bg={C.sheetFill} label="ГКЛ целый" />}
+                {step >= 4 && <LegItem color={C.sheetCutBorder} bg={C.sheetCutFill} label="ГКЛ резаный" />}
+              </div>
+            )}
+
+            {/* Итоги по листам (шаг 4) */}
+            {step === 4 && result?.sheetLayout && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <StatCard label="Всего листов" value={result.sheetLayout.totalSheets * form.layers} unit="шт" />
+                <StatCard label="Целых" value={result.sheetLayout.fullSheets * form.layers} unit="шт" color={C.success} />
+                <StatCard label="Резаных" value={result.sheetLayout.cutSheets * form.layers} unit="шт" color={C.warning} />
+                {result.sheetLayout.rotated && (
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '0 12px',
+                    background: '#fffbeb', border: `1px solid #fcd34d`, borderRadius: 8,
+                    fontSize: 12, color: '#92400e' }}>
+                    ↺ Листы повёрнуты — длинная сторона вдоль ширины помещения
                   </div>
                 )}
               </div>
             )}
+
+            {/* Спецификация — накопительная */}
+            {visibleMats.length > 0 && (
+              <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+                <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`,
+                  fontWeight: 600, fontSize: 14, color: C.text, display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Спецификация</span>
+                  <span style={{ fontSize: 12, color: C.muted, fontWeight: 400 }}>
+                    шаги 1–{step} из 4
+                  </span>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: C.bg }}>
+                      <th style={th}>Наименование</th>
+                      <th style={{ ...th, textAlign: 'center', width: 60 }}>Ед.</th>
+                      <th style={{ ...th, textAlign: 'right', width: 80 }}>Кол-во</th>
+                      <th style={{ ...th, textAlign: 'right', width: 70 }}>На м²</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleMats.map((m, i) => (
+                      <tr key={i} style={{ borderBottom: `1px solid ${C.border}`,
+                        background: i % 2 === 0 ? '#fff' : C.bg }}>
+                        <td style={td}>{m.name}</td>
+                        <td style={{ ...td, textAlign: 'center', color: C.muted }}>{m.unit}</td>
+                        <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{m.qty}</td>
+                        <td style={{ ...td, textAlign: 'right', color: C.muted }}>
+                          {m.ratePerSqm != null ? m.ratePerSqm.toFixed(1) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
-        ) : (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: COLORS.panel, borderRadius: 10, border: `1px solid ${COLORS.border}` }}>
-            <div style={{ textAlign: 'center', color: COLORS.textMuted }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>📐</div>
-              <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 6 }}>Введите размеры помещения</div>
-              <div style={{ fontSize: 13 }}>Длина и ширина — или площадь и периметр вручную</div>
-            </div>
-          </div>
         )}
       </div>
     </div>
   )
 }
 
-// ─── Холст раскладки листов ───────────────────────────────────────────────────
+// ─── Холст ───────────────────────────────────────────────────────────────────
 
-function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
-  layout: CeilingSheetLayout
+function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layout }: {
+  form: CeilingSpecFull
+  step: Step
   canvasW: number
-  shiftMm: number
-  type: CeilingType
+  shiftMainMm: number
+  shiftBearingMm: number
+  layout: import('./core/calcCeiling').CeilingSheetLayout | null
 }) {
-  const PAD_LEFT = 48   // место для подписи ширины слева
-  const PAD_TOP  = 38   // место для шкалы профилей сверху
-  const PAD_BOT  = 8
-  const PAD_RIGHT = 8
+  const PAD_L = 50   // шкала по Y слева
+  const PAD_T = 40   // шкала по X сверху
+  const PAD_R = 10
+  const PAD_B = 10
 
-  // Доступная ширина для самого чертежа
-  const drawW = canvasW - PAD_LEFT - PAD_RIGHT
+  const { roomLengthMm: L, roomWidthMm: W_room } = form
+  const drawW = canvasW - PAD_L - PAD_R
+  const scale = Math.min(drawW / L, 360 / W_room)
+  const W = L * scale
+  const H = W_room * scale
+  const stageH = H + PAD_T + PAD_B
 
-  const scale = Math.min(
-    drawW / layout.roomLengthMm,
-    360 / layout.roomWidthMm,
-  )
-  const W = layout.roomLengthMm * scale
-  const H = layout.roomWidthMm * scale
-  const canvasH = H + PAD_TOP + PAD_BOT
+  // ── Профиль ПП 60×27: визуальная толщина в px ──
+  const PP_W = Math.max(3, Math.min(6, scale * 60 / 1000))  // ~60мм в масштабе, мин 3px
+  const PN_W = Math.max(2, Math.min(4, scale * 28 / 1000))  // ~28мм
 
-  // Листы: длинная сторона (sheetL) по X, короткая (sheetW) по Y
-  const shiftX = shiftMm % layout.sheetL
+  // ── Основные профили (вдоль X, шаг c) ──
+  const stepC = form.stepC
+  const mainPosX: number[] = []
+  let x0 = shiftMainMm % stepC
+  if (x0 === 0) x0 = 0
+  for (let x = x0; x <= L; x += stepC) mainPosX.push(x * scale)
 
-  const sheets: { x: number; y: number; w: number; h: number; isCut: boolean }[] = []
-  let y = 0
-  while (y < layout.roomWidthMm) {
-    const rowH = Math.min(layout.sheetW, layout.roomWidthMm - y)
-    let x = -shiftX
-    while (x < layout.roomLengthMm) {
-      const colW = Math.min(layout.sheetL, layout.roomLengthMm - Math.max(x, 0))
-      const sx = Math.max(x, 0)
-      const isCut = rowH < layout.sheetW || colW < layout.sheetL || x < 0
-      if (colW > 0) {
-        sheets.push({ x: sx * scale, y: y * scale, w: colW * scale, h: rowH * scale, isCut })
-      }
-      x += layout.sheetL
-    }
-    y += layout.sheetW
-  }
+  // ── Несущие профили (поперёк Y, шаг b=500) ──
+  const stepB = 500
+  const bearingPosY: number[] = []
+  let y0 = shiftBearingMm % stepB
+  for (let y = y0; y <= W_room; y += stepB) bearingPosY.push(y * scale)
 
-  // Основные профили (вертикальные, шаг c) — позиции в мм
-  const mainProfilesMm: number[] = []
-  for (let x = layout.stepC; x < layout.roomLengthMm; x += layout.stepC) {
-    mainProfilesMm.push(x)
-  }
-
-  // Несущие профили (горизонтальные, шаг b=500мм)
-  const bearingProfiles: number[] = []
-  for (let yb = layout.stepB; yb < layout.roomWidthMm; yb += layout.stepB) {
-    bearingProfiles.push(yb * scale)
-  }
-
-  // Подвесы
+  // ── Подвесы (на основных профилях, шаг a из таблицы) ──
+  const stepA = layout?.stepA ?? 1000
   const hangers: { x: number; y: number }[] = []
-  if (type !== 'p131' && layout.stepA > 0) {
-    for (const xMm of mainProfilesMm) {
-      for (let ya = layout.stepA / 2; ya < layout.roomWidthMm; ya += layout.stepA) {
-        hangers.push({ x: xMm * scale, y: ya * scale })
+  for (const px of mainPosX) {
+    for (let ya = stepA / 2; ya < W_room; ya += stepA) {
+      hangers.push({ x: px, y: ya * scale })
+    }
+  }
+
+  // ── Листы ГКЛ (шаг 4) ──
+  const sheets: { x: number; y: number; w: number; h: number; isCut: boolean }[] = []
+  if (step === 4 && layout) {
+    const shiftX = 0
+    let sy = 0
+    while (sy < W_room) {
+      const rh = Math.min(layout.sheetW, W_room - sy)
+      let sx = shiftX
+      while (sx < L) {
+        const cw = Math.min(layout.sheetL, L - sx)
+        const isCut = rh < layout.sheetW || cw < layout.sheetL
+        if (cw > 0) sheets.push({ x: sx * scale, y: sy * scale, w: cw * scale, h: rh * scale, isCut })
+        sx += layout.sheetL
       }
+      sy += layout.sheetW
     }
   }
 
-  // Шкала шага профилей — пролёты между основными профилями
-  // Добавляем 0 и конец помещения как границы
-  const profileBoundsMm = [0, ...mainProfilesMm, layout.roomLengthMm]
-  const spanLabels: { x: number; w: number; label: string }[] = []
-  for (let i = 0; i < profileBoundsMm.length - 1; i++) {
-    const x0 = profileBoundsMm[i]
-    const x1 = profileBoundsMm[i + 1]
-    const span = x1 - x0
-    // Показываем только если пролёт достаточно широк для метки
-    if (span * scale > 30) {
-      spanLabels.push({
-        x: x0 * scale,
-        w: span * scale,
-        label: `${span}`,
-      })
-    }
+  // ── Шкала X (основные профили, сверху) ──
+  const xBounds = [0, ...mainPosX.map(px => px / scale), L]
+  const xSpans: { x: number; w: number; lbl: string }[] = []
+  for (let i = 0; i < xBounds.length - 1; i++) {
+    const a = xBounds[i], b = xBounds[i + 1], span = b - a
+    if (span * scale > 24) xSpans.push({ x: a * scale, w: span * scale, lbl: `${Math.round(span)}` })
   }
 
-  // Накопительные позиции профилей для подписи над риской
-  const profilePosMm = mainProfilesMm.map(x => ({ x, px: x * scale }))
+  // ── Шкала Y (несущие профили, слева) ──
+  const yBounds = [0, ...bearingPosY.map(py => py / scale), W_room]
+  const ySpans: { y: number; h: number; lbl: string }[] = []
+  for (let i = 0; i < yBounds.length - 1; i++) {
+    const a = yBounds[i], b = yBounds[i + 1], span = b - a
+    if (span * scale > 18) ySpans.push({ y: a * scale, h: span * scale, lbl: `${Math.round(span)}` })
+  }
 
   return (
-    <Stage width={canvasW} height={canvasH}>
-      <Layer x={PAD_LEFT} y={PAD_TOP}>
+    <Stage width={canvasW} height={stageH}>
+      <Layer x={PAD_L} y={PAD_T}>
 
-        {/* ── Шкала шага основных профилей (над холстом) ── */}
-        <Line points={[0, -PAD_TOP + 10, W, -PAD_TOP + 10]}
-          stroke={COLORS.profileMain} strokeWidth={1} opacity={0.4}
-        />
-        {spanLabels.map((s, i) => (
-          <Group key={`span${i}`}>
-            <Line points={[s.x, -PAD_TOP + 5, s.x, -PAD_TOP + 15]}
-              stroke={COLORS.profileMain} strokeWidth={1.5}
-            />
-            <Line points={[s.x + s.w, -PAD_TOP + 5, s.x + s.w, -PAD_TOP + 15]}
-              stroke={COLORS.profileMain} strokeWidth={1.5}
-            />
-            <Text
-              x={s.x} y={-PAD_TOP + 16}
-              width={s.w} align="center"
-              text={s.label}
-              fontSize={10} fill={COLORS.profileMain} fontStyle="bold"
-            />
+        {/* ── Шкала X сверху (основные профили) ── */}
+        <Line points={[0, -PAD_T + 10, W, -PAD_T + 10]} stroke={C.scaleLine} strokeWidth={1} />
+        {xSpans.map((s, i) => (
+          <Group key={`xs${i}`}>
+            <Line points={[s.x, -PAD_T + 5, s.x, -PAD_T + 15]} stroke={C.scaleLine} strokeWidth={1.5} />
+            <Line points={[s.x + s.w, -PAD_T + 5, s.x + s.w, -PAD_T + 15]} stroke={C.scaleLine} strokeWidth={1.5} />
+            <Text x={s.x} y={-PAD_T + 16} width={s.w} align="center"
+              text={s.lbl} fontSize={10} fill={C.ppMain} fontStyle="bold" />
           </Group>
         ))}
-        {/* Накопительные позиции над рисками */}
-        {profilePosMm.map((p, i) => (
-          <Text key={`pos${i}`}
-            x={p.px - 18} y={-PAD_TOP + 1}
-            width={36} align="center"
-            text={`${p.x}`}
-            fontSize={9} fill={COLORS.textMuted}
-          />
+        {/* Накопительные позиции основных профилей */}
+        {mainPosX.filter((_, i) => i > 0).map((px, i) => (
+          <Text key={`xp${i}`} x={px - 20} y={-PAD_T + 1} width={40} align="center"
+            text={`${Math.round(px / scale)}`} fontSize={9} fill={C.scaleText} />
         ))}
 
-        {/* Подпись ширины слева (вертикально) */}
-        <Text
-          x={-PAD_LEFT + 4} y={H / 2 + 30}
-          text={`${layout.roomWidthMm} мм`}
-          fontSize={11} fill={COLORS.textMuted}
-          rotation={-90}
-        />
-        {/* Подпись длины сверху по центру */}
-        <Text
-          x={W / 2 - 30} y={-PAD_TOP + 1}
-          width={60} align="center"
-          text={`${layout.roomLengthMm} мм`}
-          fontSize={10} fill={COLORS.textMuted}
-        />
-
-        {/* ── Холст помещения ── */}
-        <Rect x={0} y={0} width={W} height={H} fill="#f0f4f8" stroke={COLORS.profileMain} strokeWidth={2} />
-
-        {/* Листы ГКЛ */}
-        {sheets.map((s, i) => (
-          <Rect key={i}
-            x={s.x} y={s.y} width={s.w} height={s.h}
-            fill={s.isCut ? COLORS.sheetCut : COLORS.sheet}
-            stroke={s.isCut ? COLORS.sheetCutBorder : COLORS.sheetBorder}
-            strokeWidth={1}
-          />
+        {/* ── Шкала Y слева (несущие профили) ── */}
+        <Line points={[-PAD_L + 10, 0, -PAD_L + 10, H]} stroke={C.scaleLine} strokeWidth={1} />
+        {ySpans.map((s, i) => (
+          <Group key={`ys${i}`}>
+            <Line points={[-PAD_L + 5, s.y, -PAD_L + 15, s.y]} stroke={C.scaleLine} strokeWidth={1.5} />
+            <Line points={[-PAD_L + 5, s.y + s.h, -PAD_L + 15, s.y + s.h]} stroke={C.scaleLine} strokeWidth={1.5} />
+            <Text x={-PAD_L + 16} y={s.y + s.h / 2 - 5} width={28}
+              text={s.lbl} fontSize={9} fill={C.ppBearing} fontStyle="bold" />
+          </Group>
+        ))}
+        {/* Накопительные позиции несущих профилей */}
+        {bearingPosY.filter((_, i) => i > 0).map((py, i) => (
+          <Text key={`yp${i}`} x={-PAD_L + 1} y={py - 6} width={PAD_L - 18} align="right"
+            text={`${Math.round(py / scale)}`} fontSize={9} fill={C.scaleText} />
         ))}
 
-        {/* Несущие профили (горизонтальные, шаг b) */}
-        {bearingProfiles.map((py, i) => (
-          <Line key={`b${i}`}
-            points={[0, py, W, py]}
-            stroke="#546e7a" strokeWidth={2} dash={[8, 5]} opacity={0.9}
-          />
+        {/* ── Фон помещения ── */}
+        <Rect x={0} y={0} width={W} height={H} fill="#eef2f7"
+          stroke={C.ppMain} strokeWidth={2} />
+
+        {/* ── Шаг 4: Листы ГКЛ (под профилями) ── */}
+        {step === 4 && sheets.map((s, i) => (
+          <Rect key={`sh${i}`} x={s.x} y={s.y} width={s.w} height={s.h}
+            fill={s.isCut ? C.sheetCutFill : C.sheetFill}
+            stroke={s.isCut ? C.sheetCutBorder : C.sheetBorder} strokeWidth={1} />
         ))}
 
-        {/* Основные профили (вертикальные, шаг c) */}
-        {mainProfilesMm.map((xMm, i) => (
-          <Line key={`m${i}`}
-            points={[xMm * scale, 0, xMm * scale, H]}
-            stroke={COLORS.profileMain} strokeWidth={2.5} opacity={0.95}
-          />
-        ))}
+        {/* ── Шаг 1+: ПН 28×27 по периметру ── */}
+        {/* Верх */}
+        <Rect x={0} y={0} width={W} height={PN_W} fill={C.pn} opacity={0.85} />
+        {/* Низ */}
+        <Rect x={0} y={H - PN_W} width={W} height={PN_W} fill={C.pn} opacity={0.85} />
+        {/* Лево */}
+        <Rect x={0} y={0} width={PN_W} height={H} fill={C.pn} opacity={0.85} />
+        {/* Право */}
+        <Rect x={W - PN_W} y={0} width={PN_W} height={H} fill={C.pn} opacity={0.85} />
 
-        {/* Подвесы */}
-        {hangers.map((h, i) => (
-          <Group key={`h${i}`} x={h.x} y={h.y}>
-            <Rect x={-5} y={-5} width={10} height={10}
-              fill="rgba(229,57,53,0.3)" stroke={COLORS.hanger} strokeWidth={2} cornerRadius={2}
-            />
+        {/* ── Шаг 2+: Основные ПП 60×27 (вертикальные) ── */}
+        {step >= 2 && mainPosX.map((px, i) => (
+          <Group key={`mp${i}`}>
+            {/* Имитация П-профиля: тёмная полка + светлая середина + тёмная полка */}
+            <Rect x={px - PP_W / 2} y={0} width={PP_W / 4} height={H}
+              fill={C.ppMain} opacity={0.9} />
+            <Rect x={px - PP_W / 4} y={0} width={PP_W / 2} height={H}
+              fill="#78909c" opacity={0.6} />
+            <Rect x={px + PP_W / 4} y={0} width={PP_W / 4} height={H}
+              fill={C.ppMain} opacity={0.9} />
           </Group>
         ))}
 
-        {/* Рамка поверх всего */}
+        {/* ── Шаг 2+: Подвесы ── */}
+        {step >= 2 && hangers.map((h, i) => (
+          <Group key={`hg${i}`} x={h.x} y={h.y}>
+            <Rect x={-5} y={-4} width={10} height={8}
+              fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1.5} cornerRadius={1} />
+            {/* Тяга подвеса — вертикальная линия вверх */}
+            <Line points={[0, -4, 0, -10]} stroke={C.hanger} strokeWidth={1} />
+          </Group>
+        ))}
+
+        {/* ── Шаг 3+: Несущие ПП 60×27 (горизонтальные) ── */}
+        {step >= 3 && bearingPosY.map((py, i) => (
+          <Group key={`bp${i}`}>
+            <Rect x={0} y={py - PP_W / 2} width={W} height={PP_W / 4}
+              fill={C.ppBearing} opacity={0.9} />
+            <Rect x={0} y={py - PP_W / 4} width={W} height={PP_W / 2}
+              fill="#90a4ae" opacity={0.6} />
+            <Rect x={0} y={py + PP_W / 4} width={W} height={PP_W / 4}
+              fill={C.ppBearing} opacity={0.9} />
+          </Group>
+        ))}
+
+        {/* ── Шаг 3+: Крабы на пересечениях ── */}
+        {step >= 3 && mainPosX.map((px, mi) =>
+          bearingPosY.map((py, bi) => (
+            <Group key={`cr${mi}_${bi}`} x={px} y={py}>
+              <Rect x={-4} y={-4} width={8} height={8}
+                fill={C.crab} opacity={0.9} cornerRadius={1} />
+              <Line points={[-6, 0, 6, 0]} stroke={C.crab} strokeWidth={1} />
+              <Line points={[0, -6, 0, 6]} stroke={C.crab} strokeWidth={1} />
+            </Group>
+          ))
+        )}
+
+        {/* ── Размерные подписи ── */}
+        <Text x={W / 2 - 25} y={-PAD_T + 1} width={50} align="center"
+          text={`${L} мм`} fontSize={10} fill={C.muted} />
+        <Text x={-PAD_L + 1} y={H / 2} text={`${W_room} мм`}
+          fontSize={10} fill={C.muted} rotation={-90} offsetY={-3} />
+
+        {/* ── Рамка поверх ── */}
         <Rect x={0} y={0} width={W} height={H}
-          fill="transparent" stroke={COLORS.profileMain} strokeWidth={2}
-        />
+          fill="transparent" stroke={C.ppMain} strokeWidth={2} />
+
       </Layer>
     </Stage>
   )
 }
 
-// ─── Мелкие компоненты ────────────────────────────────────────────────────────
+// ─── Мелкие компоненты ───────────────────────────────────────────────────────
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: '#fff', borderRadius: 10, border: `1px solid ${COLORS.border}`, overflow: 'hidden' }}>
-      <div style={{ padding: '10px 14px', background: COLORS.bg, borderBottom: `1px solid ${COLORS.border}`,
-        fontSize: 12, fontWeight: 600, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        {title}
-      </div>
-      <div style={{ padding: 14 }}>{children}</div>
+    <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      <div style={{ padding: '8px 12px', background: C.bg, borderBottom: `1px solid ${C.border}`,
+        fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: '0.06em' }}>{title}</div>
+      <div style={{ padding: 12 }}>{children}</div>
     </div>
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function LegItem({ color, bg, label, dot }: { color: string; bg?: string; label: string; dot?: boolean }) {
   return (
-    <div>
-      <label style={LABEL_STYLE}>{label}</label>
-      {children}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: C.muted }}>
+      {dot
+        ? <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
+        : <div style={{ width: 18, height: 10, background: bg ?? color,
+            border: `1.5px solid ${color}`, borderRadius: 2, flexShrink: 0 }} />
+      }
+      {label}
     </div>
   )
 }
 
-function Row2({ children }: { children: React.ReactNode }) {
-  return <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 8 }}>{children}</div>
-}
-
-function StatCard({ label, value, unit, color }: { label: string; value: number | string; unit: string; color?: string }) {
+function StatCard({ label, value, unit, color }: { label: string; value: number; unit: string; color?: string }) {
   return (
-    <div style={{ flex: 1, background: '#fff', borderRadius: 8, border: `1px solid ${COLORS.border}`,
-      padding: '10px 14px', textAlign: 'center' }}>
-      <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: color ?? COLORS.text }}>{value}</div>
-      <div style={{ fontSize: 11, color: COLORS.textMuted }}>{unit}</div>
+    <div style={{ flex: 1, background: C.panel, borderRadius: 8, border: `1px solid ${C.border}`,
+      padding: '8px 12px', textAlign: 'center' }}>
+      <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: color ?? C.text }}>{value}</div>
+      <div style={{ fontSize: 11, color: C.muted }}>{unit}</div>
     </div>
   )
 }
 
-function LegendItem({ color, bg, label }: { color: string; bg: string; label: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <div style={{ width: 20, height: 14, background: bg, border: `1.5px solid ${color}`, borderRadius: 3 }} />
-      <span style={{ color: COLORS.textMuted }}>{label}</span>
-    </div>
-  )
+const shiftBtn: React.CSSProperties = {
+  padding: '4px 8px', fontSize: 11, borderRadius: 5,
+  border: `1px solid ${C.border}`, background: C.bg,
+  color: C.text, cursor: 'pointer', whiteSpace: 'nowrap',
 }
 
-const TH: React.CSSProperties = {
-  padding: '8px 12px', textAlign: 'left', fontWeight: 600,
-  fontSize: 12, color: COLORS.textMuted, borderBottom: `1px solid ${COLORS.border}`,
+const th: React.CSSProperties = {
+  padding: '7px 12px', textAlign: 'left', fontWeight: 600,
+  fontSize: 11, color: C.muted, borderBottom: `1px solid ${C.border}`,
 }
-const TD: React.CSSProperties = {
-  padding: '7px 12px', fontSize: 14, color: COLORS.text,
+const td: React.CSSProperties = {
+  padding: '6px 12px', fontSize: 13, color: C.text,
 }
