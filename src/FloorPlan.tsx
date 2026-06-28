@@ -276,6 +276,7 @@ export default function FloorPlan() {
   const [rightTab, setRightTab]         = useState<'construction' | 'finish' | 'materials' | 'calc'>('construction')
   const [hoveredId, setHoveredId]       = useState<string | null>(null)
   const [snapActive, setSnapActive]     = useState(false)
+  const [inspectorId, setInspectorId]   = useState<string | null>(null)
 
   const dragRef      = useRef<DragState>(null)
   const dragMovedRef = useRef(false)
@@ -549,7 +550,8 @@ export default function FloorPlan() {
     return { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length }
   }
 
-  const selectedLine = lines.find(l => l.id === selectedId)
+  const selectedLine  = lines.find(l => l.id === selectedId)
+  const inspectorLine = lines.find(l => l.id === inspectorId)
   const previewPt    = cursor ?? (drawing ? { x: drawing.x1, y: drawing.y1 } : null)
   const previewX2    = previewPt?.x ?? 0
   const previewY2    = previewPt?.y ?? 0
@@ -917,20 +919,13 @@ export default function FloorPlan() {
                                 </Group>
                               )
                             }
-                            return len > 60 ? (
-                              <>
-                                <Text x={mx-40} y={my-11} width={80} text={l.label} fontSize={10}
-                                  fill={stroke} align="center" fontStyle="bold" listening={false} />
-                                <Text x={mx-40} y={my+1} width={80} text={fmtLen(l.lengthMm)} fontSize={9}
-                                  fill={stroke + 'cc'} align="center" listening={false} />
-                              </>
-                            ) : (
-                              <Text x={mx-30} y={my-8} width={60} text={l.label} fontSize={9}
+                            return len > 40 ? (
+                              <Text x={mx-40} y={my-12} width={80} text={l.label} fontSize={10}
                                 fill={stroke} align="center" fontStyle="bold" listening={false} />
-                            )
+                            ) : null
                           })()}
-                          {/* Размерная линия над стеной */}
-                          {!inErase && (
+                          {/* Размерная линия над стеной — только при hover или select */}
+                          {!inErase && (isSelected || hoveredId === l.id) && (
                             <DimLineShapes x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
                               lengthMm={l.lengthMm} offsetPx={half + 14}
                               dimColor={isSelected ? stroke : '#999'} />
@@ -967,20 +962,13 @@ export default function FloorPlan() {
                         )}
                         {!inErase && (() => {
                           const linePx = Math.sqrt((l.x2-l.x1)**2 + (l.y2-l.y1)**2)
-                          return linePx > 60 ? (
-                            <>
-                              <Text x={mx-40} y={my-18} width={80} text={l.label} fontSize={10}
-                                fill={stroke} align="center" fontStyle="bold" listening={false} />
-                              <Text x={mx-40} y={my-6} width={80} text={fmtLen(l.lengthMm)} fontSize={9}
-                                fill={stroke + 'cc'} align="center" listening={false} />
-                            </>
-                          ) : (
-                            <Text x={mx-30} y={my-16} width={60} text={l.label} fontSize={9}
+                          return linePx > 40 ? (
+                            <Text x={mx-40} y={my-12} width={80} text={l.label} fontSize={10}
                               fill={stroke} align="center" fontStyle="bold" listening={false} />
-                          )
+                          ) : null
                         })()}
-                        {/* Размерная линия */}
-                        {!inErase && (
+                        {/* Размерная линия — только при hover или select */}
+                        {!inErase && (isSelected || hoveredId === l.id) && (
                           <DimLineShapes x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
                             lengthMm={l.lengthMm} offsetPx={sw / 2 + 14}
                             dimColor={isSelected ? stroke : '#999'} />
@@ -1070,7 +1058,7 @@ export default function FloorPlan() {
                     const isSelected = l.id === selectedId
                     return (
                       <tr key={l.id}
-                        onClick={() => { setSelected(l.id); setMode('select') }}
+                        onClick={() => { setSelected(l.id); setInspectorId(l.id); setMode('select') }}
                         style={{
                           cursor: 'pointer',
                           background: isSelected ? '#eef2ff' : 'transparent',
@@ -1092,7 +1080,7 @@ export default function FloorPlan() {
                           {' '}Не начата
                         </td>
                         <td style={{ ...tdS, display: 'flex', gap: 4 }}>
-                          <button title="Просмотр" style={iconBtnStyle} onClick={e => { e.stopPropagation(); setSelected(l.id); setMode('select') }}>👁</button>
+                          <button title="Просмотр" style={iconBtnStyle} onClick={e => { e.stopPropagation(); setSelected(l.id); setInspectorId(l.id); setMode('select') }}>👁</button>
                           <button title="Открыть расчёт" style={iconBtnStyle} onClick={e => { e.stopPropagation() }}>↗</button>
                           <button title="Меню" style={iconBtnStyle} onClick={e => { e.stopPropagation() }}>⋮</button>
                         </td>
@@ -1118,7 +1106,7 @@ export default function FloorPlan() {
         </div>
 
         {/* ════════════════════ ПРАВАЯ ПАНЕЛЬ ════════════════════ */}
-        {selectedLine && (
+        {inspectorLine && (
           <div style={rightPanelStyle}>
             {/* Заголовок правой панели */}
             <div style={{
@@ -1128,7 +1116,7 @@ export default function FloorPlan() {
             }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433' }}>
-                  {selectedLine.label}
+                  {inspectorLine.label}
                 </div>
                 <button
                   onClick={() => { /* open full calc */ }}
@@ -1144,20 +1132,20 @@ export default function FloorPlan() {
               <div style={{ display: 'flex', gap: 6 }}>
                 <button title="Дублировать" style={iconBtnStyle2} onClick={() => {}}>⧉</button>
                 <button title="Удалить" style={{ ...iconBtnStyle2, color: '#e53935' }}
-                  onClick={() => { removePlanLine(selectedLine.id); setSelected(null) }}>🗑</button>
-                <button title="Закрыть" style={iconBtnStyle2} onClick={() => setSelected(null)}>✕</button>
+                  onClick={() => { removePlanLine(inspectorLine.id); setInspectorId(null); setSelected(null) }}>🗑</button>
+                <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorId(null)}>✕</button>
               </div>
             </div>
 
             {/* Статус + цвет типа */}
             <div style={{ padding: '10px 16px 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: LINE_COLORS[selectedLine.type], fontSize: 16 }}>●</span>
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#1e2433' }}>{selectedLine.label}</span>
+              <span style={{ color: LINE_COLORS[inspectorLine.type], fontSize: 16 }}>●</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#1e2433' }}>{inspectorLine.label}</span>
               <span style={{ fontSize: 11, color: '#888', marginLeft: 4 }}>
-                {LINE_LABELS_SHORT[selectedLine.type]}
+                {LINE_LABELS_SHORT[inspectorLine.type]}
               </span>
               <span style={{ marginLeft: 'auto', fontSize: 11, color: '#aaa' }}>
-                {fmtLen(selectedLine.lengthMm)}
+                {fmtLen(inspectorLine.lengthMm)}
               </span>
             </div>
 
@@ -1187,8 +1175,8 @@ export default function FloorPlan() {
                   {/* Тип конструкции — смена через дропдаун */}
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Тип конструкции</div>
-                    <select value={selectedLine.type}
-                      onChange={e => updatePlanLine(selectedLine.id, { type: e.target.value as PlanLineType, spec: undefined })}
+                    <select value={inspectorLine.type}
+                      onChange={e => updatePlanLine(inspectorLine.id, { type: e.target.value as PlanLineType, spec: undefined })}
                       style={{ width: '100%', fontSize: 12, padding: '6px 8px', border: '1px solid #dde', borderRadius: 5, background: '#fff' }}>
                       {(Object.entries(LINE_LABELS_SHORT) as [PlanLineType, string][]).map(([t, label]) => (
                         <option key={t} value={t}>{label}</option>
@@ -1196,34 +1184,34 @@ export default function FloorPlan() {
                     </select>
                   </div>
 
-                  {/* Детальный каскадный селектор — из таксономии для данного типа */}
+                  {/* Детальный каскадный селектор */}
                   <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #f0f0f0' }}>
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Конструкция / материал</div>
                     <ConstructionSpecSelector
-                      planType={selectedLine.type}
-                      value={selectedLine.spec}
-                      onChange={spec => updatePlanLine(selectedLine.id, { spec })}
+                      planType={inspectorLine.type}
+                      value={inspectorLine.spec}
+                      onChange={spec => updatePlanLine(inspectorLine.id, { spec })}
                       compact
                     />
                   </div>
 
                   {/* Информация о выбранной конструкции */}
-                  {selectedLine.spec?.material && (() => {
-                    const specMat = selectedLine.spec.material
-                    const specSub = selectedLine.spec.subtype
-                    const typeColor = LINE_COLORS[selectedLine.type]
+                  {inspectorLine.spec?.material && (() => {
+                    const specMat = inspectorLine.spec.material
+                    const specSub = inspectorLine.spec.subtype
+                    const typeColor = LINE_COLORS[inspectorLine.type]
                     return (
                       <div style={{ padding: '10px 12px', background: typeColor + '10', borderRadius: 6, marginBottom: 12, border: `1px solid ${typeColor}30` }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: typeColor }}>
-                          {LINE_LABELS_SHORT[selectedLine.type]}
+                          {LINE_LABELS_SHORT[inspectorLine.type]}
                         </div>
                         <div style={{ fontSize: 11, color: '#555', marginTop: 3 }}>
                           Материал: <b>{specMat}</b>
                           {specSub && <span> · {specSub}</span>}
                         </div>
                         <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>
-                          Длина: <b>{fmtLen(selectedLine.lengthMm)}</b>
-                          {' · '}Площадь: <b>{calcLineArea(selectedLine).toFixed(2)} м²</b>
+                          Длина: <b>{fmtLen(inspectorLine.lengthMm)}</b>
+                          {' · '}Площадь: <b>{calcLineArea(inspectorLine).toFixed(2)} м²</b>
                         </div>
                       </div>
                     )
@@ -1233,13 +1221,12 @@ export default function FloorPlan() {
                   <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600 }}>Название</div>
                     <input
-                      value={selectedLine.label}
-                      onChange={e => updatePlanLine(selectedLine.id, { label: e.target.value })}
+                      value={inspectorLine.label}
+                      onChange={e => updatePlanLine(inspectorLine.id, { label: e.target.value })}
                       style={{ width: '100%', fontSize: 12, padding: '6px 8px', border: '1px solid #dde', borderRadius: 5, boxSizing: 'border-box' as const }}
                     />
                   </div>
 
-                  {/* Пустое поле для будущих параметров */}
                   <div style={{ fontSize: 11, color: '#aaa', textAlign: 'center', padding: '8px 0' }}>
                     Дополнительные параметры будут доступны после выбора конструкции
                   </div>
@@ -1248,7 +1235,7 @@ export default function FloorPlan() {
 
               {rightTab === 'finish' && (
                 <div style={{ padding: '10px 0' }}>
-                  <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>Отделка для: <b>{selectedLine.label}</b></div>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>Отделка для: <b>{inspectorLine.label}</b></div>
                   <div style={{ padding: 12, background: '#f5f7fb', borderRadius: 8, fontSize: 12, color: '#888', textAlign: 'center' }}>
                     Выберите тип отделки для этой конструкции
                   </div>
@@ -1268,12 +1255,12 @@ export default function FloorPlan() {
                     Параметры для расчёта
                   </div>
                   <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
-                    Длина: <b>{fmtLen(selectedLine.lengthMm)}</b>
+                    Длина: <b>{fmtLen(inspectorLine.lengthMm)}</b>
                   </div>
                   <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
-                    Площадь (при h=3000): <b>{calcLineArea(selectedLine).toFixed(2)} м²</b>
+                    Площадь (при h=3000): <b>{calcLineArea(inspectorLine).toFixed(2)} м²</b>
                   </div>
-                  {selectedLine.spec?.material ? (
+                  {inspectorLine.spec?.material ? (
                     <div style={{ padding: 10, background: '#f5f7fb', borderRadius: 6, fontSize: 12, color: '#888' }}>
                       Нажмите «Открыть полный расчёт» для детальной спецификации материалов
                     </div>
