@@ -12,6 +12,7 @@ import { MIN_GAP } from './core/buildPositions'
 import { useProjectStore } from './store/useProjectStore'
 import LiningCalc from './LiningCalc'
 import FloorPlan from './FloorPlan'
+import CeilingCalc from './CeilingCalc'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
 import { calcProjectSheetLayout, buildSurfaceInputs } from './core/calcProjectSheetLayout'
@@ -144,7 +145,7 @@ function fmtCut(totalMm: number, bars: number, wasteMm: number): React.ReactNode
 export default function App() {
   const [form, setForm] = useState<WallInput>(DEFAULT_INPUT)
   const [shiftInput, setShiftInput] = useState('100')
-  const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan'>('wall')
+  const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling'>('wall')
   const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
   const [sheetSideTab, setSheetSideTab] = useState<'A' | 'B'>('A')
   const [showOffcuts, setShowOffcuts] = useState(false)
@@ -490,7 +491,7 @@ export default function App() {
 
       {/* ─── Вкладки ─── */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid #dde' }}>
-        {([['wall', 'Перегородки'], ['lining', 'Облицовка стен'], ['plan', '🗺 План']] as const).map(([tab, label]) => (
+        {([['wall', 'Перегородки'], ['lining', 'Облицовка стен'], ['ceiling', '🏠 Потолки'], ['plan', '🗺 План']] as const).map(([tab, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={{
             padding: '10px 24px', fontSize: 14, cursor: 'pointer',
             border: 'none', borderBottom: activeTab === tab ? '2px solid #3a7bd5' : '2px solid transparent',
@@ -501,6 +502,7 @@ export default function App() {
       </div>
 
       {activeTab === 'lining' && <LiningCalc canvasW={CANVAS_W} />}
+      {activeTab === 'ceiling' && <CeilingCalc />}
 
       {activeTab === 'plan' && (
         <div style={{ margin: '0 -24px', height: 'calc(100vh - 140px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
