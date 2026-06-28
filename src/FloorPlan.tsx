@@ -797,7 +797,10 @@ export default function FloorPlan() {
                     const mx = (l.x1 + l.x2) / 2
                     const my = (l.y1 + l.y2) / 2
 
-                    const thicknessPx = vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
+                    // Рисуем двойную линию (трапецию) ТОЛЬКО если spec задан явно.
+                    // Без spec — тонкая линия, чтобы не путать при первом рисовании.
+                    const hasExplicitSpec = !!(l.spec?.material)
+                    const thicknessPx = (hasExplicitSpec && vis.thicknessMm > 0) ? vis.thicknessMm / scaleMmPx : 0
                     const dx = l.x2 - l.x1, dy = l.y2 - l.y1
                     const len = Math.sqrt(dx*dx + dy*dy)
                     const useDouble = thicknessPx > 3 && len > 0 && !inErase

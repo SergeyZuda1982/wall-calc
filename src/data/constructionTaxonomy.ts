@@ -228,7 +228,8 @@ const GKL_STUD_THICKNESS: Record<string, number> = {
 
 export function getWallThicknessMm(type: PlanLineType, material?: string, subtype?: string): number {
   if (type === 'wall_new') {
-    if (!material || material === 'gkl') return GKL_STUD_THICKNESS[subtype ?? ''] ?? 100
+    if (!material) return 0  // нет spec → не рисуем трапецию
+    if (material === 'gkl') return GKL_STUD_THICKNESS[subtype ?? ''] ?? 100
     if (material === 'brick' || material === 'gasblock' || material === 'foamblock')
       return parseInt(subtype ?? '0') || 200
   }
