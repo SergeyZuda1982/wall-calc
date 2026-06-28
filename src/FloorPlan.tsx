@@ -13,7 +13,7 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group } from 'react-konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour } from './types'
-import { getLineVisual, getContourFill } from './data/constructionTaxonomy'
+import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
@@ -29,26 +29,12 @@ const LINE_COLORS: Record<PlanLineType, string> = {
   ceiling:       '#8e24aa',
   floor:         '#6d4c41',
 }
-const LINE_LABELS: Record<PlanLineType, string> = {
-  wall_new:      'Перегородки',
-  wall_lining:   'Облицовка стен',
-  wall_existing: 'Сущ. конструкции',
-  ceiling:       'Потолки',
-  floor:         'Полы',
-}
 const LINE_LABELS_SHORT: Record<PlanLineType, string> = {
   wall_new:      'Перегородка',
   wall_lining:   'Облицовка',
   wall_existing: 'Сущ. конструкция',
   ceiling:       'Потолок',
   floor:         'Пол',
-}
-const LINE_ICONS: Record<PlanLineType, string> = {
-  wall_new:      '▧',
-  wall_lining:   '▤',
-  ceiling:       '▨',
-  floor:         '▦',
-  wall_existing: '▩',
 }
 const LINE_WIDTH: Record<PlanLineType, number> = {
   wall_new: 4, wall_lining: 3, wall_existing: 5, ceiling: 2, floor: 2,
@@ -276,6 +262,8 @@ export default function FloorPlan() {
   const [planView, setPlanView]         = useState<PlanView>('top')
   const [mode, setMode]                 = useState<Mode>('draw')
   const [drawType, setDrawType]         = useState<PlanLineType>('wall_new')
+  const [drawSpec, setDrawSpec]         = useState<PlanLineSpec | null>(null)
+  const [expandedMaterial, setExpandedMaterial] = useState<string | null>(null)
   const [orthoMode, setOrthoMode]       = useState(false)
   const [drawing, setDrawing]           = useState<{ x1: number; y1: number } | null>(null)
   const [cursor, setCursor]             = useState<{ x: number; y: number } | null>(null)
@@ -552,6 +540,7 @@ export default function FloorPlan() {
             x1: drawing.x1, y1: drawing.y1,
             x2: chainStartPt!.x, y2: chainStartPt!.y,
             type: drawType, lengthMm, label,
+            spec: drawSpec ?? undefined,
           })
           allLineIds = [...allLineIds, closingId]
         }
@@ -585,14 +574,14 @@ export default function FloorPlan() {
         const lengthMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
         const label = genLabel(drawType, lines)
         // Синхронно получаем id и добавляем в цепочку
-        const newId = addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label })
+        const newId = addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label, spec: drawSpec ?? undefined })
         setChainLineIds(prev => [...prev, newId])
         setDrawing({ x1: pt.x, y1: pt.y })
       }
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, scaleStep, orthoMode, addPlanLine])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, scaleStep, orthoMode, addPlanLine])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.cancelBubble = true
@@ -671,6 +660,7 @@ export default function FloorPlan() {
       x2: l.x2 + nx, y2: l.y2 + ny,
       type: l.type, lengthMm: l.lengthMm,
       label,
+      spec: l.spec,
     })
     setShowParallelDialog(false)
   }
@@ -753,24 +743,82 @@ export default function FloorPlan() {
         {/* ════════════════════ ЛЕВАЯ ПАНЕЛЬ ════════════════════ */}
         <div style={leftPanelStyle}>
 
-          {/* Конструкции */}
-          <div style={sectionHeaderStyle}>Конструкции</div>
-          {(Object.entries(LINE_LABELS) as [PlanLineType, string][]).map(([t, label]) => (
-            <button key={t}
-              onClick={() => { setDrawType(t); switchMode('draw') }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '8px 14px', background: 'transparent', border: 'none',
-                cursor: 'pointer', width: '100%', textAlign: 'left',
-                borderLeft: (mode === 'draw' && drawType === t) ? `3px solid ${LINE_COLORS[t]}` : '3px solid transparent',
-                borderRadius: 0,
-                color: (mode === 'draw' && drawType === t) ? '#fff' : '#8a9ac8',
-                backgroundColor: (mode === 'draw' && drawType === t) ? 'rgba(255,255,255,0.07)' : 'transparent',
-              }}>
-              <span style={{ fontSize: 15, color: LINE_COLORS[t] }}>{LINE_ICONS[t]}</span>
-              <span style={{ fontSize: 12, fontWeight: (mode === 'draw' && drawType === t) ? 600 : 400 }}>{label}</span>
-            </button>
-          ))}
+          {/* Конструкции — дерево материалов */}
+          {([
+            { label: 'Существующие стены', type: 'wall_existing' as PlanLineType },
+            { label: 'Перегородки',        type: 'wall_new'      as PlanLineType },
+            { label: 'Облицовки',          type: 'wall_lining'   as PlanLineType },
+            { label: 'Потолки',            type: 'ceiling'        as PlanLineType },
+            { label: 'Полы',               type: 'floor'          as PlanLineType },
+          ]).map(({ label, type }) => {
+            const nodes = TAXONOMY[type] ?? []
+            return (
+              <div key={type}>
+                <div style={{ ...sectionHeaderStyle, color: LINE_COLORS[type] }}>{label}</div>
+                {nodes.map(node => {
+                  const hasChildren = (node.children?.length ?? 0) > 0
+                  const expandKey = `${type}:${node.value}`
+                  const isExpanded = expandedMaterial === expandKey
+                  const visL1 = getLineVisual(type, node.value)
+                  const nodeColor = visL1.colorOverride ?? LINE_COLORS[type]
+                  const isActiveL1 = mode === 'draw' && drawType === type && drawSpec?.material === node.value
+                  return (
+                    <div key={node.value}>
+                      <button
+                        onClick={() => {
+                          if (hasChildren) {
+                            setExpandedMaterial(isExpanded ? null : expandKey)
+                            setDrawType(type)
+                          } else {
+                            setDrawType(type)
+                            setDrawSpec({ material: node.value })
+                            setExpandedMaterial(null)
+                            switchMode('draw')
+                          }
+                        }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '7px 14px', background: 'transparent', border: 'none',
+                          cursor: 'pointer', width: '100%', textAlign: 'left', borderRadius: 0,
+                          borderLeft: (isActiveL1 && !hasChildren) ? `3px solid ${nodeColor}` : '3px solid transparent',
+                          color: isActiveL1 ? '#fff' : '#8a9ac8',
+                          backgroundColor: isActiveL1 ? 'rgba(255,255,255,0.07)' : 'transparent',
+                        }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: nodeColor, flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, flex: 1, fontWeight: isActiveL1 ? 600 : 400 }}>{node.label}</span>
+                        {hasChildren && <span style={{ fontSize: 10, color: '#4a5578' }}>{isExpanded ? '▴' : '▾'}</span>}
+                      </button>
+                      {hasChildren && isExpanded && node.children!.map(child => {
+                        const visSub = getLineVisual(type, node.value, child.value)
+                        const subColor = visSub.colorOverride ?? LINE_COLORS[type]
+                        const isActiveSub = isActiveL1 && drawSpec?.subtype === child.value
+                        return (
+                          <button key={child.value}
+                            onClick={() => {
+                              setDrawType(type)
+                              setDrawSpec({ material: node.value, subtype: child.value })
+                              setExpandedMaterial(null)
+                              switchMode('draw')
+                            }}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 8,
+                              padding: '6px 14px 6px 28px', background: 'transparent', border: 'none',
+                              cursor: 'pointer', width: '100%', textAlign: 'left', borderRadius: 0,
+                              borderLeft: isActiveSub ? `3px solid ${subColor}` : '3px solid transparent',
+                              color: isActiveSub ? '#fff' : '#7a8ab0',
+                              backgroundColor: isActiveSub ? 'rgba(255,255,255,0.06)' : 'transparent',
+                            }}>
+                            <span style={{ width: 6, height: 6, borderRadius: 1, background: subColor, flexShrink: 0, opacity: 0.8 }} />
+                            <span style={{ fontSize: 11, fontWeight: isActiveSub ? 600 : 400 }}>{child.label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
 
           <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
 
@@ -1172,28 +1220,34 @@ export default function FloorPlan() {
                   })}
 
                   {/* Превью рисования */}
-                  {mode === 'draw' && drawing && previewPt && (
-                    <>
-                      <Line points={[drawing.x1,drawing.y1,previewX2,previewY2]}
-                        stroke={LINE_COLORS[drawType]} strokeWidth={LINE_WIDTH[drawType]} dash={[6,4]} opacity={0.6} lineCap="round" listening={false} />
-                      {previewLabel(previewX2, previewY2) && (
-                        <Text x={(drawing.x1+previewX2)/2-30} y={(drawing.y1+previewY2)/2-16}
-                          width={60} text={previewLabel(previewX2,previewY2)}
-                          fontSize={10} fill={LINE_COLORS[drawType]} align="center" fontStyle="bold" listening={false} />
-                      )}
-                    </>
-                  )}
+                  {mode === 'draw' && drawing && previewPt && (() => {
+                    const previewVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype)
+                    const previewColor = previewVis.colorOverride ?? LINE_COLORS[drawType]
+                    return (
+                      <>
+                        <Line points={[drawing.x1,drawing.y1,previewX2,previewY2]}
+                          stroke={previewColor} strokeWidth={LINE_WIDTH[drawType]} dash={[6,4]} opacity={0.6} lineCap="round" listening={false} />
+                        {previewLabel(previewX2, previewY2) && (
+                          <Text x={(drawing.x1+previewX2)/2-30} y={(drawing.y1+previewY2)/2-16}
+                            width={60} text={previewLabel(previewX2,previewY2)}
+                            fontSize={10} fill={previewColor} align="center" fontStyle="bold" listening={false} />
+                        )}
+                      </>
+                    )
+                  })()}
 
                   {/* Курсор снапа */}
-                  {cursor && mode === 'draw' && (
-                    snapActive ? (
+                  {cursor && mode === 'draw' && (() => {
+                    const curVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype)
+                    const curColor = curVis.colorOverride ?? LINE_COLORS[drawType]
+                    return snapActive ? (
                       <Circle x={cursor.x} y={cursor.y} radius={8}
                         stroke="#4caf50" strokeWidth={2} fill="rgba(76,175,80,0.15)" listening={false} />
                     ) : (
                       <Circle x={cursor.x} y={cursor.y} radius={6}
-                        stroke={LINE_COLORS[drawType]} strokeWidth={1.5} fill="rgba(255,255,255,0.7)" listening={false} />
+                        stroke={curColor} strokeWidth={1.5} fill="rgba(255,255,255,0.7)" listening={false} />
                     )
-                  )}
+                  })()}
 
                   {/* Точки масштаба */}
                   {scalePt1 && <Circle x={scalePt1.x} y={scalePt1.y} radius={7} fill="#ff9800" listening={false} />}
