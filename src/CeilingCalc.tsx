@@ -432,74 +432,125 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
   shiftMm: number
   type: CeilingType
 }) {
-  const PAD = 40
+  // Отступы: сверху больше — там шкала профилей
+  const PAD_LEFT = 44   // для подписи высоты
+  const PAD_TOP  = 36   // для шкалы шага профилей
+  const PAD_BOT  = 8
+
   const scale = Math.min(
-    (canvasW - PAD * 2) / layout.roomLengthMm,
-    400 / layout.roomWidthMm,
+    (canvasW - PAD_LEFT - 8) / layout.roomLengthMm,
+    380 / layout.roomWidthMm,
   )
   const W = layout.roomLengthMm * scale
   const H = layout.roomWidthMm * scale
-  const canvasH = H + PAD * 2
+  const canvasH = H + PAD_TOP + PAD_BOT
 
-  // Лист: длинная сторона (sheetL) по оси X (длина помещения)
-  //       короткая сторона (sheetW) по оси Y (ширина помещения)
-  // Сдвиг применяется по оси X (вдоль длины листа)
+  // Листы: длинная сторона (sheetL) по X, короткая (sheetW) по Y
   const shiftX = shiftMm % layout.sheetL
 
   const sheets: { x: number; y: number; w: number; h: number; isCut: boolean }[] = []
   let y = 0
   while (y < layout.roomWidthMm) {
-    // rowH — высота текущего ряда (по ширине листа sheetW)
     const rowH = Math.min(layout.sheetW, layout.roomWidthMm - y)
     let x = -shiftX
     while (x < layout.roomLengthMm) {
-      // colW — ширина текущей колонки (по длине листа sheetL)
       const colW = Math.min(layout.sheetL, layout.roomLengthMm - Math.max(x, 0))
       const sx = Math.max(x, 0)
       const isCut = rowH < layout.sheetW || colW < layout.sheetL || x < 0
       if (colW > 0) {
-        sheets.push({
-          x: sx * scale,
-          y: y * scale,
-          w: colW * scale,
-          h: rowH * scale,
-          isCut,
-        })
+        sheets.push({ x: sx * scale, y: y * scale, w: colW * scale, h: rowH * scale, isCut })
       }
       x += layout.sheetL
     }
     y += layout.sheetW
   }
 
-  // Основные профили (вдоль длины, шаг c)
-  const mainProfiles: number[] = []
+  // Основные профили (вертикальные, шаг c) — позиции в мм
+  const mainProfilesMm: number[] = []
   for (let x = layout.stepC; x < layout.roomLengthMm; x += layout.stepC) {
-    mainProfiles.push(x * scale)
+    mainProfilesMm.push(x)
   }
 
-  // Несущие профили (поперёк, шаг b=500мм)
+  // Несущие профили (горизонтальные, шаг b=500мм)
   const bearingProfiles: number[] = []
-  for (let y = layout.stepB; y < layout.roomWidthMm; y += layout.stepB) {
-    bearingProfiles.push(y * scale)
+  for (let yb = layout.stepB; yb < layout.roomWidthMm; yb += layout.stepB) {
+    bearingProfiles.push(yb * scale)
   }
 
-  // Подвесы (на пересечениях основных профилей с шагом stepA)
+  // Подвесы
   const hangers: { x: number; y: number }[] = []
   if (type !== 'p131' && layout.stepA > 0) {
-    for (const px of mainProfiles) {
+    for (const xMm of mainProfilesMm) {
       for (let ya = layout.stepA / 2; ya < layout.roomWidthMm; ya += layout.stepA) {
-        hangers.push({ x: px, y: ya * scale })
+        hangers.push({ x: xMm * scale, y: ya * scale })
       }
     }
   }
 
+  // Шкала шага профилей — пролёты между основными профилями
+  // Добавляем 0 и конец помещения как границы
+  const profileBoundsMm = [0, ...mainProfilesMm, layout.roomLengthMm]
+  const spanLabels: { x: number; w: number; label: string }[] = []
+  for (let i = 0; i < profileBoundsMm.length - 1; i++) {
+    const x0 = profileBoundsMm[i]
+    const x1 = profileBoundsMm[i + 1]
+    const span = x1 - x0
+    // Показываем только если пролёт достаточно широк для метки
+    if (span * scale > 30) {
+      spanLabels.push({
+        x: x0 * scale,
+        w: span * scale,
+        label: `${span}`,
+      })
+    }
+  }
+
+  // Накопительные позиции профилей для подписи над риской
+  const profilePosMm = mainProfilesMm.map(x => ({ x, px: x * scale }))
+
   return (
     <Stage width={canvasW} height={canvasH}>
-      <Layer offsetX={-PAD} offsetY={-PAD}>
-        {/* Фон помещения */}
+      <Layer offsetX={PAD_LEFT} offsetY={PAD_TOP}>
+
+        {/* ── Шкала шага основных профилей (над холстом) ── */}
+        {/* Общая стрелка-линия по всей ширине */}
+        <Line points={[0, -PAD_TOP + 8, W, -PAD_TOP + 8]}
+          stroke={COLORS.profileMain} strokeWidth={1} opacity={0.5}
+        />
+        {/* Засечки и подписи пролётов */}
+        {spanLabels.map((s, i) => (
+          <Group key={`span${i}`}>
+            {/* Левая засечка */}
+            <Line points={[s.x, -PAD_TOP + 4, s.x, -PAD_TOP + 12]}
+              stroke={COLORS.profileMain} strokeWidth={1.5}
+            />
+            {/* Правая засечка */}
+            <Line points={[s.x + s.w, -PAD_TOP + 4, s.x + s.w, -PAD_TOP + 12]}
+              stroke={COLORS.profileMain} strokeWidth={1.5}
+            />
+            {/* Подпись по центру пролёта */}
+            <Text
+              x={s.x} y={-PAD_TOP + 13}
+              width={s.w} align="center"
+              text={s.label}
+              fontSize={10} fill={COLORS.profileMain} fontStyle="bold"
+            />
+          </Group>
+        ))}
+        {/* Накопительные позиции профилей над рисками */}
+        {profilePosMm.map((p, i) => (
+          <Text key={`pos${i}`}
+            x={p.px - 16} y={-PAD_TOP + 1}
+            width={32} align="center"
+            text={`${p.x}`}
+            fontSize={9} fill={COLORS.textMuted}
+          />
+        ))}
+
+        {/* ── Холст помещения ── */}
         <Rect x={0} y={0} width={W} height={H} fill="#f0f4f8" stroke={COLORS.profileMain} strokeWidth={2} />
 
-        {/* Листы ГКЛ — рисуем первыми */}
+        {/* Листы ГКЛ */}
         {sheets.map((s, i) => (
           <Rect key={i}
             x={s.x} y={s.y} width={s.w} height={s.h}
@@ -509,7 +560,7 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
           />
         ))}
 
-        {/* Несущие профили поверх листов (горизонтальные, шаг b=500мм) */}
+        {/* Несущие профили (горизонтальные, шаг b) */}
         {bearingProfiles.map((py, i) => (
           <Line key={`b${i}`}
             points={[0, py, W, py]}
@@ -517,15 +568,15 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
           />
         ))}
 
-        {/* Основные профили поверх (вертикальные, шаг c) */}
-        {mainProfiles.map((px, i) => (
+        {/* Основные профили (вертикальные, шаг c) */}
+        {mainProfilesMm.map((xMm, i) => (
           <Line key={`m${i}`}
-            points={[px, 0, px, H]}
+            points={[xMm * scale, 0, xMm * scale, H]}
             stroke={COLORS.profileMain} strokeWidth={2.5} opacity={0.95}
           />
         ))}
 
-        {/* Подвесы — поверх всего */}
+        {/* Подвесы */}
         {hangers.map((h, i) => (
           <Group key={`h${i}`} x={h.x} y={h.y}>
             <Rect x={-5} y={-5} width={10} height={10}
@@ -534,15 +585,14 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
           </Group>
         ))}
 
-        {/* Размерные подписи по осям */}
-        <Text x={W / 2} y={-28} text={`${layout.roomLengthMm} мм`}
-          fontSize={12} fill={COLORS.textMuted} align="center" offsetX={40}
-        />
-        <Text x={-36} y={H / 2} text={`${layout.roomWidthMm} мм`}
-          fontSize={12} fill={COLORS.textMuted} rotation={-90}
+        {/* Подпись ширины помещения слева */}
+        <Text x={-PAD_LEFT + 2} y={H / 2}
+          text={`${layout.roomWidthMm} мм`}
+          fontSize={11} fill={COLORS.textMuted} rotation={-90}
+          offsetY={-4}
         />
 
-        {/* Рамка */}
+        {/* Рамка поверх всего */}
         <Rect x={0} y={0} width={W} height={H}
           fill="transparent" stroke={COLORS.profileMain} strokeWidth={2}
         />
