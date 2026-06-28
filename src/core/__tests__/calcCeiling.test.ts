@@ -176,15 +176,56 @@ describe('calcCeilingSheetLayout — раскрой 5000×4000мм', () => {
     expect(layout.stepA).toBe(1150)
   })
 
-  it('rowCount = 2 (4000 / 2500 → 2 ряда)', () => {
+  // Лист 1200×2500: длинная сторона (2500) вдоль длины помещения (5000мм)
+  // colCount = ceil(5000/2500) = 2 колонки по длине
+  // rowCount = ceil(4000/1200) = 4 ряда по ширине (последний резаный: 4000%1200=400мм)
+  it('colCount = 2 (5000 / 2500 → 2 колонки по длине)', () => {
+    expect(layout.colCount).toBe(2)
+  })
+
+  it('rowCount = 4 (4000 / 1200 → 4 ряда по ширине)', () => {
+    expect(layout.rowCount).toBe(4)
+  })
+
+  it('totalSheets = 8', () => {
+    expect(layout.totalSheets).toBe(8)
+  })
+
+  it('fullSheets = 6 (2 полных колонки × 3 полных ряда)', () => {
+    // 4000 % 1200 = 400 → последний ряд резаный → fullRows = 3
+    // 5000 % 2500 = 0 → fullCols = 2
+    expect(layout.fullSheets).toBe(6)
+  })
+
+  it('cutSheets = 2 (нижний ряд резаный)', () => {
+    expect(layout.cutSheets).toBe(2)
+  })
+})
+
+describe('calcCeilingSheetLayout — раскрой 2500×2400мм (квадрат из 2 целых листов)', () => {
+  const res = calcCeiling({ ...BASE, roomLengthMm: 2500, roomWidthMm: 2400,
+    areaSqm: 6, perimeterM: 9.8 })
+  const layout = res.sheetLayout!
+
+  // Лист 1200×2500: длинная (2500) по длине = 1 колонка (целая)
+  // Короткая (1200) по ширине: ceil(2400/1200) = 2 ряда (оба целые)
+  it('colCount = 1 (2500/2500)', () => {
+    expect(layout.colCount).toBe(1)
+  })
+
+  it('rowCount = 2 (2400/1200)', () => {
     expect(layout.rowCount).toBe(2)
   })
 
-  it('colCount = 5 (5000 / 1200 → 5 колонок)', () => {
-    expect(layout.colCount).toBe(5)
+  it('totalSheets = 2', () => {
+    expect(layout.totalSheets).toBe(2)
   })
 
-  it('totalSheets = 10', () => {
-    expect(layout.totalSheets).toBe(10)
+  it('fullSheets = 2 — оба целые', () => {
+    expect(layout.fullSheets).toBe(2)
+  })
+
+  it('cutSheets = 0', () => {
+    expect(layout.cutSheets).toBe(0)
   })
 })

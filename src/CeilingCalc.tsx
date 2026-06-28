@@ -434,22 +434,22 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
   const H = layout.roomWidthMm * scale
   const canvasH = H + PAD * 2
 
-  // Листы (по длине = по оси X, по ширине = по оси Y)
-  const sheetW_px = layout.sheetW * scale
-  const sheetL_px = layout.sheetL * scale
-  void sheetW_px; void sheetL_px
-  const shift_px = (shiftMm % layout.sheetW) * scale
-  void shift_px
+  // Лист: длинная сторона (sheetL) по оси X (длина помещения)
+  //       короткая сторона (sheetW) по оси Y (ширина помещения)
+  // Сдвиг применяется по оси X (вдоль длины листа)
+  const shiftX = shiftMm % layout.sheetL
 
   const sheets: { x: number; y: number; w: number; h: number; isCut: boolean }[] = []
   let y = 0
   while (y < layout.roomWidthMm) {
-    const rowH = Math.min(layout.sheetL, layout.roomWidthMm - y)
-    let x = -shiftMm
+    // rowH — высота текущего ряда (по ширине листа sheetW)
+    const rowH = Math.min(layout.sheetW, layout.roomWidthMm - y)
+    let x = -shiftX
     while (x < layout.roomLengthMm) {
-      const colW = Math.min(layout.sheetW, layout.roomLengthMm - Math.max(x, 0))
+      // colW — ширина текущей колонки (по длине листа sheetL)
+      const colW = Math.min(layout.sheetL, layout.roomLengthMm - Math.max(x, 0))
       const sx = Math.max(x, 0)
-      const isCut = rowH < layout.sheetL || colW < layout.sheetW || x < 0
+      const isCut = rowH < layout.sheetW || colW < layout.sheetL || x < 0
       if (colW > 0) {
         sheets.push({
           x: sx * scale,
@@ -459,9 +459,9 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
           isCut,
         })
       }
-      x += layout.sheetW
+      x += layout.sheetL
     }
-    y += layout.sheetL
+    y += layout.sheetW
   }
 
   // Основные профили (вдоль длины, шаг c)
@@ -492,7 +492,7 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
         {/* Фон помещения */}
         <Rect x={0} y={0} width={W} height={H} fill="#f0f4f8" stroke={COLORS.profileMain} strokeWidth={2} />
 
-        {/* Листы ГКЛ */}
+        {/* Листы ГКЛ — рисуем первыми */}
         {sheets.map((s, i) => (
           <Rect key={i}
             x={s.x} y={s.y} width={s.w} height={s.h}
@@ -502,27 +502,27 @@ function CeilingCanvas({ layout, canvasW, shiftMm, type }: {
           />
         ))}
 
-        {/* Несущие профили (горизонтальные, шаг b) */}
+        {/* Несущие профили поверх листов (горизонтальные, шаг b=500мм) */}
         {bearingProfiles.map((py, i) => (
           <Line key={`b${i}`}
             points={[0, py, W, py]}
-            stroke={COLORS.profile} strokeWidth={1.5} dash={[6, 4]}
+            stroke="#546e7a" strokeWidth={2} dash={[8, 5]} opacity={0.9}
           />
         ))}
 
-        {/* Основные профили (вертикальные, шаг c) */}
+        {/* Основные профили поверх (вертикальные, шаг c) */}
         {mainProfiles.map((px, i) => (
           <Line key={`m${i}`}
             points={[px, 0, px, H]}
-            stroke={COLORS.profileMain} strokeWidth={2}
+            stroke={COLORS.profileMain} strokeWidth={2.5} opacity={0.95}
           />
         ))}
 
-        {/* Подвесы */}
+        {/* Подвесы — поверх всего */}
         {hangers.map((h, i) => (
           <Group key={`h${i}`} x={h.x} y={h.y}>
             <Rect x={-5} y={-5} width={10} height={10}
-              fill="rgba(229,57,53,0.2)" stroke={COLORS.hanger} strokeWidth={1.5} cornerRadius={2}
+              fill="rgba(229,57,53,0.3)" stroke={COLORS.hanger} strokeWidth={2} cornerRadius={2}
             />
           </Group>
         ))}

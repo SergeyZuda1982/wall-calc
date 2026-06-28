@@ -258,24 +258,21 @@ export function calcCeilingSheetLayout(spec: CeilingSpec): CeilingSheetLayout | 
   const stepA = getHangerStep(spec.type, stepC)
   const stepB = STEP_B  // 500мм — шаг несущих профилей
 
-  // Листы укладываются поперёк несущих профилей (длинной стороной вдоль основных)
-  // Ряды — по ширине помещения (вдоль несущих профилей, шаг b=500мм)
-  // Колонки — по длине помещения (вдоль основных профилей, шаг c)
+  // Лист лежит: длинная сторона (sheetL=2500) вдоль длины помещения (X)
+  //             короткая сторона (sheetW=1200) поперёк, вдоль ширины (Y)
+  // Колонки (X) — по длине помещения, шаг = sheetL
+  // Ряды    (Y) — по ширине помещения, шаг = sheetW
 
-  // Количество рядов (по ширине)
-  const rowCount = Math.ceil(roomWidthMm / sheetL)
-  // Количество колонок (по длине)
-  const colCount = Math.ceil(roomLengthMm / sheetW)
+  const colCount = Math.ceil(roomLengthMm / sheetL)
+  const rowCount = Math.ceil(roomWidthMm / sheetW)
 
   const totalSheets = rowCount * colCount
 
-  // Подсчёт целых и резаных листов
-  const lastRowRemainder = roomWidthMm % sheetL
-  const lastColRemainder = roomLengthMm % sheetW
+  const lastColRemainder = roomLengthMm % sheetL
+  const lastRowRemainder = roomWidthMm % sheetW
 
-  // Полные ряды и колонки
-  const fullRows = lastRowRemainder === 0 ? rowCount : rowCount - 1
   const fullCols = lastColRemainder === 0 ? colCount : colCount - 1
+  const fullRows = lastRowRemainder === 0 ? rowCount : rowCount - 1
 
   const fullSheets = fullRows * fullCols
   const cutSheets = totalSheets - fullSheets
@@ -283,17 +280,16 @@ export function calcCeilingSheetLayout(spec: CeilingSpec): CeilingSheetLayout | 
   // Обрезки
   const offcuts: [number, number][] = []
   if (lastColRemainder > 0) {
-    // Правая колонка — обрезанные по ширине листы
-    for (let r = 0; r < (lastRowRemainder > 0 ? rowCount - 1 : rowCount); r++) {
-      offcuts.push([lastColRemainder, sheetL])
+    const rowsInRightCol = lastRowRemainder > 0 ? rowCount - 1 : rowCount
+    for (let r = 0; r < rowsInRightCol; r++) {
+      offcuts.push([lastColRemainder, sheetW])
     }
   }
   if (lastRowRemainder > 0) {
-    // Нижний ряд — обрезанные по длине листы
-    for (let c = 0; c < (lastColRemainder > 0 ? colCount - 1 : colCount); c++) {
-      offcuts.push([sheetW, lastRowRemainder])
+    const colsInBottomRow = lastColRemainder > 0 ? colCount - 1 : colCount
+    for (let c = 0; c < colsInBottomRow; c++) {
+      offcuts.push([sheetL, lastRowRemainder])
     }
-    // Угловой кусок
     if (lastColRemainder > 0) {
       offcuts.push([lastColRemainder, lastRowRemainder])
     }
