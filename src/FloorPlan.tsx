@@ -245,6 +245,19 @@ type DragState =
   | { kind: 'end2'; id: string; startPx: number; startPy: number }
   | null
 
+/** Ray casting — точка внутри полигона */
+function pointInPolygon(px: number, py: number, pts: { x: number; y: number }[]): boolean {
+  let inside = false
+  const n = pts.length
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y
+    const xj = pts[j].x, yj = pts[j].y
+    if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
+      inside = !inside
+  }
+  return inside
+}
+
 // ─── Компонент ───────────────────────────────────────────────────────────────
 
 export default function FloorPlan() {
@@ -285,6 +298,12 @@ export default function FloorPlan() {
   const dragRef      = useRef<DragState>(null)
   const dragMovedRef = useRef(false)
   const lineWasClickedRef = useRef(false)
+  const panStartRef  = useRef<{ x: number; y: number; sx: number; sy: number } | null>(null)
+
+  // Зум и панорамирование
+  const [stageScale, setStageScale] = useState(1)
+  const [stagePos,   setStagePos]   = useState({ x: 0, y: 0 })
+  const [spaceDown,  setSpaceDown]  = useState(false)
 
   // Масштаб
   const [scaleStep, setScaleStep]             = useState<0 | 1 | 2>(0)
@@ -304,6 +323,15 @@ export default function FloorPlan() {
     update()
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
+  }, [])
+
+  // Space — режим панорамирования
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.code === 'Space' && !e.repeat) { e.preventDefault(); setSpaceDown(true) } }
+    const up   = (e: KeyboardEvent) => { if (e.code === 'Space') { setSpaceDown(false); panStartRef.current = null } }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup',   up)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
   }, [])
 
   // ── Переключение режима ────────────────────────────────────────────────────
@@ -331,9 +359,13 @@ export default function FloorPlan() {
     const te = e.evt as TouchEvent
     if (te.touches?.length > 0) {
       const rect = stage.container().getBoundingClientRect()
-      return { x: te.touches[0].clientX - rect.left, y: te.touches[0].clientY - rect.top }
+      const sx = te.touches[0].clientX - rect.left
+      const sy = te.touches[0].clientY - rect.top
+      return { x: (sx - stagePos.x) / stageScale, y: (sy - stagePos.y) / stageScale }
     }
-    return stage.getPointerPosition()
+    const sp = stage.getPointerPosition()
+    if (!sp) return null
+    return { x: (sp.x - stagePos.x) / stageScale, y: (sp.y - stagePos.y) / stageScale }
   }
 
   function applySnap(x: number, y: number, excludeId?: string): { x: number; y: number } {
@@ -398,9 +430,17 @@ export default function FloorPlan() {
   }
 
   const handleMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
-    const pos = e.target.getStage()?.getPointerPosition()
-    if (pos) handleMove(pos.x, pos.y)
-  }, [lines, mode, drawing, orthoMode, dragRef.current])
+    const stage = e.target.getStage()
+    if (!stage) return
+    const sp = stage.getPointerPosition()
+    if (!sp) return
+    // Панорамирование
+    if (panStartRef.current) {
+      setStagePos({ x: panStartRef.current.sx + sp.x - panStartRef.current.x, y: panStartRef.current.sy + sp.y - panStartRef.current.y })
+      return
+    }
+    handleMove((sp.x - stagePos.x) / stageScale, (sp.y - stagePos.y) / stageScale)
+  }, [lines, mode, drawing, orthoMode, dragRef.current, stagePos, stageScale])
 
   const handleTouchMove = useCallback((e: KonvaEventObject<TouchEvent>) => {
     const stage = e.target.getStage()
@@ -408,8 +448,10 @@ export default function FloorPlan() {
     const te = e.evt as TouchEvent
     if (!te.touches.length) return
     const rect = stage.container().getBoundingClientRect()
-    handleMove(te.touches[0].clientX - rect.left, te.touches[0].clientY - rect.top)
-  }, [lines, mode, drawing, orthoMode, dragRef.current])
+    const sx = te.touches[0].clientX - rect.left
+    const sy = te.touches[0].clientY - rect.top
+    handleMove((sx - stagePos.x) / stageScale, (sy - stagePos.y) / stageScale)
+  }, [lines, mode, drawing, orthoMode, dragRef.current, stagePos, stageScale])
 
   function startDragLine(id: string, kind: 'line' | 'end1' | 'end2', px: number, py: number) {
     if (mode !== 'select') return
@@ -424,12 +466,49 @@ export default function FloorPlan() {
   }
 
   const handlePointerUp = useCallback(() => {
+    panStartRef.current = null
     if (dragRef.current && !dragMovedRef.current && mode === 'select') {
       setSelected(dragRef.current.id)
     }
     dragRef.current = null
     dragMovedRef.current = false
   }, [mode])
+
+  // ── Зум колёсиком ─────────────────────────────────────────────────────────
+  function handleWheel(e: KonvaEventObject<WheelEvent>) {
+    e.evt.preventDefault()
+    const stage = stageRef.current
+    if (!stage) return
+    const sp = stage.getPointerPosition()
+    if (!sp) return
+    const SCALE_BY = 1.12
+    const newScale = e.evt.deltaY < 0
+      ? Math.min(stageScale * SCALE_BY, 20)
+      : Math.max(stageScale / SCALE_BY, 0.1)
+    const mouseWorldX = (sp.x - stagePos.x) / stageScale
+    const mouseWorldY = (sp.y - stagePos.y) / stageScale
+    setStageScale(newScale)
+    setStagePos({ x: sp.x - mouseWorldX * newScale, y: sp.y - mouseWorldY * newScale })
+  }
+
+  // ── Начало панорамирования (Space + ЛКМ, или СКМ) ─────────────────────────
+  function handleStageMouseDown(e: KonvaEventObject<MouseEvent>) {
+    if (e.evt.button === 1 || (e.evt.button === 0 && spaceDown)) {
+      const sp = stageRef.current?.getPointerPosition()
+      if (sp) panStartRef.current = { x: sp.x, y: sp.y, sx: stagePos.x, sy: stagePos.y }
+      e.evt.preventDefault()
+    }
+  }
+
+  // ── Ограничение черчения внутри периметра ─────────────────────────────────
+  function isPointAllowed(x: number, y: number, type: PlanLineType): boolean {
+    if (type === 'wall_existing') return true
+    if (rooms.length === 0) return true
+    return rooms.some(room => {
+      const pts = extractContourPoints(room.lineIds, lines)
+      return pts.length >= 3 && pointInPolygon(x, y, pts)
+    })
+  }
 
   const handleStageClick = useCallback((e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (dragMovedRef.current) return
@@ -456,7 +535,7 @@ export default function FloorPlan() {
         dist(pt.x, pt.y, chainStartPt.x, chainStartPt.y) <= SNAP_PX
 
       if (!drawing) {
-        // Начало новой линии — запоминаем стартовую точку цепочки
+        if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
         setDrawing({ x1: pt.x, y1: pt.y })
         if (!chainStartPt) setChainStartPt({ x: pt.x, y: pt.y })
 
@@ -500,6 +579,7 @@ export default function FloorPlan() {
         setChainLineIds([])
 
       } else {
+        if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
         const d = dist(drawing.x1, drawing.y1, pt.x, pt.y)
         if (d < 5) { setDrawing(null); setChainStartPt(null); setChainLineIds([]); return }
         const lengthMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
@@ -859,27 +939,44 @@ export default function FloorPlan() {
           </div>
 
           {/* ── Холст ── */}
-          <div style={{ flex: 1, overflow: 'hidden', padding: 12, minHeight: CANVAS_H + 24 }}>
             <div ref={containerRef}
               style={{
                 border: '1px solid #dde', borderRadius: 8, overflow: 'hidden', background: '#fafafa',
-                cursor: mode === 'draw' ? 'crosshair' : mode === 'select' ? 'grab' : mode === 'erase' ? 'pointer' : 'default',
+                cursor: spaceDown ? (panStartRef.current ? 'grabbing' : 'grab')
+                  : mode === 'draw' ? 'crosshair' : mode === 'select' ? 'default' : mode === 'erase' ? 'pointer' : 'default',
                 touchAction: 'none',
                 boxShadow: '0 1px 6px rgba(0,0,0,0.08)',
               }}>
               <Stage ref={stageRef} width={canvasW} height={CANVAS_H}
+                scaleX={stageScale} scaleY={stageScale}
+                x={stagePos.x} y={stagePos.y}
                 onClick={handleStageClick} onTap={handleStageClick}
+                onMouseDown={handleStageMouseDown}
                 onMouseMove={handleMouseMove} onTouchMove={handleTouchMove}
-                onMouseUp={handlePointerUp} onTouchEnd={handlePointerUp}>
+                onMouseUp={handlePointerUp} onTouchEnd={handlePointerUp}
+                onWheel={handleWheel}>
                 <Layer>
-                  <Rect x={0} y={0} width={canvasW} height={CANVAS_H} fill="#fafafa" />
-                  {/* Сетка */}
-                  {Array.from({ length: Math.floor(canvasW / 50) + 1 }, (_, i) => (
-                    <Line key={`gv${i}`} points={[i*50,0,i*50,CANVAS_H]} stroke="#ebebeb" strokeWidth={1} listening={false} />
-                  ))}
-                  {Array.from({ length: Math.floor(CANVAS_H / 50) + 1 }, (_, i) => (
-                    <Line key={`gh${i}`} points={[0,i*50,canvasW,i*50]} stroke="#ebebeb" strokeWidth={1} listening={false} />
-                  ))}
+                  {/* Фон и сетка — адаптивные к zoom/pan */}
+                  {(() => {
+                    const x0 = -stagePos.x / stageScale - 100
+                    const y0 = -stagePos.y / stageScale - 100
+                    const x1 = (canvasW - stagePos.x) / stageScale + 100
+                    const y1 = (CANVAS_H - stagePos.y) / stageScale + 100
+                    const step = 50
+                    const lw = 1 / stageScale
+                    const gx0 = Math.floor(x0 / step) * step
+                    const gy0 = Math.floor(y0 / step) * step
+                    const vLines = []
+                    const hLines = []
+                    for (let x = gx0; x <= x1; x += step)
+                      vLines.push(<Line key={`gv${x}`} points={[x, y0, x, y1]} stroke="#ebebeb" strokeWidth={lw} listening={false} />)
+                    for (let y = gy0; y <= y1; y += step)
+                      hLines.push(<Line key={`gh${y}`} points={[x0, y, x1, y]} stroke="#ebebeb" strokeWidth={lw} listening={false} />)
+                    return [
+                      <Rect key="bg" x={x0} y={y0} width={x1-x0} height={y1-y0} fill="#fafafa" listening={false} />,
+                      ...vLines, ...hLines
+                    ]
+                  })()}
 
                   {/* Помещения (замкнутые периметры wall_existing) */}
                   {rooms.map(room => {
@@ -1119,7 +1216,6 @@ export default function FloorPlan() {
                 </Layer>
               </Stage>
             </div>
-          </div>
 
           {/* ── Таблица конструкций снизу ── */}
           {lines.length > 0 && (
