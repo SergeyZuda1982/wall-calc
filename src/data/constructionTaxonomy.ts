@@ -107,10 +107,38 @@ export const TAXONOMY: Record<PlanLineType, TaxNode[]> = {
   ],
 
   wall_existing: [
-    { value: 'brick',    label: 'Кирпич',         abbr: 'КИР', children: [] },
-    { value: 'block',    label: 'Блок / Ракушняк', abbr: 'БЛК', children: [] },
-    { value: 'concrete', label: 'Монолит / Бетон', abbr: 'МНЛ', children: [] },
-    { value: 'unknown',  label: 'Тип неизвестен',  abbr: '?',   children: [] },
+    {
+      value: 'brick', label: 'Кирпич', abbr: 'КИР',
+      children: [
+        { value: '120', label: '½ кирпича — 120мм',  abbr: '120' },
+        { value: '250', label: '1 кирпич — 250мм',   abbr: '250' },
+        { value: '380', label: '1½ кирпича — 380мм', abbr: '380' },
+        { value: '510', label: '2 кирпича — 510мм',  abbr: '510' },
+        { value: '640', label: '2½ кирпича — 640мм', abbr: '640' },
+      ],
+    },
+    {
+      value: 'block', label: 'Блок / Газобетон', abbr: 'БЛК',
+      children: [
+        { value: '100', label: '100мм', abbr: '100' },
+        { value: '150', label: '150мм', abbr: '150' },
+        { value: '200', label: '200мм', abbr: '200' },
+        { value: '250', label: '250мм', abbr: '250' },
+        { value: '300', label: '300мм', abbr: '300' },
+        { value: '400', label: '400мм', abbr: '400' },
+      ],
+    },
+    {
+      value: 'concrete', label: 'Монолит / Бетон', abbr: 'МНЛ',
+      children: [
+        { value: '150', label: '150мм', abbr: '150' },
+        { value: '180', label: '180мм', abbr: '180' },
+        { value: '200', label: '200мм', abbr: '200' },
+        { value: '250', label: '250мм', abbr: '250' },
+        { value: '300', label: '300мм', abbr: '300' },
+      ],
+    },
+    { value: 'unknown', label: 'Тип неизвестен', abbr: '?', children: [] },
   ],
 
   ceiling: [
@@ -234,9 +262,17 @@ export function getWallThicknessMm(type: PlanLineType, material?: string, subtyp
       return parseInt(subtype ?? '0') || 200
   }
   if (type === 'wall_existing') {
+    if (!material) return 0
+    // Подтип содержит толщину в мм числом
+    if (subtype) {
+      const t = parseInt(subtype)
+      if (!isNaN(t)) return t
+    }
+    // Fallback для старых линий без подтипа
     if (material === 'brick')    return 250
     if (material === 'concrete') return 200
-    return 200
+    if (material === 'block')    return 200
+    return 0  // unknown — одиночная линия
   }
   if (type === 'wall_lining') {
     if (material === 'gkl')     return 40
