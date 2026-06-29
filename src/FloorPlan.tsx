@@ -19,7 +19,7 @@ import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 // ─── Константы ───────────────────────────────────────────────────────────────
 
 const CANVAS_H   = 520
-const SNAP_PX    = 18
+const SNAP_SCREEN_PX = 18   // порог снапа в экранных пикселях (не мировых!)
 const DRAG_THRESHOLD = 4
 
 const LINE_COLORS: Record<PlanLineType, string> = {
@@ -52,8 +52,8 @@ function lineLengthMm(x1: number, y1: number, x2: number, y2: number, s: number)
   return Math.round(dist(x1, y1, x2, y2) * s)
 }
 
-function snapPoint(x: number, y: number, lines: PlanLine[], excludeId?: string) {
-  let best = { x, y, snapped: false, d: SNAP_PX }
+function snapPoint(x: number, y: number, lines: PlanLine[], excludeId?: string, threshPx = SNAP_SCREEN_PX) {
+  let best = { x, y, snapped: false, d: threshPx }
   for (const l of lines) {
     if (l.id === excludeId) continue
     for (const [px, py] of [[l.x1, l.y1], [l.x2, l.y2]] as [number, number][]) {
@@ -365,7 +365,8 @@ export default function FloorPlan() {
   }
 
   function applySnap(x: number, y: number, excludeId?: string): { x: number; y: number } {
-    const snapped = snapPoint(x, y, lines, excludeId)
+    const thresh = SNAP_SCREEN_PX / stageScaleRef.current
+    const snapped = snapPoint(x, y, lines, excludeId, thresh)
     if (orthoMode && drawing && !snapped.snapped) {
       return snapOrtho(drawing.x1, drawing.y1, snapped.x, snapped.y)
     }
@@ -389,7 +390,8 @@ export default function FloorPlan() {
       dragMovedRef.current = true
 
       if (dr.kind === 'line') {
-        const s = snapPoint(dr.origX1 + dx, dr.origY1 + dy, lines, dr.id)
+        const thresh = SNAP_SCREEN_PX / stageScaleRef.current
+        const s = snapPoint(dr.origX1 + dx, dr.origY1 + dy, lines, dr.id, thresh)
         const snapDx = s.snapped ? s.x - dr.origX1 : dx
         const snapDy = s.snapped ? s.y - dr.origY1 : dy
         const newX1 = dr.origX1 + snapDx
@@ -399,23 +401,26 @@ export default function FloorPlan() {
         const lm = lineLengthMm(newX1, newY1, newX2, newY2, scaleMmPx)
         updatePlanLine(dr.id, { x1: newX1, y1: newY1, x2: newX2, y2: newY2, lengthMm: lm })
       } else if (dr.kind === 'end1') {
-        const s = snapPoint(rawX, rawY, lines, dr.id)
+        const thresh = SNAP_SCREEN_PX / stageScaleRef.current
+        const s = snapPoint(rawX, rawY, lines, dr.id, thresh)
         const l = lines.find(l => l.id === dr.id)!
         const lm = lineLengthMm(s.x, s.y, l.x2, l.y2, scaleMmPx)
         updatePlanLine(dr.id, { x1: s.x, y1: s.y, lengthMm: lm })
       } else {
-        const s = snapPoint(rawX, rawY, lines, dr.id)
+        const thresh = SNAP_SCREEN_PX / stageScaleRef.current
+        const s = snapPoint(rawX, rawY, lines, dr.id, thresh)
         const l = lines.find(l => l.id === dr.id)!
         const lm = lineLengthMm(l.x1, l.y1, s.x, s.y, scaleMmPx)
         updatePlanLine(dr.id, { x2: s.x, y2: s.y, lengthMm: lm })
       }
       return
     }
-    const snappedInfo = snapPoint(rawX, rawY, lines)
+    const snapThresh = SNAP_SCREEN_PX / stageScaleRef.current
+    const snappedInfo = snapPoint(rawX, rawY, lines, undefined, snapThresh)
     // В draw-режиме: дополнительно проверяем снап к началу цепочки (замыкание)
     const snapToChainStart =
       mode === 'draw' && drawing && chainStartPt &&
-      dist(rawX, rawY, chainStartPt.x, chainStartPt.y) <= SNAP_PX
+      dist(rawX, rawY, chainStartPt.x, chainStartPt.y) <= snapThresh
     const pt = snapToChainStart
       ? { x: chainStartPt!.x, y: chainStartPt!.y, snapped: true }
       : (orthoMode && drawing && !snappedInfo.snapped)
@@ -539,22 +544,23 @@ export default function FloorPlan() {
 
     if (mode === 'draw') {
       const pt = applySnap(pos.x, pos.y)
+      const snapThresh = SNAP_SCREEN_PX / stageScaleRef.current
 
       // Проверка: курсор снапнулся к началу цепочки → замыкание
       const closingChain =
         drawing && chainStartPt &&
-        dist(pt.x, pt.y, chainStartPt.x, chainStartPt.y) <= SNAP_PX
+        dist(pt.x, pt.y, chainStartPt.x, chainStartPt.y) <= snapThresh
 
       if (!drawing) {
         // ── Shift+клик на endpoint → переактивация линии ─────────────────
         const shiftHeld = 'shiftKey' in e.evt && e.evt.shiftKey
         if (shiftHeld) {
           const hitLine = lines.find(l =>
-            dist(pt.x, pt.y, l.x2, l.y2) <= SNAP_PX ||
-            dist(pt.x, pt.y, l.x1, l.y1) <= SNAP_PX
+            dist(pt.x, pt.y, l.x2, l.y2) <= snapThresh ||
+            dist(pt.x, pt.y, l.x1, l.y1) <= snapThresh
           )
           if (hitLine) {
-            const hitEnd2 = dist(pt.x, pt.y, hitLine.x2, hitLine.y2) <= SNAP_PX
+            const hitEnd2 = dist(pt.x, pt.y, hitLine.x2, hitLine.y2) <= snapThresh
             const anchor = hitEnd2
               ? { x: hitLine.x1, y: hitLine.y1 }
               : { x: hitLine.x2, y: hitLine.y2 }
@@ -580,7 +586,7 @@ export default function FloorPlan() {
           ? lines.find(l => l.id === chainLineIds[chainLineIds.length - 1])
           : null
         const continuingChain = lastChainLine &&
-          dist(pt.x, pt.y, lastChainLine.x2, lastChainLine.y2) <= SNAP_PX
+          dist(pt.x, pt.y, lastChainLine.x2, lastChainLine.y2) <= snapThresh
 
         if (!continuingChain) {
           setChainStartPt({ x: pt.x, y: pt.y })
