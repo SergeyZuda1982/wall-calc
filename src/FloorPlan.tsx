@@ -293,6 +293,12 @@ export default function FloorPlan() {
   const [stagePos,   setStagePos]   = useState({ x: 0, y: 0 })
   const [spaceDown,  setSpaceDown]  = useState(false)
 
+  // Рефы для stagePos/stageScale — всегда актуальны внутри колбэков без пересоздания
+  const stagePosRef   = useRef(stagePos)
+  const stageScaleRef = useRef(stageScale)
+  stagePosRef.current   = stagePos
+  stageScaleRef.current = stageScale
+
   // Масштаб
   const [scaleStep, setScaleStep]             = useState<0 | 1 | 2>(0)
   const [scalePt1, setScalePt1]               = useState<{ x: number; y: number } | null>(null)
@@ -344,16 +350,18 @@ export default function FloorPlan() {
   function getPos(e: KonvaEventObject<MouseEvent | TouchEvent>): { x: number; y: number } | null {
     const stage = e.target.getStage()
     if (!stage) return null
+    const sp = stagePosRef.current
+    const sc = stageScaleRef.current
     const te = e.evt as TouchEvent
     if (te.touches?.length > 0) {
       const rect = stage.container().getBoundingClientRect()
       const sx = te.touches[0].clientX - rect.left
       const sy = te.touches[0].clientY - rect.top
-      return { x: (sx - stagePos.x) / stageScale, y: (sy - stagePos.y) / stageScale }
+      return { x: (sx - sp.x) / sc, y: (sy - sp.y) / sc }
     }
-    const sp = stage.getPointerPosition()
-    if (!sp) return null
-    return { x: (sp.x - stagePos.x) / stageScale, y: (sp.y - stagePos.y) / stageScale }
+    const pos = stage.getPointerPosition()
+    if (!pos) return null
+    return { x: (pos.x - sp.x) / sc, y: (pos.y - sp.y) / sc }
   }
 
   function applySnap(x: number, y: number, excludeId?: string): { x: number; y: number } {
@@ -427,8 +435,9 @@ export default function FloorPlan() {
       setStagePos({ x: panStartRef.current.sx + sp.x - panStartRef.current.x, y: panStartRef.current.sy + sp.y - panStartRef.current.y })
       return
     }
-    handleMove((sp.x - stagePos.x) / stageScale, (sp.y - stagePos.y) / stageScale)
-  }, [lines, mode, drawing, orthoMode, dragRef.current, stagePos, stageScale])
+    const pos = stagePosRef.current; const sc = stageScaleRef.current
+    handleMove((sp.x - pos.x) / sc, (sp.y - pos.y) / sc)
+  }, [lines, mode, drawing, orthoMode, dragRef.current])
 
   const handleTouchMove = useCallback((e: KonvaEventObject<TouchEvent>) => {
     const stage = e.target.getStage()
@@ -438,8 +447,9 @@ export default function FloorPlan() {
     const rect = stage.container().getBoundingClientRect()
     const sx = te.touches[0].clientX - rect.left
     const sy = te.touches[0].clientY - rect.top
-    handleMove((sx - stagePos.x) / stageScale, (sy - stagePos.y) / stageScale)
-  }, [lines, mode, drawing, orthoMode, dragRef.current, stagePos, stageScale])
+    const pos = stagePosRef.current; const sc = stageScaleRef.current
+    handleMove((sx - pos.x) / sc, (sy - pos.y) / sc)
+  }, [lines, mode, drawing, orthoMode, dragRef.current])
 
   function startDragLine(id: string, kind: 'line' | 'end1' | 'end2', px: number, py: number) {
     if (mode !== 'select') return
