@@ -399,52 +399,111 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   shiftBearingMm: number
   layout: import('./core/calcCeiling').CeilingSheetLayout | null
 }) {
-  const PAD_L = 50   // шкала по Y слева
-  const PAD_T = 40   // шкала по X сверху
+  const PAD_L = 50
+  const PAD_T = 40
   const PAD_R = 10
   const PAD_B = 10
+  const CANVAS_H = 460  // фиксированная высота холста
 
   const { roomLengthMm: L, roomWidthMm: W_room } = form
   const drawW = canvasW - PAD_L - PAD_R
-  const scale = Math.min(drawW / L, 360 / W_room)
+
+  // ── Зум и панорама ──
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan]   = useState({ x: 0, y: 0 })
+  const isPanning       = useRef(false)
+  const lastMid         = useRef({ x: 0, y: 0 })
+  const stageRef        = useRef<any>(null)
+
+  // Базовый масштаб (fit в окно)
+  const baseScale = Math.min(drawW / L, (CANVAS_H - PAD_T - PAD_B) / W_room)
+
+  // Итоговый масштаб с учётом зума
+  const scale = baseScale * zoom
   const W = L * scale
   const H = W_room * scale
-  const stageH = H + PAD_T + PAD_B
+  const stageH = CANVAS_H
 
-  // ── Профиль ПП 60×27: визуальная толщина в px ──
-  const PP_W = Math.max(3, Math.min(6, scale * 60 / 1000))  // ~60мм в масштабе, мин 3px
-  const PN_W = Math.max(2, Math.min(4, scale * 28 / 1000))  // ~28мм
+  // Сброс зума при смене помещения
+  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [form.roomLengthMm, form.roomWidthMm])
 
-  // ── Основные профили (вдоль X, шаг c) ──
+  // Обработчик колёсика — зум к точке курсора
+  function handleWheel(e: any) {
+    e.evt.preventDefault()
+    const stage = stageRef.current
+    if (!stage) return
+    const oldScale = zoom
+    const pointer  = stage.getPointerPosition()
+    if (!pointer) return
+    // Точка в координатах чертежа (без учёта PAD)
+    const mouseX = (pointer.x - PAD_L - pan.x) / (baseScale * oldScale)
+    const mouseY = (pointer.y - PAD_T - pan.y) / (baseScale * oldScale)
+    const dir    = e.evt.deltaY > 0 ? -1 : 1
+    const factor = 1 + dir * 0.12
+    const newZoom = Math.min(10, Math.max(0.3, oldScale * factor))
+    // Корректируем пан чтобы точка под курсором не сдвинулась
+    const newPanX = pointer.x - PAD_L - mouseX * baseScale * newZoom
+    const newPanY = pointer.y - PAD_T - mouseY * baseScale * newZoom
+    setZoom(newZoom)
+    setPan({ x: newPanX, y: newPanY })
+  }
+
+  // Средняя кнопка — панорамирование
+  function handleMouseDown(e: any) {
+    if (e.evt.button === 1) {  // средняя кнопка
+      e.evt.preventDefault()
+      isPanning.current = true
+      lastMid.current   = { x: e.evt.clientX, y: e.evt.clientY }
+    }
+  }
+  function handleMouseMove(e: any) {
+    if (!isPanning.current) return
+    const dx = e.evt.clientX - lastMid.current.x
+    const dy = e.evt.clientY - lastMid.current.y
+    lastMid.current = { x: e.evt.clientX, y: e.evt.clientY }
+    setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }))
+  }
+  function handleMouseUp(e: any) {
+    if (e.evt.button === 1) isPanning.current = false
+  }
+
+  // ── Профили ──
+  const PP_W = Math.max(3, Math.min(10, scale * 60 / 1000))
+  const PN_W = Math.max(2, Math.min(6,  scale * 28 / 1000))
+
+  // ── Основные профили (X, шаг c) ──
   const stepC = form.stepC
   const mainPosX: number[] = []
-  let x0 = shiftMainMm % stepC
-  if (x0 === 0) x0 = 0
+  const x0 = shiftMainMm % stepC
   for (let x = x0; x <= L; x += stepC) mainPosX.push(x * scale)
 
-  // ── Несущие профили (поперёк Y, шаг b=500) ──
+  // ── Несущие профили (Y, шаг b=500) ──
   const stepB = 500
   const bearingPosY: number[] = []
-  let y0 = shiftBearingMm % stepB
+  const y0 = shiftBearingMm % stepB
   for (let y = y0; y <= W_room; y += stepB) bearingPosY.push(y * scale)
 
-  // ── Подвесы (на основных профилях, шаг a из таблицы) ──
+  // ── Подвесы ──
   const stepA = layout?.stepA ?? 1000
   const hangers: { x: number; y: number }[] = []
-  for (const px of mainPosX) {
-    for (let ya = stepA / 2; ya < W_room; ya += stepA) {
-      hangers.push({ x: px, y: ya * scale })
+  // Рисуем подвесы только если их не слишком много (иначе каша)
+  const hangerCount = mainPosX.length * Math.ceil(W_room / stepA)
+  const showHangers = hangerCount <= 200
+  if (showHangers) {
+    for (const px of mainPosX) {
+      for (let ya = stepA / 2; ya < W_room; ya += stepA) {
+        hangers.push({ x: px, y: ya * scale })
+      }
     }
   }
 
   // ── Листы ГКЛ (шаг 4) ──
   const sheets: { x: number; y: number; w: number; h: number; isCut: boolean }[] = []
   if (step === 4 && layout) {
-    const shiftX = 0
     let sy = 0
     while (sy < W_room) {
       const rh = Math.min(layout.sheetW, W_room - sy)
-      let sx = shiftX
+      let sx = 0
       while (sx < L) {
         const cw = Math.min(layout.sheetL, L - sx)
         const isCut = rh < layout.sheetW || cw < layout.sheetL
@@ -455,57 +514,105 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     }
   }
 
-  // ── Шкала X (основные профили, сверху) ──
+  // ── Шкала X — пересчитываем с учётом зума/пана ──
+  // Показываем только те профили что видны
   const xBounds = [0, ...mainPosX.map(px => px / scale), L]
   const xSpans: { x: number; w: number; lbl: string }[] = []
   for (let i = 0; i < xBounds.length - 1; i++) {
     const a = xBounds[i], b = xBounds[i + 1], span = b - a
-    if (span * scale > 24) xSpans.push({ x: a * scale, w: span * scale, lbl: `${Math.round(span)}` })
+    const wPx = span * scale
+    if (wPx > 20) xSpans.push({ x: a * scale, w: wPx, lbl: `${Math.round(span)}` })
   }
 
-  // ── Шкала Y (несущие профили, слева) ──
+  // ── Шкала Y ──
   const yBounds = [0, ...bearingPosY.map(py => py / scale), W_room]
   const ySpans: { y: number; h: number; lbl: string }[] = []
   for (let i = 0; i < yBounds.length - 1; i++) {
     const a = yBounds[i], b = yBounds[i + 1], span = b - a
-    if (span * scale > 18) ySpans.push({ y: a * scale, h: span * scale, lbl: `${Math.round(span)}` })
+    const hPx = span * scale
+    if (hPx > 16) ySpans.push({ y: a * scale, h: hPx, lbl: `${Math.round(span)}` })
   }
 
+  // Смещение чертежа с учётом пана (ограничиваем чтоб не уйти слишком далеко)
+  const offX = Math.max(-(W * zoom), Math.min(drawW, pan.x))
+  const offY = Math.max(-(H * zoom), Math.min(CANVAS_H - PAD_T, pan.y))
+
   return (
-    <Stage width={canvasW} height={stageH}>
+    <div style={{ position: 'relative' }}>
+      {/* Подсказка по управлению */}
+      <div style={{ position: 'absolute', top: 4, right: 8, fontSize: 11,
+        color: C.muted, pointerEvents: 'none', zIndex: 1 }}>
+        🖱 колёсико — зум · зажать колёсико — двигать
+        {zoom !== 1 && (
+          <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }) }}
+            style={{ marginLeft: 8, fontSize: 11, padding: '1px 6px',
+              border: `1px solid ${C.border}`, borderRadius: 4,
+              background: C.bg, cursor: 'pointer', color: C.accent,
+              pointerEvents: 'all' }}>
+            сброс
+          </button>
+        )}
+      </div>
+    <Stage ref={stageRef} width={canvasW} height={stageH}
+      onWheel={handleWheel}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      style={{ cursor: isPanning.current ? 'grabbing' : 'default' }}>
+      {/* ── Шкала X сверху — фиксированная, не двигается с паном ── */}
       <Layer x={PAD_L} y={PAD_T}>
+        <Line points={[0, -PAD_T + 10, canvasW - PAD_L - PAD_R, -PAD_T + 10]}
+          stroke={C.scaleLine} strokeWidth={1} />
+        {xSpans.map((s, i) => {
+          const sx = s.x + offX
+          if (sx + s.w < 0 || sx > canvasW - PAD_L) return null
+          return (
+            <Group key={`xs${i}`}>
+              <Line points={[sx, -PAD_T + 5, sx, -PAD_T + 15]} stroke={C.scaleLine} strokeWidth={1.5} />
+              <Line points={[sx + s.w, -PAD_T + 5, sx + s.w, -PAD_T + 15]} stroke={C.scaleLine} strokeWidth={1.5} />
+              <Text x={sx} y={-PAD_T + 16} width={s.w} align="center"
+                text={s.lbl} fontSize={10} fill={C.ppMain} fontStyle="bold" />
+            </Group>
+          )
+        })}
+        {mainPosX.filter((_, i) => i > 0).map((px, i) => {
+          const sx = px + offX
+          if (sx < -20 || sx > canvasW - PAD_L + 20) return null
+          return (
+            <Text key={`xp${i}`} x={sx - 20} y={-PAD_T + 1} width={40} align="center"
+              text={`${Math.round(px / scale)}`} fontSize={9} fill={C.scaleText} />
+          )
+        })}
+      </Layer>
 
-        {/* ── Шкала X сверху (основные профили) ── */}
-        <Line points={[0, -PAD_T + 10, W, -PAD_T + 10]} stroke={C.scaleLine} strokeWidth={1} />
-        {xSpans.map((s, i) => (
-          <Group key={`xs${i}`}>
-            <Line points={[s.x, -PAD_T + 5, s.x, -PAD_T + 15]} stroke={C.scaleLine} strokeWidth={1.5} />
-            <Line points={[s.x + s.w, -PAD_T + 5, s.x + s.w, -PAD_T + 15]} stroke={C.scaleLine} strokeWidth={1.5} />
-            <Text x={s.x} y={-PAD_T + 16} width={s.w} align="center"
-              text={s.lbl} fontSize={10} fill={C.ppMain} fontStyle="bold" />
-          </Group>
-        ))}
-        {/* Накопительные позиции основных профилей */}
-        {mainPosX.filter((_, i) => i > 0).map((px, i) => (
-          <Text key={`xp${i}`} x={px - 20} y={-PAD_T + 1} width={40} align="center"
-            text={`${Math.round(px / scale)}`} fontSize={9} fill={C.scaleText} />
-        ))}
+      {/* ── Шкала Y слева — фиксированная ── */}
+      <Layer x={PAD_L} y={PAD_T}>
+        <Line points={[-PAD_L + 10, 0, -PAD_L + 10, stageH - PAD_T]}
+          stroke={C.scaleLine} strokeWidth={1} />
+        {ySpans.map((s, i) => {
+          const sy = s.y + offY
+          if (sy + s.h < 0 || sy > stageH - PAD_T) return null
+          return (
+            <Group key={`ys${i}`}>
+              <Line points={[-PAD_L + 5, sy, -PAD_L + 15, sy]} stroke={C.scaleLine} strokeWidth={1.5} />
+              <Line points={[-PAD_L + 5, sy + s.h, -PAD_L + 15, sy + s.h]} stroke={C.scaleLine} strokeWidth={1.5} />
+              <Text x={-PAD_L + 16} y={sy + s.h / 2 - 5} width={28}
+                text={s.lbl} fontSize={9} fill={C.ppBearing} fontStyle="bold" />
+            </Group>
+          )
+        })}
+        {bearingPosY.filter((_, i) => i > 0).map((py, i) => {
+          const sy = py + offY
+          if (sy < -10 || sy > stageH - PAD_T + 10) return null
+          return (
+            <Text key={`yp${i}`} x={-PAD_L + 1} y={sy - 6} width={PAD_L - 18} align="right"
+              text={`${Math.round(py / scale)}`} fontSize={9} fill={C.scaleText} />
+          )
+        })}
+      </Layer>
 
-        {/* ── Шкала Y слева (несущие профили) ── */}
-        <Line points={[-PAD_L + 10, 0, -PAD_L + 10, H]} stroke={C.scaleLine} strokeWidth={1} />
-        {ySpans.map((s, i) => (
-          <Group key={`ys${i}`}>
-            <Line points={[-PAD_L + 5, s.y, -PAD_L + 15, s.y]} stroke={C.scaleLine} strokeWidth={1.5} />
-            <Line points={[-PAD_L + 5, s.y + s.h, -PAD_L + 15, s.y + s.h]} stroke={C.scaleLine} strokeWidth={1.5} />
-            <Text x={-PAD_L + 16} y={s.y + s.h / 2 - 5} width={28}
-              text={s.lbl} fontSize={9} fill={C.ppBearing} fontStyle="bold" />
-          </Group>
-        ))}
-        {/* Накопительные позиции несущих профилей */}
-        {bearingPosY.filter((_, i) => i > 0).map((py, i) => (
-          <Text key={`yp${i}`} x={-PAD_L + 1} y={py - 6} width={PAD_L - 18} align="right"
-            text={`${Math.round(py / scale)}`} fontSize={9} fill={C.scaleText} />
-        ))}
+      {/* ── Основной слой чертежа — двигается с паном ── */}
+      <Layer x={PAD_L + offX} y={PAD_T + offY}>
 
         {/* ── Фон помещения ── */}
         <Rect x={0} y={0} width={W} height={H} fill="#eef2f7"
@@ -575,18 +682,20 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
           ))
         )}
 
-        {/* ── Размерные подписи ── */}
-        <Text x={W / 2 - 25} y={-PAD_T + 1} width={50} align="center"
-          text={`${L} мм`} fontSize={10} fill={C.muted} />
-        <Text x={-PAD_L + 1} y={H / 2} text={`${W_room} мм`}
-          fontSize={10} fill={C.muted} rotation={-90} offsetY={-3} />
-
         {/* ── Рамка поверх ── */}
         <Rect x={0} y={0} width={W} height={H}
           fill="transparent" stroke={C.ppMain} strokeWidth={2} />
 
+        {/* Подсказка если подвесов слишком много для отображения */}
+        {!showHangers && step >= 2 && (
+          <Text x={W / 2 - 80} y={H / 2 - 8} width={160} align="center"
+            text={`Подвесы: приблизьте чертёж`}
+            fontSize={11} fill={C.hanger} />
+        )}
+
       </Layer>
     </Stage>
+    </div>
   )
 }
 
