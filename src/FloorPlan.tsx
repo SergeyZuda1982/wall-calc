@@ -546,6 +546,36 @@ export default function FloorPlan() {
         dist(pt.x, pt.y, chainStartPt.x, chainStartPt.y) <= SNAP_PX
 
       if (!drawing) {
+        // ── Клик на endpoint существующей линии → переактивация ──────────
+        // Ищем линию, у которой конец (x2,y2) или начало (x1,y1) рядом с кликом
+        const hitLine = lines.find(l =>
+          dist(pt.x, pt.y, l.x2, l.y2) <= SNAP_PX ||
+          dist(pt.x, pt.y, l.x1, l.y1) <= SNAP_PX
+        )
+        if (hitLine) {
+          // Определяем: кликнули на x2 или x1?
+          const hitEnd2 = dist(pt.x, pt.y, hitLine.x2, hitLine.y2) <= SNAP_PX
+          // Противоположный конец = новое начало рисования
+          const anchor = hitEnd2
+            ? { x: hitLine.x1, y: hitLine.y1 }
+            : { x: hitLine.x2, y: hitLine.y2 }
+          // Удаляем линию
+          removePlanLine(hitLine.id)
+          // Корректируем цепочку
+          const newChainIds = chainLineIds.filter(id => id !== hitLine.id)
+          setChainLineIds(newChainIds)
+          // Если удалили первую линию цепочки — обновляем chainStartPt
+          if (chainLineIds[0] === hitLine.id) {
+            const newFirst = newChainIds.length > 0
+              ? lines.find(l => l.id === newChainIds[0])
+              : null
+            setChainStartPt(newFirst ? { x: newFirst.x1, y: newFirst.y1 } : anchor)
+          }
+          // Начинаем рисование от противоположного конца
+          setDrawing({ x1: anchor.x, y1: anchor.y })
+          return
+        }
+
         if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
 
         // Если кликнули рядом с концом последней линии цепочки — продолжаем её,
@@ -614,7 +644,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, scaleStep, orthoMode, addPlanLine])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, scaleStep, orthoMode, addPlanLine, removePlanLine])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.cancelBubble = true
