@@ -8,13 +8,15 @@
  * Логика рисования/редактирования — без изменений.
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { Stage, Layer, Line, Circle, Text, Rect, Group } from 'react-konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour } from './types'
 import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
+import { computeWallJoins } from './core/wallJoin'
+import type { WallForJoin } from './core/wallJoin'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -753,6 +755,26 @@ export default function FloorPlan() {
   const previewY2    = previewPt?.y ?? 0
   // allPoints убраны — snap-точки на холсте не рисуются
 
+  // ── Wall join: скорректированные точки для стыков ────────────────────────
+  const wallJoins = useMemo(() => {
+    const walls: WallForJoin[] = []
+    lines.forEach((l, idx) => {
+      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
+      const hasSpec = !!(l.spec?.material)
+      const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
+      if (thicknessPx <= 3) return
+      const dx = l.x2 - l.x1, dy = l.y2 - l.y1
+      if (Math.sqrt(dx * dx + dy * dy) < 1) return
+      walls.push({
+        id: l.id,
+        x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2,
+        halfPx: thicknessPx / 2,
+        createdIndex: idx,
+      })
+    })
+    return computeWallJoins(walls)
+  }, [lines, scaleMmPx])
+
   // ── Статус конструкций ────────────────────────────────────────────────────
   // Статус хранится в label через суффикс или через будущие поля
   // Сейчас используем простую заглушку — все "Не начата"
@@ -1165,16 +1187,32 @@ export default function FloorPlan() {
 
                     if (useDouble) {
                       const half = thicknessPx / 2
-                      const nx = -dy / len * half
-                      const ny =  dx / len * half
                       const hitW = Math.max(28, thicknessPx + 8)
-                      // Четыре угла прямоугольника по часовой стрелке:
-                      // A(x1+nx,y1+ny) → B(x2+nx,y2+ny) → C(x2-nx,y2-ny) → D(x1-nx,y1-ny)
-                      const ax = l.x1+nx, ay = l.y1+ny
-                      const bx = l.x2+nx, by = l.y2+ny
-                      const cx = l.x2-nx, cy = l.y2-ny
-                      const dx2 = l.x1-nx, dy2 = l.y1-ny
                       const fill = isSelected ? stroke + '30' : inContour ? '#ff980022' : vis.fillColor
+                      const sw = vis.strokeWidth
+
+                      // ── Wall join: берём скорректированные точки если есть ──
+                      const jw = wallJoins.get(l.id)
+
+                      // Для заливки: расширенная ось → прямоугольник без дыр
+                      const fax1 = jw ? jw.ax1 : l.x1, fay1 = jw ? jw.ay1 : l.y1
+                      const fax2 = jw ? jw.ax2 : l.x2, fay2 = jw ? jw.ay2 : l.y2
+                      const fdx = fax2-fax1, fdy = fay2-fay1
+                      const flen = Math.sqrt(fdx*fdx+fdy*fdy)
+                      const fnx = flen > 0 ? -fdy/flen*half : 0
+                      const fny = flen > 0 ?  fdx/flen*half : 0
+                      const fAx=fax1+fnx, fAy=fay1+fny
+                      const fBx=fax2+fnx, fBy=fay2+fny
+                      const fCx=fax2-fnx, fCy=fay2-fny
+                      const fDx=fax1-fnx, fDy=fay1-fny
+
+                      // Для граничных линий: точки join (или дефолт)
+                      const p1p = jw ? jw.p1p : { x: l.x1+(-dy/len*half), y: l.y1+(dx/len*half) }
+                      const p2p = jw ? jw.p2p : { x: l.x2+(-dy/len*half), y: l.y2+(dx/len*half) }
+                      const p1m = jw ? jw.p1m : { x: l.x1-(-dy/len*half), y: l.y1-(dx/len*half) }
+                      const p2m = jw ? jw.p2m : { x: l.x2-(-dy/len*half), y: l.y2-(dx/len*half) }
+                      const cap1 = jw ? jw.cap1 : true
+                      const cap2 = jw ? jw.cap2 : true
 
                       return (
                         <Group key={l.id}
@@ -1182,16 +1220,17 @@ export default function FloorPlan() {
                           onTouchStart={e => handleLinePointerDown(l.id, e)}
                           onMouseEnter={() => setHoveredId(l.id)}
                           onMouseLeave={() => setHoveredId(null)}>
+                          {/* Хитзона по оси */}
                           <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke="transparent" strokeWidth={hitW} hitStrokeWidth={hitW} />
-                          {/* Заливка — замкнутый прямоугольник A→B→C→D */}
-                          <Line points={[ax,ay, bx,by, cx,cy, dx2,dy2]} closed fill={fill} stroke="none" listening={false} />
+                          {/* Заливка — прямоугольник по расширенной оси */}
+                          <Line points={[fAx,fAy, fBx,fBy, fCx,fCy, fDx,fDy]} closed fill={fill} stroke="none" listening={false} />
                           {/* Штриховка существующих конструкций */}
                           {l.type === 'wall_existing' && (() => {
-                            const hatch = calcHatch(ax, ay, bx, by, cx, cy, dx2, dy2, 8)
+                            const hatch = calcHatch(fAx, fAy, fBx, fBy, fCx, fCy, fDx, fDy, 8)
                             return (
                               <Group clipFunc={(ctx: any) => {
-                                ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by)
-                                ctx.lineTo(cx, cy); ctx.lineTo(dx2, dy2); ctx.closePath()
+                                ctx.beginPath(); ctx.moveTo(fAx, fAy); ctx.lineTo(fBx, fBy)
+                                ctx.lineTo(fCx, fCy); ctx.lineTo(fDx, fDy); ctx.closePath()
                               }} listening={false}>
                                 {hatch.map((pts, i) => (
                                   <Line key={i} points={pts} stroke="#78909c" strokeWidth={0.8} opacity={0.5} listening={false} />
@@ -1199,10 +1238,13 @@ export default function FloorPlan() {
                               </Group>
                             )
                           })()}
-                          {/* Две параллельных линии (стороны стены) */}
-                          <Line points={[ax,ay, bx,by]} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
-                          <Line points={[dx2,dy2, cx,cy]} stroke={stroke} strokeWidth={vis.strokeWidth} lineCap="square" dash={dash} listening={false} />
-                          {/* Метка: внутри тела если толстая стена, иначе над линией */}
+                          {/* Граничные линии Side+ и Side− с join-точками */}
+                          <Line points={[p1p.x,p1p.y, p2p.x,p2p.y]} stroke={stroke} strokeWidth={sw} lineCap="butt" dash={dash} listening={false} />
+                          <Line points={[p1m.x,p1m.y, p2m.x,p2m.y]} stroke={stroke} strokeWidth={sw} lineCap="butt" dash={dash} listening={false} />
+                          {/* Торцы только на свободных концах */}
+                          {cap1 && <Line points={[p1p.x,p1p.y, p1m.x,p1m.y]} stroke={stroke} strokeWidth={sw} lineCap="square" listening={false} />}
+                          {cap2 && <Line points={[p2p.x,p2p.y, p2m.x,p2m.y]} stroke={stroke} strokeWidth={sw} lineCap="square" listening={false} />}
+                          {/* Метка */}
                           {(() => {
                             const lineAngle = Math.atan2(dy, dx) * 180 / Math.PI
                             const rot = (lineAngle > 90 || lineAngle < -90) ? lineAngle + 180 : lineAngle
@@ -1219,13 +1261,13 @@ export default function FloorPlan() {
                                 fill={stroke} align="center" fontStyle="bold" listening={false} />
                             ) : null
                           })()}
-                          {/* Размерная линия над стеной — только при hover или select */}
+                          {/* Размерная линия — только при hover или select */}
                           {!inErase && (isSelected || hoveredId === l.id) && (
                             <DimLineShapes x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
                               lengthMm={l.lengthMm} offsetPx={half + 14}
                               dimColor={isSelected ? stroke : '#999'} />
                           )}
-                          {/* Прозрачная хитзона для drag-handle при select — без видимых маркеров */}
+                          {/* Прозрачная хитзона для drag-handle при select */}
                           {isSelected && mode === 'select' && <>
                             <Circle x={l.x1} y={l.y1} radius={12} fill="transparent" stroke="transparent"
                               onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
