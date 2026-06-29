@@ -1,13 +1,15 @@
-# wall-calc — конспект проекта (актуальный на b51579b, 28.06.2026)
+# wall-calc — конспект проекта (актуальный на 1f93d4b, 29.06.2026)
 
 **Репо:** github.com/SergeyZuda1982/wall-calc
 **Сайт:** https://sergeyzuda1982.github.io/wall-calc/
-**Стек:** React + TypeScript + Vite + react-konva + Zustand + Supabase + vitest
+**Стек:** React + TypeScript + Vite + react-konva + Zustand + vitest
 **Хостинг:** GitHub Pages (автодеплой через Actions при git push)
 **GitHub token:** выдаётся пользователем в чат при необходимости пуша (~30 дней)
 
 ⚠️ **ОБЯЗАТЕЛЬНОЕ ПРАВИЛО:** перед любой правкой — `git fetch origin && git reset --hard origin/main`.
 Не доверяй конспектам из старых чатов на слово — сверяй с `git log -1` и реальными файлами.
+
+⚠️ **Supabase не используем.** Авторизация по номеру телефона недоступна, данные должны храниться в РФ. Файлы Supabase в репо пока не трогаем, но логику на них не строим. Альтернатива (свой бэкенд / localStorage-first) — отдельная задача.
 
 ---
 
@@ -21,7 +23,7 @@
 ```
 Объект
 └── Помещение (замкнутый контур wall_existing)
-    ├── Стены периметра (wall_existing) — кирпич/блок/монолит/ГКЛ/остекление
+    ├── Стены периметра (wall_existing) — кирпич/блок/монолит/остекление
     │   └── Облицовки (wall_lining) — привязаны к стене периметра
     ├── Перегородки (wall_new) — внутри периметра
     ├── Пол — свойство помещения, площадь = Room.areaM2 (автоматически)
@@ -36,85 +38,62 @@
 
 ---
 
-## СЛЕДУЮЩАЯ ЗАДАЧА: материал до рисования + визуал
+## Что сделано в этом чате (коммиты 64ac473 → 1f93d4b)
 
-### Что меняем в левой панели
+### 1. Левая панель — дерево материалов (64ac473)
+- `drawSpec: PlanLineSpec | null` — новое состояние, хранит материал+подтип выбранные ДО рисования
+- `expandedMaterial: string | null` — аккордеон в левой панели
+- Левая панель разбита на секции: Существующие стены / Перегородки / Облицовки / Потолки / Полы
+- Материал без подтипов → клик = сразу draw mode
+- Материал с подтипами → клик раскрывает список, клик по подтипу = draw mode
+- `addPlanLine` везде получает `spec: drawSpec ?? undefined`
+- Параллельная линия копирует `spec` от источника
+- Preview-линия и курсор снапа используют цвет из `getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype)`
+- Убраны `LINE_LABELS`, `LINE_ICONS` (более не нужны)
+- TAXONOMY экспортируется из `constructionTaxonomy.ts` для левой панели
+- **179 тестов**
 
-Сейчас: тип → потом материал в инспекторе справа.
-Должно быть: выбрал материал = выбрал всё, сразу рисуешь с нужным визуалом.
+### 2. Управление рисованием — только ЛКМ, ПКМ = отмена (fbae0b6)
+- `handleStageClick`: только `button === 0` (левая кнопка)
+- После окончания линии `setDrawing(null)` — не автостарт следующей
+- `handleStageContextMenu`: ПКМ сбрасывает `drawing` / `chainStartPt` / `chainLineIds`
+- При новом клике в draw mode: если рядом с концом последней линии цепочки → продолжаем; иначе новая цепочка
+- Замыкание комнаты (зелёный кружок) работает как раньше
 
-**Структура левой панели:**
-```
-СУЩЕСТВУЮЩИЕ КОНСТРУКЦИИ
-  🧱 Кирпич
-  ⬜ Газоблок
-  🔲 Монолит
-  🪟 Остекление
-  📋 ГКЛ (перегородка как существующая)
+### 3. Shift+клик на endpoint — переактивация линии (30bab14)
+- В draw mode (когда `drawing === null`): Shift+ЛКМ рядом с концом линии
+- Линия удаляется, рисование начинается от противоположного конца
+- Удобно для: укоротить / удлинить / развернуть без переключения в select
+- Обычный клик — без изменений (нет конфликта с чертежом)
+- Порог снапа при проверке тоже `snapThresh` (экранные пиксели)
 
-ПЕРЕГОРОДКИ
-  ГКЛ · 600мм  ← шаг профиля выбран до рисования
-  ГКЛ · 400мм
-  ГКЛ · 300мм
-  Пазогребень
+### 4. Толщины для wall_existing (ac756f7)
+В `constructionTaxonomy.ts` добавлены подтипы с реальными мм:
+- **Кирпич**: 120 / 250 / 380 / 510 / 640мм (½…2½ кирпича)
+- **Блок / Газобетон**: 100 / 150 / 200 / 250 / 300 / 400мм (убран Ракушняк)
+- **Монолит / Бетон**: 150 / 180 / 200 / 250 / 300мм
+- **Тип неизвестен**: без подтипов → одиночная линия
 
-ОБЛИЦОВКИ
-  ГКЛ на профиле
-  ГКЛ на клею
-```
+`getWallThicknessMm` для `wall_existing`: `subtype → parseInt(subtype)`;
+fallback для старых линий без подтипа: кирпич 250, остальное 200.
 
-### Визуал материалов на холсте
+### 5. Минимальная длина линии (13426a0)
+- Было: `d < 5px` → при масштабе 140мм/px минимум ~700мм
+- Стало: `lengthMm < 10` → минимум 10мм при любом масштабе
 
-**Кирпич** — двойная линия, штриховка кирпичным паттерном, красновато-коричневый
-**Газоблок/пеноблок** — двойная линия, прямоугольные ячейки, серый
-**Монолит** — толстая двойная линия, точечная штриховка, тёмно-серый
-**ГКЛ (существующая)** — тонкая двойная линия, серый
-**Остекление** — одиночная тонкая линия, голубой, без заливки
+### 6. Fix: stale closure stagePos/stageScale (5cd48e7)
+`handleStageClick` и `handleMouseMove` захватывали `stagePos`/`stageScale`
+из замыкания момента создания useCallback → после зума/пана координаты клика
+считались неверно → начало линии ставилось не там.
 
-**Шаг профиля перегородки** (визуализируется внутри тела):
-```
-600мм:  ║    |    |    |    ║
-400мм:  ║  |  |  |  |  |  ║
-300мм:  ║ | | | | | | | | ║
-```
-Засечки рисуются в масштабе холста (scaleMmPerPx). Шаг сразу идёт в расчёт — не вводится повторно.
+**Исправление:** `stagePosRef` / `stageScaleRef` обновляются при каждом рендере,
+`getPos` и обработчики движения читают через рефы — всегда актуально.
 
-### Как это меняет код
-
-- `drawType` сейчас = `PlanLineType`. Нужен `drawSpec: PlanLineSpec | null` — материал+подтип выбранные до рисования
-- При `addPlanLine` сразу передаётся `spec: drawSpec`
-- `getLineVisual` уже умеет рисовать по spec — ничего не ломается
-- В левой панели: тип разворачивается в список материалов → выбор = `setDrawSpec`
-
----
-
-## Что сделано (этот и предыдущий чаты)
-
-### Трёхколоночный UI (до этого чата)
-Левая панель (220px) + центр (холст + таблица) + правая панель (300px, инспектор).
-Это уже реализовано и стабильно.
-
-### Визуал холста (2b6e522)
-- `DimLineShapes` — размерная линия с засечками, только при hover/select
-- Штриховка 45° для wall_existing через clipFunc + calcHatch
-- Snap-точки только при наведении, зелёный курсор при snap
-- `selectedId` (холст) / `inspectorId` (правая панель) — разделены
-
-### Room — автозамыкание периметра (d0119d2, 788830c)
-- Тип Room: lineIds, areaM2, perimeterMm, label, templateName?
-- chainStartPt (зелёный кружок) + chainLineIds (синхронно через addPlanLine→id)
-- addPlanLine возвращает string (id) — нет race conditions с setTimeout
-- Рендер Room: заливка + имя + площадь + периметр по центру
-
-### Зум и панорамирование (cba4b32)
-- Колёсико: zoom ×1.12/шаг, диапазон 0.1–20, к точке под курсором
-- Space+ЛКМ или средняя кнопка: панорамирование
-- stageScale/stagePos — визуальный zoom, мировые px и scaleMmPerPx не меняются
-- Адаптивная сетка: только в видимой области, strokeWidth = 1/stageScale
-
-### Ограничение черчения (cba4b32)
-- pointInPolygon (ray casting)
-- isPointAllowed: wall_existing — везде, остальное — только внутри Room
+### 7. Fix: снап в экранных пикселях (1f93d4b)
+- Было: `SNAP_PX = 18` мировых пикселей → при масштабе 38мм/px = 684мм радиус снапа
+- Стало: `SNAP_SCREEN_PX = 18 / stageScale` мировых пикселей = всегда 18 экранных
+- Исправлено везде: `applySnap`, `handleMove` (draw + drag end1/end2/line), `handleStageClick`
+- `snapPoint` принимает опциональный `threshPx` параметр
 
 ---
 
@@ -122,8 +101,9 @@
 
 ```typescript
 interface PlanLineSpec {
-  material: string   // 'gkl' | 'brick' | 'gasblock' | 'concrete' | 'glass' | ...
-  subtype?: string   // 'ps75' | '250' | 'step600' | ...
+  material: string   // 'gkl' | 'brick' | 'block' | 'concrete' | 'glass' | 'unknown'
+  subtype?: string   // для wall_new: 'ps50'|'ps75'|'ps100'|...
+                     // для wall_existing: '120'|'250'|'380'|... (мм числом)
 }
 
 interface PlanLine {
@@ -142,7 +122,7 @@ interface Room {
   areaM2: number       // формула Гаусса
   perimeterMm: number
   label: string
-  templateName?: string  // шаблоны для ЖК
+  templateName?: string
 }
 
 interface FloorPlan {
@@ -157,6 +137,7 @@ interface FloorPlan {
 - `getWallThicknessMm(type, material, subtype)` → мм
 - `getLineVisual(type, material, subtype)` → `{ strokeWidth, dash, colorOverride, thicknessMm, fillColor }`
 - `getSpecAbbr(type, material, subtype)` → "ГКЛ·ПС75"
+- `TAXONOMY: Record<PlanLineType, TaxonomyNode[]>` — экспортируется для левой панели
 
 ---
 
@@ -165,50 +146,27 @@ interface FloorPlan {
 ```
 stageScale: число (1 по умолчанию, 0.1–20)
 stagePos: {x, y} — смещение Stage в экранных px
+stagePosRef / stageScaleRef — рефы, всегда актуальны в колбэках
 
 Мир → экран:  screenX = worldX * stageScale + stagePos.x
 Экран → мир:  worldX = (screenX - stagePos.x) / stageScale
 
-Zoom к курсору:
-  mouseWorldX = (sp.x - stagePos.x) / oldScale
-  newPos.x = sp.x - mouseWorldX * newScale
+Snap порог:   SNAP_SCREEN_PX / stageScale  (всегда 18 экранных px)
 ```
 
 ---
 
-## Прогресс-трекинг (концепция, реализация отложена)
+## Управление на холсте
 
-Из обсуждения в другом чате — зафиксировано для проектирования:
-
-- % выполнения считается автоматически по чек-листу этапов
-- У каждого type+material свой набор этапов (progressStages.ts рядом с taxonomy)
-- Роли пользователей с весами (рабочий < прораб < владелец) — кто выставил статус с большим весом, тот выигрывает при конфликте
-- История изменений (кто, когда, этап, вес)
-- Финишная отделка блокируется пока черновая не done
-- Многопользовательность отложена, модель данных проектируем заранее
-- getStatus() сейчас заглушка ('none'), UI статусов уже нарисован
-
-```typescript
-interface ConstructionProgress {
-  lineId: string
-  completedStageIds: string[]
-  percent: number   // derived
-  status: 'none' | 'in_progress' | 'done'   // derived
-  lastChangedBy: { userId: string; roleWeight: number }
-  history: ProgressHistoryEntry[]
-}
-```
-
----
-
-## Текстуры материалов (концепция, частично)
-
-- fillPatternImage в Konva — seamless растровые текстуры по полигону A→B→C→D
-- fillPatternScale подгоняется под scaleMmPerPx (кирпичики реального размера)
-- fillPatternRotation подгоняется под угол линии
-- Источники CC0: Poly Haven (polyhaven.com), ambientCG (ambientcg.com)
-- Для плана нужна текстура "в разрезе" (торец материала), не фасадная кладка
-- Не сделано: выбрать текстуры, положить в src/assets/textures/, заменить fillColor → fillPatternImage
+| Действие | Результат |
+|---|---|
+| ЛКМ (draw mode, drawing=null) | Начало линии |
+| ЛКМ (draw mode, drawing≠null) | Конец линии, drawing=null |
+| Shift+ЛКМ на endpoint | Удалить линию, начать от противоположного конца |
+| ПКМ (draw mode) | Отмена текущего сегмента и цепочки |
+| Space+ЛКМ / СКМ | Панорамирование |
+| Колёсико | Зум к курсору |
+| R | Режим стирания (erase) |
 
 ---
 
@@ -224,15 +182,23 @@ interface ConstructionProgress {
 
 ---
 
+## Следующие задачи (приоритет)
+
+1. **Связать план с расчётным модулем** — перегородка/облицовка на плане → её данные в калькулятор (кнопка "Открыть полный расчёт")
+2. **Закрыть баги**: высота 3000мм хардкод, крайние стойки за периметр
+3. **localStorage-first** хранение (вместо Supabase) — проекты живут в браузере
+
+---
+
 ## Структура файлов
 
 ```
 src/
   types/index.ts
   data/
-    constructionTaxonomy.ts  — материалы + резолверы (ключевой файл)
+    constructionTaxonomy.ts  — TAXONOMY + резолверы (ключевой файл)
     profiles.ts, maxHeight.ts, liningMaxHeight.ts, ceilingData.ts
-  core/                      — 176 тестов (все зелёные)
+  core/                      — 179 тестов (все зелёные)
     calcResults.ts, calcLining.ts, calcCeiling.ts
     calcSheetLayout.ts, calcProjectSheetLayout.ts
     calcScrews.ts, calcStudMaterial.ts
@@ -245,9 +211,9 @@ src/
     useAuthStore.ts, useProjectsStore.ts
   hooks/
     useWallCalc.ts, useContainerWidth.ts, useSupabaseSync.ts
-  lib/supabase.ts
+  lib/supabase.ts          — не используем, не трогаем
   App.tsx, CeilingCalc.tsx, LiningCalc.tsx
-  FloorPlan.tsx            — ~1580 строк, главный файл плана
+  FloorPlan.tsx            — ~1620 строк, главный файл плана
 ```
 
 ---
@@ -258,6 +224,6 @@ src/
 git fetch origin && git reset --hard origin/main
 npm install
 npm run build   # без ошибок TS
-npm test        # 176 тестов
+npm test        # 179 тестов
 git push        # нужен токен в remote URL
 ```
