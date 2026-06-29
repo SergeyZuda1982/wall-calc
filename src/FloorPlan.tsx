@@ -751,7 +751,7 @@ export default function FloorPlan() {
   const previewPt    = cursor ?? (drawing ? { x: drawing.x1, y: drawing.y1 } : null)
   const previewX2    = previewPt?.x ?? 0
   const previewY2    = previewPt?.y ?? 0
-  const allPoints    = lines.flatMap(l => [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }])
+  // allPoints убраны — snap-точки на холсте не рисуются
 
   // ── Статус конструкций ────────────────────────────────────────────────────
   // Статус хранится в label через суффикс или через будущие поля
@@ -1225,18 +1225,15 @@ export default function FloorPlan() {
                               lengthMm={l.lengthMm} offsetPx={half + 14}
                               dimColor={isSelected ? stroke : '#999'} />
                           )}
-                          {/* Кружки на концах: drag-handle при select, hover-точки при наведении */}
-                          {isSelected && mode === 'select' ? <>
-                            <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
+                          {/* Прозрачная хитзона для drag-handle при select — без видимых маркеров */}
+                          {isSelected && mode === 'select' && <>
+                            <Circle x={l.x1} y={l.y1} radius={12} fill="transparent" stroke="transparent"
                               onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
                               onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }} />
-                            <Circle x={l.x2} y={l.y2} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
+                            <Circle x={l.x2} y={l.y2} radius={12} fill="transparent" stroke="transparent"
                               onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }}
                               onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }} />
-                          </> : hoveredId === l.id ? <>
-                            <Circle x={l.x1} y={l.y1} radius={5} fill={stroke} listening={false} />
-                            <Circle x={l.x2} y={l.y2} radius={5} fill={stroke} listening={false} />
-                          </> : null}
+                          </>}
                         </Group>
                       )
                     }
@@ -1268,18 +1265,15 @@ export default function FloorPlan() {
                             lengthMm={l.lengthMm} offsetPx={sw / 2 + 14}
                             dimColor={isSelected ? stroke : '#999'} />
                         )}
-                        {/* Кружки: drag-handle при select, hover-точки при наведении */}
-                        {isSelected && mode === 'select' ? <>
-                          <Circle x={l.x1} y={l.y1} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
+                        {/* Прозрачная хитзона для drag-handle при select — без видимых маркеров */}
+                        {isSelected && mode === 'select' && <>
+                          <Circle x={l.x1} y={l.y1} radius={12} fill="transparent" stroke="transparent"
                             onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
                             onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }} />
-                          <Circle x={l.x2} y={l.y2} radius={9} fill="#fff" stroke={specColor} strokeWidth={2}
+                          <Circle x={l.x2} y={l.y2} radius={12} fill="transparent" stroke="transparent"
                             onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }}
                             onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }} />
-                        </> : hoveredId === l.id ? <>
-                          <Circle x={l.x1} y={l.y1} radius={5} fill={stroke} listening={false} />
-                          <Circle x={l.x2} y={l.y2} radius={5} fill={stroke} listening={false} />
-                        </> : null}
+                        </>}
                       </Group>
                     )
                   })}
@@ -1301,16 +1295,20 @@ export default function FloorPlan() {
                     )
                   })()}
 
-                  {/* Курсор снапа */}
+                  {/* Курсор снапа — крестик вместо круга */}
                   {cursor && mode === 'draw' && (() => {
                     const curVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype)
                     const curColor = curVis.colorOverride ?? LINE_COLORS[drawType]
-                    return snapActive ? (
-                      <Circle x={cursor.x} y={cursor.y} radius={8}
-                        stroke="#4caf50" strokeWidth={2} fill="rgba(76,175,80,0.15)" listening={false} />
-                    ) : (
-                      <Circle x={cursor.x} y={cursor.y} radius={6}
-                        stroke={curColor} strokeWidth={1.5} fill="rgba(255,255,255,0.7)" listening={false} />
+                    const sz = 7 / stageScale
+                    const sw = 1.5 / stageScale
+                    const color = snapActive ? '#4caf50' : curColor
+                    return (
+                      <>
+                        <Line points={[cursor.x - sz, cursor.y, cursor.x + sz, cursor.y]}
+                          stroke={color} strokeWidth={sw} listening={false} />
+                        <Line points={[cursor.x, cursor.y - sz, cursor.x, cursor.y + sz]}
+                          stroke={color} strokeWidth={sw} listening={false} />
+                      </>
                     )
                   })()}
 
@@ -1321,17 +1319,13 @@ export default function FloorPlan() {
                     <Line points={[scalePt1!.x,scalePt1!.y,scalePt2.x,scalePt2.y]} stroke="#ff9800" strokeWidth={2} dash={[4,3]} listening={false} />
                   </>}
 
-                  {/* Стартовая точка цепочки — зелёный кружок замыкания */}
+                  {/* Стартовая точка цепочки — маленькая мировая точка замыкания */}
                   {mode === 'draw' && chainStartPt && drawing && (
-                    <Circle x={chainStartPt.x} y={chainStartPt.y} radius={7}
-                      stroke="#4caf50" strokeWidth={2} fill="rgba(76,175,80,0.2)" listening={false} />
+                    <Circle x={chainStartPt.x} y={chainStartPt.y} radius={4 / stageScale}
+                      stroke="#4caf50" strokeWidth={1.5 / stageScale} fill="rgba(76,175,80,0.4)" listening={false} />
                   )}
 
-                  {/* Точки снапа — только в draw-режиме и только не-активные */}
-                  {mode === 'draw' && allPoints.map((pt, i) => (
-                    <Circle key={i} x={pt.x} y={pt.y} radius={3}
-                      fill="transparent" stroke="#bbb" strokeWidth={1} listening={false} />
-                  ))}
+                  {/* snap-точки концов убраны — они перекрывали конструкции */}
                 </Layer>
               </Stage>
             </div>
