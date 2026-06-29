@@ -546,6 +546,32 @@ export default function FloorPlan() {
         dist(pt.x, pt.y, chainStartPt.x, chainStartPt.y) <= SNAP_PX
 
       if (!drawing) {
+        // ── Shift+клик на endpoint → переактивация линии ─────────────────
+        const shiftHeld = 'shiftKey' in e.evt && e.evt.shiftKey
+        if (shiftHeld) {
+          const hitLine = lines.find(l =>
+            dist(pt.x, pt.y, l.x2, l.y2) <= SNAP_PX ||
+            dist(pt.x, pt.y, l.x1, l.y1) <= SNAP_PX
+          )
+          if (hitLine) {
+            const hitEnd2 = dist(pt.x, pt.y, hitLine.x2, hitLine.y2) <= SNAP_PX
+            const anchor = hitEnd2
+              ? { x: hitLine.x1, y: hitLine.y1 }
+              : { x: hitLine.x2, y: hitLine.y2 }
+            removePlanLine(hitLine.id)
+            const newChainIds = chainLineIds.filter(id => id !== hitLine.id)
+            setChainLineIds(newChainIds)
+            if (chainLineIds[0] === hitLine.id) {
+              const newFirst = newChainIds.length > 0
+                ? lines.find(l => l.id === newChainIds[0])
+                : null
+              setChainStartPt(newFirst ? { x: newFirst.x1, y: newFirst.y1 } : anchor)
+            }
+            setDrawing({ x1: anchor.x, y1: anchor.y })
+            return
+          }
+        }
+
         if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
 
         // Если кликнули рядом с концом последней линии цепочки — продолжаем её,
@@ -614,7 +640,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, scaleStep, orthoMode, addPlanLine])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, scaleStep, orthoMode, addPlanLine, removePlanLine])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.cancelBubble = true
