@@ -628,9 +628,8 @@ export default function FloorPlan() {
 
       } else {
         if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
-        const d = dist(drawing.x1, drawing.y1, pt.x, pt.y)
-        if (d < 5) { setDrawing(null); return }
         const lengthMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
+        if (lengthMm < 10) { setDrawing(null); return }  // < 10мм — не линия, случайный клик
         const label = genLabel(drawType, lines)
         const newId = addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label, spec: drawSpec ?? undefined })
         setChainLineIds(prev => [...prev, newId])
