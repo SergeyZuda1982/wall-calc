@@ -488,6 +488,16 @@ export default function FloorPlan() {
     }
   }
 
+  // ── ПКМ — отмена текущего действия ─────────────────────────────────────
+  function handleStageContextMenu(e: KonvaEventObject<MouseEvent>) {
+    e.evt.preventDefault()
+    if (mode === 'draw') {
+      setDrawing(null)
+      setChainStartPt(null)
+      setChainLineIds([])
+    }
+  }
+
   // ── Ограничение черчения внутри периметра ─────────────────────────────────
   function isPointAllowed(x: number, y: number, type: PlanLineType): boolean {
     if (type === 'wall_existing') return true
@@ -504,6 +514,9 @@ export default function FloorPlan() {
       lineWasClickedRef.current = false
       return
     }
+    // Только ЛКМ (для мышиных событий)
+    if ('button' in e.evt && e.evt.button !== 0) return
+
     const pos = getPos(e)
     if (!pos) return
 
@@ -524,8 +537,20 @@ export default function FloorPlan() {
 
       if (!drawing) {
         if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
+
+        // Если кликнули рядом с концом последней линии цепочки — продолжаем её,
+        // иначе — начинаем новую цепочку
+        const lastChainLine = chainLineIds.length > 0
+          ? lines.find(l => l.id === chainLineIds[chainLineIds.length - 1])
+          : null
+        const continuingChain = lastChainLine &&
+          dist(pt.x, pt.y, lastChainLine.x2, lastChainLine.y2) <= SNAP_PX
+
+        if (!continuingChain) {
+          setChainStartPt({ x: pt.x, y: pt.y })
+          setChainLineIds([])
+        }
         setDrawing({ x1: pt.x, y1: pt.y })
-        if (!chainStartPt) setChainStartPt({ x: pt.x, y: pt.y })
 
       } else if (closingChain) {
         // Замыкание: добавляем последний отрезок до chainStartPt (если нужен)
@@ -533,7 +558,6 @@ export default function FloorPlan() {
         let allLineIds = [...chainLineIds]
 
         if (d >= 5) {
-          // Пользователь не дошёл до начала — добавляем замыкающую линию
           const lengthMm = lineLengthMm(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y, scaleMmPx)
           const label = genLabel(drawType, lines)
           const closingId = addPlanLine({
@@ -554,7 +578,6 @@ export default function FloorPlan() {
               .map(id => storeLines.find(l => l.id === id))
               .filter(Boolean) as PlanLine[]
             if (roomLines.length < 3) return
-            // Строим упорядоченный полигон через extractContourPoints
             const pts = extractContourPoints(finalIds, storeLines)
             const area = polygonAreaM2(pts.length >= 3 ? pts : roomLines.map(l => ({ x: l.x1, y: l.y1 })), scaleMmPx)
             const perimeter = roomLines.reduce((s, l) => s + l.lengthMm, 0)
@@ -570,13 +593,13 @@ export default function FloorPlan() {
       } else {
         if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
         const d = dist(drawing.x1, drawing.y1, pt.x, pt.y)
-        if (d < 5) { setDrawing(null); setChainStartPt(null); setChainLineIds([]); return }
+        if (d < 5) { setDrawing(null); return }
         const lengthMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
         const label = genLabel(drawType, lines)
-        // Синхронно получаем id и добавляем в цепочку
         const newId = addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label, spec: drawSpec ?? undefined })
         setChainLineIds(prev => [...prev, newId])
-        setDrawing({ x1: pt.x, y1: pt.y })
+        // Конец линии — НЕ автостарт следующей, ждём нового клика пользователя
+        setDrawing(null)
       }
       return
     }
@@ -1000,6 +1023,7 @@ export default function FloorPlan() {
                 x={stagePos.x} y={stagePos.y}
                 onClick={handleStageClick} onTap={handleStageClick}
                 onMouseDown={handleStageMouseDown}
+                onContextMenu={handleStageContextMenu}
                 onMouseMove={handleMouseMove} onTouchMove={handleTouchMove}
                 onMouseUp={handlePointerUp} onTouchEnd={handlePointerUp}
                 onWheel={handleWheel}>
