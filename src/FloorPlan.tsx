@@ -13,7 +13,7 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Image as KonvaImage } fr
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening } from './types'
 import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 import { computeWallJoins } from './core/wallJoin'
@@ -122,6 +122,49 @@ function polygonAreaM2(points: { x: number; y: number }[], scaleMmPx: number): n
     area -= points[j].x * points[i].y
   }
   return Math.abs(area) / 2 * (scaleMmPx / 1000) ** 2
+}
+
+interface WallAxisSegment { ax1: number; ay1: number; ax2: number; ay2: number; capStart: boolean; capEnd: boolean }
+interface OpeningRenderInfo { x: number; y: number; opening: PlanOpening }
+
+/**
+ * Разбивает ось стены на сплошные сегменты, исключая проёмы (двери/окна).
+ * fax1/fay1/fax2/fay2 — уже расширенная под wall-join ось (для заливки/стыков),
+ * l.x1/l.y1 — исходное (не расширенное) начало линии, от которого отсчитывается
+ * offsetMm каждого проёма. cap1/cap2 — нужны ли торцы на истинных свободных концах.
+ */
+function computeOpeningSegments(
+  fax1: number, fay1: number, fax2: number, fay2: number,
+  origX1: number, origY1: number,
+  ux: number, uy: number, scaleMmPx: number,
+  openings: PlanOpening[] | undefined,
+  cap1: boolean, cap2: boolean,
+): { segments: WallAxisSegment[]; gaps: OpeningRenderInfo[] } {
+  if (!openings || openings.length === 0) {
+    return { segments: [{ ax1: fax1, ay1: fay1, ax2: fax2, ay2: fay2, capStart: cap1, capEnd: cap2 }], gaps: [] }
+  }
+  const sorted = openings.slice().sort((a, b) => a.offsetMm - b.offsetMm)
+  const segments: WallAxisSegment[] = []
+  const gaps: OpeningRenderInfo[] = []
+
+  let curX = fax1, curY = fay1
+  let curCap = cap1
+
+  for (const op of sorted) {
+    const startPx = op.offsetMm / scaleMmPx
+    const endPx = (op.offsetMm + op.widthMm) / scaleMmPx
+    const gapStartX = origX1 + ux * startPx, gapStartY = origY1 + uy * startPx
+    const gapEndX   = origX1 + ux * endPx,   gapEndY   = origY1 + uy * endPx
+
+    segments.push({ ax1: curX, ay1: curY, ax2: gapStartX, ay2: gapStartY, capStart: curCap, capEnd: true })
+    gaps.push({ x: (gapStartX + gapEndX) / 2, y: (gapStartY + gapEndY) / 2, opening: op })
+
+    curX = gapEndX; curY = gapEndY; curCap = true
+  }
+  segments.push({ ax1: curX, ay1: curY, ax2: fax2, ay2: fay2, capStart: curCap, capEnd: cap2 })
+
+  // Отбрасываем вырожденные (нулевой длины) сегменты — проём впритык к концу стены
+  return { segments: segments.filter(s => dist(s.ax1, s.ay1, s.ax2, s.ay2) > 0.5), gaps }
 }
 
 function extractContourPoints(lineIds: string[], lines: PlanLine[]) {
@@ -351,6 +394,10 @@ export default function FloorPlan() {
   const [showScaleDialog, setShowScaleDialog] = useState(false)
   // Уточнение масштаба по уже начерченной линии
   const [recalInput, setRecalInput]           = useState('')
+  // Добавление проёма (дверь/окно) на выбранной линии
+  const [openingType, setOpeningType]         = useState<'door' | 'window'>('door')
+  const [openingOffset, setOpeningOffset]     = useState('')
+  const [openingWidth, setOpeningWidth]       = useState('')
 
   // ── Подложка PDF ──────────────────────────────────────────────────────────
   const [bgImageEl, setBgImageEl]       = useState<HTMLImageElement | null>(null)
@@ -995,6 +1042,35 @@ export default function FloorPlan() {
     }
   }
 
+  /** Следующий порядковый номер проёма данного типа (Д-N / О-N) — сквозная нумерация по всему плану */
+  function nextOpeningLabel(type: 'door' | 'window'): string {
+    const prefix = type === 'door' ? 'Д' : 'О'
+    let maxN = 0
+    for (const l of lines) {
+      for (const op of l.openings ?? []) {
+        if (op.type !== type) continue
+        const m = op.label.match(/-(\d+)$/)
+        if (m) maxN = Math.max(maxN, parseInt(m[1]))
+      }
+    }
+    return `${prefix}-${maxN + 1}`
+  }
+
+  function addOpening(lineId: string, type: 'door' | 'window', offsetMm: number, widthMm: number) {
+    const line = lines.find(l => l.id === lineId)
+    if (!line) return
+    if (offsetMm < 0 || widthMm <= 0 || offsetMm + widthMm > line.lengthMm) return
+    const id = `op_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+    const label = nextOpeningLabel(type)
+    updatePlanLine(lineId, { openings: [...(line.openings ?? []), { id, type, offsetMm, widthMm, label }] })
+  }
+
+  function removeOpening(lineId: string, openingId: string) {
+    const line = lines.find(l => l.id === lineId)
+    if (!line) return
+    updatePlanLine(lineId, { openings: (line.openings ?? []).filter(o => o.id !== openingId) })
+  }
+
   function contourCentroid(c: PlanContour) {
     const pts = extractContourPoints(c.lineIds, lines)
     if (!pts.length) return null
@@ -1046,9 +1122,11 @@ export default function FloorPlan() {
 
   // ── Подсчёт площади выбранной линии ───────────────────────────────────────
   function calcLineArea(l: PlanLine): number {
-    // Площадь = длина × высота (если высота задана через spec или дефолт 3000мм)
+    // Площадь = длина × высота (если высота задана через spec или дефолт 3000мм),
+    // минус площадь проёмов (двери/окна) — материал на них не идёт
     const h = 3000 // дефолт
-    return Math.round(l.lengthMm * h / 1_000_000 * 100) / 100
+    const openingsAreaM2 = (l.openings ?? []).reduce((s, op) => s + (op.widthMm * h) / 1_000_000, 0)
+    return Math.round((l.lengthMm * h / 1_000_000 - openingsAreaM2) * 100) / 100
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1604,25 +1682,16 @@ export default function FloorPlan() {
                       // ── Wall join: берём скорректированные точки если есть ──
                       const jw = wallJoins.get(l.id)
 
-                      // Для заливки: расширенная ось → прямоугольник без дыр
                       const fax1 = jw ? jw.ax1 : l.x1, fay1 = jw ? jw.ay1 : l.y1
                       const fax2 = jw ? jw.ax2 : l.x2, fay2 = jw ? jw.ay2 : l.y2
-                      const fdx = fax2-fax1, fdy = fay2-fay1
-                      const flen = Math.sqrt(fdx*fdx+fdy*fdy)
-                      const fnx = flen > 0 ? -fdy/flen*half : 0
-                      const fny = flen > 0 ?  fdx/flen*half : 0
-                      const fAx=fax1+fnx, fAy=fay1+fny
-                      const fBx=fax2+fnx, fBy=fay2+fny
-                      const fCx=fax2-fnx, fCy=fay2-fny
-                      const fDx=fax1-fnx, fDy=fay1-fny
-
-                      // Для граничных линий: точки join (или дефолт)
-                      const p1p = jw ? jw.p1p : { x: l.x1+(-dy/len*half), y: l.y1+(dx/len*half) }
-                      const p2p = jw ? jw.p2p : { x: l.x2+(-dy/len*half), y: l.y2+(dx/len*half) }
-                      const p1m = jw ? jw.p1m : { x: l.x1-(-dy/len*half), y: l.y1-(dx/len*half) }
-                      const p2m = jw ? jw.p2m : { x: l.x2-(-dy/len*half), y: l.y2-(dx/len*half) }
                       const cap1 = jw ? jw.cap1 : true
                       const cap2 = jw ? jw.cap2 : true
+                      const ux = dx / len, uy = dy / len
+
+                      // ── Разбивка на сегменты вокруг проёмов (дверей/окон) ──
+                      const { segments, gaps } = computeOpeningSegments(
+                        fax1, fay1, fax2, fay2, l.x1, l.y1, ux, uy, scaleMmPx, l.openings, cap1, cap2,
+                      )
 
                       return (
                         <Group key={l.id}
@@ -1630,30 +1699,55 @@ export default function FloorPlan() {
                           onTouchStart={e => handleLinePointerDown(l.id, e)}
                           onMouseEnter={() => setHoveredId(l.id)}
                           onMouseLeave={() => setHoveredId(null)}>
-                          {/* Хитзона по оси */}
+                          {/* Хитзона по оси — на всю линию, включая проёмы (чтобы клик попадал) */}
                           <Line points={[l.x1,l.y1,l.x2,l.y2]} stroke="transparent" strokeWidth={hitW} hitStrokeWidth={hitW} />
-                          {/* Заливка — прямоугольник по расширенной оси */}
-                          <Line points={[fAx,fAy, fBx,fBy, fCx,fCy, fDx,fDy]} closed fill={fill} stroke="none" listening={false} />
-                          {/* Штриховка существующих конструкций */}
-                          {l.type === 'wall_existing' && (() => {
-                            const hatch = calcHatch(fAx, fAy, fBx, fBy, fCx, fCy, fDx, fDy, 8)
+
+                          {segments.map((seg, si) => {
+                            const sdx = seg.ax2-seg.ax1, sdy = seg.ay2-seg.ay1
+                            const slen = Math.sqrt(sdx*sdx+sdy*sdy)
+                            const snx = slen > 0 ? -sdy/slen*half : 0
+                            const sny = slen > 0 ?  sdx/slen*half : 0
+                            const sAx=seg.ax1+snx, sAy=seg.ay1+sny
+                            const sBx=seg.ax2+snx, sBy=seg.ay2+sny
+                            const sCx=seg.ax2-snx, sCy=seg.ay2-sny
+                            const sDx=seg.ax1-snx, sDy=seg.ay1-sny
+                            const sp1p = { x: sAx, y: sAy }, sp2p = { x: sBx, y: sBy }
+                            const sp1m = { x: sDx, y: sDy }, sp2m = { x: sCx, y: sCy }
                             return (
-                              <Group clipFunc={(ctx: any) => {
-                                ctx.beginPath(); ctx.moveTo(fAx, fAy); ctx.lineTo(fBx, fBy)
-                                ctx.lineTo(fCx, fCy); ctx.lineTo(fDx, fDy); ctx.closePath()
-                              }} listening={false}>
-                                {hatch.map((pts, i) => (
-                                  <Line key={i} points={pts} stroke="#78909c" strokeWidth={0.8} opacity={0.5} listening={false} />
-                                ))}
+                              <Group key={si}>
+                                {/* Заливка сегмента */}
+                                <Line points={[sAx,sAy, sBx,sBy, sCx,sCy, sDx,sDy]} closed fill={fill} stroke="none" listening={false} />
+                                {/* Штриховка существующих конструкций */}
+                                {l.type === 'wall_existing' && (() => {
+                                  const hatch = calcHatch(sAx, sAy, sBx, sBy, sCx, sCy, sDx, sDy, 8)
+                                  return (
+                                    <Group clipFunc={(ctx: any) => {
+                                      ctx.beginPath(); ctx.moveTo(sAx, sAy); ctx.lineTo(sBx, sBy)
+                                      ctx.lineTo(sCx, sCy); ctx.lineTo(sDx, sDy); ctx.closePath()
+                                    }} listening={false}>
+                                      {hatch.map((pts, i) => (
+                                        <Line key={i} points={pts} stroke="#78909c" strokeWidth={0.8} opacity={0.5} listening={false} />
+                                      ))}
+                                    </Group>
+                                  )
+                                })()}
+                                {/* Граничные линии сегмента */}
+                                <Line points={[sp1p.x,sp1p.y, sp2p.x,sp2p.y]} stroke={stroke} strokeWidth={sw} lineCap="butt" dash={dash} listening={false} />
+                                <Line points={[sp1m.x,sp1m.y, sp2m.x,sp2m.y]} stroke={stroke} strokeWidth={sw} lineCap="butt" dash={dash} listening={false} />
+                                {/* Торцы — на свободных концах ИЛИ на краях проёма */}
+                                {seg.capStart && <Line points={[sp1p.x,sp1p.y, sp1m.x,sp1m.y]} stroke={stroke} strokeWidth={sw} lineCap="square" listening={false} />}
+                                {seg.capEnd   && <Line points={[sp2p.x,sp2p.y, sp2m.x,sp2m.y]} stroke={stroke} strokeWidth={sw} lineCap="square" listening={false} />}
                               </Group>
                             )
-                          })()}
-                          {/* Граничные линии Side+ и Side− с join-точками */}
-                          <Line points={[p1p.x,p1p.y, p2p.x,p2p.y]} stroke={stroke} strokeWidth={sw} lineCap="butt" dash={dash} listening={false} />
-                          <Line points={[p1m.x,p1m.y, p2m.x,p2m.y]} stroke={stroke} strokeWidth={sw} lineCap="butt" dash={dash} listening={false} />
-                          {/* Торцы только на свободных концах */}
-                          {cap1 && <Line points={[p1p.x,p1p.y, p1m.x,p1m.y]} stroke={stroke} strokeWidth={sw} lineCap="square" listening={false} />}
-                          {cap2 && <Line points={[p2p.x,p2p.y, p2m.x,p2m.y]} stroke={stroke} strokeWidth={sw} lineCap="square" listening={false} />}
+                          })}
+
+                          {/* Подписи проёмов (Д-1 / О-1) в разрыве */}
+                          {gaps.map(g => (
+                            <Text key={g.opening.id} x={g.x-40} y={g.y-7} width={80}
+                              text={g.opening.label} fontSize={10} fill={stroke}
+                              align="center" fontStyle="bold" listening={false} />
+                          ))}
+
                           {/* Метка */}
                           {(() => {
                             const lineAngle = Math.atan2(dy, dx) * 180 / Math.PI
@@ -2018,6 +2112,68 @@ export default function FloorPlan() {
                       onChange={e => updatePlanLine(inspectorLine.id, { label: e.target.value })}
                       style={{ width: '100%', fontSize: 12, padding: '6px 8px', border: '1px solid #dde', borderRadius: 5, boxSizing: 'border-box' as const }}
                     />
+                  </div>
+
+                  {/* Проёмы (двери/окна) */}
+                  <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Проёмы</div>
+
+                    {(inspectorLine.openings ?? []).length > 0 && (
+                      <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {(inspectorLine.openings ?? []).map(op => (
+                          <div key={op.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '4px 6px', background: '#f7f8fb', borderRadius: 4 }}>
+                            <span style={{ fontWeight: 600, color: op.type === 'door' ? '#8d6e63' : '#42a5f5', minWidth: 32 }}>{op.label}</span>
+                            <span style={{ color: '#666' }}>{op.type === 'door' ? 'дверь' : 'окно'}, отступ {op.offsetMm}мм, ширина {op.widthMm}мм</span>
+                            <button onClick={() => removeOpening(inspectorLine.id, op.id)}
+                              style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: '#e57373', cursor: 'pointer', fontSize: 13, padding: '0 4px' }}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                      {(['door', 'window'] as const).map(t => (
+                        <button key={t} onClick={() => setOpeningType(t)}
+                          style={{
+                            flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer',
+                            border: `1px solid ${openingType === t ? (t === 'door' ? '#8d6e63' : '#42a5f5') : '#dde'}`,
+                            background: openingType === t ? (t === 'door' ? '#8d6e6320' : '#42a5f520') : '#fff',
+                            color: openingType === t ? (t === 'door' ? '#8d6e63' : '#42a5f5') : '#888',
+                          }}>
+                          {t === 'door' ? 'Дверь' : 'Окно'}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <input type="number" placeholder="отступ, мм" value={openingOffset}
+                        onChange={e => setOpeningOffset(e.target.value)}
+                        style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #dde', minWidth: 0 }} />
+                      <input type="number" placeholder="ширина, мм" value={openingWidth}
+                        onChange={e => setOpeningWidth(e.target.value)}
+                        style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #dde', minWidth: 0 }} />
+                    </div>
+                    <button
+                      onClick={() => {
+                        const offset = parseFloat(openingOffset), width = parseFloat(openingWidth)
+                        if (offset >= 0 && width > 0) {
+                          addOpening(inspectorLine.id, openingType, offset, width)
+                          setOpeningOffset(''); setOpeningWidth('')
+                        }
+                      }}
+                      disabled={!(parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0)}
+                      style={{
+                        width: '100%', marginTop: 4, fontSize: 11, padding: '6px 0', borderRadius: 4, border: 'none',
+                        background: (parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0) ? '#3a7bd5' : '#ddd',
+                        color: '#fff', cursor: (parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0) ? 'pointer' : 'not-allowed',
+                      }}>
+                      + Добавить проём
+                    </button>
+                    {parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0 &&
+                      parseFloat(openingOffset) + parseFloat(openingWidth) > inspectorLine.lengthMm && (
+                      <div style={{ fontSize: 10, color: '#e57373', marginTop: 4 }}>
+                        Отступ + ширина превышают длину линии ({fmtLen(inspectorLine.lengthMm)})
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ fontSize: 11, color: '#aaa', textAlign: 'center', padding: '8px 0' }}>

@@ -348,6 +348,15 @@ export interface PlanLineSpec {
 }
 
 /** Одна линия на плане */
+/** Проём (дверь/окно) на линии стены/перегородки */
+export interface PlanOpening {
+  id: string
+  type: 'door' | 'window'
+  offsetMm: number   // отступ от начала линии (x1,y1) вдоль оси, мм
+  widthMm: number
+  label: string       // "Д-1" / "О-1"
+}
+
 export interface PlanLine {
   id: string
   x1: number; y1: number   // координаты на холсте (px)
@@ -358,6 +367,7 @@ export interface PlanLine {
   spec?: PlanLineSpec       // конструктивная спецификация (материал / подтип)
   wallId?: string           // ссылка на WallEntry если привязана
   liningId?: string         // ссылка на LiningEntry если привязана
+  openings?: PlanOpening[]  // дверные/оконные проёмы на этой линии
 }
 
 /** Подложка — растровое изображение страницы PDF, по которому обводят план */
