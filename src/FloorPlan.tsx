@@ -581,6 +581,9 @@ export default function FloorPlan() {
   // ── Ограничение черчения внутри периметра ─────────────────────────────────
   function isPointAllowed(x: number, y: number, type: PlanLineType): boolean {
     if (type === 'wall_existing') return true
+    // При обводке подложки (кальки) геометрия уже задана исходным чертежом —
+    // ограничение "только внутри замкнутого периметра" не нужно
+    if (floorPlan?.backgroundImage) return true
     if (rooms.length === 0) return true
     return rooms.some(room => {
       const pts = extractContourPoints(room.lineIds, lines)
