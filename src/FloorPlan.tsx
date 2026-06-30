@@ -746,6 +746,11 @@ export default function FloorPlan() {
   }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, scaleStep, orthoMode, addPlanLine, removePlanLine])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
+    // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
+    // этой линии, а попытка прицелиться T-снапом в её ось. Не перехватываем —
+    // даём клику дойти до Stage, иначе коммит новой точки никогда не сработает.
+    if (mode === 'draw' || mode === 'scale') return
+
     e.cancelBubble = true
     lineWasClickedRef.current = true
 
