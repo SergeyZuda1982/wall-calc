@@ -601,9 +601,9 @@ export default function FloorPlan() {
     if (!pos) return
 
     if (mode === 'scale') {
-      const s = snapPoint(pos.x, pos.y, lines)
-      if (scaleStep === 0) { setScalePt1({ x: s.x, y: s.y }); setScaleStep(1) }
-      else if (scaleStep === 1) { setScalePt2({ x: s.x, y: s.y }); setScaleStep(2); setShowScaleDialog(true) }
+      // Снап к существующим линиям не нужен — калибруемся по точкам на подложке/чертеже
+      if (scaleStep === 0) { setScalePt1({ x: pos.x, y: pos.y }); setScaleStep(1) }
+      else if (scaleStep === 1) { setScalePt2({ x: pos.x, y: pos.y }); setScaleStep(2); setShowScaleDialog(true) }
       return
     }
 
@@ -1495,12 +1495,22 @@ export default function FloorPlan() {
                     )
                   })()}
 
-                  {/* Точки масштаба */}
-                  {scalePt1 && <Circle x={scalePt1.x} y={scalePt1.y} radius={7} fill="#ff9800" listening={false} />}
-                  {scalePt2 && <>
-                    <Circle x={scalePt2.x} y={scalePt2.y} radius={7} fill="#ff9800" listening={false} />
-                    <Line points={[scalePt1!.x,scalePt1!.y,scalePt2.x,scalePt2.y]} stroke="#ff9800" strokeWidth={2} dash={[4,3]} listening={false} />
-                  </>}
+                  {/* Точки масштаба — крестики, масштабируются с зумом для точности клика */}
+                  {scalePt1 && (() => {
+                    const sz = 6 / stageScale, sw = 1.5 / stageScale
+                    return <>
+                      <Line points={[scalePt1.x-sz,scalePt1.y, scalePt1.x+sz,scalePt1.y]} stroke="#ff9800" strokeWidth={sw} listening={false} />
+                      <Line points={[scalePt1.x,scalePt1.y-sz, scalePt1.x,scalePt1.y+sz]} stroke="#ff9800" strokeWidth={sw} listening={false} />
+                    </>
+                  })()}
+                  {scalePt2 && (() => {
+                    const sz = 6 / stageScale, sw = 1.5 / stageScale
+                    return <>
+                      <Line points={[scalePt2.x-sz,scalePt2.y, scalePt2.x+sz,scalePt2.y]} stroke="#ff9800" strokeWidth={sw} listening={false} />
+                      <Line points={[scalePt2.x,scalePt2.y-sz, scalePt2.x,scalePt2.y+sz]} stroke="#ff9800" strokeWidth={sw} listening={false} />
+                      <Line points={[scalePt1!.x,scalePt1!.y,scalePt2.x,scalePt2.y]} stroke="#ff9800" strokeWidth={sw} dash={[4/stageScale,3/stageScale]} listening={false} />
+                    </>
+                  })()}
 
                   {/* Стартовая точка цепочки — маленькая мировая точка замыкания */}
                   {mode === 'draw' && chainStartPt && drawing && (
