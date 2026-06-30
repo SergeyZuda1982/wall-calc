@@ -352,9 +352,11 @@ export interface PlanLineSpec {
 export interface PlanOpening {
   id: string
   type: 'door' | 'window'
-  offsetMm: number   // отступ от начала линии (x1,y1) вдоль оси, мм
+  offsetMm: number    // отступ от начала линии (x1,y1) вдоль оси, мм
   widthMm: number
-  label: string       // "Д-1" / "О-1"
+  heightMm: number     // высота проёма: для двери — от пола; для окна — высота самого окна
+  sillHeightMm?: number // высота низа окна от уровня чистого пола (только для окна)
+  label: string         // "Д-1" / "О-1"
 }
 
 export interface PlanLine {
@@ -368,6 +370,7 @@ export interface PlanLine {
   wallId?: string           // ссылка на WallEntry если привязана
   liningId?: string         // ссылка на LiningEntry если привязана
   openings?: PlanOpening[]  // дверные/оконные проёмы на этой линии
+  heightMm?: number         // высота конструкции, мм (по умолчанию 3000, если не задано)
 }
 
 /** Подложка — растровое изображение страницы PDF, по которому обводят план */

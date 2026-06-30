@@ -398,6 +398,8 @@ export default function FloorPlan() {
   const [openingType, setOpeningType]         = useState<'door' | 'window'>('door')
   const [openingOffset, setOpeningOffset]     = useState('')
   const [openingWidth, setOpeningWidth]       = useState('')
+  const [openingHeight, setOpeningHeight]     = useState('2000')
+  const [openingSill, setOpeningSill]         = useState('900')
 
   // ── Подложка PDF ──────────────────────────────────────────────────────────
   const [bgImageEl, setBgImageEl]       = useState<HTMLImageElement | null>(null)
@@ -1056,13 +1058,18 @@ export default function FloorPlan() {
     return `${prefix}-${maxN + 1}`
   }
 
-  function addOpening(lineId: string, type: 'door' | 'window', offsetMm: number, widthMm: number) {
+  function addOpening(
+    lineId: string, type: 'door' | 'window',
+    offsetMm: number, widthMm: number, heightMm: number, sillHeightMm?: number,
+  ) {
     const line = lines.find(l => l.id === lineId)
     if (!line) return
-    if (offsetMm < 0 || widthMm <= 0 || offsetMm + widthMm > line.lengthMm) return
+    if (offsetMm < 0 || widthMm <= 0 || heightMm <= 0 || offsetMm + widthMm > line.lengthMm) return
     const id = `op_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
     const label = nextOpeningLabel(type)
-    updatePlanLine(lineId, { openings: [...(line.openings ?? []), { id, type, offsetMm, widthMm, label }] })
+    const opening: PlanOpening = { id, type, offsetMm, widthMm, heightMm, label }
+    if (type === 'window' && sillHeightMm !== undefined) opening.sillHeightMm = sillHeightMm
+    updatePlanLine(lineId, { openings: [...(line.openings ?? []), opening] })
   }
 
   function removeOpening(lineId: string, openingId: string) {
@@ -1122,10 +1129,10 @@ export default function FloorPlan() {
 
   // ── Подсчёт площади выбранной линии ───────────────────────────────────────
   function calcLineArea(l: PlanLine): number {
-    // Площадь = длина × высота (если высота задана через spec или дефолт 3000мм),
-    // минус площадь проёмов (двери/окна) — материал на них не идёт
-    const h = 3000 // дефолт
-    const openingsAreaM2 = (l.openings ?? []).reduce((s, op) => s + (op.widthMm * h) / 1_000_000, 0)
+    // Площадь = длина × высота стены, минус площадь проёмов (двери/окна по их
+    // СОБСТВЕННОЙ высоте, не высоте стены) — материал на них не идёт
+    const h = l.heightMm ?? 3000
+    const openingsAreaM2 = (l.openings ?? []).reduce((s, op) => s + (op.widthMm * op.heightMm) / 1_000_000, 0)
     return Math.round((l.lengthMm * h / 1_000_000 - openingsAreaM2) * 100) / 100
   }
 
@@ -1929,7 +1936,15 @@ export default function FloorPlan() {
                           {l.spec?.material && <span style={{ color: '#888', marginLeft: 4 }}>({l.spec.material}{l.spec.subtype ? ` ${l.spec.subtype}` : ''})</span>}
                         </td>
                         <td style={tdS}>{fmtLen(l.lengthMm)}</td>
-                        <td style={tdS}>3000 мм</td>
+                        <td style={tdS}>
+                          <input type="number" value={l.heightMm ?? 3000}
+                            onClick={e => e.stopPropagation()}
+                            onChange={e => {
+                              const v = parseFloat(e.target.value)
+                              if (v > 0) updatePlanLine(l.id, { heightMm: v })
+                            }}
+                            style={{ width: 64, fontSize: 11, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
+                        </td>
                         <td style={tdS}>{calcLineArea(l).toFixed(2)} м²</td>
                         <td style={tdS}>
                           <span style={{ color: statusColor(status) }}>{statusDot(status)}</span>
@@ -2123,7 +2138,11 @@ export default function FloorPlan() {
                         {(inspectorLine.openings ?? []).map(op => (
                           <div key={op.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '4px 6px', background: '#f7f8fb', borderRadius: 4 }}>
                             <span style={{ fontWeight: 600, color: op.type === 'door' ? '#8d6e63' : '#42a5f5', minWidth: 32 }}>{op.label}</span>
-                            <span style={{ color: '#666' }}>{op.type === 'door' ? 'дверь' : 'окно'}, отступ {op.offsetMm}мм, ширина {op.widthMm}мм</span>
+                            <span style={{ color: '#666' }}>
+                              {op.type === 'door'
+                                ? `дверь, отступ ${op.offsetMm}, ${op.widthMm}×${op.heightMm}мм`
+                                : `окно, отступ ${op.offsetMm}, ${op.widthMm}×${op.heightMm}мм, низ от пола ${op.sillHeightMm ?? 900}мм`}
+                            </span>
                             <button onClick={() => removeOpening(inspectorLine.id, op.id)}
                               style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: '#e57373', cursor: 'pointer', fontSize: 13, padding: '0 4px' }}>✕</button>
                           </div>
@@ -2133,7 +2152,7 @@ export default function FloorPlan() {
 
                     <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
                       {(['door', 'window'] as const).map(t => (
-                        <button key={t} onClick={() => setOpeningType(t)}
+                        <button key={t} onClick={() => { setOpeningType(t); setOpeningHeight(t === 'door' ? '2000' : '1200') }}
                           style={{
                             flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer',
                             border: `1px solid ${openingType === t ? (t === 'door' ? '#8d6e63' : '#42a5f5') : '#dde'}`,
@@ -2144,7 +2163,7 @@ export default function FloorPlan() {
                         </button>
                       ))}
                     </div>
-                    <div style={{ display: 'flex', gap: 4 }}>
+                    <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
                       <input type="number" placeholder="отступ, мм" value={openingOffset}
                         onChange={e => setOpeningOffset(e.target.value)}
                         style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #dde', minWidth: 0 }} />
@@ -2152,19 +2171,33 @@ export default function FloorPlan() {
                         onChange={e => setOpeningWidth(e.target.value)}
                         style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #dde', minWidth: 0 }} />
                     </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <input type="number"
+                        placeholder={openingType === 'door' ? 'высота от пола, мм' : 'высота окна, мм'}
+                        value={openingHeight}
+                        onChange={e => setOpeningHeight(e.target.value)}
+                        style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #dde', minWidth: 0 }} />
+                      {openingType === 'window' && (
+                        <input type="number" placeholder="низ окна от пола, мм" value={openingSill}
+                          onChange={e => setOpeningSill(e.target.value)}
+                          style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #dde', minWidth: 0 }} />
+                      )}
+                    </div>
                     <button
                       onClick={() => {
                         const offset = parseFloat(openingOffset), width = parseFloat(openingWidth)
-                        if (offset >= 0 && width > 0) {
-                          addOpening(inspectorLine.id, openingType, offset, width)
+                        const height = parseFloat(openingHeight)
+                        const sill = openingType === 'window' ? parseFloat(openingSill) : undefined
+                        if (offset >= 0 && width > 0 && height > 0) {
+                          addOpening(inspectorLine.id, openingType, offset, width, height, sill)
                           setOpeningOffset(''); setOpeningWidth('')
                         }
                       }}
-                      disabled={!(parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0)}
+                      disabled={!(parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0 && parseFloat(openingHeight) > 0)}
                       style={{
                         width: '100%', marginTop: 4, fontSize: 11, padding: '6px 0', borderRadius: 4, border: 'none',
-                        background: (parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0) ? '#3a7bd5' : '#ddd',
-                        color: '#fff', cursor: (parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0) ? 'pointer' : 'not-allowed',
+                        background: (parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0 && parseFloat(openingHeight) > 0) ? '#3a7bd5' : '#ddd',
+                        color: '#fff', cursor: (parseFloat(openingOffset) >= 0 && parseFloat(openingWidth) > 0 && parseFloat(openingHeight) > 0) ? 'pointer' : 'not-allowed',
                       }}>
                       + Добавить проём
                     </button>
@@ -2206,8 +2239,14 @@ export default function FloorPlan() {
                   <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
                     Длина: <b>{fmtLen(inspectorLine.lengthMm)}</b>
                   </div>
+                  <div style={{ fontSize: 12, color: '#555', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    Высота:
+                    <input type="number" value={inspectorLine.heightMm ?? 3000}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updatePlanLine(inspectorLine.id, { heightMm: v }) }}
+                      style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
+                  </div>
                   <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
-                    Площадь (при h=3000): <b>{calcLineArea(inspectorLine).toFixed(2)} м²</b>
+                    Площадь: <b>{calcLineArea(inspectorLine).toFixed(2)} м²</b>
                   </div>
                   {inspectorLine.spec?.material ? (
                     <div style={{ padding: 10, background: '#f5f7fb', borderRadius: 6, fontSize: 12, color: '#888' }}>
