@@ -253,7 +253,7 @@ export default function FloorPlan() {
   const {
     floorPlan, addPlanLine, updatePlanLine, removePlanLine,
     setFloorPlanScale, clearFloorPlan,
-    addContour, addRoom,
+    addContour, addRoom, updateRoom, updateContour,
     setBackgroundImage, updateBackgroundImage,
   } = useProjectStore()
 
@@ -309,6 +309,8 @@ export default function FloorPlan() {
   const [scalePt2, setScalePt2]               = useState<{ x: number; y: number } | null>(null)
   const [scaleMmInput, setScaleMmInput]       = useState('')
   const [showScaleDialog, setShowScaleDialog] = useState(false)
+  // Уточнение масштаба по уже начерченной линии
+  const [recalInput, setRecalInput]           = useState('')
 
   // ── Подложка PDF ──────────────────────────────────────────────────────────
   const [bgImageEl, setBgImageEl]       = useState<HTMLImageElement | null>(null)
@@ -806,6 +808,47 @@ export default function FloorPlan() {
     setFloorPlanScale(mm / px)
     setShowScaleDialog(false); setScaleStep(0); setScalePt1(null); setScalePt2(null); setScaleMmInput('')
     switchMode('draw')
+  }
+
+  /**
+   * Глобальная перекалибровка по уже начерченной линии:
+   * пользователь указывает точный реальный размер одной линии —
+   * масштаб всего плана пересчитывается, и lengthMm/areaM2/perimeterMm
+   * у ВСЕХ линий, помещений и контуров обновляются под новый масштаб.
+   * Координаты (x1,y1,x2,y2) не трогаются — меняется только масштаб
+   * перевода px→мм и производные от него величины.
+   */
+  function recalibrateByLine(lineId: string, exactMm: number) {
+    const target = lines.find(l => l.id === lineId)
+    if (!target || exactMm <= 0) return
+    const px = dist(target.x1, target.y1, target.x2, target.y2)
+    if (px < 1) return
+    const newScale = exactMm / px
+
+    // Локально пересчитанные длины — используем их же для площадей помещений/контуров
+    const newLengths = new Map<string, number>()
+    for (const l of lines) {
+      newLengths.set(l.id, lineLengthMm(l.x1, l.y1, l.x2, l.y2, newScale))
+    }
+
+    setFloorPlanScale(newScale)
+    for (const l of lines) {
+      updatePlanLine(l.id, { lengthMm: newLengths.get(l.id)! })
+    }
+    for (const room of rooms) {
+      const pts = extractContourPoints(room.lineIds, lines)
+      const area = polygonAreaM2(pts.length >= 3 ? pts : room.lineIds.map(id => {
+        const l = lines.find(x => x.id === id); return l ? { x: l.x1, y: l.y1 } : { x: 0, y: 0 }
+      }), newScale)
+      const perimeter = room.lineIds.reduce((s, id) => s + (newLengths.get(id) ?? 0), 0)
+      updateRoom(room.id, { areaM2: area, perimeterMm: perimeter })
+    }
+    for (const c of contours) {
+      const pts = extractContourPoints(c.lineIds, lines)
+      if (pts.length < 3) continue
+      const area = polygonAreaM2(pts, newScale)
+      updateContour(c.id, { areaM2: area })
+    }
   }
 
   function contourCentroid(c: PlanContour) {
@@ -1643,6 +1686,24 @@ export default function FloorPlan() {
               <span style={{ marginLeft: 'auto', fontSize: 11, color: '#aaa' }}>
                 {fmtLen(inspectorLine.lengthMm)}
               </span>
+            </div>
+
+            {/* Уточнить точный размер — пересчитывает масштаб всего плана */}
+            <div style={{ padding: '4px 16px 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input type="number" placeholder="точный размер, мм" value={recalInput}
+                onChange={e => setRecalInput(e.target.value)}
+                style={{ flex: 1, fontSize: 11, padding: '5px 8px', borderRadius: 5, border: '1px solid #e0e4ee' }} />
+              <button
+                onClick={() => {
+                  const mm = parseFloat(recalInput)
+                  if (mm > 0) { recalibrateByLine(inspectorLine.id, mm); setRecalInput('') }
+                }}
+                disabled={!parseFloat(recalInput)}
+                style={{ fontSize: 11, padding: '5px 10px', borderRadius: 5, border: 'none',
+                  background: parseFloat(recalInput) > 0 ? '#3a7bd5' : '#ddd', color: '#fff',
+                  cursor: parseFloat(recalInput) > 0 ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap' }}>
+                Уточнить масштаб
+              </button>
             </div>
 
             {/* Вкладки */}
