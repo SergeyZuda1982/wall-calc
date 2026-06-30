@@ -22,7 +22,8 @@ import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 // ─── Константы ───────────────────────────────────────────────────────────────
 
 const CANVAS_H   = 520
-const SNAP_SCREEN_PX = 18   // порог снапа в экранных пикселях (не мировых!)
+const SNAP_SCREEN_PX = 24   // порог снапа в экранных пикселях (увеличен для тач-устройств — нет hover перед тапом)
+const CHAIN_SNAP_SCREEN_PX = 34   // ещё более терпимый порог для продолжения цепочки от конца предыдущей линии
 const DRAG_THRESHOLD = 4
 
 const LINE_COLORS: Record<PlanLineType, string> = {
@@ -650,18 +651,22 @@ export default function FloorPlan() {
 
         if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
 
-        // Если кликнули рядом с концом последней линии цепочки — продолжаем её,
-        // иначе — начинаем новую цепочку
+        // Если кликнули рядом с концом последней линии цепочки — продолжаем её точно
+        // от её координат (порог шире обычного снапа — тач без hover промахивается чаще)
+        const chainSnapThresh = CHAIN_SNAP_SCREEN_PX / stageScaleRef.current
         const lastChainLine = chainLineIds.length > 0
           ? lines.find(l => l.id === chainLineIds[chainLineIds.length - 1])
           : null
         const continuingChain = lastChainLine &&
-          dist(pt.x, pt.y, lastChainLine.x2, lastChainLine.y2) <= snapThresh
+          dist(pos.x, pos.y, lastChainLine.x2, lastChainLine.y2) <= chainSnapThresh
 
-        if (!continuingChain) {
-          setChainStartPt({ x: pt.x, y: pt.y })
-          setChainLineIds([])
+        if (continuingChain) {
+          setDrawing({ x1: lastChainLine!.x2, y1: lastChainLine!.y2 })
+          return
         }
+
+        setChainStartPt({ x: pt.x, y: pt.y })
+        setChainLineIds([])
         setDrawing({ x1: pt.x, y1: pt.y })
 
       } else if (closingChain) {
