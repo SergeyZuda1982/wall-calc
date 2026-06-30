@@ -56,7 +56,10 @@ function lineLengthMm(x1: number, y1: number, x2: number, y2: number, s: number)
   return Math.round(dist(x1, y1, x2, y2) * s)
 }
 
-function snapPoint(x: number, y: number, lines: PlanLine[], excludeId?: string, threshPx = SNAP_SCREEN_PX) {
+function snapPoint(
+  x: number, y: number, lines: PlanLine[], scaleMmPx: number,
+  excludeId?: string, threshPx = SNAP_SCREEN_PX,
+) {
   let best = { x, y, snapped: false, d: threshPx }
   for (const l of lines) {
     if (l.id === excludeId) continue
@@ -66,7 +69,9 @@ function snapPoint(x: number, y: number, lines: PlanLine[], excludeId?: string, 
       if (d < best.d) best = { x: px, y: py, snapped: true, d }
     }
     // T-примыкание: ближайшая точка на оси линии (не только конец) —
-    // нужно чтобы перегородка могла начаться/упереться в РЕБРО другой стены
+    // нужно чтобы перегородка могла начаться/упереться в РЕБРО другой стены.
+    // Порог расширен на половину толщины стены: клик в ЛЮБОЕ место видимого
+    // двойного контура стены (а не точно по оси) должен прилипать к оси.
     const dx = l.x2 - l.x1, dy = l.y2 - l.y1
     const len2 = dx * dx + dy * dy
     if (len2 > 1) {
@@ -74,7 +79,10 @@ function snapPoint(x: number, y: number, lines: PlanLine[], excludeId?: string, 
       t = Math.max(0, Math.min(1, t))
       const px = l.x1 + t * dx, py = l.y1 + t * dy
       const d = dist(x, y, px, py)
-      if (d < best.d) best = { x: px, y: py, snapped: true, d }
+      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
+      const halfThicknessPx = vis.thicknessMm > 0 ? (vis.thicknessMm / 2) / scaleMmPx : 0
+      const bodyThresh = threshPx + halfThicknessPx
+      if (d < bodyThresh && d < best.d + halfThicknessPx) best = { x: px, y: py, snapped: true, d }
     }
   }
   return best
@@ -446,7 +454,7 @@ export default function FloorPlan() {
 
   function applySnap(x: number, y: number, excludeId?: string): { x: number; y: number } {
     const thresh = SNAP_SCREEN_PX / stageScaleRef.current
-    const snapped = snapPoint(x, y, lines, excludeId, thresh)
+    const snapped = snapPoint(x, y, lines, scaleMmPx, excludeId, thresh)
     if (orthoMode && drawing && !snapped.snapped) {
       return snapOrtho(drawing.x1, drawing.y1, snapped.x, snapped.y)
     }
@@ -471,7 +479,7 @@ export default function FloorPlan() {
 
       if (dr.kind === 'line') {
         const thresh = SNAP_SCREEN_PX / stageScaleRef.current
-        const s = snapPoint(dr.origX1 + dx, dr.origY1 + dy, lines, dr.id, thresh)
+        const s = snapPoint(dr.origX1 + dx, dr.origY1 + dy, lines, scaleMmPx, dr.id, thresh)
         const snapDx = s.snapped ? s.x - dr.origX1 : dx
         const snapDy = s.snapped ? s.y - dr.origY1 : dy
         const newX1 = dr.origX1 + snapDx
@@ -482,13 +490,13 @@ export default function FloorPlan() {
         updatePlanLine(dr.id, { x1: newX1, y1: newY1, x2: newX2, y2: newY2, lengthMm: lm })
       } else if (dr.kind === 'end1') {
         const thresh = SNAP_SCREEN_PX / stageScaleRef.current
-        const s = snapPoint(rawX, rawY, lines, dr.id, thresh)
+        const s = snapPoint(rawX, rawY, lines, scaleMmPx, dr.id, thresh)
         const l = lines.find(l => l.id === dr.id)!
         const lm = lineLengthMm(s.x, s.y, l.x2, l.y2, scaleMmPx)
         updatePlanLine(dr.id, { x1: s.x, y1: s.y, lengthMm: lm })
       } else {
         const thresh = SNAP_SCREEN_PX / stageScaleRef.current
-        const s = snapPoint(rawX, rawY, lines, dr.id, thresh)
+        const s = snapPoint(rawX, rawY, lines, scaleMmPx, dr.id, thresh)
         const l = lines.find(l => l.id === dr.id)!
         const lm = lineLengthMm(l.x1, l.y1, s.x, s.y, scaleMmPx)
         updatePlanLine(dr.id, { x2: s.x, y2: s.y, lengthMm: lm })
@@ -496,7 +504,7 @@ export default function FloorPlan() {
       return
     }
     const snapThresh = SNAP_SCREEN_PX / stageScaleRef.current
-    const snappedInfo = snapPoint(rawX, rawY, lines, undefined, snapThresh)
+    const snappedInfo = snapPoint(rawX, rawY, lines, scaleMmPx, undefined, snapThresh)
     // В draw-режиме: дополнительно проверяем снап к началу цепочки (замыкание)
     const snapToChainStart =
       mode === 'draw' && drawing && chainStartPt &&
