@@ -60,7 +60,19 @@ function snapPoint(x: number, y: number, lines: PlanLine[], excludeId?: string, 
   let best = { x, y, snapped: false, d: threshPx }
   for (const l of lines) {
     if (l.id === excludeId) continue
+    // Концы линии
     for (const [px, py] of [[l.x1, l.y1], [l.x2, l.y2]] as [number, number][]) {
+      const d = dist(x, y, px, py)
+      if (d < best.d) best = { x: px, y: py, snapped: true, d }
+    }
+    // T-примыкание: ближайшая точка на оси линии (не только конец) —
+    // нужно чтобы перегородка могла начаться/упереться в РЕБРО другой стены
+    const dx = l.x2 - l.x1, dy = l.y2 - l.y1
+    const len2 = dx * dx + dy * dy
+    if (len2 > 1) {
+      let t = ((x - l.x1) * dx + (y - l.y1) * dy) / len2
+      t = Math.max(0, Math.min(1, t))
+      const px = l.x1 + t * dx, py = l.y1 + t * dy
       const d = dist(x, y, px, py)
       if (d < best.d) best = { x: px, y: py, snapped: true, d }
     }
