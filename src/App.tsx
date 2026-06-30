@@ -361,8 +361,8 @@ export default function App() {
 
         {/* Боковая панель объектов */}
         {showProjects && (
-          <div style={{ width: 220, background: '#f5f5f5', borderRight: '1px solid #ddd',
-            padding: 16, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+          <div style={{ width: 220, maxWidth: '70vw', background: '#f5f5f5', borderRight: '1px solid #ddd',
+            padding: 16, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', flexShrink: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: '#333', marginBottom: 4 }}>📁 Объекты</div>
             {projects.length === 0 && (
               <div style={{ fontSize: 12, color: '#999' }}>Нет объектов</div>
@@ -403,7 +403,7 @@ export default function App() {
         )}
 
         {/* Основной контент */}
-        <div ref={canvasWrapRef} style={{ flex: 1, padding: 24, maxWidth: 900, overflowY: 'auto' }}>
+        <div ref={canvasWrapRef} style={{ flex: 1, padding: 'clamp(10px, 4vw, 24px)', maxWidth: 900, overflowY: 'auto', minWidth: 0 }}>
 
       {/* ─── Панель объекта ─── */}
       <div style={{ marginBottom: 20, padding: '12px 16px', background: '#f8f9ff', border: '1px solid #dde', borderRadius: 8 }}>
@@ -490,13 +490,14 @@ export default function App() {
       </div>
 
       {/* ─── Вкладки ─── */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid #dde' }}>
+      <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid #dde',
+        overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
         {([['wall', 'Перегородки'], ['lining', 'Облицовка стен'], ['ceiling', '🏠 Потолки'], ['plan', '🗺 План']] as const).map(([tab, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={{
-            padding: '10px 24px', fontSize: 14, cursor: 'pointer',
+            padding: '10px clamp(10px, 3vw, 24px)', fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap',
             border: 'none', borderBottom: activeTab === tab ? '2px solid #3a7bd5' : '2px solid transparent',
             background: 'none', color: activeTab === tab ? '#3a7bd5' : '#666',
-            fontWeight: activeTab === tab ? 600 : 400, marginBottom: -2,
+            fontWeight: activeTab === tab ? 600 : 400, marginBottom: -2, flexShrink: 0,
           }}>{label}</button>
         ))}
       </div>

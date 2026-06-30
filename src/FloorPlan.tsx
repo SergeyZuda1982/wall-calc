@@ -12,6 +12,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { Stage, Layer, Line, Circle, Text, Rect, Group, Image as KonvaImage } from 'react-konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
+import { useIsMobile } from './hooks/useIsMobile'
 import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour } from './types'
 import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
@@ -411,6 +412,11 @@ export default function FloorPlan() {
   const containerRef = useRef<HTMLDivElement>(null)
   const stageRef     = useRef<any>(null)
   const [canvasW, setCanvasW] = useState(600)
+
+  // ── Мобильная адаптация ──
+  const isMobile = useIsMobile()
+  const [mobileLeftOpen, setMobileLeftOpen] = useState(false)
+  const [mobileRightOpen, setMobileRightOpen] = useState(false)
   useEffect(() => {
     function update() {
       if (containerRef.current) setCanvasW(containerRef.current.offsetWidth)
@@ -439,6 +445,7 @@ export default function FloorPlan() {
     dragMovedRef.current = false
     if (m !== 'select') setSelected(null)
     if (m !== 'erase') setEraseIds([])
+    if (isMobile && m === 'draw') setMobileLeftOpen(false)
   }
 
   function confirmErase(ids: string[]) {
@@ -901,6 +908,13 @@ export default function FloorPlan() {
   }
 
   const selectedLine  = lines.find(l => l.id === selectedId)
+
+  // На мобильном — при выборе линии авто-открыть правую шторку, при снятии выбора — закрыть
+  useEffect(() => {
+    if (!isMobile) return
+    if (selectedLine) { setMobileRightOpen(true); setMobileLeftOpen(false) }
+    else setMobileRightOpen(false)
+  }, [selectedId, isMobile])
   const inspectorLine = lines.find(l => l.id === inspectorId)
   const previewPt    = cursor ?? (drawing ? { x: drawing.x1, y: drawing.y1 } : null)
   const previewX2    = previewPt?.x ?? 0
@@ -954,18 +968,28 @@ export default function FloorPlan() {
         display: 'flex', alignItems: 'center', gap: 8,
         padding: '8px 16px', background: '#fff',
         borderBottom: '1px solid #e0e4ee',
-        flexShrink: 0,
+        flexShrink: 0, flexWrap: 'wrap',
       }}>
+        {isMobile && (
+          <button onClick={() => { setMobileLeftOpen(o => !o); setMobileRightOpen(false) }}
+            title="Конструкции" style={{
+              ...toolBtnStyle(mobileLeftOpen), padding: '6px 10px', fontSize: 16,
+            }}>
+            ☰
+          </button>
+        )}
         <span style={{ fontSize: 15, fontWeight: 700, color: '#1e2433' }}>План объекта</span>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: '#888' }}>
-          Масштаб: {scaleMmPx >= 10 ? `${Math.round(scaleMmPx)}мм/рх` : `${scaleMmPx.toFixed(1)}мм/рх`}
-        </span>
+        {!isMobile && (
+          <span style={{ fontSize: 12, color: '#888' }}>
+            Масштаб: {scaleMmPx >= 10 ? `${Math.round(scaleMmPx)}мм/рх` : `${scaleMmPx.toFixed(1)}мм/рх`}
+          </span>
+        )}
         {/* Undo/Redo placeholders */}
-        <button title="Отменить" style={toolBtnStyle(false)}>↩</button>
-        <button title="Повторить" style={toolBtnStyle(false)}>↪</button>
-        <button onClick={() => { }} style={{ ...toolBtnStyle(false), minWidth: 90 }}>
-          Экспорт ▾
+        {!isMobile && <button title="Отменить" style={toolBtnStyle(false)}>↩</button>}
+        {!isMobile && <button title="Повторить" style={toolBtnStyle(false)}>↪</button>}
+        <button onClick={() => { }} style={{ ...toolBtnStyle(false), minWidth: isMobile ? 0 : 90, padding: isMobile ? '6px 10px' : undefined }}>
+          {isMobile ? '⬇' : 'Экспорт ▾'}
         </button>
         {lines.length > 0 && (
           <button onClick={() => { if (confirm('Очистить план?')) clearFloorPlan() }}
@@ -973,13 +997,36 @@ export default function FloorPlan() {
             🗑
           </button>
         )}
+        {isMobile && selectedLine && (
+          <button onClick={() => { setMobileRightOpen(o => !o); setMobileLeftOpen(false) }}
+            title="Параметры" style={{
+              ...toolBtnStyle(mobileRightOpen), padding: '6px 10px', fontSize: 16,
+            }}>
+            ⚙
+          </button>
+        )}
       </div>
 
+
       {/* ── Трёхколоночный layout ── */}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+
+        {/* Затемнение фона при открытой шторке на мобильном */}
+        {isMobile && (mobileLeftOpen || mobileRightOpen) && (
+          <div onClick={() => { setMobileLeftOpen(false); setMobileRightOpen(false) }}
+            style={{
+              position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 20,
+            }} />
+        )}
 
         {/* ════════════════════ ЛЕВАЯ ПАНЕЛЬ ════════════════════ */}
-        <div style={leftPanelStyle}>
+        <div style={isMobile ? {
+          ...leftPanelStyle,
+          position: 'absolute', top: 0, bottom: 0, left: 0, zIndex: 21,
+          transform: mobileLeftOpen ? 'translateX(0)' : 'translateX(-100%)',
+          transition: 'transform 0.22s ease',
+          boxShadow: mobileLeftOpen ? '4px 0 16px rgba(0,0,0,0.25)' : 'none',
+        } : leftPanelStyle}>
 
           {/* Конструкции — дерево материалов */}
           {([
@@ -1727,8 +1774,21 @@ export default function FloorPlan() {
         </div>
 
         {/* ════════════════════ ПРАВАЯ ПАНЕЛЬ ════════════════════ */}
-        {inspectorLine && (
-          <div style={rightPanelStyle}>
+        {inspectorLine && (isMobile ? mobileRightOpen : true) && (
+          <div style={isMobile ? {
+            ...rightPanelStyle,
+            position: 'absolute', top: 0, bottom: 0, right: 0, zIndex: 21,
+            width: Math.min(RIGHT_W, window.innerWidth - 32),
+            minWidth: 0, maxWidth: Math.min(RIGHT_W, window.innerWidth - 32),
+            boxShadow: '-4px 0 16px rgba(0,0,0,0.25)',
+          } : rightPanelStyle}>
+            {isMobile && (
+              <button onClick={() => setMobileRightOpen(false)} style={{
+                position: 'absolute', top: 8, right: 8, zIndex: 1,
+                width: 28, height: 28, borderRadius: 14, border: '1px solid #ddd',
+                background: '#fff', cursor: 'pointer', fontSize: 14,
+              }}>✕</button>
+            )}
             {/* Заголовок правой панели */}
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
