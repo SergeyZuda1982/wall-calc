@@ -60,13 +60,13 @@ function snapPoint(
   x: number, y: number, lines: PlanLine[], scaleMmPx: number,
   excludeId?: string, threshPx = SNAP_SCREEN_PX,
 ) {
-  let best = { x, y, snapped: false, d: threshPx }
+  let best = { x, y, snapped: false, d: Infinity }
   for (const l of lines) {
     if (l.id === excludeId) continue
     // Концы линии
     for (const [px, py] of [[l.x1, l.y1], [l.x2, l.y2]] as [number, number][]) {
       const d = dist(x, y, px, py)
-      if (d < best.d) best = { x: px, y: py, snapped: true, d }
+      if (d <= threshPx && d < best.d) best = { x: px, y: py, snapped: true, d }
     }
     // T-примыкание: ближайшая точка на оси линии (не только конец) —
     // нужно чтобы перегородка могла начаться/упереться в РЕБРО другой стены.
@@ -82,9 +82,12 @@ function snapPoint(
       const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
       const halfThicknessPx = vis.thicknessMm > 0 ? (vis.thicknessMm / 2) / scaleMmPx : 0
       const bodyThresh = threshPx + halfThicknessPx
-      if (d < bodyThresh && d < best.d + halfThicknessPx) best = { x: px, y: py, snapped: true, d }
+      // Кандидат валиден относительно СВОЕГО порога (учитывает толщину ИМЕННО этой стены),
+      // а не относительно best.d, который мог уже сжаться из-за другой, не относящейся линии
+      if (d <= bodyThresh && d < best.d) best = { x: px, y: py, snapped: true, d }
     }
   }
+  if (!best.snapped) return { x, y, snapped: false, d: threshPx }
   return best
 }
 
