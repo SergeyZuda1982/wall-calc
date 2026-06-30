@@ -326,6 +326,9 @@ export default function FloorPlan() {
   const dragMovedRef = useRef(false)
   const lineWasClickedRef = useRef(false)
   const panStartRef  = useRef<{ x: number; y: number; sx: number; sy: number } | null>(null)
+  // Touch: панорама одним пальцем (когда не рисуем/не двигаем линию) и pinch-zoom двумя
+  const touchPanRef   = useRef<{ x: number; y: number; sx: number; sy: number } | null>(null)
+  const pinchRef       = useRef<{ dist: number; scale: number; midX: number; midY: number } | null>(null)
 
   // Зум и панорамирование
   const [stageScale, setStageScale] = useState(1)
@@ -552,12 +555,79 @@ export default function FloorPlan() {
     handleMove((sp.x - pos.x) / sc, (sp.y - pos.y) / sc)
   }, [lines, mode, drawing, orthoMode, dragRef.current])
 
+  function touchDist(t1: Touch, t2: Touch) {
+    return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
+  }
+  function touchMid(t1: Touch, t2: Touch) {
+    return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 }
+  }
+
+  const handleTouchStart = useCallback((e: KonvaEventObject<TouchEvent>) => {
+    const te = e.evt as TouchEvent
+    const stage = e.target.getStage()
+    if (!stage) return
+    const rect = stage.container().getBoundingClientRect()
+
+    if (te.touches.length === 2) {
+      // Старт pinch-zoom — отменяем любое одиночное панорамирование/драг
+      touchPanRef.current = null
+      const m = touchMid(te.touches[0], te.touches[1])
+      pinchRef.current = {
+        dist: touchDist(te.touches[0], te.touches[1]),
+        scale: stageScaleRef.current,
+        midX: m.x, midY: m.y,
+      }
+      return
+    }
+
+    if (te.touches.length === 1) {
+      // Палец коснулся пустого места холста (не линии, не ручки) — начинаем панораму,
+      // но только если мы не в процессе рисования и не тащим линию
+      const isOnEmptyCanvas = e.target === stage
+      if (isOnEmptyCanvas && mode !== 'draw' && !dragRef.current) {
+        const sx = te.touches[0].clientX - rect.left
+        const sy = te.touches[0].clientY - rect.top
+        touchPanRef.current = { x: sx, y: sy, sx: stagePosRef.current.x, sy: stagePosRef.current.y }
+      }
+    }
+  }, [mode])
+
   const handleTouchMove = useCallback((e: KonvaEventObject<TouchEvent>) => {
     const stage = e.target.getStage()
     if (!stage) return
     const te = e.evt as TouchEvent
     if (!te.touches.length) return
     const rect = stage.container().getBoundingClientRect()
+
+    // ── Pinch-zoom двумя пальцами ──
+    if (te.touches.length === 2 && pinchRef.current) {
+      te.preventDefault()
+      const d = touchDist(te.touches[0], te.touches[1])
+      const m = touchMid(te.touches[0], te.touches[1])
+      const ratio = d / pinchRef.current.dist
+      const newScale = Math.min(Math.max(pinchRef.current.scale * ratio, 0.1), 20)
+      const mx = m.x - rect.left
+      const my = m.y - rect.top
+      const worldX = (mx - stagePosRef.current.x) / stageScaleRef.current
+      const worldY = (my - stagePosRef.current.y) / stageScaleRef.current
+      setStageScale(newScale)
+      setStagePos({ x: mx - worldX * newScale, y: my - worldY * newScale })
+      return
+    }
+
+    // ── Панорама одним пальцем (по пустому месту) ──
+    if (te.touches.length === 1 && touchPanRef.current) {
+      te.preventDefault()
+      const sx = te.touches[0].clientX - rect.left
+      const sy = te.touches[0].clientY - rect.top
+      setStagePos({
+        x: touchPanRef.current.sx + sx - touchPanRef.current.x,
+        y: touchPanRef.current.sy + sy - touchPanRef.current.y,
+      })
+      return
+    }
+
+    // ── Иначе — обычное рисование / драг линии одним пальцем ──
     const sx = te.touches[0].clientX - rect.left
     const sy = te.touches[0].clientY - rect.top
     const pos = stagePosRef.current; const sc = stageScaleRef.current
@@ -584,6 +654,15 @@ export default function FloorPlan() {
     dragRef.current = null
     dragMovedRef.current = false
   }, [mode])
+
+  const handleTouchEnd = useCallback((e: KonvaEventObject<TouchEvent>) => {
+    const te = e.evt as TouchEvent
+    if (te.touches.length < 2) pinchRef.current = null
+    if (te.touches.length === 0) {
+      touchPanRef.current = null
+      handlePointerUp()
+    }
+  }, [handlePointerUp])
 
   // ── Зум колёсиком ─────────────────────────────────────────────────────────
   function handleWheel(e: KonvaEventObject<WheelEvent>) {
@@ -1389,8 +1468,9 @@ export default function FloorPlan() {
                 onClick={handleStageClick} onTap={handleStageClick}
                 onMouseDown={handleStageMouseDown}
                 onContextMenu={handleStageContextMenu}
-                onMouseMove={handleMouseMove} onTouchMove={handleTouchMove}
-                onMouseUp={handlePointerUp} onTouchEnd={handlePointerUp}
+                onMouseMove={handleMouseMove}
+                onTouchStart={handleTouchStart} onTouchMove={handleTouchMove}
+                onMouseUp={handlePointerUp} onTouchEnd={handleTouchEnd}
                 onWheel={handleWheel}>
                 <Layer>
                   {/* Фон и сетка — адаптивные к zoom/pan */}
