@@ -68,23 +68,33 @@ function snapPoint(
       const d = dist(x, y, px, py)
       if (d <= threshPx && d < best.d) best = { x: px, y: py, snapped: true, d }
     }
-    // T-примыкание: ближайшая точка на оси линии (не только конец) —
-    // нужно чтобы перегородка могла начаться/упереться в РЕБРО другой стены.
-    // Порог расширен на половину толщины стены: клик в ЛЮБОЕ место видимого
-    // двойного контура стены (а не точно по оси) должен прилипать к оси.
+    // T-примыкание: снап к БЛИЖНЕМУ РЕБРУ стены (не к оси!) — именно туда
+    // физически упирается примыкающая перегородка. Длина при этом сразу
+    // получается "в свету" (до грани, не до центра), без отдельной коррекции.
     const dx = l.x2 - l.x1, dy = l.y2 - l.y1
-    const len2 = dx * dx + dy * dy
-    if (len2 > 1) {
-      let t = ((x - l.x1) * dx + (y - l.y1) * dy) / len2
+    const len = Math.sqrt(dx * dx + dy * dy)
+    if (len > 1) {
+      const ux = dx / len, uy = dy / len
+      let t = ((x - l.x1) * dx + (y - l.y1) * dy) / (len * len)
       t = Math.max(0, Math.min(1, t))
-      const px = l.x1 + t * dx, py = l.y1 + t * dy
-      const d = dist(x, y, px, py)
+      const axisX = l.x1 + t * dx, axisY = l.y1 + t * dy
+
       const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
       const halfThicknessPx = vis.thicknessMm > 0 ? (vis.thicknessMm / 2) / scaleMmPx : 0
+
+      // Нормаль к оси линии; определяем с какой стороны от оси кликнули,
+      // чтобы выбрать БЛИЖНЮЮ грань (ту, с которой приближается курсор)
+      const nx = -uy, ny = ux
+      const side = (x - axisX) * nx + (y - axisY) * ny
+      const faceSign = side >= 0 ? 1 : -1
+      const faceX = axisX + faceSign * nx * halfThicknessPx
+      const faceY = axisY + faceSign * ny * halfThicknessPx
+
+      const d = dist(x, y, faceX, faceY)
       const bodyThresh = threshPx + halfThicknessPx
       // Кандидат валиден относительно СВОЕГО порога (учитывает толщину ИМЕННО этой стены),
       // а не относительно best.d, который мог уже сжаться из-за другой, не относящейся линии
-      if (d <= bodyThresh && d < best.d) best = { x: px, y: py, snapped: true, d }
+      if (d <= bodyThresh && d < best.d) best = { x: faceX, y: faceY, snapped: true, d }
     }
   }
   if (!best.snapped) return { x, y, snapped: false, d: threshPx }

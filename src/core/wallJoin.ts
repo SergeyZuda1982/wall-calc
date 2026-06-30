@@ -183,7 +183,7 @@ function applyL(
   else                  { jb.ax1 -= bi.ux * a.halfPx; jb.ay1 -= bi.uy * a.halfPx }
 }
 
-// ─── T-стык: attached обрезается до внешней грани main ───────────────────
+// ─── T-стык: attached обрезается до ближней грани main ───────────────────
 
 function applyT(
   _attached: WallForJoin, main: WallForJoin,
@@ -195,11 +195,13 @@ function applyT(
   const dir_into_x = aEnd === 'end1' ? ai.ux : -ai.ux
   const dir_into_y = aEnd === 'end1' ? ai.uy : -ai.uy
 
-  // Dot с side+ main: если > 0, attached уходит в сторону side+ → внешняя = side−
+  // Dot с side+ main: если > 0, attached лежит со стороны side+ →
+  // ближняя грань (та, в которую упирается attached) — это side+
   const dot = dir_into_x * (bi.nx / main.halfPx) + dir_into_y * (bi.ny / main.halfPx)
-  const extSign = dot > 0 ? -1 : 1
+  const extSign = dot > 0 ? 1 : -1
 
-  // Точка на внешней грани main
+  // Точка на ближней грани main (не дальней!) — именно туда физически
+  // упирается примыкающая стена
   const extPx = main.x1 + extSign * bi.nx
   const extPy = main.y1 + extSign * bi.ny
 
@@ -214,7 +216,7 @@ function applyT(
 
   setEnd(ja, aEnd, Ip, Im)
 
-  // Расширяем ось attached до внешней грани main (dir_out = −dir_into)
+  // Расширяем ось attached до ближней грани main (dir_out = −dir_into)
   const dir_out_x = -dir_into_x
   const dir_out_y = -dir_into_y
   if (aEnd === 'end1') {
