@@ -358,12 +358,22 @@ export interface PlanLine {
   liningId?: string         // ссылка на LiningEntry если привязана
 }
 
+/** Подложка — растровое изображение страницы PDF, по которому обводят план */
+export interface BackgroundImage {
+  dataUrl: string    // PNG base64
+  x: number; y: number       // мировые px левого верхнего угла
+  width: number; height: number  // мировые px (натуральный размер при загрузке)
+  opacity: number     // 0..1
+  locked: boolean      // true = не реагирует на клики, не двигается
+}
+
 /** План объекта */
 export interface FloorPlan {
   scaleMmPerPx: number
   lines: PlanLine[]
   contours: PlanContour[]
   rooms: Room[]
+  backgroundImage?: BackgroundImage | null
 }
 
 export const DEFAULT_FLOOR_PLAN: FloorPlan = {
@@ -371,6 +381,7 @@ export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   lines: [],
   contours: [],
   rooms: [],
+  backgroundImage: null,
 }
 
 /** Активный вид на холсте */

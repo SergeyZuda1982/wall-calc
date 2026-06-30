@@ -72,6 +72,8 @@ export interface ProjectStore {
 
   // план объекта
   setFloorPlanScale: (scaleMmPerPx: number) => void
+  setBackgroundImage: (img: import('../types').BackgroundImage | null) => void
+  updateBackgroundImage: (patch: Partial<import('../types').BackgroundImage>) => void
   addPlanLine: (line: Omit<PlanLine, 'id'>) => string
   updatePlanLine: (id: string, patch: Partial<PlanLine>) => void
   removePlanLine: (id: string) => void
@@ -287,6 +289,28 @@ export const useProjectStore = create<ProjectStore>()(
       setFloorPlanScale: (scaleMmPerPx) => {
         set(s => {
           const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), scaleMmPerPx }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      setBackgroundImage: (img) => {
+        set(s => {
+          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), backgroundImage: img }
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+          )
+          return { floorPlan, projects }
+        })
+      },
+
+      updateBackgroundImage: (patch) => {
+        set(s => {
+          const cur = s.floorPlan?.backgroundImage
+          if (!cur) return {}
+          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), backgroundImage: { ...cur, ...patch } }
           const projects = s.projects.map(p =>
             p.id === s.activeProjectId ? { ...p, floorPlan } : p
           )

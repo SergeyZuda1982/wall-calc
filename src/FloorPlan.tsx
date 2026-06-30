@@ -9,7 +9,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { Stage, Layer, Line, Circle, Text, Rect, Group } from 'react-konva'
+import { Stage, Layer, Line, Circle, Text, Rect, Group, Image as KonvaImage } from 'react-konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour } from './types'
@@ -17,6 +17,7 @@ import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxo
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 import { computeWallJoins } from './core/wallJoin'
 import type { WallForJoin } from './core/wallJoin'
+import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -253,6 +254,7 @@ export default function FloorPlan() {
     floorPlan, addPlanLine, updatePlanLine, removePlanLine,
     setFloorPlanScale, clearFloorPlan,
     addContour, addRoom,
+    setBackgroundImage, updateBackgroundImage,
   } = useProjectStore()
 
   const lines     = floorPlan?.lines    ?? []
@@ -307,6 +309,67 @@ export default function FloorPlan() {
   const [scalePt2, setScalePt2]               = useState<{ x: number; y: number } | null>(null)
   const [scaleMmInput, setScaleMmInput]       = useState('')
   const [showScaleDialog, setShowScaleDialog] = useState(false)
+
+  // ── Подложка PDF ──────────────────────────────────────────────────────────
+  const [bgImageEl, setBgImageEl]       = useState<HTMLImageElement | null>(null)
+  const [bgUploading, setBgUploading]   = useState(false)
+  const [bgError, setBgError]           = useState<string | null>(null)
+  const [bgPendingFile, setBgPendingFile] = useState<File | null>(null)
+  const [bgPageCount, setBgPageCount]   = useState(1)
+  const [bgPageInput, setBgPageInput]   = useState('1')
+  const bgFileInputRef = useRef<HTMLInputElement>(null)
+
+  // Загружаем HTMLImageElement из dataUrl при изменении подложки в сторе
+  useEffect(() => {
+    const url = floorPlan?.backgroundImage?.dataUrl
+    if (!url) { setBgImageEl(null); return }
+    const img = new window.Image()
+    img.onload = () => setBgImageEl(img)
+    img.src = url
+  }, [floorPlan?.backgroundImage?.dataUrl])
+
+  const handleBgFileSelected = useCallback(async (file: File) => {
+    setBgError(null)
+    try {
+      const count = await getPdfPageCount(file)
+      if (count > 1) {
+        setBgPendingFile(file)
+        setBgPageCount(count)
+        setBgPageInput('1')
+      } else {
+        setBgUploading(true)
+        const res = await renderPdfPageToImage(file, 1)
+        setBackgroundImage({
+          dataUrl: res.dataUrl, x: 0, y: 0,
+          width: res.width, height: res.height,
+          opacity: 0.6, locked: true,
+        })
+        setBgUploading(false)
+      }
+    } catch (err) {
+      setBgError('Не удалось прочитать PDF. Проверьте файл.')
+      setBgUploading(false)
+    }
+  }, [setBackgroundImage])
+
+  const handleBgConfirmPage = useCallback(async () => {
+    if (!bgPendingFile) return
+    const page = Math.min(Math.max(parseInt(bgPageInput) || 1, 1), bgPageCount)
+    setBgUploading(true)
+    setBgError(null)
+    try {
+      const res = await renderPdfPageToImage(bgPendingFile, page)
+      setBackgroundImage({
+        dataUrl: res.dataUrl, x: 0, y: 0,
+        width: res.width, height: res.height,
+        opacity: 0.6, locked: true,
+      })
+    } catch {
+      setBgError('Не удалось отрендерить страницу.')
+    }
+    setBgUploading(false)
+    setBgPendingFile(null)
+  }, [bgPendingFile, bgPageInput, bgPageCount, setBackgroundImage])
 
   // Адаптивная ширина холста
   const containerRef = useRef<HTMLDivElement>(null)
@@ -931,7 +994,71 @@ export default function FloorPlan() {
             </button>
           ))}
 
-          {/* Параллельная и Вид сбоку */}
+          <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
+
+          {/* Подложка PDF */}
+          <div style={sectionHeaderStyle}>Подложка (PDF)</div>
+          <input ref={bgFileInputRef} type="file" accept="application/pdf" style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleBgFileSelected(f); e.target.value = '' }} />
+
+          {!floorPlan?.backgroundImage && !bgPendingFile && (
+            <button onClick={() => bgFileInputRef.current?.click()} disabled={bgUploading}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 14px', background: 'transparent', border: 'none',
+                cursor: bgUploading ? 'default' : 'pointer', width: '100%', textAlign: 'left',
+                color: '#8a9ac8', fontSize: 12,
+              }}>
+              <span style={{ fontSize: 14, minWidth: 16, textAlign: 'center' }}>📄</span>
+              <span>{bgUploading ? 'Загрузка…' : 'Загрузить PDF'}</span>
+            </button>
+          )}
+
+          {bgPendingFile && (
+            <div style={{ padding: '6px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 11, color: '#8a9ac8' }}>Страница (1–{bgPageCount}):</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input type="number" min={1} max={bgPageCount} value={bgPageInput}
+                  onChange={e => setBgPageInput(e.target.value)}
+                  style={{ width: 50, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                <button onClick={handleBgConfirmPage} disabled={bgUploading}
+                  style={{ fontSize: 11, padding: '4px 10px', borderRadius: 4, border: 'none', background: '#7c8fcf', color: '#fff', cursor: 'pointer' }}>
+                  {bgUploading ? '…' : 'Загрузить'}
+                </button>
+                <button onClick={() => setBgPendingFile(null)}
+                  style={{ fontSize: 11, padding: '4px 10px', borderRadius: 4, border: 'none', background: 'transparent', color: '#8a9ac8', cursor: 'pointer' }}>
+                  Отмена
+                </button>
+              </div>
+            </div>
+          )}
+
+          {floorPlan?.backgroundImage && (
+            <div style={{ padding: '6px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: '#8a9ac8', minWidth: 56 }}>Прозр.</span>
+                <input type="range" min={0.1} max={1} step={0.05}
+                  value={floorPlan.backgroundImage.opacity}
+                  onChange={e => updateBackgroundImage({ opacity: parseFloat(e.target.value) })}
+                  style={{ flex: 1 }} />
+              </div>
+              <button onClick={() => switchMode('scale')}
+                style={{ fontSize: 11, padding: '6px 10px', borderRadius: 4, border: '1px solid #3a4060', background: mode === 'scale' ? '#7c8fcf' : 'transparent', color: '#fff', cursor: 'pointer' }}>
+                📐 Откалибровать масштаб
+              </button>
+              <button onClick={() => { if (window.confirm('Удалить подложку?')) setBackgroundImage(null) }}
+                style={{ fontSize: 11, padding: '6px 10px', borderRadius: 4, border: '1px solid #3a4060', background: 'transparent', color: '#e57373', cursor: 'pointer' }}>
+                Удалить подложку
+              </button>
+            </div>
+          )}
+
+          {bgError && (
+            <div style={{ padding: '4px 14px', fontSize: 11, color: '#e57373' }}>{bgError}</div>
+          )}
+
+          <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
+
           {selectedLine && (
             <>
               <button onClick={() => setShowParallelDialog(true)}
@@ -1111,6 +1238,20 @@ export default function FloorPlan() {
                       <Rect key="bg" x={x0} y={y0} width={x1-x0} height={y1-y0} fill="#fafafa" listening={false} />,
                       ...vLines, ...hLines
                     ]
+                  })()}
+
+                  {/* Подложка PDF — под линиями, над сеткой */}
+                  {floorPlan?.backgroundImage && bgImageEl && (() => {
+                    const bg = floorPlan.backgroundImage!
+                    return (
+                      <KonvaImage
+                        image={bgImageEl}
+                        x={bg.x} y={bg.y}
+                        width={bg.width} height={bg.height}
+                        opacity={bg.opacity}
+                        listening={false}
+                      />
+                    )
                   })()}
 
                   {/* Помещения (замкнутые периметры wall_existing) */}
