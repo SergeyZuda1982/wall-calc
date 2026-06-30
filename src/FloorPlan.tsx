@@ -1034,7 +1034,11 @@ export default function FloorPlan() {
                           <button key={child.value}
                             onClick={() => {
                               setDrawType(type)
-                              setDrawSpec({ material: node.value, subtype: child.value })
+                              setDrawSpec({
+                                material: node.value, subtype: child.value,
+                                boardSubtype: drawSpec?.material === node.value ? drawSpec?.boardSubtype : 'standard',
+                                layers: drawSpec?.material === node.value ? drawSpec?.layers : 1,
+                              })
                               setExpandedMaterial(null)
                               switchMode('draw')
                             }}
@@ -1051,6 +1055,41 @@ export default function FloorPlan() {
                           </button>
                         )
                       })}
+
+                      {/* Тип листа + кол-во слоёв — только для ГКЛ, после выбора профиля/монтажа */}
+                      {node.value === 'gkl' && isActiveL1 && drawSpec?.subtype && (
+                        <div style={{ padding: '6px 14px 8px 28px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 10, color: '#7a8ab0', minWidth: 50 }}>Лист:</span>
+                            <select
+                              value={drawSpec.boardSubtype ?? 'standard'}
+                              onChange={e => setDrawSpec({ ...drawSpec, boardSubtype: e.target.value as PlanLineSpec['boardSubtype'] })}
+                              style={{ flex: 1, fontSize: 11, padding: '3px 5px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }}>
+                              <option value="standard">Стандарт ГКЛ</option>
+                              <option value="moisture">Влагостойкий ГКЛВ</option>
+                              <option value="fire">Огнестойкий ГКЛО</option>
+                              <option value="moisture_fire">Влагоогнестойкий ГКЛВО</option>
+                            </select>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 10, color: '#7a8ab0', minWidth: 50 }}>Слоёв:</span>
+                            <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                              {([1, 2] as const).map(n => (
+                                <button key={n}
+                                  onClick={() => setDrawSpec({ ...drawSpec, layers: n })}
+                                  style={{
+                                    flex: 1, fontSize: 11, padding: '3px 0', borderRadius: 4,
+                                    border: '1px solid #3a4060', cursor: 'pointer',
+                                    background: (drawSpec.layers ?? 1) === n ? '#7c8fcf' : 'transparent',
+                                    color: (drawSpec.layers ?? 1) === n ? '#fff' : '#8a9ac8',
+                                  }}>
+                                  {n} слой{n === 2 ? 'я' : ''}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )
                 })}

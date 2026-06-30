@@ -43,8 +43,23 @@ export default function ConstructionSpecSelector({ planType, value, onChange, co
 
   function handleL2(subtype: string) {
     if (!value?.material) return
-    onChange({ material: value.material, subtype: subtype || undefined })
+    onChange({
+      material: value.material, subtype: subtype || undefined,
+      boardSubtype: value.boardSubtype, layers: value.layers,
+    })
   }
+
+  function handleBoardSubtype(boardSubtype: string) {
+    if (!value?.material) return
+    onChange({ ...value, boardSubtype: (boardSubtype || undefined) as PlanLineSpec['boardSubtype'] })
+  }
+
+  function handleLayers(layers: 1 | 2) {
+    if (!value?.material) return
+    onChange({ ...value, layers })
+  }
+
+  const isGkl = value?.material === 'gkl' && !!value?.subtype
 
   const gap = compact ? 6 : 8
   const labelStyle: React.CSSProperties = compact
@@ -79,6 +94,30 @@ export default function ConstructionSpecSelector({ planType, value, onChange, co
             <option key={n.value} value={n.value}>{n.label}</option>
           ))}
         </select>
+      )}
+
+      {/* ── Лист обшивки + кол-во слоёв (только ГКЛ, после выбора подтипа) ── */}
+      {isGkl && (
+        <>
+          <select
+            value={value?.boardSubtype ?? 'standard'}
+            onChange={e => handleBoardSubtype(e.target.value)}
+            style={{ ...selectStyle, color: '#222' }}
+          >
+            <option value="standard">Стандарт ГКЛ</option>
+            <option value="moisture">Влагостойкий ГКЛВ</option>
+            <option value="fire">Огнестойкий ГКЛО</option>
+            <option value="moisture_fire">Влагоогнестойкий ГКЛВО</option>
+          </select>
+          <select
+            value={value?.layers ?? 1}
+            onChange={e => handleLayers(Number(e.target.value) as 1 | 2)}
+            style={{ ...selectStyle, color: '#222' }}
+          >
+            <option value={1}>1 слой</option>
+            <option value={2}>2 слоя</option>
+          </select>
+        </>
       )}
 
       {/* Кнопка сброса — только когда что-то выбрано */}

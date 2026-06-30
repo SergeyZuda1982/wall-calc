@@ -80,8 +80,10 @@ export const TAXONOMY: Record<PlanLineType, TaxNode[]> = {
     {
       value: 'gkl', label: 'ГКЛ / ГВЛ', abbr: 'ГКЛ',
       children: [
-        { value: '1',  label: '1 слой',  abbr: '1сл' },
-        { value: '2',  label: '2 слоя',  abbr: '2сл' },
+        { value: 'glued',      label: 'На клею (без каркаса)',   abbr: 'КЛЕЙ' },
+        { value: 'frame_pn28', label: 'Каркас ПН/ПС 28 (~40мм)', abbr: 'К28' },
+        { value: 'frame_ps50', label: 'Каркас ПС 50 (~65мм)',    abbr: 'К50' },
+        { value: 'frame_ps75', label: 'Каркас ПС 75 (~90мм)',    abbr: 'К75' },
       ],
     },
     {
@@ -254,6 +256,10 @@ const GKL_STUD_THICKNESS: Record<string, number> = {
   ps50: 75, ps75: 100, ps100: 125, ps125: 150, double: 200,
 }
 
+const LINING_THICKNESS: Record<string, number> = {
+  glued: 12, frame_pn28: 40, frame_ps50: 65, frame_ps75: 90,
+}
+
 export function getWallThicknessMm(type: PlanLineType, material?: string, subtype?: string): number {
   if (type === 'wall_new') {
     if (!material) return 0  // нет spec → не рисуем трапецию
@@ -275,12 +281,22 @@ export function getWallThicknessMm(type: PlanLineType, material?: string, subtyp
     return 0  // unknown — одиночная линия
   }
   if (type === 'wall_lining') {
-    if (material === 'gkl')     return 40
+    if (material === 'gkl')     return LINING_THICKNESS[subtype ?? ''] ?? 40
     if (material === 'tile')    return 15
     if (material === 'plaster') return 20
     return 30
   }
   return 0
+}
+
+/** Краткая аббревиатура типа листа ГКЛ для подписи на плане */
+const BOARD_SUBTYPE_ABBR: Record<string, string> = {
+  standard: '', moisture: 'ГКЛВ', fire: 'ГКЛО', moisture_fire: 'ГКЛВО',
+}
+
+export function getBoardSubtypeAbbr(boardSubtype?: string): string {
+  if (!boardSubtype) return ''
+  return BOARD_SUBTYPE_ABBR[boardSubtype] ?? ''
 }
 
 // ─── Визуальный стиль линии ──────────────────────────────────────────────────
@@ -363,11 +379,22 @@ export function getLineVisual(
 
 // ─── Подпись на холсте ───────────────────────────────────────────────────────
 
-export function getSpecAbbr(type: PlanLineType, material?: string, subtype?: string): string {
+export function getSpecAbbr(
+  type: PlanLineType, material?: string, subtype?: string,
+  boardSubtype?: string, layers?: 1 | 2,
+): string {
   if (!material) return ''
   const l1 = TAXONOMY[type]?.find(n => n.value === material)
   if (!l1) return ''
-  if (!subtype || !l1.children?.length) return l1.abbr
-  const l2 = l1.children.find(n => n.value === subtype)
-  return l2 ? `${l1.abbr}·${l2.abbr}` : l1.abbr
+  let abbr = l1.abbr
+  if (subtype && l1.children?.length) {
+    const l2 = l1.children.find(n => n.value === subtype)
+    if (l2) abbr = `${abbr}·${l2.abbr}`
+  }
+  if (material === 'gkl') {
+    const boardAbbr = getBoardSubtypeAbbr(boardSubtype)
+    if (boardAbbr) abbr = `${abbr}·${boardAbbr}`
+    if (layers === 2) abbr = `${abbr}·2сл`
+  }
+  return abbr
 }

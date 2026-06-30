@@ -342,7 +342,9 @@ export type PlanLineType =
 /** Конструктивная спецификация линии — выбирается каскадно */
 export interface PlanLineSpec {
   material: string    // level 1: 'gkl' | 'brick' | 'armstrong' | etc.
-  subtype?: string    // level 2: толщина, слои, подтип
+  subtype?: string    // level 2: профиль каркаса / толщина / способ монтажа
+  boardSubtype?: GklSubtype  // тип листа обшивки (стандарт/влагостойкий/огнестойкий) — для gkl
+  layers?: 1 | 2              // число слоёв обшивки с каждой стороны — для gkl
 }
 
 /** Одна линия на плане */
