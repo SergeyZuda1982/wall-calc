@@ -345,6 +345,7 @@ export default function FloorPlan() {
   const [mode, setMode]                 = useState<Mode>('draw')
   const [drawType, setDrawType]         = useState<PlanLineType>('wall_new')
   const [drawSpec, setDrawSpec]         = useState<PlanLineSpec | null>(null)
+  const [drawHeightMm, setDrawHeightMm] = useState('3000')
   const [expandedMaterial, setExpandedMaterial] = useState<string | null>(null)
   const [orthoMode, setOrthoMode]       = useState(false)
   const [drawing, setDrawing]           = useState<{ x1: number; y1: number } | null>(null)
@@ -865,6 +866,7 @@ export default function FloorPlan() {
             x2: chainStartPt!.x, y2: chainStartPt!.y,
             type: drawType, lengthMm, label,
             spec: drawSpec ?? undefined,
+            heightMm: parseFloat(drawHeightMm) || 3000,
           })
           allLineIds = [...allLineIds, closingId]
         }
@@ -895,7 +897,10 @@ export default function FloorPlan() {
         const lengthMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
         if (lengthMm < 10) { setDrawing(null); return }  // < 10мм — не линия, случайный клик
         const label = genLabel(drawType, lines)
-        const newId = addPlanLine({ x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label, spec: drawSpec ?? undefined })
+        const newId = addPlanLine({
+          x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label,
+          spec: drawSpec ?? undefined, heightMm: parseFloat(drawHeightMm) || 3000,
+        })
         setChainLineIds(prev => [...prev, newId])
         // Конец линии — НЕ автостарт следующей, ждём нового клика пользователя
         setDrawing(null)
@@ -903,7 +908,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, scaleStep, orthoMode, addPlanLine, removePlanLine])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, scaleStep, orthoMode, addPlanLine, removePlanLine])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1440,6 +1445,17 @@ export default function FloorPlan() {
               )}
             </>
           )}
+
+          <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
+
+          {/* Высота для новых конструкций — применяется ко всем линиям при рисовании */}
+          <div style={{ padding: '4px 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Высота:</span>
+            <input type="number" value={drawHeightMm}
+              onChange={e => setDrawHeightMm(e.target.value)}
+              style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+            <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
+          </div>
 
           <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
 
