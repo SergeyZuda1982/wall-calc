@@ -403,9 +403,10 @@ export default function App() {
         )}
 
         {/* Основной контент */}
-        <div ref={canvasWrapRef} style={{ flex: 1, padding: 'clamp(10px, 4vw, 24px)', maxWidth: 900, overflowY: 'auto', minWidth: 0 }}>
+        <div ref={canvasWrapRef} style={{ flex: 1, padding: 'clamp(10px, 4vw, 24px)', maxWidth: activeTab === 'plan' ? 'none' : 900, overflowY: 'auto', minWidth: 0 }}>
 
-      {/* ─── Панель объекта ─── */}
+      {/* ─── Панель объекта ─── (на вкладке "План" скрыта — имя объекта уже видно в шапке, а дропдауны перегородок/облицовок тут не нужны, освобождаем высоту под канвас) */}
+      {activeTab !== 'plan' && (
       <div style={{ marginBottom: 20, padding: '12px 16px', background: '#f8f9ff', border: '1px solid #dde', borderRadius: 8 }}>
 
         {/* Строка: название объекта */}
@@ -488,6 +489,7 @@ export default function App() {
           </div>
         )}
       </div>
+      )}
 
       {/* ─── Вкладки ─── */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid #dde',
@@ -506,7 +508,7 @@ export default function App() {
       {activeTab === 'ceiling' && <CeilingCalc />}
 
       {activeTab === 'plan' && (
-        <div style={{ margin: '0 -24px', height: 'calc(100vh - 140px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ margin: '0 -24px', height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <FloorPlan />
         </div>
       )}
