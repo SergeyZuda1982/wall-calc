@@ -331,7 +331,7 @@ export default function FloorPlan() {
   const {
     floorPlan, addPlanLine, updatePlanLine, removePlanLine,
     setFloorPlanScale, clearFloorPlan,
-    addContour, addRoom, updateRoom, updateContour,
+    addContour, addRoom, updateRoom, removeRoom, updateContour,
     setBackgroundImage, updateBackgroundImage,
   } = useProjectStore()
 
@@ -362,6 +362,7 @@ export default function FloorPlan() {
   const [hoveredId, setHoveredId]       = useState<string | null>(null)
   const [snapActive, setSnapActive]     = useState(false)
   const [inspectorId, setInspectorId]   = useState<string | null>(null)
+  const [inspectorRoomId, setInspectorRoomId] = useState<string | null>(null)
   // Цепочка рисования периметра
   const [chainStartPt, setChainStartPt] = useState<{ x: number; y: number } | null>(null)
   const [chainLineIds, setChainLineIds] = useState<string[]>([])
@@ -1634,15 +1635,44 @@ export default function FloorPlan() {
                     const flatPts = pts.flatMap(p => [p.x, p.y])
                     const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length
                     const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
+                    const minX = Math.min(...pts.map(p => p.x)), maxX = Math.max(...pts.map(p => p.x))
+                    const minY = Math.min(...pts.map(p => p.y)), maxY = Math.max(...pts.map(p => p.y))
+                    const clickable = mode === 'select'
                     return (
-                      <Group key={room.id} listening={false}>
-                        <Line points={flatPts} closed fill="rgba(120,144,156,0.08)" stroke="none" listening={false} />
+                      <Group key={room.id} listening={clickable}>
+                        <Line points={flatPts} closed fill="rgba(120,144,156,0.08)" stroke="none"
+                          listening={clickable}
+                          onClick={clickable ? (e) => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null) } : undefined}
+                          onTap={clickable ? (e) => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null) } : undefined} />
+                        {room.isColumn && (
+                          <Group listening={false} clipFunc={ctx => {
+                            ctx.beginPath()
+                            pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+                            ctx.closePath()
+                          }}>
+                            {(() => {
+                              const step = 14
+                              const diag = (maxX - minX) + (maxY - minY)
+                              const strokes = []
+                              for (let d = -diag; d < diag; d += step) {
+                                strokes.push(
+                                  <Line key={d}
+                                    points={[minX + d, minY, minX + d + (maxY - minY), maxY]}
+                                    stroke="#78909c" strokeWidth={1} listening={false} />
+                                )
+                              }
+                              return strokes
+                            })()}
+                          </Group>
+                        )}
                         <Text x={cx - 70} y={cy - 18} width={140}
-                          text={room.label} fontSize={11} fill="#78909c" align="center" fontStyle="bold" listening={false} />
+                          text={room.isColumn ? (room.label || 'Колонна') : room.label} fontSize={11} fill="#78909c" align="center" fontStyle="bold" listening={false} />
                         <Text x={cx - 70} y={cy - 2} width={140}
                           text={`${room.areaM2.toFixed(1)} м²`} fontSize={13} fill="#78909c" align="center" fontStyle="bold" listening={false} />
-                        <Text x={cx - 70} y={cy + 16} width={140}
-                          text={`П: ${(room.perimeterMm / 1000).toFixed(1)} м`} fontSize={9} fill="#90a4ae" align="center" listening={false} />
+                        {!room.isColumn && (
+                          <Text x={cx - 70} y={cy + 16} width={140}
+                            text={`П: ${(room.perimeterMm / 1000).toFixed(1)} м`} fontSize={9} fill="#90a4ae" align="center" listening={false} />
+                        )}
                       </Group>
                     )
                   })}
@@ -2313,6 +2343,49 @@ export default function FloorPlan() {
             )}
           </div>
         )}
+
+        {/* ─── Мини-панель помещения / колонны ─── */}
+        {!inspectorLine && inspectorRoomId && (() => {
+          const room = rooms.find(r => r.id === inspectorRoomId)
+          if (!room) return null
+          return (
+            <div style={isMobile ? {
+              ...rightPanelStyle,
+              position: 'absolute', top: 0, bottom: 0, right: 0, zIndex: 21,
+              width: Math.min(RIGHT_W, window.innerWidth - 32),
+              minWidth: 0, maxWidth: Math.min(RIGHT_W, window.innerWidth - 32),
+              boxShadow: '-4px 0 16px rgba(0,0,0,0.25)',
+            } : rightPanelStyle}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px 10px', borderBottom: '1px solid #e0e4ee', background: '#fff',
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{room.isColumn ? 'Колонна' : 'Помещение'}</div>
+                <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorRoomId(null)}>✕</button>
+              </div>
+              <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <label style={{ fontSize: 12, color: '#555' }}>
+                  Название
+                  <input value={room.label} onChange={e => updateRoom(room.id, { label: e.target.value })}
+                    style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!room.isColumn}
+                    onChange={e => updateRoom(room.id, { isColumn: e.target.checked })} />
+                  Это колонна (заштриховать)
+                </label>
+                <div style={{ fontSize: 12, color: '#888' }}>
+                  Площадь: <b>{room.areaM2.toFixed(2)} м²</b>
+                  {!room.isColumn && <> · Периметр: <b>{(room.perimeterMm / 1000).toFixed(2)} м</b></>}
+                </div>
+                <button onClick={() => { removeRoom(room.id); setInspectorRoomId(null) }}
+                  style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
+                  🗑 Удалить {room.isColumn ? 'колонну' : 'помещение'}
+                </button>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {/* ── Диалог параллельной линии ── */}

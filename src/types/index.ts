@@ -423,4 +423,5 @@ export interface Room {
   perimeterMm: number    // периметр в мм
   label: string          // "Помещение 1", "Кухня" и т.д.
   templateName?: string  // для будущих шаблонов (ЖК)
+  isColumn?: boolean     // true — это колонна (тот же замкнутый контур, но не помещение)
 }
