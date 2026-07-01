@@ -359,6 +359,12 @@ export interface PlanOpening {
   label: string         // "Д-1" / "О-1"
 }
 
+/** Категория конструкции: капитал (периметр/колонны/уровни — не трогаем) или изменяемая (строим/сносим) */
+export type LineCategory = 'capital' | 'mutable'
+
+/** Статус выполнения работ по конструкции */
+export type WorkStatus = 'demolition' | 'existing' | 'planned' | 'in_progress' | 'done'
+
 export interface PlanLine {
   id: string
   x1: number; y1: number   // координаты на холсте (px)
@@ -371,6 +377,8 @@ export interface PlanLine {
   liningId?: string         // ссылка на LiningEntry если привязана
   openings?: PlanOpening[]  // дверные/оконные проёмы на этой линии
   heightMm?: number         // высота конструкции, мм (по умолчанию 3000, если не задано)
+  category?: LineCategory   // капитал (периметр/колонны) или изменяемая конструкция
+  workStatus?: WorkStatus   // статус работ — актуально для mutable
 }
 
 /** Подложка — растровое изображение страницы PDF, по которому обводят план */

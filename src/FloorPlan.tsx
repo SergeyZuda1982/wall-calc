@@ -13,7 +13,7 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Image as KonvaImage } fr
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus } from './types'
 import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 import { computeWallJoins } from './core/wallJoin'
@@ -45,6 +45,28 @@ const LINE_WIDTH: Record<PlanLineType, number> = {
   wall_new: 4, wall_lining: 3, wall_existing: 5, ceiling: 2, floor: 2,
 }
 const HAS_SIDE_VIEW: PlanLineType[] = ['wall_new', 'wall_lining', 'floor']
+
+const STATUS_LABELS: Record<WorkStatus, string> = {
+  demolition:  'Под снос',
+  existing:    'Существует',
+  planned:     'Запланировано',
+  in_progress: 'В работе',
+  done:        'Выполнено',
+}
+const STATUS_COLORS: Record<WorkStatus, string> = {
+  demolition:  '#e53935',
+  existing:    '#78909c',
+  planned:     '#1e88e5',
+  in_progress: '#fb8c00',
+  done:        '#43a047',
+}
+/** Капитал по умолчанию — только цепочка периметра (wall_existing), всё остальное изменяемое */
+function defaultCategory(type: PlanLineType): LineCategory {
+  return type === 'wall_existing' ? 'capital' : 'mutable'
+}
+function defaultStatus(category: LineCategory): WorkStatus {
+  return category === 'capital' ? 'existing' : 'planned'
+}
 
 type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase'
 
@@ -868,6 +890,7 @@ export default function FloorPlan() {
             type: drawType, lengthMm, label,
             spec: drawSpec ?? undefined,
             heightMm: parseFloat(drawHeightMm) || 3000,
+            category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
           })
           allLineIds = [...allLineIds, closingId]
         }
@@ -901,6 +924,7 @@ export default function FloorPlan() {
         const newId = addPlanLine({
           x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label,
           spec: drawSpec ?? undefined, heightMm: parseFloat(drawHeightMm) || 3000,
+          category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
         })
         setChainLineIds(prev => [...prev, newId])
         // Конец линии — НЕ автостарт следующей, ждём нового клика пользователя
@@ -994,6 +1018,8 @@ export default function FloorPlan() {
       type: l.type, lengthMm: l.lengthMm,
       label,
       spec: l.spec,
+      category: l.category ?? defaultCategory(l.type),
+      workStatus: l.workStatus,
     })
     setShowParallelDialog(false)
   }
@@ -1718,6 +1744,10 @@ export default function FloorPlan() {
                     const mx = (l.x1 + l.x2) / 2
                     const my = (l.y1 + l.y2) / 2
 
+                    const lCategory  = l.category ?? defaultCategory(l.type)
+                    const lStatus    = l.workStatus ?? defaultStatus(lCategory)
+                    const showStatusDot = lCategory === 'mutable' && !inErase
+
                     // Рисуем двойную линию (трапецию) ТОЛЬКО если spec задан явно.
                     // Без spec — тонкая линия, чтобы не путать при первом рисовании.
                     const hasExplicitSpec = !!(l.spec?.material)
@@ -1810,12 +1840,16 @@ export default function FloorPlan() {
                                 <Group x={mx} y={my} rotation={rot} listening={false}>
                                   <Text x={-35} y={-7} width={70} text={l.label} fontSize={10}
                                     fill={stroke} align="center" fontStyle="bold" listening={false} />
+                                  {showStatusDot && <Circle x={38} y={-2} radius={3.5} fill={STATUS_COLORS[lStatus]} listening={false} />}
                                 </Group>
                               )
                             }
                             return len > 40 ? (
-                              <Text x={mx-40} y={my-12} width={80} text={l.label} fontSize={10}
-                                fill={stroke} align="center" fontStyle="bold" listening={false} />
+                              <Group x={mx} y={my-12} listening={false}>
+                                <Text x={-40} width={80} text={l.label} fontSize={10}
+                                  fill={stroke} align="center" fontStyle="bold" listening={false} />
+                                {showStatusDot && <Circle x={44} y={5} radius={3.5} fill={STATUS_COLORS[lStatus]} listening={false} />}
+                              </Group>
                             ) : null
                           })()}
                           {/* Размерная линия — только при hover или select */}
@@ -1854,8 +1888,11 @@ export default function FloorPlan() {
                         {!inErase && (() => {
                           const linePx = Math.sqrt((l.x2-l.x1)**2 + (l.y2-l.y1)**2)
                           return linePx > 40 ? (
-                            <Text x={mx-40} y={my-12} width={80} text={l.label} fontSize={10}
-                              fill={stroke} align="center" fontStyle="bold" listening={false} />
+                            <Group x={mx} y={my-12} listening={false}>
+                              <Text x={-40} width={80} text={l.label} fontSize={10}
+                                fill={stroke} align="center" fontStyle="bold" listening={false} />
+                              {showStatusDot && <Circle x={44} y={5} radius={3.5} fill={STATUS_COLORS[lStatus]} listening={false} />}
+                            </Group>
                           ) : null
                         })()}
                         {/* Размерная линия — только при hover или select */}
@@ -2077,6 +2114,53 @@ export default function FloorPlan() {
               <span style={{ marginLeft: 'auto', fontSize: 11, color: '#aaa' }}>
                 {fmtLen(inspectorLine.lengthMm)}
               </span>
+            </div>
+
+            {/* Категория: капитал / изменяемая конструкция */}
+            <div style={{ padding: '6px 16px 4px' }}>
+              <div style={{ fontSize: 10, color: '#999', marginBottom: 4, textTransform: 'uppercase' }}>Категория</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {(['capital', 'mutable'] as LineCategory[]).map(cat => {
+                  const active = (inspectorLine.category ?? defaultCategory(inspectorLine.type)) === cat
+                  return (
+                    <button key={cat}
+                      onClick={() => updatePlanLine(inspectorLine.id, {
+                        category: cat,
+                        workStatus: inspectorLine.workStatus ?? defaultStatus(cat),
+                      })}
+                      style={{
+                        flex: 1, fontSize: 11, padding: '6px 8px', borderRadius: 5, cursor: 'pointer',
+                        border: active ? '1.5px solid #3a7bd5' : '1px solid #ddd',
+                        background: active ? '#eaf2fd' : '#fff',
+                        color: active ? '#3a7bd5' : '#666', fontWeight: active ? 700 : 400,
+                      }}>
+                      {cat === 'capital' ? '🔒 Капитал' : '✏️ Изменяемая'}
+                    </button>
+                  )
+                })}
+              </div>
+              {(inspectorLine.category ?? defaultCategory(inspectorLine.type)) === 'capital' && (
+                <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>
+                  Периметр / колонна / уровень — не сносится и не двигается, к ней подтягиваются остальные
+                </div>
+              )}
+            </div>
+
+            {/* Статус работ */}
+            <div style={{ padding: '6px 16px 8px' }}>
+              <div style={{ fontSize: 10, color: '#999', marginBottom: 4, textTransform: 'uppercase' }}>Статус работ</div>
+              <select
+                value={inspectorLine.workStatus ?? defaultStatus(inspectorLine.category ?? defaultCategory(inspectorLine.type))}
+                onChange={e => updatePlanLine(inspectorLine.id, { workStatus: e.target.value as WorkStatus })}
+                style={{
+                  width: '100%', fontSize: 12, padding: '6px 8px', borderRadius: 5, border: '1px solid #ddd',
+                  color: STATUS_COLORS[inspectorLine.workStatus ?? defaultStatus(inspectorLine.category ?? defaultCategory(inspectorLine.type))],
+                  fontWeight: 600,
+                }}>
+                {(Object.keys(STATUS_LABELS) as WorkStatus[]).map(s => (
+                  <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                ))}
+              </select>
             </div>
 
             {/* Уточнить точный размер — пересчитывает масштаб всего плана */}
