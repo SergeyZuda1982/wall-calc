@@ -131,7 +131,12 @@ export function computeWallJoins(walls: WallForJoin[]): Map<string, JoinedWall> 
         const t = projT(ax, ay, b.x1, b.y1, b.x2, b.y2)
         if (t <= JOIN_EPS / bi.len || t >= 1 - JOIN_EPS / bi.len) continue
         const cx = b.x1 + t * (b.x2 - b.x1), cy = b.y1 + t * (b.y2 - b.y1)
-        if (d2(ax, ay, cx, cy) > EPS2) continue
+        // Допуск — вся ПОЛОСА толщины стены B (её грань), а не только ось:
+        // snapPoint() ставит конец примыкающей линии на БЛИЖНЮЮ ГРАНЬ,
+        // это может быть на расстоянии b.halfPx от оси B (для толстых стен —
+        // десятки px), не только в пределах JOIN_EPS от центра.
+        const distToAxis = Math.sqrt(d2(ax, ay, cx, cy))
+        if (distToAxis > b.halfPx + JOIN_EPS) continue
         applyT(a, b, ai, bi, ja, aEnd)
       }
 
@@ -140,7 +145,8 @@ export function computeWallJoins(walls: WallForJoin[]): Map<string, JoinedWall> 
         const t = projT(bx, by, a.x1, a.y1, a.x2, a.y2)
         if (t <= JOIN_EPS / ai.len || t >= 1 - JOIN_EPS / ai.len) continue
         const cx = a.x1 + t * (a.x2 - a.x1), cy = a.y1 + t * (a.y2 - a.y1)
-        if (d2(bx, by, cx, cy) > EPS2) continue
+        const distToAxis = Math.sqrt(d2(bx, by, cx, cy))
+        if (distToAxis > a.halfPx + JOIN_EPS) continue
         applyT(b, a, bi, ai, jb, bEnd)
       }
     }
