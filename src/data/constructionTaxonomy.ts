@@ -348,7 +348,7 @@ export function getLineVisual(
   if (type === 'wall_existing') {
     if (material === 'concrete') return { strokeWidth: 1.5, dash: null,    colorOverride: '#455a64', thicknessMm, fillColor, contourFill }
     if (material === 'block')    return { strokeWidth: 1.5, dash: [6, 3],  colorOverride: '#607d8b', thicknessMm, fillColor, contourFill }
-    if (material === 'unknown')  return { strokeWidth: 4,   dash: [3, 3],  colorOverride: '#90a4ae', thicknessMm: 0, fillColor, contourFill }
+    if (material === 'unknown')  return { strokeWidth: 1.5, dash: [5, 4], colorOverride: '#90a4ae', thicknessMm: 0, fillColor, contourFill }
     // brick — default
     return { strokeWidth: 1.5, dash: null, colorOverride: '#6d4c41', thicknessMm, fillColor, contourFill }
   }

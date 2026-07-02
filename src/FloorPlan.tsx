@@ -1971,7 +1971,8 @@ export default function FloorPlan() {
                     return (
                       <>
                         <Line points={[drawing.x1,drawing.y1,previewX2,previewY2]}
-                          stroke={previewColor} strokeWidth={LINE_WIDTH[drawType]} dash={[6,4]} opacity={0.6} lineCap="round" listening={false} />
+                          stroke={previewColor} strokeWidth={previewVis.strokeWidth || LINE_WIDTH[drawType]}
+                          dash={previewVis.dash ?? undefined} opacity={0.6} lineCap="round" listening={false} />
                         {previewLabel(previewX2, previewY2) && (
                           <Text x={(drawing.x1+previewX2)/2-30} y={(drawing.y1+previewY2)/2-16}
                             width={60} text={previewLabel(previewX2,previewY2)}
