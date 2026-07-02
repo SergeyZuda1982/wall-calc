@@ -20,6 +20,7 @@ import { computeWallJoins } from './core/wallJoin'
 import type { WallForJoin } from './core/wallJoin'
 import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
+import { calcLineFasteners } from './core/calcAttachmentFasteners'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 
@@ -2241,14 +2242,15 @@ export default function FloorPlan() {
             {/* Боковое примыкание + крепёж — только для перегородок/облицовки (у них есть боковые стойки) */}
             {(inspectorLine.type === 'wall_new' || inspectorLine.type === 'wall_lining') && (() => {
               const att = lineAttachments.get(inspectorLine.id)
-              const ends: Array<{ key: 'start' | 'end'; label: string; info: EndAttachment | null }> = [
-                { key: 'start', label: 'Начало (x1,y1)', info: att?.start ?? null },
-                { key: 'end',   label: 'Конец (x2,y2)',  info: att?.end ?? null },
+              const fasteners = calcLineFasteners(inspectorLine, att)
+              const ends: Array<{ key: 'start' | 'end'; label: string; info: EndAttachment | null; qty: number }> = [
+                { key: 'start', label: 'Начало (x1,y1)', info: att?.start ?? null, qty: fasteners.start?.qty ?? 0 },
+                { key: 'end',   label: 'Конец (x2,y2)',  info: att?.end ?? null,   qty: fasteners.end?.qty ?? 0 },
               ]
               return (
                 <div style={{ padding: '6px 16px 8px', borderTop: '1px solid #f0f0f0' }}>
                   <div style={{ fontSize: 10, color: '#999', marginBottom: 6, textTransform: 'uppercase' }}>Боковое примыкание и крепёж</div>
-                  {ends.map(({ key, label, info }) => {
+                  {ends.map(({ key, label, info, qty }) => {
                     const overrideField = key === 'start' ? 'fastenerStart' : 'fastenerEnd'
                     const override = inspectorLine[overrideField]
                     const suggested = info ? suggestFastener(info.material) : null
@@ -2286,6 +2288,9 @@ export default function FloorPlan() {
                               }}
                               title="Шаг крепежа, мм"
                               style={{ width: 64, fontSize: 11, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
+                            <span style={{ fontSize: 11, color: '#555', alignSelf: 'center', whiteSpace: 'nowrap' }}>
+                              {qty} шт
+                            </span>
                           </div>
                         )}
                         {info && !suggested && !override && (
