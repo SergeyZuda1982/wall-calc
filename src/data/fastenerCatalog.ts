@@ -21,6 +21,14 @@ export interface FastenerOption {
 }
 
 /** Полный список крепежа для выпадающего списка в UI (не завязан на материал) */
+export const ATTACHMENT_MATERIAL_LABEL: Record<AttachmentMaterial, string> = {
+  brick: 'Кирпич',
+  block: 'Блок / газобетон',
+  concrete: 'Монолит / бетон',
+  gkl_existing: 'Существующая ГКЛ-конструкция',
+  unknown: 'Материал не задан',
+}
+
 export const FASTENER_OPTIONS: FastenerOption[] = [
   { value: 'dowel_6x40',        label: 'Дюбель 6×40 (бетон/кирпич)' },
   { value: 'wood_screw_45',     label: 'Саморез по дереву 45мм (блок)' },

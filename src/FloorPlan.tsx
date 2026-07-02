@@ -13,11 +13,14 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Image as KonvaImage } fr
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType } from './types'
 import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 import { computeWallJoins } from './core/wallJoin'
 import type { WallForJoin } from './core/wallJoin'
+import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
+import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
+import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
@@ -1179,6 +1182,26 @@ export default function FloorPlan() {
     return computeWallJoins(walls)
   }, [lines, scaleMmPx])
 
+  // ── Боковое примыкание: к чему упирается каждый конец линии ──────────────
+  const lineAttachments = useMemo(() => {
+    const surfaces: AttachSurface[] = []
+    lines.forEach(l => {
+      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
+      const hasSpec = !!(l.spec?.material) || l.type === 'wall_existing'
+      const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
+      if (thicknessPx <= 3) return
+      const dx = l.x2 - l.x1, dy = l.y2 - l.y1
+      if (Math.sqrt(dx * dx + dy * dy) < 1) return
+      surfaces.push({
+        id: l.id,
+        x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2,
+        halfPx: thicknessPx / 2,
+        material: attachmentMaterialOf(l.type, l.spec?.material),
+      })
+    })
+    return resolveAllAttachments(surfaces)
+  }, [lines, scaleMmPx])
+
   // ── Статус конструкций ────────────────────────────────────────────────────
   // Статус хранится в label через суффикс или через будущие поля
   // Сейчас используем простую заглушку — все "Не начата"
@@ -2214,6 +2237,68 @@ export default function FloorPlan() {
                 ))}
               </select>
             </div>
+
+            {/* Боковое примыкание + крепёж — только для перегородок/облицовки (у них есть боковые стойки) */}
+            {(inspectorLine.type === 'wall_new' || inspectorLine.type === 'wall_lining') && (() => {
+              const att = lineAttachments.get(inspectorLine.id)
+              const ends: Array<{ key: 'start' | 'end'; label: string; info: EndAttachment | null }> = [
+                { key: 'start', label: 'Начало (x1,y1)', info: att?.start ?? null },
+                { key: 'end',   label: 'Конец (x2,y2)',  info: att?.end ?? null },
+              ]
+              return (
+                <div style={{ padding: '6px 16px 8px', borderTop: '1px solid #f0f0f0' }}>
+                  <div style={{ fontSize: 10, color: '#999', marginBottom: 6, textTransform: 'uppercase' }}>Боковое примыкание и крепёж</div>
+                  {ends.map(({ key, label, info }) => {
+                    const overrideField = key === 'start' ? 'fastenerStart' : 'fastenerEnd'
+                    const override = inspectorLine[overrideField]
+                    const suggested = info ? suggestFastener(info.material) : null
+                    const currentType: FastenerType | '' = override?.type ?? suggested ?? ''
+                    const currentStep = override?.stepMm ?? DEFAULT_FASTENER_STEP_MM
+                    return (
+                      <div key={key} style={{ marginBottom: 8, padding: '6px 8px', background: '#fafbfc', borderRadius: 5, border: '1px solid #eee' }}>
+                        <div style={{ fontSize: 11, color: '#555', marginBottom: 4 }}>
+                          {label}: {info ? <b>{ATTACHMENT_MATERIAL_LABEL[info.material]}</b> : <span style={{ color: '#aaa' }}>свободный край</span>}
+                        </div>
+                        {info && (
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <select
+                              value={currentType}
+                              onChange={e => {
+                                const type = e.target.value as FastenerType
+                                updatePlanLine(inspectorLine.id, {
+                                  [overrideField]: { type, stepMm: currentStep },
+                                } as Partial<PlanLine>)
+                              }}
+                              style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }}>
+                              {!currentType && <option value="">Выберите тип крепежа</option>}
+                              {FASTENER_OPTIONS.map(o => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
+                            <input type="number" value={currentStep}
+                              onChange={e => {
+                                const stepMm = parseFloat(e.target.value)
+                                if (stepMm > 0 && currentType) {
+                                  updatePlanLine(inspectorLine.id, {
+                                    [overrideField]: { type: currentType, stepMm },
+                                  } as Partial<PlanLine>)
+                                }
+                              }}
+                              title="Шаг крепежа, мм"
+                              style={{ width: 64, fontSize: 11, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
+                          </div>
+                        )}
+                        {info && !suggested && !override && (
+                          <div style={{ fontSize: 10, color: '#e57373', marginTop: 3 }}>
+                            Материал соседней конструкции не задан — выберите крепёж вручную
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
 
             {/* Уточнить точный размер — пересчитывает масштаб всего плана */}
             <div style={{ padding: '4px 16px 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
