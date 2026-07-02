@@ -365,6 +365,36 @@ export type LineCategory = 'capital' | 'mutable'
 /** Статус выполнения работ по конструкции */
 export type WorkStatus = 'demolition' | 'existing' | 'planned' | 'in_progress' | 'done'
 
+/**
+ * Материал конструкции, к которой примыкает конец линии (боковое примыкание).
+ * Выводится геометрически через attachmentResolver, НЕ хранится на линии.
+ * 'unknown' — есть примыкание, но материал соседней конструкции не задан
+ * (wall_existing без spec.material).
+ */
+export type AttachmentMaterial =
+  | 'brick'
+  | 'block'       // газо-/пеноблок
+  | 'concrete'    // монолит/бетон
+  | 'gkl_existing' // существующая ГКЛ-конструкция (перегородка/облицовка)
+  | 'unknown'
+
+/** Тип крепежа для примыкания к боковой конструкции или к потолку/полу */
+export type FastenerType =
+  | 'dowel_6x40'         // дюбель 6×40 — бетон/кирпич
+  | 'wood_screw_45'      // саморез по дереву 45мм — газо-/пеноблок
+  | 'wood_screw_55'      // саморез по дереву 55мм — газо-/пеноблок
+  | 'metal_screw'        // саморез по металлу — ГКЛ к существующей ГКЛ-конструкции
+  | 'gypsum_toggle'      // дюбель-бабочка — ГКЛ (рекомендация Кнауф, на практике редко)
+  | 'anchor_wedge_6x40'  // анкер-клин 6×40 — подвесы в потолок (монолит)
+  | 'self_drill_screw'   // саморез с сверлом / просечка — тонкий металл
+  | 'roofing_screw'      // кровельный саморез — толстый металл
+
+/** Выбор крепежа для одного примыкания: тип + шаг по длине примыкания, мм */
+export interface FastenerSpec {
+  type: FastenerType
+  stepMm: number
+}
+
 export interface PlanLine {
   id: string
   x1: number; y1: number   // координаты на холсте (px)
@@ -379,6 +409,12 @@ export interface PlanLine {
   heightMm?: number         // высота конструкции, мм (по умолчанию 3000, если не задано)
   category?: LineCategory   // капитал (периметр/колонны) или изменяемая конструкция
   workStatus?: WorkStatus   // статус работ — актуально для mutable
+  /**
+   * Ручное переопределение крепежа для примыкания на конце линии (start=x1,y1 / end=x2,y2).
+   * Если не задано — используется дефолт из suggestFastener(material) по резолву attachmentResolver.
+   */
+  fastenerStart?: FastenerSpec
+  fastenerEnd?: FastenerSpec
 }
 
 /** Подложка — растровое изображение страницы PDF, по которому обводят план */
