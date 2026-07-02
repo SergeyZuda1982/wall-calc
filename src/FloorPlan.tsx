@@ -443,6 +443,14 @@ export default function FloorPlan() {
     img.src = url
   }, [floorPlan?.backgroundImage?.dataUrl])
 
+  // Автоцентрирование канваса сразу после загрузки/смены подложки — чтобы не потерять её из виду
+  useEffect(() => {
+    if (!floorPlan?.backgroundImage) return
+    const t = setTimeout(() => fitToContent(), 50)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [floorPlan?.backgroundImage?.dataUrl])
+
   const handleBgFileSelected = useCallback(async (file: File) => {
     setBgError(null)
     try {
@@ -751,6 +759,26 @@ export default function FloorPlan() {
   }, [mode])
   const handlePointerUpRef = useRef(handlePointerUp)
   handlePointerUpRef.current = handlePointerUp
+
+  // ── Показать всё: центрирует и вписывает все линии + подложку в экран ─────
+  function fitToContent() {
+    const pts: { x: number; y: number }[] = []
+    lines.forEach(l => { pts.push({ x: l.x1, y: l.y1 }); pts.push({ x: l.x2, y: l.y2 }) })
+    const bg = floorPlan?.backgroundImage
+    if (bg) {
+      pts.push({ x: bg.x, y: bg.y })
+      pts.push({ x: bg.x + bg.width, y: bg.y + bg.height })
+    }
+    if (pts.length === 0) { setStageScale(1); setStagePos({ x: 0, y: 0 }); return }
+    const minX = Math.min(...pts.map(p => p.x)), maxX = Math.max(...pts.map(p => p.x))
+    const minY = Math.min(...pts.map(p => p.y)), maxY = Math.max(...pts.map(p => p.y))
+    const w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1)
+    const pad = 60
+    const newScale = Math.min((canvasW - pad * 2) / w, (CANVAS_H - pad * 2) / h, 5)
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+    setStageScale(newScale)
+    setStagePos({ x: canvasW / 2 - cx * newScale, y: CANVAS_H / 2 - cy * newScale })
+  }
 
   // ── Зум колёсиком ─────────────────────────────────────────────────────────
   function handleWheel(e: KonvaEventObject<WheelEvent>) {
@@ -1199,6 +1227,10 @@ export default function FloorPlan() {
         {/* Undo/Redo placeholders */}
         {!isMobile && <button title="Отменить" style={toolBtnStyle(false)}>↩</button>}
         {!isMobile && <button title="Повторить" style={toolBtnStyle(false)}>↪</button>}
+        <button onClick={fitToContent} title="Показать всё — вписать план/подложку в экран"
+          style={{ ...toolBtnStyle(false), minWidth: isMobile ? 0 : undefined, padding: isMobile ? '6px 10px' : '5px 10px' }}>
+          🎯 {isMobile ? '' : 'Показать всё'}
+        </button>
         <button onClick={() => { }} style={{ ...toolBtnStyle(false), minWidth: isMobile ? 0 : 90, padding: isMobile ? '6px 10px' : undefined }}>
           {isMobile ? '⬇' : 'Экспорт ▾'}
         </button>
