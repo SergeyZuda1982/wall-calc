@@ -1695,13 +1695,9 @@ export default function FloorPlan() {
                     const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
                     const minX = Math.min(...pts.map(p => p.x)), maxX = Math.max(...pts.map(p => p.x))
                     const minY = Math.min(...pts.map(p => p.y)), maxY = Math.max(...pts.map(p => p.y))
-                    const clickable = mode === 'select'
                     return (
-                      <Group key={room.id} listening={clickable}>
-                        <Line points={flatPts} closed fill="rgba(120,144,156,0.08)" stroke="none"
-                          listening={clickable}
-                          onClick={clickable ? (e) => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null) } : undefined}
-                          onTap={clickable ? (e) => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null) } : undefined} />
+                      <Group key={room.id} listening={false}>
+                        <Line points={flatPts} closed fill="rgba(120,144,156,0.08)" stroke="none" listening={false} />
                         {room.isColumn && (
                           <Group listening={false} clipFunc={ctx => {
                             ctx.beginPath()
@@ -1942,6 +1938,28 @@ export default function FloorPlan() {
                             onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }}
                             onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }} />
                         </>}
+                      </Group>
+                    )
+                  })}
+
+                  {/* Маркеры помещений/колонн — намеренно поверх линий (z-order), чтобы
+                      хитзона стен (24px) не перехватывала клик у маленьких контуров типа колонны */}
+                  {mode === 'select' && rooms.map(room => {
+                    const roomLines = room.lineIds
+                      .map(id => lines.find(l => l.id === id))
+                      .filter(Boolean) as PlanLine[]
+                    if (roomLines.length < 3) return null
+                    const pts = roomLines.map(l => ({ x: l.x1, y: l.y1 }))
+                    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length
+                    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
+                    const r = 9 / stageScale
+                    return (
+                      <Group key={'marker-' + room.id}
+                        onClick={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setSelected(null) }}
+                        onTap={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setSelected(null) }}>
+                        <Circle x={cx} y={cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
+                        <Text x={cx - r} y={cy - r} width={r * 2} height={r * 2} text={room.isColumn ? '▦' : '⛶'}
+                          fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
                       </Group>
                     )
                   })}
