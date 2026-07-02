@@ -1173,6 +1173,7 @@ export default function FloorPlan() {
         x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2,
         halfPx: thicknessPx / 2,
         createdIndex: idx,
+        category: l.category ?? defaultCategory(l.type),
       })
     })
     return computeWallJoins(walls)

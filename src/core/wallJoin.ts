@@ -19,6 +19,7 @@ export interface WallForJoin {
   x2: number; y2: number
   halfPx: number       // половина толщины в мировых px
   createdIndex: number // порядок создания (для приоритета в L-стыке)
+  category?: 'capital' | 'mutable' // капитал (периметр/колонна) — никогда не "уступает" изменяемой при T-стыке
 }
 
 export interface JoinedWall {
@@ -37,6 +38,17 @@ export interface JoinedWall {
 
 function d2(ax: number, ay: number, bx: number, by: number): number {
   return (ax - bx) ** 2 + (ay - by) ** 2
+}
+
+/**
+ * Капитал (периметр/колонна) никогда не "уступает" изменяемой конструкции
+ * при T-стыке — т.е. не может оказаться attached-стороной (обрезаемой),
+ * даже если геометрически её конец случайно лёг на тело mutable-стены.
+ * Между двумя capital или двумя mutable — приоритета нет, обычная геометрия.
+ */
+function attachedYieldsToMain(attached: WallForJoin, main: WallForJoin): boolean {
+  if (attached.category === 'capital' && main.category === 'mutable') return false
+  return true
 }
 
 /**
@@ -137,6 +149,7 @@ export function computeWallJoins(walls: WallForJoin[]): Map<string, JoinedWall> 
         // десятки px), не только в пределах JOIN_EPS от центра.
         const distToAxis = Math.sqrt(d2(ax, ay, cx, cy))
         if (distToAxis > b.halfPx + JOIN_EPS) continue
+        if (!attachedYieldsToMain(a, b)) continue // капитал не обрезается изменяемой
         applyT(a, b, ai, bi, ja, aEnd)
       }
 
@@ -147,6 +160,7 @@ export function computeWallJoins(walls: WallForJoin[]): Map<string, JoinedWall> 
         const cx = a.x1 + t * (a.x2 - a.x1), cy = a.y1 + t * (a.y2 - a.y1)
         const distToAxis = Math.sqrt(d2(bx, by, cx, cy))
         if (distToAxis > a.halfPx + JOIN_EPS) continue
+        if (!attachedYieldsToMain(b, a)) continue // капитал не обрезается изменяемой
         applyT(b, a, bi, ai, jb, bEnd)
       }
     }
