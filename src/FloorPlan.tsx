@@ -13,9 +13,11 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Image as KonvaImage } fr
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec } from './types'
+import { DEFAULT_BOARD_SPEC } from './types'
 import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
+import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { computeWallJoins } from './core/wallJoin'
 import type { WallForJoin } from './core/wallJoin'
 import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
@@ -372,6 +374,9 @@ export default function FloorPlan() {
   const [drawType, setDrawType]         = useState<PlanLineType>('wall_new')
   const [drawSpec, setDrawSpec]         = useState<PlanLineSpec | null>(null)
   const [drawHeightMm, setDrawHeightMm] = useState('3000')
+  const [drawStep, setDrawStep] = useState('600')
+  const [drawLayer1, setDrawLayer1] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
+  const [drawLayer2, setDrawLayer2] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
   const [expandedMaterial, setExpandedMaterial] = useState<string | null>(null)
   const [orthoMode, setOrthoMode]       = useState(false)
   const [drawing, setDrawing]           = useState<{ x1: number; y1: number } | null>(null)
@@ -920,7 +925,7 @@ export default function FloorPlan() {
             x1: drawing.x1, y1: drawing.y1,
             x2: chainStartPt!.x, y2: chainStartPt!.y,
             type: drawType, lengthMm, label,
-            spec: drawSpec ?? undefined,
+            spec: drawSpec ? { ...drawSpec, step: parseFloat(drawStep) || 600, layer1: drawLayer1, layer2: drawLayer2 } : undefined,
             heightMm: parseFloat(drawHeightMm) || 3000,
             category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
           })
@@ -955,7 +960,7 @@ export default function FloorPlan() {
         const label = genLabel(drawType, lines)
         const newId = addPlanLine({
           x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label,
-          spec: drawSpec ?? undefined, heightMm: parseFloat(drawHeightMm) || 3000,
+          spec: drawSpec ? { ...drawSpec, step: parseFloat(drawStep) || 600, layer1: drawLayer1, layer2: drawLayer2 } : undefined, heightMm: parseFloat(drawHeightMm) || 3000,
           category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
         })
         setChainLineIds(prev => [...prev, newId])
@@ -965,7 +970,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, scaleStep, orthoMode, addPlanLine, removePlanLine])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1539,6 +1544,26 @@ export default function FloorPlan() {
               onChange={e => setDrawHeightMm(e.target.value)}
               style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
             <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
+          </div>
+
+          {/* Шаг стоек и лист обшивки — глобальный дефолт для новых линий, правится точечно в инспекторе */}
+          <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Шаг стоек:</span>
+            <input type="number" value={drawStep}
+              onChange={e => setDrawStep(e.target.value)}
+              style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+            <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
+          </div>
+          <div style={{ padding: '0 14px 8px' }}>
+            <div style={{ fontSize: 11, color: '#8a9ac8', marginBottom: 4 }}>
+              Лист 1-го слоя{(drawSpec?.layers ?? 1) === 2 ? ' / 2-го слоя' : ''}:
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+              <BoardSpecSelector value={drawLayer1} onChange={setDrawLayer1} />
+              {(drawSpec?.layers ?? 1) === 2 && (
+                <BoardSpecSelector value={drawLayer2} onChange={setDrawLayer2} />
+              )}
+            </div>
           </div>
 
           <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
@@ -2390,6 +2415,39 @@ export default function FloorPlan() {
                       </div>
                     )
                   })()}
+
+                  {/* Шаг стоек и лист обшивки — переопределение для этой линии (дефолт см. в левой панели при рисовании) */}
+                  {(inspectorLine.type === 'wall_new' || inspectorLine.type === 'wall_lining') && inspectorLine.spec?.material === 'gkl' && (
+                    <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>
+                      <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Шаг стоек и лист</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: '#666' }}>Шаг:</span>
+                        <input type="number" value={inspectorLine.spec?.step ?? ''}
+                          placeholder="600"
+                          onChange={e => {
+                            const step = parseFloat(e.target.value)
+                            if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, step: step > 0 ? step : undefined } })
+                          }}
+                          style={{ width: 70, fontSize: 12, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
+                        <span style={{ fontSize: 11, color: '#666' }}>мм</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
+                        Лист 1-го слоя{(inspectorLine.spec?.layers ?? 1) === 2 ? ' / 2-го слоя' : ''}:
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                        <BoardSpecSelector
+                          value={inspectorLine.spec?.layer1 ?? DEFAULT_BOARD_SPEC}
+                          onChange={layer1 => { if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, layer1 } }) }}
+                        />
+                        {(inspectorLine.spec?.layers ?? 1) === 2 && (
+                          <BoardSpecSelector
+                            value={inspectorLine.spec?.layer2 ?? DEFAULT_BOARD_SPEC}
+                            onChange={layer2 => { if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, layer2 } }) }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Имя конструкции */}
                   <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>
