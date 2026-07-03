@@ -15,12 +15,14 @@
  * — Точки перегиба обоих профилей тоже добавляются в границы колонок (как
  *   и края проёмов), поэтому внутри каждой отдельной колонки высота стены
  *   меняется линейно (без внутренних изломов).
- * — Высота колонки = наибольшая из высот на её двух краях (studHeightAt
- *   в x1 и x2) — то есть колонка кроится по своей "худшей" точке, а не по
- *   худшей точке всей стены. Реальный диагональный рез у самого уклона
- *   остаётся ручной работой монтажника (лист режется по месту), но сам
- *   раскрой (сколько листов и где горизонтальные стыки) теперь учитывает
- *   форму уклона по всей длине стены, а не одну фиксированную высоту.
+ * — Кусок, который реально задевает наклонную линию (её нижняя точка ниже
+ *   верха куска), обрезается по этой линии геометрически (`geometry2d.ts`,
+ *   `clipRectBySlopedTop`) — получается настоящая трапеция/треугольник,
+ *   а не прямоугольник по худшей точке. `kind: 'diagonal_cut'`, реальная
+ *   форма — в `polygon`, площадь материала (`usedAreaM2`) считается по
+ *   этому многоугольнику, а не по ограничивающему прямоугольнику.
+ *   Сам физический рез по месту всё равно делает монтажник — программа
+ *   лишь верно показывает, где он проходит, и не завышает расход листа.
  */
 
 import type {
@@ -28,6 +30,7 @@ import type {
   BoardOffcut, BoardLayerLayout, BoardSheetResult, EdgeProfile,
 } from '../types'
 import { studHeightAt } from './profileGeometry'
+import { clipRectBySlopedTop, polygonArea } from './geometry2d'
 
 const SHEET_W = 1200  // ширина листа всегда 1200 мм
 
@@ -202,10 +205,13 @@ function calcLayer(
     const x2 = bounds[i + 1]
     const cw  = x2 - x1
 
-    // Высота стены на этой колонке: границы уже разбиты по точкам перегиба
-    // профиля, поэтому внутри [x1, x2] высота линейна — берём худший
-    // (больший) из двух краёв, а не единую высоту на всю стену.
-    const wallH = Math.max(studHeightAt(x1, ceilingProfile, floorProfile), studHeightAt(x2, ceilingProfile, floorProfile))
+    // Высота стены на краях этой колонки: границы уже разбиты по точкам
+    // перегиба профиля, поэтому внутри [x1, x2] высота линейна между
+    // hL и hR — это и есть уравнение наклонной линии реза для этой колонки.
+    const hL = studHeightAt(x1, ceilingProfile, floorProfile)
+    const hR = studHeightAt(x2, ceilingProfile, floorProfile)
+    const wallH = Math.max(hL, hR)
+    const isSlopedColumn = hL !== hR
 
     // ── 4-значная схема vOffset ──────────────────────────────────────────────
     // Глобальный слот = floor(x1 / step): номер шага от начала стены,
@@ -271,14 +277,32 @@ function calcLayer(
 
         const widthCut  = cw < SHEET_W
         const heightCut = ph < SL
-        const kind: BoardPiece['kind'] =
+        let kind: BoardPiece['kind'] =
           widthCut && heightCut ? 'both_cut'
           : widthCut            ? 'width_cut'
           : heightCut           ? 'height_cut'
           : 'full'
 
-        pieces.push({ x: x1, y: py, w: cw, h: ph, kind, source })
-        usedMm2 += cw * ph
+        // Кусок задевает уклон (колонка наклонная, и верх куска выше
+        // низшей из двух точек hL/hR) → считаем реальную обрезанную форму,
+        // а не прямоугольник по худшей точке. Если линия проходит выше
+        // всего куска на всём его протяжении — обрезка вернёт исходный
+        // прямоугольник без изменений, реза тут по факту нет.
+        let polygon: BoardPiece['polygon']
+        let pieceAreaMm2 = cw * ph
+        if (isSlopedColumn && py + ph > Math.min(hL, hR)) {
+          const clipped = clipRectBySlopedTop(x1, x2, py, py + ph, hL, hR)
+          const clippedArea = polygonArea(clipped)
+          // Реально отличается от прямоугольника (не просто "линия выше всюду")
+          if (Math.abs(clippedArea - cw * ph) > 1) {
+            kind = 'diagonal_cut'
+            polygon = clipped.map(pt => ({ x: pt.x, y: pt.y }))
+            pieceAreaMm2 = clippedArea
+          }
+        }
+
+        pieces.push({ x: x1, y: py, w: cw, h: ph, kind, source, polygon })
+        usedMm2 += pieceAreaMm2
       }
     }
 
