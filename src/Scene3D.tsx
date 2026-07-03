@@ -10,9 +10,9 @@
  * и цвета.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Grid } from '@react-three/drei'
+import { OrbitControls, Grid, FlyControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { useProjectStore } from './store/useProjectStore'
 import {
@@ -109,6 +109,7 @@ function SlabOrColumn({ room, ceilingMm }: { room: RoomPolygon3D; ceilingMm: num
 }
 
 export default function Scene3D() {
+  const [cameraMode, setCameraMode] = useState<'orbit' | 'fly'>('orbit')
   const floorPlan = useProjectStore(s => s.floorPlan)
   const lines = floorPlan?.lines ?? []
   const rooms = floorPlan?.rooms ?? []
@@ -134,14 +135,40 @@ export default function Scene3D() {
   }
 
   return (
-    <div style={{ width: '100%', height: '100%', background: '#eef1f6' }}>
+    <div style={{ width: '100%', height: '100%', background: '#eef1f6', position: 'relative' }}>
+      <div style={{
+        position: 'absolute', top: 12, left: 12, zIndex: 10,
+        display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start',
+      }}>
+        <button
+          onClick={() => setCameraMode(m => m === 'orbit' ? 'fly' : 'orbit')}
+          style={{
+            padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            border: '1px solid #3a7bd5', borderRadius: 6,
+            background: cameraMode === 'fly' ? '#3a7bd5' : '#fff',
+            color: cameraMode === 'fly' ? '#fff' : '#3a7bd5',
+          }}>
+          {cameraMode === 'fly' ? '✈ Режим полёта (вкл)' : '🖱 Мышь (вкл) — включить полёт'}
+        </button>
+        {cameraMode === 'fly' && (
+          <div style={{
+            padding: '6px 10px', fontSize: 12, color: '#444', background: '#fffbe6',
+            border: '1px solid #e6d68a', borderRadius: 6, maxWidth: 220, lineHeight: 1.4,
+          }}>
+            W/S — вперёд/назад, A/D — влево/вправо, R/F — вверх/вниз.
+            Зажать мышь и потянуть — посмотреть по сторонам.
+          </div>
+        )}
+      </div>
       <Canvas shadows camera={{ position: [10, 10, 10], fov: 50 }}>
         <ambientLight intensity={0.6} />
         <directionalLight position={[8, 12, 6]} intensity={1} castShadow />
         <Grid args={[100, 100]} cellColor="#c9ccd6" sectionColor="#9aa0b0" fadeDistance={40} position={[0, -0.001, 0]} />
         {boxes.map(box => <WallMesh key={box.id} box={box} />)}
         {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} />)}
-        <OrbitControls makeDefault />
+        {cameraMode === 'orbit'
+          ? <OrbitControls makeDefault />
+          : <FlyControls makeDefault dragToLook movementSpeed={4} rollSpeed={0.6} />}
       </Canvas>
     </div>
   )
