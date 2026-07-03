@@ -13,6 +13,7 @@
 import type { Opening, BoardSpec, BoardOffcut, BoardSheetResult } from '../types'
 import type { WallEntry, LiningEntry } from '../store/useProjectStore'
 import { calcSheetLayout } from './calcSheetLayout'
+import { flatProfile } from './profileGeometry'
 
 // ─── Публичные типы ─────────────────────────────────────────────────────────
 
@@ -133,7 +134,8 @@ export function calcProjectSheetLayout(surfaces: SurfaceSheetInput[]): ProjectSh
   for (const s of surfaces) {
     const result = calcSheetLayout(
       s.wallL,
-      s.wallH,
+      flatProfile(s.wallL, s.wallH),
+      flatProfile(s.wallL, 0),
       s.firstStud,
       s.step,
       s.gklLayers,

@@ -737,7 +737,8 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
             const firstStudForSheet = positions.find(p => p > 0 && p < snapL) ?? form.step
             const sheetLayout: BoardSheetResult = calcSheetLayout(
               snapL,
-              snapWorstH,
+              snapCeilingProfile,
+              snapFloorProfile,
               firstStudForSheet,
               form.step,
               layers as 1 | 2,

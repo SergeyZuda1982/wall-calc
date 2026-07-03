@@ -1214,10 +1214,10 @@ export default function App() {
               if (!result) return null
               const ceilP = form.ceilingProfile && form.ceilingProfile.length >= 2 ? form.ceilingProfile : flatProfile(form.length, form.height)
               const floorP = form.floorProfile && form.floorProfile.length >= 2 ? form.floorProfile : flatProfile(form.length, 0)
-              const worstH = Math.round(maxStudHeight(ceilP, floorP, form.length))
               const sheetLayout: BoardSheetResult = calcSheetLayout(
                 form.length,
-                worstH,
+                ceilP,
+                floorP,
                 currentFirstStud || form.firstStud,
                 currentStep || form.step,
                 gklLayers as 1 | 2,

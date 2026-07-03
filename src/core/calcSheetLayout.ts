@@ -10,12 +10,24 @@
  *   Минимальный разбег в любой точке стены ≥ SL/4 = 625мм ≥ 400мм (п.8.16).
  * — Края проёмов добавляются в список границ колонок → нет ложных void-зон.
  * — Переиспользование обрезков: жадный алгоритм (первый подходящий из пула).
+ *
+ * Уклон/ступени потолка и пола (EdgeProfile):
+ * — Точки перегиба обоих профилей тоже добавляются в границы колонок (как
+ *   и края проёмов), поэтому внутри каждой отдельной колонки высота стены
+ *   меняется линейно (без внутренних изломов).
+ * — Высота колонки = наибольшая из высот на её двух краях (studHeightAt
+ *   в x1 и x2) — то есть колонка кроится по своей "худшей" точке, а не по
+ *   худшей точке всей стены. Реальный диагональный рез у самого уклона
+ *   остаётся ручной работой монтажника (лист режется по месту), но сам
+ *   раскрой (сколько листов и где горизонтальные стыки) теперь учитывает
+ *   форму уклона по всей длине стены, а не одну фиксированную высоту.
  */
 
 import type {
   Opening, BoardSpec, BoardPiece, BoardColumn,
-  BoardOffcut, BoardLayerLayout, BoardSheetResult,
+  BoardOffcut, BoardLayerLayout, BoardSheetResult, EdgeProfile,
 } from '../types'
+import { studHeightAt } from './profileGeometry'
 
 const SHEET_W = 1200  // ширина листа всегда 1200 мм
 
@@ -46,8 +58,11 @@ function sheetSlot(x1: number, firstW: number): number {
 /**
  * Границы колонок:
  * - шаговые точки по листу (firstStud, затем каждые 1200мм)
- * - ПЛЮС левые и правые края всех проёмов
- * → каждая под-колонка либо целиком внутри проёма, либо целиком снаружи
+ * - края всех проёмов
+ * - точки перегиба профилей потолка/пола (уклон/ступени) — чтобы внутри
+ *   колонки высота стены менялась линейно, без внутренних изломов
+ * → каждая под-колонка либо целиком внутри проёма, либо целиком снаружи,
+ *   и целиком лежит на одном линейном участке уклона
  */
 function columnBoundaries(
   firstStud: number,
@@ -55,6 +70,8 @@ function columnBoundaries(
   wallL: number,
   layer: 1 | 2,
   openings: Opening[],
+  ceilingProfile: EdgeProfile,
+  floorProfile: EdgeProfile,
   sideIndex: 0 | 1 = 0,
 ): number[] {
   const firstW = firstColWidth(firstStud, step, layer, sideIndex)
@@ -76,6 +93,10 @@ function columnBoundaries(
     if (oL > 0 && oL < wallL) pts.add(Math.round(oL))
     if (oR > 0 && oR < wallL) pts.add(Math.round(oR))
   }
+
+  // Точки перегиба уклона потолка/пола
+  for (const p of ceilingProfile) if (p.x > 0 && p.x < wallL) pts.add(Math.round(p.x))
+  for (const p of floorProfile) if (p.x > 0 && p.x < wallL) pts.add(Math.round(p.x))
 
   return [...pts].sort((a, b) => a - b)
 }
@@ -156,7 +177,8 @@ function takeFromPool(pool: PoolItem[], needW: number, needH: number): PoolItem 
 
 function calcLayer(
   wallL: number,
-  wallH: number,
+  ceilingProfile: EdgeProfile,
+  floorProfile: EdgeProfile,
   firstStud: number,
   step: number,
   openings: Opening[],
@@ -167,7 +189,7 @@ function calcLayer(
 ): BoardLayerLayout {
   const SL = spec.sheetLength
 
-  const bounds  = columnBoundaries(firstStud, step, wallL, layer, openings, sideIndex)
+  const bounds  = columnBoundaries(firstStud, step, wallL, layer, openings, ceilingProfile, floorProfile, sideIndex)
   const columns: BoardColumn[] = []
   const pool    = sharedPool   // алиас для читаемости
 
@@ -179,6 +201,11 @@ function calcLayer(
     const x1 = bounds[i]
     const x2 = bounds[i + 1]
     const cw  = x2 - x1
+
+    // Высота стены на этой колонке: границы уже разбиты по точкам перегиба
+    // профиля, поэтому внутри [x1, x2] высота линейна — берём худший
+    // (больший) из двух краёв, а не единую высоту на всю стену.
+    const wallH = Math.max(studHeightAt(x1, ceilingProfile, floorProfile), studHeightAt(x2, ceilingProfile, floorProfile))
 
     // ── 4-значная схема vOffset ──────────────────────────────────────────────
     // Глобальный слот = floor(x1 / step): номер шага от начала стены,
@@ -285,7 +312,8 @@ function calcLayer(
 
 export function calcSheetLayout(
   wallL: number,
-  wallH: number,
+  ceilingProfile: EdgeProfile,
+  floorProfile: EdgeProfile,
   firstStud: number,
   step: number,
   gklLayers: 1 | 2,
@@ -303,7 +331,7 @@ export function calcSheetLayout(
   const sharedPool: PoolItem[] = initialPool.map(o => ({ ...o, used: false }))
 
   const args = (si: 0 | 1, layer: 1 | 2, spec: BoardSpec) =>
-    [wallL, wallH, firstStud, step, openings, spec, layer, si, sharedPool] as const
+    [wallL, ceilingProfile, floorProfile, firstStud, step, openings, spec, layer, si, sharedPool] as const
 
   const l1A  = calcLayer(...args(0, 1, layer1Spec))
   const l2A  = gklLayers === 2 ? calcLayer(...args(0, 2, layer2Spec)) : null
