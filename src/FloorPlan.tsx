@@ -25,6 +25,9 @@ import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners } from './core/calcAttachmentFasteners'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
+import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
+import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
+import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -387,6 +390,7 @@ export default function FloorPlan() {
   const [contourLabel, setContourLabel] = useState('')
   const [contourSpec, setContourSpec]   = useState<PlanLineSpec | undefined>(undefined)
   const [eraseIds, setEraseIds]         = useState<string[]>([])
+  const [showSheetSummary, setShowSheetSummary] = useState(false)
   const [showParallelDialog, setShowParallelDialog] = useState(false)
   const [parallelDist, setParallelDist]             = useState('100')
   const [rightTab, setRightTab]         = useState<'construction' | 'finish' | 'materials' | 'calc'>('construction')
@@ -1162,6 +1166,13 @@ export default function FloorPlan() {
     else setMobileRightOpen(false)
   }, [selectedId, isMobile])
   const inspectorLine = lines.find(l => l.id === inspectorId)
+
+  // Смета раскроя листов по всему проекту — пересчитывается только при изменении линий
+  const sheetSummary: ProjectSheetResult = useMemo(
+    () => calcProjectSheetLayout(planLinesToSurfaceInputs(lines)),
+    [lines],
+  )
+
   const previewPt    = cursor ?? (drawing ? { x: drawing.x1, y: drawing.y1 } : null)
   const previewX2    = previewPt?.x ?? 0
   const previewY2    = previewPt?.y ?? 0
@@ -2083,8 +2094,20 @@ export default function FloorPlan() {
               background: '#fff', borderTop: '1px solid #e0e4ee',
               padding: '0', flexShrink: 0, maxHeight: 240, overflowY: 'auto',
             }}>
-              <div style={{ padding: '10px 16px 4px', fontSize: 13, fontWeight: 700, color: '#1e2433' }}>
-                Конструкции на плане
+              <div style={{ padding: '10px 16px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433' }}>
+                  Конструкции на плане
+                </div>
+                {sheetSummary.surfaces.length > 0 && (
+                  <button onClick={() => setShowSheetSummary(true)}
+                    style={{
+                      fontSize: 11, fontWeight: 600, color: '#fff', background: '#3a7bd5',
+                      border: 'none', borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 5,
+                    }}>
+                    📋 Смета раскроя ({sheetSummary.totalSheetsNeeded} л.)
+                  </button>
+                )}
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
@@ -2136,7 +2159,7 @@ export default function FloorPlan() {
                         </td>
                         <td style={{ ...tdS, display: 'flex', gap: 4 }}>
                           <button title="Просмотр" style={iconBtnStyle} onClick={e => { e.stopPropagation(); setSelected(l.id); setInspectorId(l.id); setMode('select') }}>👁</button>
-                          <button title="Открыть расчёт" style={iconBtnStyle} onClick={e => { e.stopPropagation() }}>↗</button>
+                          <button title="Открыть расчёт" style={iconBtnStyle} onClick={e => { e.stopPropagation(); setShowSheetSummary(true) }}>↗</button>
                           <button title="Меню" style={iconBtnStyle} onClick={e => { e.stopPropagation() }}>⋮</button>
                         </td>
                       </tr>
@@ -2187,7 +2210,7 @@ export default function FloorPlan() {
                   {inspectorLine.label}
                 </div>
                 <button
-                  onClick={() => { /* open full calc */ }}
+                  onClick={() => setShowSheetSummary(true)}
                   style={{
                     marginTop: 6, fontSize: 11, fontWeight: 600,
                     color: '#fff', background: '#3a7bd5', border: 'none',
@@ -2602,7 +2625,7 @@ export default function FloorPlan() {
                       color: '#fff', background: '#3a7bd5', border: 'none',
                       borderRadius: 6, cursor: 'pointer',
                     }}
-                    onClick={() => {}}>
+                    onClick={() => setShowSheetSummary(true)}>
                     Открыть полный расчёт ↗
                   </button>
                 </div>
@@ -2671,6 +2694,88 @@ export default function FloorPlan() {
           )
         })()}
       </div>
+
+      {/* ── Смета раскроя листов ГКЛ (проектный расчёт) ── */}
+      {showSheetSummary && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          onClick={() => setShowSheetSummary(false)}>
+          <div style={{ background: '#fff', borderRadius: 10, padding: 0, width: 640, maxWidth: '92vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.25)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #e0e4ee' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#1e2433' }}>📋 Смета раскроя ГКЛ</div>
+              <button onClick={() => setShowSheetSummary(false)} style={iconBtnStyle2}>✕</button>
+            </div>
+
+            {sheetSummary.surfaces.length === 0 ? (
+              <div style={{ padding: 24, fontSize: 12, color: '#888', textAlign: 'center' }}>
+                Нет конструкций с раскроем ГКЛ — задайте материал «ГКЛ» перегородкам или облицовкам на плане
+              </div>
+            ) : (
+              <>
+                <div style={{ overflowY: 'auto', padding: '0 20px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: '#f5f7fb' }}>
+                        <th style={thS}>№</th>
+                        <th style={thS}>Конструкция</th>
+                        <th style={thS}>Листов</th>
+                        <th style={thS}>Использовано</th>
+                        <th style={thS}>Куплено</th>
+                        <th style={thS}>Отходы</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sheetSummary.surfaces.map((s, i) => (
+                        <tr key={s.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                          <td style={tdS}>{i + 1}</td>
+                          <td style={tdS}>{s.label}</td>
+                          <td style={tdS}>{s.result.totalSheetsNeeded}</td>
+                          <td style={tdS}>{s.result.totalUsedAreaM2.toFixed(2)} м²</td>
+                          <td style={tdS}>{s.result.totalSheetAreaM2.toFixed(2)} м²</td>
+                          <td style={tdS}>
+                            <span style={{ color: s.result.totalWastePercent > 15 ? '#e53935' : '#888' }}>
+                              {s.result.totalWastePercent}%
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ padding: '14px 20px', borderTop: '1px solid #e0e4ee', background: '#f5f7fb' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, color: '#1e2433', marginBottom: 6 }}>
+                    <span>Итого листов:</span>
+                    <span>{sheetSummary.totalSheetsNeeded} шт</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555', marginBottom: 3 }}>
+                    <span>Использовано площади:</span>
+                    <span>{sheetSummary.totalUsedAreaM2.toFixed(2)} м²</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555', marginBottom: 3 }}>
+                    <span>Куплено площади листов:</span>
+                    <span>{sheetSummary.totalSheetAreaM2.toFixed(2)} м²</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555', marginBottom: 3 }}>
+                    <span>Отходы:</span>
+                    <span style={{ color: sheetSummary.totalWastePercent > 15 ? '#e53935' : '#555', fontWeight: 600 }}>
+                      {sheetSummary.totalWastePercent}%
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#888' }}>
+                    <span>Остаток обрезков в пуле:</span>
+                    <span>{sheetSummary.finalOffcuts.length} шт · {sheetSummary.totalOffcutAreaM2.toFixed(2)} м²</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#aaa', marginTop: 8 }}>
+                    Обрезки переносятся последовательно между конструкциями — порядок совпадает
+                    с порядком в таблице «Конструкции на плане».
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Диалог параллельной линии ── */}
       {showParallelDialog && selectedLine && (
