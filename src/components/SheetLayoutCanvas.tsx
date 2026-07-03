@@ -31,6 +31,7 @@ const COLORS: Record<BoardPiece['kind'], string> = {
   height_cut:   '#7ed321',
   both_cut:     '#9b59b6',
   opening_void: '#d0d0d0',
+  diagonal_cut: '#e74c3c',
 }
 
 const KIND_LABELS: Record<BoardPiece['kind'], string> = {
@@ -39,6 +40,7 @@ const KIND_LABELS: Record<BoardPiece['kind'], string> = {
   height_cut:   'рез по высоте',
   both_cut:     'два реза',
   opening_void: 'проём',
+  diagonal_cut: 'рез по уклону',
 }
 
 const STUD_RULER_H = 28  // px — высота шкалы стоек сверху
@@ -156,6 +158,45 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW, first
                         fontSize={9} fill="#999" align="center" />
                     )}
                   </Group>
+                )
+              }
+
+              // ── Кусок с резом по уклону: настоящий многоугольник ────────
+              if (p.kind === 'diagonal_cut' && p.polygon && p.polygon.length >= 3) {
+                const polyPts = p.polygon.flatMap(pt => [tx(pt.x), ty(pt.y)])
+                const isOffcut = p.source === 'offcut'
+                return (
+                  <React.Fragment key={`${ci}-${pi}`}>
+                    {/* Пунктиром — заготовка (сколько места реально занято на листе) */}
+                    <Rect
+                      x={px + 1} y={py + 1}
+                      width={Math.max(1, pw - 2)}
+                      height={Math.max(1, ph - 2)}
+                      fill="transparent"
+                      stroke="#bbb"
+                      strokeWidth={1}
+                      dash={[3, 3]}
+                    />
+                    {/* Реальная форма после реза по уклону */}
+                    <Line
+                      points={polyPts}
+                      closed
+                      fill={COLORS.diagonal_cut}
+                      opacity={0.75}
+                      stroke={isOffcut ? '#e74c3c' : '#fff'}
+                      strokeWidth={isOffcut ? 1.5 : 0.5}
+                    />
+                    {pw > 30 && ph > 18 && (
+                      <Text
+                        x={px + 3} y={py + ph / 2 - 8}
+                        width={pw - 6}
+                        text={`${p.w}×${p.h}`}
+                        fontSize={9}
+                        fill="#fff"
+                        align="center"
+                      />
+                    )}
+                  </React.Fragment>
                 )
               }
 

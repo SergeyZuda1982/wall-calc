@@ -65,6 +65,53 @@ describe('calcSheetLayout — уклон потолка/пола (регресс
     expect(maxY).toBeLessThanOrEqual(2500)
   })
 
+  it('колонка, которая реально пересекает наклонную линию, содержит diagonal_cut с многоугольником', () => {
+    // Одна широкая колонка от 0 до 4000 (шаг листа больше длины стены) —
+    // единственная граница слева/справа, наклон целиком внутри неё.
+    const result = calcSheetLayout(
+      4000, slopedCeiling, flatFloor,
+      4000, 4000, 1, [], spec, spec, 1,
+    )
+    const diagPieces = result.layer1.columns
+      .flatMap(c => c.pieces)
+      .filter(p => p.kind === 'diagonal_cut')
+    expect(diagPieces.length).toBeGreaterThan(0)
+    for (const p of diagPieces) {
+      expect(p.polygon).toBeDefined()
+      expect(p.polygon!.length).toBeGreaterThanOrEqual(3)
+    }
+  })
+
+  it('usedAreaM2 у diagonal_cut куска меньше площади его ограничивающего прямоугольника (реальные отходы учтены)', () => {
+    const result = calcSheetLayout(
+      4000, slopedCeiling, flatFloor,
+      4000, 4000, 1, [], spec, spec, 1,
+    )
+    const diag = result.layer1.columns.flatMap(c => c.pieces).find(p => p.kind === 'diagonal_cut')
+    expect(diag).toBeDefined()
+    const boundingArea = diag!.w * diag!.h
+    const polyArea = (() => {
+      const pts = diag!.polygon!
+      let s = 0
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length]
+        s += a.x * b.y - b.x * a.y
+      }
+      return Math.abs(s) / 2
+    })()
+    expect(polyArea).toBeLessThan(boundingArea)
+  })
+
+  it('колонка без пересечения с уклоном (полностью ниже него) остаётся обычным full/width_cut/height_cut, без diagonal_cut', () => {
+    // Стена вся плоская 2500 (уклона нет вообще) — ни одного diagonal_cut быть не должно
+    const result = calcSheetLayout(
+      3000, flatProfile(3000, 2500), flatProfile(3000, 0),
+      600, 600, 1, [], spec, spec, 1,
+    )
+    const hasDiag = result.layer1.columns.some(c => c.pieces.some(p => p.kind === 'diagonal_cut'))
+    expect(hasDiag).toBe(false)
+  })
+
   it('раскрой с уклоном тратит меньше площади листов, чем раскрой по фиксированной худшей высоте на всю стену', () => {
     const slopedResult = calcSheetLayout(
       4000, slopedCeiling, flatFloor,
