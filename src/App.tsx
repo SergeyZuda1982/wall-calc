@@ -12,6 +12,7 @@ import { MIN_GAP } from './core/buildPositions'
 import { useProjectStore } from './store/useProjectStore'
 import LiningCalc from './LiningCalc'
 import FloorPlan from './FloorPlan'
+import Scene3D from './Scene3D'
 import CeilingCalc from './CeilingCalc'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
@@ -145,7 +146,7 @@ function fmtCut(totalMm: number, bars: number, wasteMm: number): React.ReactNode
 export default function App() {
   const [form, setForm] = useState<WallInput>(DEFAULT_INPUT)
   const [shiftInput, setShiftInput] = useState('100')
-  const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling'>('wall')
+  const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling' | '3d'>('wall')
   const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
   const [sheetSideTab, setSheetSideTab] = useState<'A' | 'B'>('A')
   const [showOffcuts, setShowOffcuts] = useState(false)
@@ -403,10 +404,10 @@ export default function App() {
         )}
 
         {/* Основной контент */}
-        <div ref={canvasWrapRef} style={{ flex: 1, padding: 'clamp(10px, 4vw, 24px)', maxWidth: activeTab === 'plan' ? 'none' : 900, overflowY: 'auto', minWidth: 0 }}>
+        <div ref={canvasWrapRef} style={{ flex: 1, padding: 'clamp(10px, 4vw, 24px)', maxWidth: (activeTab === 'plan' || activeTab === '3d') ? 'none' : 900, overflowY: 'auto', minWidth: 0 }}>
 
-      {/* ─── Панель объекта ─── (на вкладке "План" скрыта — имя объекта уже видно в шапке, а дропдауны перегородок/облицовок тут не нужны, освобождаем высоту под канвас) */}
-      {activeTab !== 'plan' && (
+      {/* ─── Панель объекта ─── (на вкладках "План" и "3D" скрыта — освобождаем высоту под канвас) */}
+      {activeTab !== 'plan' && activeTab !== '3d' && (
       <div style={{ marginBottom: 20, padding: '12px 16px', background: '#f8f9ff', border: '1px solid #dde', borderRadius: 8 }}>
 
         {/* Строка: название объекта */}
@@ -494,7 +495,7 @@ export default function App() {
       {/* ─── Вкладки ─── */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid #dde',
         overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        {([['wall', 'Перегородки'], ['lining', 'Облицовка стен'], ['ceiling', '🏠 Потолки'], ['plan', '🗺 План']] as const).map(([tab, label]) => (
+        {([['wall', 'Перегородки'], ['lining', 'Облицовка стен'], ['ceiling', '🏠 Потолки'], ['plan', '🗺 План'], ['3d', '🧊 3D']] as const).map(([tab, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={{
             padding: '10px clamp(10px, 3vw, 24px)', fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap',
             border: 'none', borderBottom: activeTab === tab ? '2px solid #3a7bd5' : '2px solid transparent',
@@ -510,6 +511,12 @@ export default function App() {
       {activeTab === 'plan' && (
         <div style={{ margin: '0 -24px', height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <FloorPlan />
+        </div>
+      )}
+
+      {activeTab === '3d' && (
+        <div style={{ margin: '0 -24px', height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <Scene3D />
         </div>
       )}
 

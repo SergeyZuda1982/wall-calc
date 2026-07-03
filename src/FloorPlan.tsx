@@ -28,6 +28,7 @@ import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
 import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
+import { extractContourPoints } from './core/contour'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -200,30 +201,7 @@ function computeOpeningSegments(
   return { segments: segments.filter(s => dist(s.ax1, s.ay1, s.ax2, s.ay2) > 0.5), gaps }
 }
 
-function extractContourPoints(lineIds: string[], lines: PlanLine[]) {
-  const sel = lineIds.map(id => lines.find(l => l.id === id)).filter(Boolean) as PlanLine[]
-  if (sel.length < 3) return []
-  const pts: { x: number; y: number }[] = []
-  let current = sel[0]
-  const used = new Set([current.id])
-  pts.push({ x: current.x1, y: current.y1 }, { x: current.x2, y: current.y2 })
-  let prevEnd = { x: current.x2, y: current.y2 }
-  for (let i = 1; i < sel.length; i++) {
-    const next = sel.find(l => !used.has(l.id) && (
-      (Math.abs(l.x1 - prevEnd.x) < 2 && Math.abs(l.y1 - prevEnd.y) < 2) ||
-      (Math.abs(l.x2 - prevEnd.x) < 2 && Math.abs(l.y2 - prevEnd.y) < 2)
-    ))
-    if (!next) break
-    used.add(next.id)
-    if (Math.abs(next.x1 - prevEnd.x) < 2 && Math.abs(next.y1 - prevEnd.y) < 2) {
-      prevEnd = { x: next.x2, y: next.y2 }
-    } else {
-      prevEnd = { x: next.x1, y: next.y1 }
-    }
-    pts.push(prevEnd)
-  }
-  return pts
-}
+// extractContourPoints вынесена в core/contour.ts (переиспользуется в planTo3D.ts)
 
 function fmtArea(m2: number) {
   return m2 < 0.01 ? '<0.01 м²' : `${m2.toFixed(2)} м²`
