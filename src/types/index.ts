@@ -350,6 +350,21 @@ export interface PlanLineSpec {
    * drawHeightMm), пишется в spec каждой новой линии, переопределяется точечно.
    */
   step?: number
+  /**
+   * Шаг прямых подвесов, мм — только для облицовки (wall_lining). Глобальный
+   * дефолт 1000 (совпадает с DEFAULT_INPUT.hangerStep в LiningCalc.tsx),
+   * переопределяется точечно. Пока без UI-панели глобального дефолта
+   * (как у step/heightMm) — задаётся только через инспектор при необходимости,
+   * иначе берётся дефолт из переводчика planLineToLiningInput.
+   */
+  hangerStep?: number
+  /**
+   * Толщина металла профиля, мм ('06'|'07') — влияет только на предупреждение
+   * о максимальной высоте (getMaxHeight/getLiningMaxHeight) и подпись, НЕ на
+   * количество материалов (проверено: calcResults.ts/calcLining.ts профиль
+   * не читают). Дефолт '06', как в App.tsx/LiningCalc.tsx.
+   */
+  profileThickness?: ProfileThickness
   layer1?: BoardSpec   // спецификация листа 1-го слоя — вход для переводчика в SurfaceSheetInput
   layer2?: BoardSpec   // спецификация листа 2-го слоя (актуален при layers === 2)
 }
