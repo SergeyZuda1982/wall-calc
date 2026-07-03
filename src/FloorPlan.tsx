@@ -42,6 +42,7 @@ const LINE_COLORS: Record<PlanLineType, string> = {
   wall_existing: '#78909c',
   ceiling:       '#8e24aa',
   floor:         '#6d4c41',
+  rib_beam:      '#37474f',
 }
 const LINE_LABELS_SHORT: Record<PlanLineType, string> = {
   wall_new:      'Перегородка',
@@ -49,9 +50,10 @@ const LINE_LABELS_SHORT: Record<PlanLineType, string> = {
   wall_existing: 'Сущ. конструкция',
   ceiling:       'Потолок',
   floor:         'Пол',
+  rib_beam:      'Ригель',
 }
 const LINE_WIDTH: Record<PlanLineType, number> = {
-  wall_new: 4, wall_lining: 3, wall_existing: 5, ceiling: 2, floor: 2,
+  wall_new: 4, wall_lining: 3, wall_existing: 5, ceiling: 2, floor: 2, rib_beam: 5,
 }
 const HAS_SIDE_VIEW: PlanLineType[] = ['wall_new', 'wall_lining', 'floor']
 
@@ -69,9 +71,9 @@ const STATUS_COLORS: Record<WorkStatus, string> = {
   in_progress: '#fb8c00',
   done:        '#43a047',
 }
-/** Капитал по умолчанию — только цепочка периметра (wall_existing), всё остальное изменяемое */
+/** Капитал по умолчанию — периметр (wall_existing) и ригели, всё остальное изменяемое */
 function defaultCategory(type: PlanLineType): LineCategory {
-  return type === 'wall_existing' ? 'capital' : 'mutable'
+  return (type === 'wall_existing' || type === 'rib_beam') ? 'capital' : 'mutable'
 }
 function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
@@ -287,7 +289,7 @@ function calcHatch(ax: number, ay: number, bx: number, by: number, cx: number, c
 
 // Генерация имени конструкции (П-1, П-2, О-1...)
 const TYPE_PREFIX: Record<PlanLineType, string> = {
-  wall_new: 'П', wall_lining: 'О', wall_existing: 'С', ceiling: 'Пт', floor: 'Пл',
+  wall_new: 'П', wall_lining: 'О', wall_existing: 'С', ceiling: 'Пт', floor: 'Пл', rib_beam: 'Р',
 }
 
 function genLabel(type: PlanLineType, lines: PlanLine[]): string {
@@ -377,6 +379,8 @@ export default function FloorPlan() {
   const [drawType, setDrawType]         = useState<PlanLineType>('wall_new')
   const [drawSpec, setDrawSpec]         = useState<PlanLineSpec | null>(null)
   const [drawHeightMm, setDrawHeightMm] = useState('3000')
+  const [drawRibWidthMm, setDrawRibWidthMm] = useState('300')  // ригель: ширина сечения по плану, мм
+  const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
   const [drawStep, setDrawStep] = useState('600')
   const [drawLayer1, setDrawLayer1] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
   const [drawLayer2, setDrawLayer2] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
@@ -831,7 +835,7 @@ export default function FloorPlan() {
 
   // ── Ограничение черчения внутри периметра ─────────────────────────────────
   function isPointAllowed(x: number, y: number, type: PlanLineType): boolean {
-    if (type === 'wall_existing') return true
+    if (type === 'wall_existing' || type === 'rib_beam') return true
     // При обводке подложки (кальки) геометрия уже задана исходным чертежом —
     // ограничение "только внутри замкнутого периметра" не нужно
     if (floorPlan?.backgroundImage) return true
@@ -932,6 +936,7 @@ export default function FloorPlan() {
             spec: drawSpec ? { ...drawSpec, step: parseFloat(drawStep) || 600, layer1: drawLayer1, layer2: drawLayer2 } : undefined,
             heightMm: parseFloat(drawHeightMm) || 3000,
             category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
+            ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: parseFloat(drawRibDropMm) || 200 } : {}),
           })
           allLineIds = [...allLineIds, closingId]
         }
@@ -966,6 +971,7 @@ export default function FloorPlan() {
           x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label,
           spec: drawSpec ? { ...drawSpec, step: parseFloat(drawStep) || 600, layer1: drawLayer1, layer2: drawLayer2 } : undefined, heightMm: parseFloat(drawHeightMm) || 3000,
           category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
+          ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: parseFloat(drawRibDropMm) || 200 } : {}),
         })
         setChainLineIds(prev => [...prev, newId])
         // Конец линии — НЕ автостарт следующей, ждём нового клика пользователя
@@ -974,7 +980,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1428,6 +1434,38 @@ export default function FloorPlan() {
             )
           })}
 
+          {/* Ригель — отдельно от дерева материалов: нет спецификации,
+              только геометрия (ширина сечения + опускание от потолка) */}
+          <div>
+            <div style={{ ...sectionHeaderStyle, color: LINE_COLORS.rib_beam }}>Ригели (перекрытие)</div>
+            <button
+              onClick={() => { setDrawType('rib_beam'); setDrawSpec(null); setMode('draw') }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 14px', background: 'transparent', border: 'none',
+                cursor: 'pointer', width: '100%', textAlign: 'left',
+                borderLeft: (mode === 'draw' && drawType === 'rib_beam') ? '3px solid #37474f' : '3px solid transparent',
+                color: (mode === 'draw' && drawType === 'rib_beam') ? '#fff' : '#8a9ac8', fontSize: 12,
+              }}>
+              <span style={{ fontSize: 14, minWidth: 16, textAlign: 'center' }}>▬</span>
+              <span>Нарисовать ригель</span>
+            </button>
+            <div style={{ padding: '2px 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Сечение:</span>
+              <input type="number" value={drawRibWidthMm}
+                onChange={e => setDrawRibWidthMm(e.target.value)}
+                style={{ width: 60, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+              <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
+            </div>
+            <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Опускание:</span>
+              <input type="number" value={drawRibDropMm}
+                onChange={e => setDrawRibDropMm(e.target.value)}
+                style={{ width: 60, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+              <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм от потолка</span>
+            </div>
+          </div>
+
           <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
 
           {/* Инструменты */}
@@ -1837,10 +1875,14 @@ export default function FloorPlan() {
                     const lStatus    = l.workStatus ?? defaultStatus(lCategory)
                     const showStatusDot = lCategory === 'mutable' && !inErase
 
-                    // Рисуем двойную линию (трапецию) ТОЛЬКО если spec задан явно.
+                    // Рисуем двойную линию (трапецию) ТОЛЬКО если spec задан явно
+                    // (или это ригель — у него своя толщина из sectionWidthMm).
                     // Без spec — тонкая линия, чтобы не путать при первом рисовании.
-                    const hasExplicitSpec = !!(l.spec?.material)
-                    const thicknessPx = (hasExplicitSpec && vis.thicknessMm > 0) ? vis.thicknessMm / scaleMmPx : 0
+                    const isRibBeam = l.type === 'rib_beam'
+                    const hasExplicitSpec = !!(l.spec?.material) || isRibBeam
+                    const thicknessPx = isRibBeam
+                      ? (l.sectionWidthMm ?? 300) / scaleMmPx
+                      : (hasExplicitSpec && vis.thicknessMm > 0) ? vis.thicknessMm / scaleMmPx : 0
                     const dx = l.x2 - l.x1, dy = l.y2 - l.y1
                     const len = Math.sqrt(dx*dx + dy*dy)
                     const useDouble = thicknessPx > 3 && len > 0 && !inErase
@@ -1848,7 +1890,7 @@ export default function FloorPlan() {
                     if (useDouble) {
                       const half = thicknessPx / 2
                       const hitW = Math.max(28, thicknessPx + 8)
-                      const fill = isSelected ? stroke + '30' : inContour ? '#ff980022' : vis.fillColor
+                      const fill = isSelected ? stroke + '30' : inContour ? '#ff980022' : (isRibBeam ? '#37474f22' : vis.fillColor)
                       const sw = vis.strokeWidth
 
                       // ── Wall join: берём скорректированные точки если есть ──
@@ -1890,7 +1932,7 @@ export default function FloorPlan() {
                                 {/* Заливка сегмента */}
                                 <Line points={[sAx,sAy, sBx,sBy, sCx,sCy, sDx,sDy]} closed fill={fill} stroke="none" listening={false} />
                                 {/* Штриховка существующих конструкций */}
-                                {l.type === 'wall_existing' && (() => {
+                                {(l.type === 'wall_existing' || l.type === 'rib_beam') && (() => {
                                   const hatch = calcHatch(sAx, sAy, sBx, sBy, sCx, sCy, sDx, sDy, 8)
                                   return (
                                     <Group clipFunc={(ctx: any) => {
@@ -1898,7 +1940,7 @@ export default function FloorPlan() {
                                       ctx.lineTo(sCx, sCy); ctx.lineTo(sDx, sDy); ctx.closePath()
                                     }} listening={false}>
                                       {hatch.map((pts, i) => (
-                                        <Line key={i} points={pts} stroke="#78909c" strokeWidth={0.8} opacity={0.5} listening={false} />
+                                        <Line key={i} points={pts} stroke={stroke} strokeWidth={0.8} opacity={0.5} listening={false} />
                                       ))}
                                     </Group>
                                   )
@@ -2123,7 +2165,7 @@ export default function FloorPlan() {
                   </tr>
                 </thead>
                 <tbody>
-                  {lines.map((l, i) => {
+                  {lines.filter(l => l.type !== 'rib_beam').map((l, i) => {
                     const status = getStatus(l.id)
                     const isSelected = l.id === selectedId
                     return (
@@ -2265,7 +2307,7 @@ export default function FloorPlan() {
               </div>
               {(inspectorLine.category ?? defaultCategory(inspectorLine.type)) === 'capital' && (
                 <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>
-                  Периметр / колонна / уровень — не сносится и не двигается, к ней подтягиваются остальные
+                  Периметр / колонна / ригель / уровень — не сносится и не двигается, к ней подтягиваются остальные
                 </div>
               )}
             </div>
@@ -2286,6 +2328,39 @@ export default function FloorPlan() {
                 ))}
               </select>
             </div>
+
+            {/* Ригель: своя геометрия вместо материала — сечение по плану + опускание от потолка */}
+            {inspectorLine.type === 'rib_beam' && (
+              <div style={{ padding: '6px 16px 10px' }}>
+                <div style={{ fontSize: 10, color: '#999', marginBottom: 6, textTransform: 'uppercase' }}>
+                  Геометрия ригеля
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, color: '#666', minWidth: 70 }}>Сечение:</span>
+                  <input type="number" value={inspectorLine.sectionWidthMm ?? 300}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value)
+                      if (v > 0) updatePlanLine(inspectorLine.id, { sectionWidthMm: v })
+                    }}
+                    style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #ddd' }} />
+                  <span style={{ fontSize: 11, color: '#999' }}>мм</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: '#666', minWidth: 70 }}>Опускание:</span>
+                  <input type="number" value={inspectorLine.dropMm ?? 200}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value)
+                      if (v >= 0) updatePlanLine(inspectorLine.id, { dropMm: v })
+                    }}
+                    style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #ddd' }} />
+                  <span style={{ fontSize: 11, color: '#999' }}>мм от потолка</span>
+                </div>
+                <div style={{ fontSize: 10, color: '#aaa', marginTop: 6 }}>
+                  Единое целое с перекрытием — резать нельзя, коммуникации в обход.
+                  Высота чистового потолка под ригелем ограничена его опусканием.
+                </div>
+              </div>
+            )}
 
             {/* Боковое примыкание + крепёж — только для перегородок/облицовки (у них есть боковые стойки) */}
             {(inspectorLine.type === 'wall_new' || inspectorLine.type === 'wall_lining') && (() => {

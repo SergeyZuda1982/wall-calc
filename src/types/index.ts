@@ -338,6 +338,8 @@ export type PlanLineType =
   | 'wall_existing'  // существующая стена (серый)
   | 'ceiling'        // потолок (фиолетовый)
   | 'floor'          // пол (коричневый)
+  | 'rib_beam'       // ригель — балка перекрытия между колоннами, монолит,
+                      // единое целое с плитой; резать нельзя, всегда capital/existing
 
 /** Конструктивная спецификация линии — выбирается каскадно */
 export interface PlanLineSpec {
@@ -431,6 +433,8 @@ export interface PlanLine {
   heightMm?: number         // высота конструкции, мм (по умолчанию 3000, если не задано)
   category?: LineCategory   // капитал (периметр/колонны) или изменяемая конструкция
   workStatus?: WorkStatus   // статус работ — актуально для mutable
+  sectionWidthMm?: number   // rib_beam: ширина сечения по плану, мм
+  dropMm?: number           // rib_beam: опускание низа балки от плиты перекрытия, мм
   /**
    * Ручное переопределение крепежа для примыкания на конце линии (start=x1,y1 / end=x2,y2).
    * Если не задано — используется дефолт из suggestFastener(material) по резолву attachmentResolver.
