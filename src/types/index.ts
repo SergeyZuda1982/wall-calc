@@ -195,6 +195,7 @@ export interface CalcResult {
   cutList: WallCutList
   rawPieces: { pn: CutPiece[]; ps: CutPiece[] }
   screws: ScrewResult
+  sealingTapeLm: number
 }
 
 export interface DrawingSnap {
