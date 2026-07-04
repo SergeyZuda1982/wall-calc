@@ -136,7 +136,7 @@ function snapPoint(
       t = Math.max(0, Math.min(1, t))
       const axisX = l.x1 + t * dx, axisY = l.y1 + t * dy
 
-      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
+      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
       const halfThicknessPx = vis.thicknessMm > 0 ? (vis.thicknessMm / 2) / scaleMmPx : 0
 
       // Нормаль к оси линии; определяем с какой стороны от оси кликнули,
@@ -1278,7 +1278,7 @@ export default function FloorPlan() {
   const wallJoins = useMemo(() => {
     const walls: WallForJoin[] = []
     lines.forEach((l, idx) => {
-      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
+      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
       const hasSpec = !!(l.spec?.material)
       const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
       if (thicknessPx <= 3) return
@@ -1300,7 +1300,7 @@ export default function FloorPlan() {
   const lineAttachments = useMemo(() => {
     const surfaces: AttachSurface[] = []
     lines.forEach(l => {
-      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
+      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
       const hasSpec = !!(l.spec?.material) || l.type === 'wall_existing'
       const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
       if (thicknessPx <= 3) return
@@ -2181,7 +2181,7 @@ export default function FloorPlan() {
                     const inErase    = eraseIds.includes(l.id)
                     const baseColor  = LINE_COLORS[l.type]
 
-                    const vis       = getLineVisual(l.type, l.spec?.material, l.spec?.subtype)
+                    const vis       = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
                     const specColor = vis.colorOverride ?? baseColor
                     const stroke    = inErase ? '#e53935' : inContour ? '#ff9800' : isSelected ? '#ff5722' : specColor
                     const dash      = (inErase || inContour || isSelected) ? undefined : (vis.dash ?? undefined)
@@ -2460,7 +2460,7 @@ export default function FloorPlan() {
 
                   {/* Превью рисования */}
                   {mode === 'draw' && drawing && previewPt && (() => {
-                    const previewVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype)
+                    const previewVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
                     const previewColor = previewVis.colorOverride ?? LINE_COLORS[drawType]
                     return (
                       <>
@@ -2478,7 +2478,7 @@ export default function FloorPlan() {
 
                   {/* Курсор снапа — крестик вместо круга */}
                   {cursor && mode === 'draw' && (() => {
-                    const curVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype)
+                    const curVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
                     const curColor = curVis.colorOverride ?? LINE_COLORS[drawType]
                     const sz = 7 / stageScale
                     const sw = 1.5 / stageScale

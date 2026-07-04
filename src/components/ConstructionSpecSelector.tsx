@@ -9,7 +9,7 @@
  */
 
 import type { PlanLineType, PlanLineSpec } from '../types'
-import { TAXONOMY } from '../data/constructionTaxonomy'
+import { TAXONOMY, parseDoubleFrameSubtype } from '../data/constructionTaxonomy'
 
 interface Props {
   planType: PlanLineType
@@ -59,7 +59,17 @@ export default function ConstructionSpecSelector({ planType, value, onChange, co
     onChange({ ...value, layers })
   }
 
+  function handleGap(gapMm: string) {
+    if (!value?.material) return
+    const n = parseInt(gapMm)
+    onChange({ ...value, gapMm: isNaN(n) ? undefined : n })
+  }
+
   const isGkl = value?.material === 'gkl' && !!value?.subtype
+  // Двойной каркас (С115.1/.2/.3, С116) — число слоёв фиксировано системой,
+  // а не выбором монтажника, поэтому обычный селектор "1/2 слоя" здесь
+  // не показываем (см. constructionTaxonomy.ts, getDoubleFrameLayerCounts).
+  const doubleFrame = parseDoubleFrameSubtype(value?.subtype)
 
   const gap = compact ? 6 : 8
   const labelStyle: React.CSSProperties = compact
@@ -109,14 +119,30 @@ export default function ConstructionSpecSelector({ planType, value, onChange, co
             <option value="fire">Огнестойкий ГКЛО</option>
             <option value="moisture_fire">Влагоогнестойкий ГКЛВО</option>
           </select>
-          <select
-            value={value?.layers ?? 1}
-            onChange={e => handleLayers(Number(e.target.value) as 1 | 2)}
-            style={{ ...selectStyle, color: '#222' }}
-          >
-            <option value={1}>1 слой</option>
-            <option value={2}>2 слоя</option>
-          </select>
+          {doubleFrame ? (
+            <span style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
+              слоёв: фикс. по системе
+            </span>
+          ) : (
+            <select
+              value={value?.layers ?? 1}
+              onChange={e => handleLayers(Number(e.target.value) as 1 | 2)}
+              style={{ ...selectStyle, color: '#222' }}
+            >
+              <option value={1}>1 слой</option>
+              <option value={2}>2 слоя</option>
+            </select>
+          )}
+          {doubleFrame?.dfType === 'c116' && (
+            <input
+              type='number'
+              placeholder='зазор, мм'
+              value={value?.gapMm ?? ''}
+              onChange={e => handleGap(e.target.value)}
+              title='Зазор между рядами стоек под коммуникации, мм'
+              style={{ ...selectStyle, width: 90, cursor: 'text' }}
+            />
+          )}
         </>
       )}
 

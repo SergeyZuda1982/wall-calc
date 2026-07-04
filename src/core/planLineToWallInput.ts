@@ -13,10 +13,14 @@
  * standalone-калькулятора): gklLayers = wallType==='c112' ? 2 : 1.
  *
  * Резолв profileType: дерево материалов wall_new (constructionTaxonomy.ts)
- * содержит 5 подтипов ГКЛ-каркаса (ps50/ps75/ps100/ps125/double), но
- * калькулятор (ProfileType) поддерживает только 3 (ps50/ps75/ps100).
- * ps125 и double — известный пробел (нет данных по толщине профиля/раскрою
- * в calcResults.ts), эти линии возвращают null, пока справочник не расширят.
+ * содержит одинарные подтипы ГКЛ-каркаса (ps50/ps75/ps100/ps125/double) и,
+ * с сессии 04.07.2026, подтипы двойного каркаса (c115_1_ps50 ... c116_ps100,
+ * см. parseDoubleFrameSubtype в constructionTaxonomy.ts) — но калькулятор
+ * (ProfileType/WallInput) поддерживает только одинарный каркас с одной парой
+ * layer1/layer2 на всю стену. ps125, double и ВСЕ подтипы двойного каркаса —
+ * известный пробел (сама механика расчёта для двух рядов стоек ещё не
+ * реализована, см. КОНСПЕКТ.md), эти линии возвращают null, пока не появится
+ * отдельный переводчик/WallInput для двойного каркаса.
  *
  * Резолв abutment: WallInput.abutment влияет на крайние стойки (торец в
  * торец без нахлёста у стены vs нахлёст на свободном конце) — та же логика,
@@ -39,8 +43,9 @@ export function resolveWallType(layers: 1 | 2 | undefined): WallType {
 
 /**
  * profileType по subtype дерева материалов wall_new:gkl.
- * ps50/ps75/ps100 — прямой проброс. ps125/double — не поддержаны
- * калькулятором (нет ProfileType/данных по раскрою), null.
+ * ps50/ps75/ps100 — прямой проброс. ps125/double и все подтипы двойного
+ * каркаса (c115_1..c115_3, c116) — не поддержаны калькулятором (нет ProfileType/
+ * данных по раскрою для двух рядов стоек), null.
  */
 export function resolveWallProfileType(subtype: string | undefined): ProfileType | null {
   if (subtype === 'ps50' || subtype === 'ps75' || subtype === 'ps100') return subtype
