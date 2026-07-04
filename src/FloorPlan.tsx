@@ -856,8 +856,9 @@ export default function FloorPlan() {
     }
 
     if (mode === 'pencil') {
+      const pt = applySnap(pos.x, pos.y)
       const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
-      const closing = pencilPts.length >= 3 && dist(pos.x, pos.y, pencilPts[0].x, pencilPts[0].y) <= closeThresh
+      const closing = pencilPts.length >= 3 && dist(pt.x, pt.y, pencilPts[0].x, pencilPts[0].y) <= closeThresh
       if (closing) {
         if (pencilHoleTargetId) {
           addSlabHole(pencilHoleTargetId, pencilPts)
@@ -867,7 +868,7 @@ export default function FloorPlan() {
         setPencilPts([])
         return
       }
-      setPencilPts(prev => [...prev, { x: pos.x, y: pos.y }])
+      setPencilPts(prev => [...prev, { x: pt.x, y: pt.y }])
       return
     }
 
@@ -2015,8 +2016,32 @@ export default function FloorPlan() {
                         />
                       )}
                       {pencilPts.map((p, i) => (
-                        <Circle key={i} x={p.x} y={p.y} radius={i === 0 ? 5 : 3}
-                          fill={i === 0 ? '#e53935' : '#8d99ae'} listening={false} />
+                        i === 0 ? (
+                          <Shape
+                            key={i} x={p.x} y={p.y} rotation={-45} listening={false}
+                            sceneFunc={(ctx) => {
+                              // Носик (остриё) — ровно в точке (0,0), тело уходит назад по диагонали,
+                              // чтобы не перекрывать угол, к которому идёт привязка.
+                              ctx.beginPath()
+                              ctx.moveTo(0, 0)
+                              ctx.lineTo(7, -2.5)
+                              ctx.lineTo(7, 2.5)
+                              ctx.closePath()
+                              ctx.fillStyle = '#e53935'
+                              ctx.fill()
+                              ctx.beginPath()
+                              ctx.rect(7, -2, 13, 4)
+                              ctx.fillStyle = '#8d99ae'
+                              ctx.fill()
+                              ctx.beginPath()
+                              ctx.rect(20, -2, 4, 4)
+                              ctx.fillStyle = '#5a6a8a'
+                              ctx.fill()
+                            }}
+                          />
+                        ) : (
+                          <Circle key={i} x={p.x} y={p.y} radius={3} fill="#8d99ae" listening={false} />
+                        )
                       ))}
                     </>
                   )}
