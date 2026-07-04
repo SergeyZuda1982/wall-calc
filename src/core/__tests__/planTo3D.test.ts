@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   wallThicknessMm, wallToBox3D, wallsToBoxes3D, estimateCeilingMm,
-  roomsToPolygons3D, slabsToPolygons3D, pxToM, mmToM,
+  roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, pxToM, mmToM,
 } from '../planTo3D'
-import type { PlanLine, Room, Slab } from '../../types'
+import type { PlanLine, Room, Slab, RoundColumn } from '../../types'
 
 function baseLine(overrides: Partial<PlanLine>): PlanLine {
   return {
@@ -165,5 +165,32 @@ describe('roomsToPolygons3D', () => {
     const lines: PlanLine[] = [baseLine({ id: 'a' })]
     const rooms: Room[] = [{ id: 'r1', lineIds: ['a'], areaM2: 0, perimeterMm: 0, label: 'X' }]
     expect(roomsToPolygons3D(rooms, lines, 10)).toHaveLength(0)
+  })
+})
+
+describe('roundColumnsToCylinders3D', () => {
+  function baseColumn(overrides: Partial<RoundColumn>): RoundColumn {
+    return { id: 'rc1', cx: 100, cy: 200, diameterMm: 400, label: 'Колонна 1', ...overrides }
+  }
+
+  it('переводит центр/радиус в метры, высота = отметка потолка', () => {
+    const cyls = roundColumnsToCylinders3D([baseColumn({})], 10, 3000) // 10мм/px, потолок 3000мм
+    expect(cyls).toHaveLength(1)
+    expect(cyls[0].cx).toBeCloseTo(1)       // 100px*10мм = 1000мм = 1м
+    expect(cyls[0].cz).toBeCloseTo(2)       // 200px*10мм = 2000мм = 2м
+    expect(cyls[0].radius).toBeCloseTo(0.2) // диаметр 400мм → радиус 200мм = 0.2м
+    expect(cyls[0].heightM).toBeCloseTo(3)  // потолок 3000мм = 3м
+  })
+
+  it('колонна с нулевым/отрицательным диаметром — пропущена', () => {
+    const cyls = roundColumnsToCylinders3D([baseColumn({ diameterMm: 0 })], 10, 3000)
+    expect(cyls).toHaveLength(0)
+  })
+
+  it('несколько колонн — все переведены', () => {
+    const cyls = roundColumnsToCylinders3D(
+      [baseColumn({ id: 'a' }), baseColumn({ id: 'b', cx: 300 })], 10, 2700,
+    )
+    expect(cyls.map(c => c.id)).toEqual(['a', 'b'])
   })
 })

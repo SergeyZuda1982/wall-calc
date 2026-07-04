@@ -494,6 +494,24 @@ export interface Slab {
   label: string                           // "Плита 1", "Плита 2"...
 }
 
+/**
+ * Круглая колонна — лёгкая самостоятельная сущность (не Room, не набор линий),
+ * по аналогии с тем, как Slab существует параллельно старому коду линий/помещений.
+ * Прямоугольные колонны по-прежнему остаются обычным Room с isColumn: true
+ * (4 линии wall_existing, замкнутые в контур) — здесь только для круглых,
+ * т.к. окружность нельзя без искажений собрать из прямых линий в Room.
+ */
+export interface RoundColumn {
+  id: string
+  cx: number            // центр, px (координаты плана)
+  cy: number
+  diameterMm: number
+  spec?: PlanLineSpec    // тот же тип spec, что у wall_existing (материал/подтип)
+  category?: LineCategory   // по умолчанию 'capital'
+  workStatus?: WorkStatus   // по умолчанию 'existing'
+  label: string
+}
+
 /** План объекта */
 export interface FloorPlan {
   scaleMmPerPx: number
@@ -501,6 +519,7 @@ export interface FloorPlan {
   contours: PlanContour[]
   rooms: Room[]
   slabs: Slab[]
+  roundColumns: RoundColumn[]
   backgroundImage?: BackgroundImage | null
 }
 
@@ -510,6 +529,7 @@ export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   contours: [],
   rooms: [],
   slabs: [],
+  roundColumns: [],
   backgroundImage: null,
 }
 
