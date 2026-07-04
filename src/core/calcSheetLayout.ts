@@ -162,6 +162,70 @@ function zoneJoints(z1: number, z2: number, SL: number, vOffset: number): number
   return pts
 }
 
+/**
+ * Минимальный практический размер узкого края косого куска (клина) у обрыва
+ * уклона, мм. Меньше него — реально не прикрутить (нож, а не кусок ГКЛ).
+ * 300 — цель (комфортно), 200 — жёсткий пол (если 300 физически не влезает
+ * между соседним стыком и длиной листа — берём максимум, что получается,
+ * но не меньше того, что позволяют ограничения).
+ */
+const TARGET_WEDGE_MM = 300
+
+/**
+ * Сдвигает ОДНУ границу в списке `ys` (если она есть), которая оказалась
+ * слишком близко к точке обрыва уклона (min(hL, hR)) — из-за этого верхний
+ * кусок получался бы тонким клином (или почти нулевым остатком с одного
+ * края). Двигаем эту границу вниз, чтобы над ней осталось ≥ TARGET_WEDGE_MM
+ * (либо максимум возможного, если мешает соседний стык или длина листа —
+ * `SL` для верхнего сегмента). Остальные границы не трогаем — это точечная
+ * правка одного стыка в одной колонке, глобальную 4-шаговую схему смещений
+ * не меняет.
+ */
+function avoidThinWedge(ys: number[], hL: number, hR: number, SL: number, minWedge: number): number[] {
+  if (hL === hR) return ys  // не наклонная колонка — обрыва уклона внутри нет
+  const hLo = Math.min(hL, hR)
+  const result = [...ys]
+
+  // ── Случай А: hLo проваливается ВНУТРИ сегмента → трапеция с тонким
+  //    краем (тает почти до нуля у дальнего края колонки, но не до нуля).
+  let idxA = -1
+  for (let i = 0; i < result.length; i++) {
+    if (result[i] <= hLo) idxA = i
+    else break
+  }
+  if (idxA >= 0 && idxA < result.length - 1) {
+    const zBelow = result[idxA]
+    const thin = hLo - zBelow
+    if (thin > 0 && thin < minWedge) {
+      const zPrev = idxA > 0 ? result[idxA - 1] : 0
+      const zAbove = result[idxA + 1]
+      const desired = hLo - minWedge
+      const newZ = Math.max(zPrev, zAbove - SL, desired)
+      if (newZ < zBelow) result[idxA] = Math.round(newZ)
+    }
+  }
+
+  // ── Случай Б: самый верхний сегмент целиком ВЫШЕ hLo → чистый треугольник
+  //    (у ближнего края колонки — вся его собственная высота, у дальнего —
+  //    ноль). Если этот треугольник сам по себе низкий — тоже клин.
+  const lastIdx = result.length - 1
+  if (lastIdx >= 1) {
+    const z1 = result[lastIdx - 1]
+    const z2 = result[lastIdx]
+    if (z1 >= hLo) {
+      const height = z2 - z1
+      if (height > 0 && height < minWedge) {
+        const zPrev = lastIdx - 1 > 0 ? result[lastIdx - 2] : 0
+        const desired = z2 - minWedge
+        const newZ = Math.max(zPrev, z2 - SL, desired)
+        if (newZ < z1) result[lastIdx - 1] = Math.round(newZ)
+      }
+    }
+  }
+
+  return result
+}
+
 // ─── Жадный пул обрезков ─────────────────────────────────────────────────────
 
 interface PoolItem { w: number; h: number; used: boolean }
@@ -228,7 +292,10 @@ function calcLayer(
     const vOffset = ((globalSlot + (layer === 2 ? 2 : 0) + sideIndex * 2) % 4) * (SL / 4)
 
     // Позиции горизонтальных стыков для этой колонки (для canvas)
-    const jointYs = zoneJoints(0, wallH, SL, vOffset).slice(1, -1)
+    const fullYs = isSlopedColumn
+      ? avoidThinWedge(zoneJoints(0, wallH, SL, vOffset), hL, hR, SL, TARGET_WEDGE_MM)
+      : zoneJoints(0, wallH, SL, vOffset)
+    const jointYs = fullYs.slice(1, -1)
 
     const voids = voidZones(x1, x2, openings)
     const work  = workZones(wallH, voids)
@@ -248,7 +315,8 @@ function calcLayer(
 
     // Рабочие зоны → листы
     for (const [z1, z2] of work) {
-      const ys = zoneJoints(z1, z2, SL, vOffset)
+      const rawYs = zoneJoints(z1, z2, SL, vOffset)
+      const ys = isSlopedColumn ? avoidThinWedge(rawYs, hL, hR, SL, TARGET_WEDGE_MM) : rawYs
 
       for (let k = 0; k < ys.length - 1; k++) {
         const py = ys[k]

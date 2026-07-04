@@ -151,3 +151,71 @@ describe('calcSheetLayout — проёмы всё ещё разбивают ко
     expect(boundaryXs.has(1800)).toBe(true)
   })
 })
+
+describe('calcSheetLayout — минимальный клин у обрыва уклона (реальный случай, перегородка 6160мм, 3600→2000)', () => {
+  // Кейс с объекта: узкий край косого куска у обрыва уклона получался
+  // считанные миллиметры (иногда даже доли мм) — физически не прикрутить
+  // к стойке. Нужно ≥300мм по возможности, ≥200мм как жёсткий минимум,
+  // если 300 не влезает между соседним стыком и длиной листа.
+  const wallL = 6160
+  const ceiling = [{ x: 0, y: 3600 }, { x: wallL, y: 2000 }]
+  const floor = flatProfile(wallL, 0)
+
+  /** Высота материала у каждого из двух вертикальных краёв куска (из полигона). */
+  function edgeHeights(p: { polygon?: { x: number; y: number }[] }): number[] {
+    const pts = p.polygon!
+    const xs = [...new Set(pts.map(pt => Math.round(pt.x)))]
+    return xs.map(x => {
+      const ys = pts.filter(pt => Math.round(pt.x) === x).map(pt => pt.y)
+      return Math.max(...ys) - Math.min(...ys)
+    })
+  }
+
+  it('ни у одного косого куска узкий край не тоньше 200мм (кроме честного нулевого острия)', () => {
+    const result = calcSheetLayout(
+      wallL, ceiling, floor, 600, 600, 2, [], spec, spec, 2,
+    )
+    const layers = [result.layer1, result.layer2, result.sideB_layer1, result.sideB_layer2]
+      .filter((l): l is NonNullable<typeof l> => l !== null)
+    for (const layer of layers) {
+      for (const col of layer.columns) {
+        for (const p of col.pieces) {
+          if (p.kind !== 'diagonal_cut') continue
+          const edges = edgeHeights(p)
+          for (const e of edges) {
+            // 0 — честное остриё треугольника (угол сходится в точку, это нормально).
+            // Всё, что между 0 и 200, — недопустимый тонкий клин.
+            expect(e === 0 || e >= 200).toBe(true)
+          }
+        }
+      }
+    }
+  })
+
+  it('там, где раньше клин был около нуля (колонка 600-1800, Ст.А слой 1), теперь ≥300мм', () => {
+    const result = calcSheetLayout(
+      wallL, ceiling, floor, 600, 600, 1, [], spec, spec, 1,
+    )
+    const col = result.layer1.columns.find(c => c.x1 === 600 && c.x2 === 1800)
+    expect(col).toBeDefined()
+    const topDiag = col!.pieces.filter(p => p.kind === 'diagonal_cut').sort((a, b) => a.y - b.y).at(-1)
+    expect(topDiag).toBeDefined()
+    const edges = edgeHeights(topDiag!)
+    const minNonZero = Math.min(...edges.filter(e => e > 0))
+    expect(minNonZero).toBeGreaterThanOrEqual(299) // цель 300, допускаем округление в мм
+  })
+
+  it('площадь кусков в колонке всё ещё честно покрывает всю высоту стены (сдвиг стыка не создал дырок/перехлёстов)', () => {
+    const result = calcSheetLayout(
+      wallL, ceiling, floor, 600, 600, 1, [], spec, spec, 1,
+    )
+    for (const col of result.layer1.columns) {
+      const sortedPieces = [...col.pieces].sort((a, b) => a.y - b.y)
+      let expectedY = 0
+      for (const p of sortedPieces) {
+        expect(p.y).toBeCloseTo(expectedY, 3)
+        expectedY += p.h
+      }
+    }
+  })
+})
