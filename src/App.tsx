@@ -1172,6 +1172,8 @@ export default function App() {
                       <td style={{ paddingBottom: 6 }}><b>{result.gklArea.toFixed(2)} м²</b></td></tr>
                     {hasInsulation && insulationArea && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Утеплитель:</td>
                       <td style={{ paddingBottom: 6 }}><b>{insulationArea} м²</b></td></tr>}
+                    {result.sealingTapeLm > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Лента уплотнительная:</td>
+                      <td style={{ paddingBottom: 6 }}><b>{fmtMeters(result.sealingTapeLm)}</b></td></tr>}
                     {/* ─── Саморезы ─── */}
                     {(() => {
                       const s = result.screws

@@ -5,6 +5,7 @@ import { calcStudMaterial, STUD_LENGTH } from './calcStudMaterial'
 import { buildOpeningStuds, mergeStuds, attachStudHeights } from './buildPositions'
 import { buildCutList, pnPieces, psPieces } from './cutList'
 import { integrateHeight, maxStudHeight, studHeightAt, profilePathLength } from './profileGeometry'
+import { calcSealingTape } from './calcSealingTape'
 
 function assignOrientations(
   studs: { pos: number; kind: StudKind; height: number }[]
@@ -146,6 +147,8 @@ export function calcResults(
   const pnCuts = pnPieces(l, activeOpenings, ceilingProfile, floorProfile)
   const psCuts = psPieces(studInfos, worstHeight, overlap, activeOpenings)
 
+  const sealingTape = calcSealingTape(ceilPathLen, floorSegPathLen, studInfos)
+
   const cutList = {
     pn: buildCutList(pnCuts),
     ps: buildCutList(psCuts),
@@ -178,5 +181,6 @@ export function calcResults(
     cutList,
     rawPieces: { pn: pnCuts, ps: psCuts },
     screws,
+    sealingTapeLm: sealingTape.tapeLm,
   }
 }
