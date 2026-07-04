@@ -10,11 +10,10 @@
  * высоты и т.п.) — в profileGeometry.ts, он использует эти примитивы
  * как строительные блоки, а не наоборот.
  *
- * Примечание на будущее: дуги/радиусы (круглые проёмы, скруглённые
- * углы) — отдельная геометрическая область, не наклонные прямые, для
- * них здесь общего решения нет — когда дойдёт очередь, это будет
- * отдельный набор функций (например, пересечение отрезка с окружностью),
- * но жить он будет тоже здесь, в общем геометрическом модуле проекта.
+ * Примечание: дуга по хорде и стреле (арки, гнутые перегородки) — есть,
+ * см. `arcFromChordAndSagitta`. Скруглённые углы и произвольные окружности
+ * (не по хорде+стреле, а, например, пересечение отрезка с окружностью)
+ * пока не реализованы — когда понадобятся, им место тоже здесь.
  */
 
 export interface Point2D {
@@ -33,6 +32,112 @@ export function polygonArea(points: Point2D[]): number {
     sum += a.x * b.y - b.x * a.y
   }
   return Math.abs(sum) / 2
+}
+
+/**
+ * Дуга, построенная по хорде (x1,y1)→(x2,y2) и стреле (H в классической
+ * формуле R=(L²+H²)/2H, L — половина хорды).
+ */
+export interface ArcFromChord {
+  cx: number
+  cy: number
+  radius: number
+  /** Угол (рад) из центра на первую точку хорды */
+  startAngle: number
+  /** Угол (рад) из центра на вторую точку хорды */
+  endAngle: number
+  /**
+   * Направление обхода от startAngle к endAngle — передавать БУКВАЛЬНО как
+   * параметр `counterclockwise` в CanvasRenderingContext2D.arc()/Konva
+   * sceneFunc: 'increasing' → false, 'decreasing' → true. Не путать со
+   * "по/против часовой" в жизни — это именно то, чего ждёт canvas API.
+   */
+  sweepDirection: 'increasing' | 'decreasing'
+  /** Угол дуги (рад), всегда положительный, (0, 2π) */
+  sweep: number
+  /** Длина дуги (не хорды!), в тех же единицах, что и координаты */
+  arcLength: number
+}
+
+/**
+ * Строит дугу по хорде и стреле — той самой H из формулы R=(L²+H²)/2H
+ * (L — половина хорды, см. ОПРЕДЕЛЕНИЕ РАДИУСА ДУГИ). Знак sagitta задаёт
+ * сторону выгиба: положительный — влево от направления x1→x2 в экранных
+ * координатах (Y вниз), отрицательный — вправо. |sagitta| может быть
+ * больше половины хорды — тогда получается "глубокая" дуга (больше
+ * полуокружности), формула и это считает верно.
+ *
+ * Возвращает null, если хорда вырождена (x1,y1)≈(x2,y2) или sagitta≈0
+ * (в последнем случае линия просто прямая, дуги нет).
+ */
+export function arcFromChordAndSagitta(
+  x1: number, y1: number, x2: number, y2: number, sagitta: number,
+): ArcFromChord | null {
+  const dx = x2 - x1, dy = y2 - y1
+  const chord = Math.hypot(dx, dy)
+  const H = Math.abs(sagitta)
+  if (chord < 1e-9 || H < 1e-9) return null
+
+  const L = chord / 2
+  const R = (L * L + H * H) / (2 * H)
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2
+  const ux = dx / chord, uy = dy / chord
+  const nx = -uy, ny = ux              // левая нормаль (unit) к направлению x1→x2
+  const dirSign = sagitta >= 0 ? 1 : -1
+
+  // Центр — на той же нормали, что и апекс дуги, но по другую сторону
+  // хорды на (R-H) (может быть и отрицательным для "глубоких" дуг — тогда
+  // центр оказывается по ту же сторону, что и апекс, что тоже верно).
+  const cx = mx - dirSign * (R - H) * nx
+  const cy = my - dirSign * (R - H) * ny
+
+  const startAngle = Math.atan2(y1 - cy, x1 - cx)
+  const endAngle   = Math.atan2(y2 - cy, x2 - cx)
+  const apexX = mx + dirSign * H * nx, apexY = my + dirSign * H * ny
+  const apexAngle = Math.atan2(apexY - cy, apexX - cx)
+
+  const twoPi = Math.PI * 2
+  const norm = (a: number) => ((a % twoPi) + twoPi) % twoPi
+  const increasingSweep = norm(endAngle - startAngle)     // обход через РОСТ угла, 0..2π
+  const apexOffset = norm(apexAngle - startAngle)
+
+  // Апекс должен лежать на пути обхода — так понимаем, в какую сторону
+  // реально нужно обходить (через рост угла или через убывание).
+  const goesDecreasing = apexOffset > increasingSweep + 1e-9
+  const sweep = goesDecreasing ? (twoPi - increasingSweep) : increasingSweep
+
+  return {
+    cx, cy, radius: R, startAngle, endAngle,
+    sweepDirection: goesDecreasing ? 'decreasing' : 'increasing',
+    sweep,
+    arcLength: R * sweep,
+  }
+}
+
+/**
+ * Длина дуги по хорде и стреле — без координат, просто числа (мм или px,
+ * главное чтобы обе величины были в одних единицах). sagitta=0 → просто
+ * chordLen (линия прямая). Тонкая обёртка над arcFromChordAndSagitta —
+ * не дублирует её математику отдельной тригонометрической веткой.
+ */
+export function arcLengthFromSagitta(chordLen: number, sagitta: number): number {
+  const arc = arcFromChordAndSagitta(0, 0, chordLen, 0, sagitta)
+  return arc ? arc.arcLength : chordLen
+}
+
+/**
+ * Точки вдоль дуги от начала к концу хорды (включительно), для рисования
+ * полилинией на Canvas/Konva или для хитзоны выделения клика мышью.
+ */
+export function sampleArcPoints(arc: ArcFromChord, segments = 32): Point2D[] {
+  const dir = arc.sweepDirection === 'decreasing' ? -1 : 1
+  const pts: Point2D[] = []
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments
+    const a = arc.startAngle + dir * arc.sweep * t
+    pts.push({ x: arc.cx + arc.radius * Math.cos(a), y: arc.cy + arc.radius * Math.sin(a) })
+  }
+  return pts
 }
 
 /**
