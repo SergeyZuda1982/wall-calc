@@ -28,6 +28,7 @@ import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
 import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
+import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints } from './core/geometry2d'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -379,6 +380,7 @@ export default function FloorPlan() {
   const [drawType, setDrawType]         = useState<PlanLineType>('wall_new')
   const [drawSpec, setDrawSpec]         = useState<PlanLineSpec | null>(null)
   const [drawHeightMm, setDrawHeightMm] = useState('3000')
+  const [drawSagittaMm, setDrawSagittaMm] = useState('0')  // стрела дуги для новых линий, 0 = прямая
   const [drawRibWidthMm, setDrawRibWidthMm] = useState('300')  // ригель: ширина сечения по плану, мм
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
   const [drawStep, setDrawStep] = useState('600')
@@ -615,13 +617,15 @@ export default function FloorPlan() {
         const thresh = SNAP_SCREEN_PX / stageScaleRef.current
         const s = snapPoint(rawX, rawY, lines, scaleMmPx, dr.id, thresh)
         const l = lines.find(l => l.id === dr.id)!
-        const lm = lineLengthMm(s.x, s.y, l.x2, l.y2, scaleMmPx)
+        const chordMm = lineLengthMm(s.x, s.y, l.x2, l.y2, scaleMmPx)
+        const lm = l.sagittaMm ? arcLengthFromSagitta(chordMm, l.sagittaMm) : chordMm
         updatePlanLine(dr.id, { x1: s.x, y1: s.y, lengthMm: lm })
       } else {
         const thresh = SNAP_SCREEN_PX / stageScaleRef.current
         const s = snapPoint(rawX, rawY, lines, scaleMmPx, dr.id, thresh)
         const l = lines.find(l => l.id === dr.id)!
-        const lm = lineLengthMm(l.x1, l.y1, s.x, s.y, scaleMmPx)
+        const chordMm = lineLengthMm(l.x1, l.y1, s.x, s.y, scaleMmPx)
+        const lm = l.sagittaMm ? arcLengthFromSagitta(chordMm, l.sagittaMm) : chordMm
         updatePlanLine(dr.id, { x2: s.x, y2: s.y, lengthMm: lm })
       }
       return
@@ -927,7 +931,9 @@ export default function FloorPlan() {
         let allLineIds = [...chainLineIds]
 
         if (d >= 5) {
-          const lengthMm = lineLengthMm(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y, scaleMmPx)
+          const straightLenMm = lineLengthMm(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y, scaleMmPx)
+          const sagittaMm = parseFloat(drawSagittaMm) || 0
+          const lengthMm = sagittaMm ? arcLengthFromSagitta(straightLenMm, sagittaMm) : straightLenMm
           const label = genLabel(drawType, lines)
           const closingId = addPlanLine({
             x1: drawing.x1, y1: drawing.y1,
@@ -937,6 +943,7 @@ export default function FloorPlan() {
             heightMm: parseFloat(drawHeightMm) || 3000,
             category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
             ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: parseFloat(drawRibDropMm) || 200 } : {}),
+            ...(sagittaMm ? { sagittaMm } : {}),
           })
           allLineIds = [...allLineIds, closingId]
         }
@@ -964,14 +971,17 @@ export default function FloorPlan() {
 
       } else {
         if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
-        const lengthMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
-        if (lengthMm < 10) { setDrawing(null); return }  // < 10мм — не линия, случайный клик
+        const straightLenMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
+        if (straightLenMm < 10) { setDrawing(null); return }  // < 10мм — не линия, случайный клик
+        const sagittaMm = parseFloat(drawSagittaMm) || 0
+        const lengthMm = sagittaMm ? arcLengthFromSagitta(straightLenMm, sagittaMm) : straightLenMm
         const label = genLabel(drawType, lines)
         const newId = addPlanLine({
           x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label,
           spec: drawSpec ? { ...drawSpec, step: parseFloat(drawStep) || 600, layer1: drawLayer1, layer2: drawLayer2 } : undefined, heightMm: parseFloat(drawHeightMm) || 3000,
           category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
           ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: parseFloat(drawRibDropMm) || 200 } : {}),
+          ...(sagittaMm ? { sagittaMm } : {}),
         })
         setChainLineIds(prev => [...prev, newId])
         // Конец линии — НЕ автостарт следующей, ждём нового клика пользователя
@@ -980,7 +990,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1192,6 +1202,7 @@ export default function FloorPlan() {
       const hasSpec = !!(l.spec?.material)
       const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
       if (thicknessPx <= 3) return
+      if (l.sagittaMm) return  // дуга — join со стенами пока не считаем (см. KONSPEKT.md)
       const dx = l.x2 - l.x1, dy = l.y2 - l.y1
       if (Math.sqrt(dx * dx + dy * dy) < 1) return
       walls.push({
@@ -1595,6 +1606,19 @@ export default function FloorPlan() {
             <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
           </div>
 
+          {/* Стрела дуги — 0 = обычная прямая линия. Заполнил — следующая
+              нарисованная линия будет дугой (арка, гнутая перегородка).
+              R показываем сразу же — тот же расчёт, что и на объекте
+              (натянул шнур, замерил стрелу посередине рулеткой). */}
+          <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Стрела дуги H:</span>
+            <input type="number" value={drawSagittaMm}
+              onChange={e => setDrawSagittaMm(e.target.value)}
+              title="0 = обычная прямая линия. Формула R=(L²+H²)/2H, L — половина хорды"
+              style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+            <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм (0=прямая)</span>
+          </div>
+
           {/* Шаг стоек и лист обшивки — глобальный дефолт для новых линий, правится точечно в инспекторе */}
           <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Шаг стоек:</span>
@@ -1886,6 +1910,79 @@ export default function FloorPlan() {
                     const dx = l.x2 - l.x1, dy = l.y2 - l.y1
                     const len = Math.sqrt(dx*dx + dy*dy)
                     const useDouble = thicknessPx > 3 && len > 0 && !inErase
+
+                    // ── Дуга (арка/гнутая перегородка) — своя ветка рендера,
+                    // мимо wallJoin/computeOpeningSegments (для дуг они пока
+                    // не считаются, см. KONSPEKT.md). Хорда/концы — те же
+                    // l.x1/y1/x2/y2, что и у прямой линии, поэтому endpoint-
+                    // drag и select работают без изменений.
+                    if (l.sagittaMm) {
+                      const sagittaPx = l.sagittaMm / scaleMmPx
+                      const arc = arcFromChordAndSagitta(l.x1, l.y1, l.x2, l.y2, sagittaPx)
+                      if (arc) {
+                        const centerPts  = sampleArcPoints(arc, 40)
+                        const centerFlat = centerPts.flatMap(p => [p.x, p.y])
+                        const midPt      = centerPts[Math.floor(centerPts.length / 2)]
+                        const wallLike   = thicknessPx > 3 && !inErase
+                        const sw         = vis.strokeWidth
+                        const fill       = isSelected ? stroke + '30' : inContour ? '#ff980022' : vis.fillColor
+
+                        let fillPolyFlat: number[] | null = null
+                        let outerFlat: number[] | null = null
+                        let innerFlat: number[] | null = null
+                        if (wallLike) {
+                          const half = thicknessPx / 2
+                          const outerPts = sampleArcPoints({ ...arc, radius: arc.radius + half }, 40)
+                          const innerPts = sampleArcPoints({ ...arc, radius: Math.max(1, arc.radius - half) }, 40)
+                          outerFlat = outerPts.flatMap(p => [p.x, p.y])
+                          innerFlat = innerPts.flatMap(p => [p.x, p.y])
+                          fillPolyFlat = [...outerFlat, ...[...innerPts].reverse().flatMap(p => [p.x, p.y])]
+                        }
+
+                        return (
+                          <Group key={l.id}
+                            opacity={inErase ? 0.55 : 1}
+                            onMouseDown={e => handleLinePointerDown(l.id, e)}
+                            onTouchStart={e => handleLinePointerDown(l.id, e)}
+                            onMouseEnter={() => setHoveredId(l.id)}
+                            onMouseLeave={() => setHoveredId(null)}>
+                            {/* Хитзона клика по всей дуге */}
+                            <Line points={centerFlat} stroke="transparent"
+                              strokeWidth={Math.max(28, thicknessPx + 8)}
+                              hitStrokeWidth={Math.max(28, thicknessPx + 8)} />
+                            {wallLike && fillPolyFlat ? (
+                              <>
+                                <Line points={fillPolyFlat} closed fill={fill} listening={false} />
+                                <Line points={outerFlat!} stroke={stroke} strokeWidth={sw} lineCap="round" dash={dash} listening={false} />
+                                <Line points={innerFlat!} stroke={stroke} strokeWidth={sw} lineCap="round" dash={dash} listening={false} />
+                              </>
+                            ) : (
+                              <Line points={centerFlat} stroke={stroke} strokeWidth={sw} lineCap="round" dash={dash} listening={false} />
+                            )}
+                            {inErase && (
+                              <Text x={midPt.x - 9} y={midPt.y - 10} text="✕" fontSize={18} fill="#e53935" fontStyle="bold" listening={false} />
+                            )}
+                            {!inErase && (
+                              <Group x={midPt.x} y={midPt.y - 12} listening={false}>
+                                <Text x={-40} width={80} text={l.label} fontSize={10}
+                                  fill={stroke} align="center" fontStyle="bold" listening={false} />
+                                {showStatusDot && <Circle x={44} y={5} radius={3.5} fill={STATUS_COLORS[lStatus]} listening={false} />}
+                              </Group>
+                            )}
+                            {isSelected && mode === 'select' && <>
+                              <Circle x={l.x1} y={l.y1} radius={12} fill="transparent" stroke="transparent"
+                                onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }}
+                                onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end1',p.x,p.y) }} />
+                              <Circle x={l.x2} y={l.y2} radius={12} fill="transparent" stroke="transparent"
+                                onMouseDown={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }}
+                                onTouchStart={e => { e.cancelBubble=true; const p=getPos(e); if(p) startDragLine(l.id,'end2',p.x,p.y) }} />
+                            </>}
+                          </Group>
+                        )
+                      }
+                      // arc === null (вырожденная хорда) — не должно случаться на
+                      // практике, но на всякий случай падаем в обычный рендер ниже
+                    }
 
                     if (useDouble) {
                       const half = thicknessPx / 2
@@ -2666,7 +2763,33 @@ export default function FloorPlan() {
                   </div>
                   <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
                     Длина: <b>{fmtLen(inspectorLine.lengthMm)}</b>
+                    {inspectorLine.sagittaMm ? <span style={{ color: '#888' }}> (длина дуги)</span> : null}
                   </div>
+                  {(() => {
+                    const chordMm = lineLengthMm(inspectorLine.x1, inspectorLine.y1, inspectorLine.x2, inspectorLine.y2, scaleMmPx)
+                    const sagitta = inspectorLine.sagittaMm ?? 0
+                    const arcInfo = sagitta ? arcFromChordAndSagitta(0, 0, chordMm, 0, sagitta) : null
+                    return (
+                      <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: arcInfo ? 4 : 0 }}>
+                          Стрела дуги H:
+                          <input type="number" value={sagitta}
+                            onChange={e => {
+                              const v = parseFloat(e.target.value) || 0
+                              const lm = v ? arcLengthFromSagitta(chordMm, v) : chordMm
+                              updatePlanLine(inspectorLine.id, { sagittaMm: v || undefined, lengthMm: lm })
+                            }}
+                            title="0 = прямая линия. R=(L²+H²)/2H, L — половина хорды"
+                            style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
+                        </div>
+                        {arcInfo && (
+                          <div style={{ fontSize: 11, color: '#888' }}>
+                            Хорда: {fmtLen(chordMm)} · Радиус R: <b>{fmtLen(Math.round(arcInfo.radius))}</b>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                   <div style={{ fontSize: 12, color: '#555', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                     Высота:
                     <input type="number" value={inspectorLine.heightMm ?? 3000}
