@@ -16,9 +16,9 @@ import { OrbitControls, Grid, FlyControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { useProjectStore } from './store/useProjectStore'
 import {
-  wallsToBoxes3D, roomsToPolygons3D, estimateCeilingMm, mmToM,
+  wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, estimateCeilingMm, mmToM,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
-  type WallBox3D, type RoomPolygon3D,
+  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D,
 } from './core/planTo3D'
 import type { PlanLineType } from './types'
 
@@ -52,7 +52,7 @@ function WallMesh({ box }: { box: WallBox3D }) {
  * математика). Shape строится как (x, -z), затем rotateX(-90°) кладёт её
  * плашмя так, что итоговые мировые X/Z совпадают с планом без зеркалирования.
  */
-function SlabOrColumn({ room, ceilingMm }: { room: RoomPolygon3D; ceilingMm: number }) {
+function SlabOrColumn({ room, ceilingMm, skipFloor }: { room: RoomPolygon3D; ceilingMm: number; skipFloor: boolean }) {
   const ceilingM = mmToM(ceilingMm)
 
   const floorGeo = useMemo(() => {
@@ -94,7 +94,7 @@ function SlabOrColumn({ room, ceilingMm }: { room: RoomPolygon3D; ceilingMm: num
 
   return (
     <>
-      {floorGeo && (
+      {floorGeo && !skipFloor && (
         <mesh geometry={floorGeo} receiveShadow>
           <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} />
         </mesh>
@@ -108,18 +108,47 @@ function SlabOrColumn({ room, ceilingMm }: { room: RoomPolygon3D; ceilingMm: num
   )
 }
 
+/**
+ * Плита, нарисованная "карандашом" — контур с вырезами (лестницы/шахты).
+ * v1: только пол текущего этажа (y=0), без зеркального потолка — потолок
+ * появится из плиты этажа ВЫШЕ, когда 3D научится показывать несколько
+ * этажей разом (задел на будущее, сейчас Scene3D показывает один этаж).
+ */
+function HandDrawnSlabMesh({ slab }: { slab: SlabPolygon3D }) {
+  const geo = useMemo(() => {
+    const shape = new THREE.Shape(slab.outer.map(p => new THREE.Vector2(p.x, -p.z)))
+    for (const hole of slab.holes) {
+      shape.holes.push(new THREE.Path(hole.map(p => new THREE.Vector2(p.x, -p.z))))
+    }
+    const depth = mmToM(FLOOR_SLAB_THICKNESS_MM)
+    const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, steps: 1 })
+    g.rotateX(-Math.PI / 2)
+    g.translate(0, -depth, 0)
+    return g
+  }, [slab])
+
+  return (
+    <mesh geometry={geo} receiveShadow>
+      <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} />
+    </mesh>
+  )
+}
+
 export default function Scene3D() {
   const [cameraMode, setCameraMode] = useState<'orbit' | 'fly'>('orbit')
   const floorPlan = useProjectStore(s => s.floorPlan)
   const lines = floorPlan?.lines ?? []
   const rooms = floorPlan?.rooms ?? []
+  const slabs = floorPlan?.slabs ?? []
   const scaleMmPx = floorPlan?.scaleMmPerPx ?? 10
 
   const boxes = useMemo(() => wallsToBoxes3D(lines, scaleMmPx), [lines, scaleMmPx])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
+  const slabPolygons = useMemo(() => slabsToPolygons3D(slabs, scaleMmPx), [slabs, scaleMmPx])
   const ceilingMm = useMemo(() => estimateCeilingMm(lines), [lines])
+  const hasHandDrawnSlabs = slabPolygons.length > 0
 
-  const isEmpty = boxes.length === 0 && polygons.length === 0
+  const isEmpty = boxes.length === 0 && polygons.length === 0 && slabPolygons.length === 0
 
   if (isEmpty) {
     return (
@@ -165,7 +194,8 @@ export default function Scene3D() {
         <directionalLight position={[8, 12, 6]} intensity={1} castShadow />
         <Grid args={[100, 100]} cellColor="#c9ccd6" sectionColor="#9aa0b0" fadeDistance={40} position={[0, -0.001, 0]} />
         {boxes.map(box => <WallMesh key={box.id} box={box} />)}
-        {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} />)}
+        {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} />)}
+        {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} />)}
         {cameraMode === 'orbit'
           ? <OrbitControls makeDefault />
           : <FlyControls makeDefault dragToLook movementSpeed={4} rollSpeed={0.6} />}

@@ -460,12 +460,29 @@ export interface BackgroundImage {
   locked: boolean      // true = не реагирует на клики, не двигается
 }
 
+/**
+ * Плита (пол/потолок этажа) — свободный контур, нарисованный "карандашом"
+ * (не привязан к прямым стенам, как Room). Отметка по высоте берётся с
+ * самого этажа (Level.elevationMm), у плиты своего поля высоты нет —
+ * один этаж = одна плита пола на его отметке, снизу она же потолок этажа
+ * ниже (см. KONSPEKT.md, обсуждение односторонней прозрачности).
+ * holes — вырезы под лестницы/лифтовые шахты/стволы коммуникаций,
+ * коммуникации в 3D должны их обходить (это отдельная будущая задача).
+ */
+export interface Slab {
+  id: string
+  outer: { x: number; y: number }[]      // внешний контур, px (как у линий)
+  holes: { x: number; y: number }[][]    // вырезы — ноль или больше замкнутых контуров внутри outer
+  label: string                           // "Плита 1", "Плита 2"...
+}
+
 /** План объекта */
 export interface FloorPlan {
   scaleMmPerPx: number
   lines: PlanLine[]
   contours: PlanContour[]
   rooms: Room[]
+  slabs: Slab[]
   backgroundImage?: BackgroundImage | null
 }
 
@@ -474,6 +491,7 @@ export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   lines: [],
   contours: [],
   rooms: [],
+  slabs: [],
   backgroundImage: null,
 }
 

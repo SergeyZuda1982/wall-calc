@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   wallThicknessMm, wallToBox3D, wallsToBoxes3D, estimateCeilingMm,
-  roomsToPolygons3D, pxToM, mmToM,
+  roomsToPolygons3D, slabsToPolygons3D, pxToM, mmToM,
 } from '../planTo3D'
-import type { PlanLine, Room } from '../../types'
+import type { PlanLine, Room, Slab } from '../../types'
 
 function baseLine(overrides: Partial<PlanLine>): PlanLine {
   return {
@@ -110,6 +110,37 @@ describe('estimateCeilingMm', () => {
       baseLine({ id: 'b', heightMm: 2800 }),
     ]
     expect(estimateCeilingMm(lines)).toBe(3200)
+  })
+})
+
+describe('slabsToPolygons3D', () => {
+  it('переводит внешний контур и дырку в метры', () => {
+    const slabs: Slab[] = [{
+      id: 's1', label: 'Плита 1',
+      outer: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+      holes: [[{ x: 10, y: 10 }, { x: 20, y: 10 }, { x: 20, y: 20 }]],
+    }]
+    const polys = slabsToPolygons3D(slabs, 10) // 10мм/px
+    expect(polys).toHaveLength(1)
+    expect(polys[0].outer[1]).toEqual({ x: 1, z: 0 }) // 100px*10мм = 1000мм = 1м
+    expect(polys[0].holes).toHaveLength(1)
+    expect(polys[0].holes[0][0]).toEqual({ x: 0.1, z: 0.1 })
+  })
+
+  it('плита без хотя бы 3 точек контура — пропущена', () => {
+    const slabs: Slab[] = [{ id: 's1', label: 'X', outer: [{ x: 0, y: 0 }, { x: 1, y: 1 }], holes: [] }]
+    expect(slabsToPolygons3D(slabs, 10)).toHaveLength(0)
+  })
+
+  it('дырка с меньше чем 3 точками — отфильтрована, сама плита остаётся', () => {
+    const slabs: Slab[] = [{
+      id: 's1', label: 'X',
+      outer: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }],
+      holes: [[{ x: 1, y: 1 }, { x: 2, y: 2 }]],
+    }]
+    const polys = slabsToPolygons3D(slabs, 10)
+    expect(polys).toHaveLength(1)
+    expect(polys[0].holes).toHaveLength(0)
   })
 })
 

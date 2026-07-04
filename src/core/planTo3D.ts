@@ -16,7 +16,7 @@
  *   было от чего повесить ригель
  */
 
-import type { PlanLine, PlanLineType, Room } from '../types'
+import type { PlanLine, PlanLineType, Room, Slab } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 
@@ -109,6 +109,30 @@ export function wallsToBoxes3D(lines: PlanLine[], scaleMmPx: number): WallBox3D[
     .filter((b): b is WallBox3D => b !== null)
 }
 
+export interface SlabPolygon3D {
+  id: string
+  /** внешний контур в метрах, план сверху (x,z) */
+  outer: { x: number; z: number }[]
+  /** вырезы (лестницы/шахты) в метрах — ноль или больше замкнутых контуров */
+  holes: { x: number; z: number }[][]
+}
+
+/**
+ * Плиты, нарисованные "карандашом" → полигоны в метрах (с дырками).
+ * Отметка по высоте у плиты не хранится (см. types/index.ts, Slab) —
+ * она берётся с этажа снаружи (Level.elevationMm), эта функция отдаёт
+ * только форму в плоскости, без положения по Y.
+ */
+export function slabsToPolygons3D(slabs: Slab[], scaleMmPx: number): SlabPolygon3D[] {
+  const toM = (pts: { x: number; y: number }[]) => pts.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) }))
+  return slabs
+    .filter(sl => sl.outer.length >= 3)
+    .map(sl => ({
+      id: sl.id,
+      outer: toM(sl.outer),
+      holes: sl.holes.filter(h => h.length >= 3).map(toM),
+    }))
+}
 export interface RoomPolygon3D {
   id: string
   isColumn: boolean
