@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clipRectBySlopedTop, polygonArea, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints } from '../geometry2d'
+import { clipRectBySlopedTop, polygonArea, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius } from '../geometry2d'
 
 describe('polygonArea', () => {
   it('площадь прямоугольника', () => {
@@ -86,7 +86,56 @@ describe('arcFromChordAndSagitta', () => {
   })
 })
 
+describe('sagittaFromRadius', () => {
+  it('round-trip: H → R → H (пологая дуга)', () => {
+    const chord = 2000, H = 150
+    const arc = arcFromChordAndSagitta(0, 0, chord, 0, H)!
+    const hBack = sagittaFromRadius(chord, arc.radius, false)
+    expect(hBack).toBeCloseTo(H, 4)
+  })
+
+  it('round-trip: H → R → H (глубокая дуга)', () => {
+    const chord = 500, H = 400  // H > L(=250) — уже глубокая дуга
+    const arc = arcFromChordAndSagitta(0, 0, chord, 0, H)!
+    const hBack = sagittaFromRadius(chord, arc.radius, true)
+    expect(hBack).toBeCloseTo(H, 4)
+  })
+
+  it('R = L (половина хорды) — ровно полуокружность, H = R = L', () => {
+    const chord = 1000  // L = 500
+    const h = sagittaFromRadius(chord, 500, false)
+    expect(h).toBeCloseTo(500, 6)
+  })
+
+  it('R < L — геометрически невозможно, null', () => {
+    expect(sagittaFromRadius(1000, 400, false)).toBeNull()  // L=500 > R=400
+  })
+
+  it('одна и та же хорда, два решения (пологое и глубокое) при одном R', () => {
+    const chord = 800, R = 1000  // L=400 < R — оба решения существуют
+    const shallow = sagittaFromRadius(chord, R, false)!
+    const deep = sagittaFromRadius(chord, R, true)!
+    expect(shallow).toBeLessThan(deep)
+    // Оба должны реально давать радиус R при подстановке обратно
+    expect(arcFromChordAndSagitta(0, 0, chord, 0, shallow)!.radius).toBeCloseTo(R, 4)
+    expect(arcFromChordAndSagitta(0, 0, chord, 0, deep)!.radius).toBeCloseTo(R, 4)
+  })
+
+  it('главный практический случай: одинаковый R при разной хорде даёт РАЗНУЮ H (не одну и ту же)', () => {
+    // Ровно та проблема, из-за которой добавили эту функцию: раньше
+    // ставили одну и ту же H на разных пролётах, что давало разный R.
+    // Правильный путь — наоборот: один R → на каждом пролёте своя H.
+    const R = 2000
+    const h1 = sagittaFromRadius(3000, R, false)!  // пролёт 3000
+    const h2 = sagittaFromRadius(4000, R, false)!  // пролёт 4000
+    expect(h1).not.toBeCloseTo(h2, 0)
+    expect(arcFromChordAndSagitta(0, 0, 3000, 0, h1)!.radius).toBeCloseTo(R, 3)
+    expect(arcFromChordAndSagitta(0, 0, 4000, 0, h2)!.radius).toBeCloseTo(R, 3)
+  })
+})
+
 describe('arcLengthFromSagitta', () => {
+
   it('sagitta=0 — просто длина хорды', () => {
     expect(arcLengthFromSagitta(1000, 0)).toBe(1000)
   })

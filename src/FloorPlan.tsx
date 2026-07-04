@@ -29,7 +29,7 @@ import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
 import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
 import { extractContourPoints } from './core/contour'
-import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints } from './core/geometry2d'
+import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius } from './core/geometry2d'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -90,6 +90,27 @@ function dist(x1: number, y1: number, x2: number, y2: number) {
 }
 function lineLengthMm(x1: number, y1: number, x2: number, y2: number, s: number) {
   return Math.round(dist(x1, y1, x2, y2) * s)
+}
+
+/**
+ * Стрела дуги для новой линии — в зависимости от выбранного в панели
+ * способа ввода: напрямую (H) или через желаемый радиус (R). Для R —
+ * если хорда (только что нарисованная) физически не влезает в
+ * окружность такого радиуса, предупреждает и линия остаётся прямой,
+ * а не молча рисует что-то неверное.
+ */
+function computeSagittaForNewLine(
+  mode: 'sagitta' | 'radius', sagittaInput: string, radiusInput: string, deep: boolean, chordMm: number,
+): number {
+  if (mode === 'sagitta') return parseFloat(sagittaInput) || 0
+  const R = parseFloat(radiusInput) || 0
+  if (!R) return 0
+  const h = sagittaFromRadius(chordMm, R, deep)
+  if (h === null) {
+    window.alert(`Радиус ${R} мм слишком мал для этой хорды (${Math.round(chordMm)} мм) — минимально возможный радиус ${Math.round(chordMm / 2)} мм (ровно полуокружность). Линия нарисована прямой.`)
+    return 0
+  }
+  return h
 }
 
 function snapPoint(
@@ -360,6 +381,10 @@ export default function FloorPlan() {
   const [drawSpec, setDrawSpec]         = useState<PlanLineSpec | null>(null)
   const [drawHeightMm, setDrawHeightMm] = useState('3000')
   const [drawSagittaMm, setDrawSagittaMm] = useState('0')  // стрела дуги для новых линий, 0 = прямая
+  const [drawArcMode, setDrawArcMode] = useState<'sagitta' | 'radius'>('sagitta')  // способ задания дуги при рисовании
+  const [drawRadiusMm, setDrawRadiusMm] = useState('')      // радиус R — альтернатива стреле H (нужен известный R на разных пролётах)
+  const [drawArcDeep, setDrawArcDeep] = useState(false)     // при R>L — какое из двух решений (пологое/глубокое)
+  const [inspectorArcDeep, setInspectorArcDeep] = useState(false)  // то же самое, но для поля R в инспекторе
   const [drawRibWidthMm, setDrawRibWidthMm] = useState('300')  // ригель: ширина сечения по плану, мм
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
   const [drawStep, setDrawStep] = useState('600')
@@ -911,7 +936,7 @@ export default function FloorPlan() {
 
         if (d >= 5) {
           const straightLenMm = lineLengthMm(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y, scaleMmPx)
-          const sagittaMm = parseFloat(drawSagittaMm) || 0
+          const sagittaMm = computeSagittaForNewLine(drawArcMode, drawSagittaMm, drawRadiusMm, drawArcDeep, straightLenMm)
           const lengthMm = sagittaMm ? arcLengthFromSagitta(straightLenMm, sagittaMm) : straightLenMm
           const label = genLabel(drawType, lines)
           const closingId = addPlanLine({
@@ -952,7 +977,7 @@ export default function FloorPlan() {
         if (!isPointAllowed(pt.x, pt.y, drawType)) return  // вне периметра
         const straightLenMm = lineLengthMm(drawing.x1, drawing.y1, pt.x, pt.y, scaleMmPx)
         if (straightLenMm < 10) { setDrawing(null); return }  // < 10мм — не линия, случайный клик
-        const sagittaMm = parseFloat(drawSagittaMm) || 0
+        const sagittaMm = computeSagittaForNewLine(drawArcMode, drawSagittaMm, drawRadiusMm, drawArcDeep, straightLenMm)
         const lengthMm = sagittaMm ? arcLengthFromSagitta(straightLenMm, sagittaMm) : straightLenMm
         const label = genLabel(drawType, lines)
         const newId = addPlanLine({
@@ -969,7 +994,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1663,18 +1688,44 @@ export default function FloorPlan() {
             <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
           </div>
 
-          {/* Стрела дуги — 0 = обычная прямая линия. Заполнил — следующая
-              нарисованная линия будет дугой (арка, гнутая перегородка).
-              R показываем сразу же — тот же расчёт, что и на объекте
-              (натянул шнур, замерил стрелу посередине рулеткой). */}
-          <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Стрела дуги H:</span>
-            <input type="number" value={drawSagittaMm}
-              onChange={e => setDrawSagittaMm(e.target.value)}
-              title="0 = обычная прямая линия. Формула R=(L²+H²)/2H, L — половина хорды"
-              style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
-            <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм (0=прямая)</span>
+          {/* Стрела дуги ИЛИ радиус — 0/пусто = обычная прямая линия.
+              Способ H: натянул шнур, замерил стрелу посередине рулеткой.
+              Способ R: известен радиус (одна арка на несколько разных
+              пролётов должна иметь ОДИН радиус, а не одну и ту же стрелу —
+              при разной хорде одинаковая H даёт РАЗНЫЙ, не связанный
+              радиус, это и была реальная проблема на объекте). */}
+          <div style={{ padding: '0 14px 4px', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Дуга по:</span>
+            <button onClick={() => setDrawArcMode('sagitta')}
+              style={{ ...toolBtnStyle(drawArcMode === 'sagitta'), padding: '3px 8px', fontSize: 11 }}>H</button>
+            <button onClick={() => setDrawArcMode('radius')}
+              style={{ ...toolBtnStyle(drawArcMode === 'radius'), padding: '3px 8px', fontSize: 11 }}>R</button>
           </div>
+          {drawArcMode === 'sagitta' ? (
+            <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Стрела дуги H:</span>
+              <input type="number" value={drawSagittaMm}
+                onChange={e => setDrawSagittaMm(e.target.value)}
+                title="0 = обычная прямая линия. Формула R=(L²+H²)/2H, L — половина хорды"
+                style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+              <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм (0=прямая)</span>
+            </div>
+          ) : (
+            <div style={{ padding: '0 14px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Радиус R:</span>
+                <input type="number" value={drawRadiusMm}
+                  onChange={e => setDrawRadiusMm(e.target.value)}
+                  title="Пусто/0 = обычная прямая линия. Стрела H посчитается сама по хорде, которую нарисуете"
+                  style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм (пусто=прямая)</span>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#8a9ac8', cursor: 'pointer' }}>
+                <input type="checkbox" checked={drawArcDeep} onChange={e => setDrawArcDeep(e.target.checked)} />
+                глубокая дуга (&gt; полуокружности)
+              </label>
+            </div>
+          )}
 
           {/* Шаг стоек и лист обшивки — глобальный дефолт для новых линий, правится точечно в инспекторе */}
           <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2826,6 +2877,8 @@ export default function FloorPlan() {
                     const chordMm = lineLengthMm(inspectorLine.x1, inspectorLine.y1, inspectorLine.x2, inspectorLine.y2, scaleMmPx)
                     const sagitta = inspectorLine.sagittaMm ?? 0
                     const arcInfo = sagitta ? arcFromChordAndSagitta(0, 0, chordMm, 0, sagitta) : null
+                    const displayR = arcInfo ? Math.round(arcInfo.radius) : ''
+                    const minR = Math.round(chordMm / 2)
                     return (
                       <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: arcInfo ? 4 : 0 }}>
@@ -2840,10 +2893,30 @@ export default function FloorPlan() {
                             style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
                         </div>
                         {arcInfo && (
-                          <div style={{ fontSize: 11, color: '#888' }}>
+                          <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>
                             Хорда: {fmtLen(chordMm)} · Радиус R: <b>{fmtLen(Math.round(arcInfo.radius))}</b>
                           </div>
                         )}
+                        {/* Альтернативный ввод — сразу радиусом (нужен, когда несколько
+                            арок с разной хордой должны иметь ОДИН и тот же радиус —
+                            через H этого не добиться, при разной хорде выйдет разный R) */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4, borderTop: '1px dashed #eee' }}>
+                          или Радиус R:
+                          <input type="number" value={displayR}
+                            onChange={e => {
+                              const R = parseFloat(e.target.value) || 0
+                              if (!R) { updatePlanLine(inspectorLine.id, { sagittaMm: undefined, lengthMm: chordMm }); return }
+                              const h = sagittaFromRadius(chordMm, R, inspectorArcDeep)
+                              if (h === null) return  // R меньше минимально возможного для этой хорды — не применяем
+                              updatePlanLine(inspectorLine.id, { sagittaMm: h, lengthMm: arcLengthFromSagitta(chordMm, h) })
+                            }}
+                            title={`Минимально возможный радиус для этой хорды: ${fmtLen(minR)}`}
+                            style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
+                        </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#999', cursor: 'pointer', marginTop: 3 }}>
+                          <input type="checkbox" checked={inspectorArcDeep} onChange={e => setInspectorArcDeep(e.target.checked)} />
+                          глубокая дуга (мин. R для этой хорды: {fmtLen(minR)})
+                        </label>
                       </div>
                     )
                   })()}
