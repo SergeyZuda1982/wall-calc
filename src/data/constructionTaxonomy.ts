@@ -14,7 +14,8 @@
  *   contourFill      → заливка замкнутого контура
  */
 
-import type { PlanLineType } from '../types'
+import type { PlanLineType, DoubleFrameType, ProfileType } from '../types'
+import { getProfile } from './profiles'
 
 export interface TaxNode {
   value: string
@@ -44,7 +45,24 @@ export const TAXONOMY: Record<PlanLineType, TaxNode[]> = {
         { value: 'ps75',  label: 'ПС 75 (~100мм)', abbr: 'ПС75' },
         { value: 'ps100', label: 'ПС 100 (~125мм)',abbr: 'ПС100' },
         { value: 'ps125', label: 'ПС 125 (~150мм)',abbr: 'ПС125' },
-        { value: 'double',label: 'Двойной каркас (~200мм)', abbr: 'ДК' },
+        { value: 'double',label: 'Двойной каркас (общий, ~200мм)', abbr: 'ДК' },
+        // ── Двойной каркас, конкретные системы Кнауф (см. КОНСПЕКТ.md,
+        // сессия 04.07.2026) — два параллельных ряда стоек, профиль
+        // одинаковый с обеих сторон. Различие только в обшивке/зазоре.
+        // Сама механика расчёта (два ряда стоек) ещё не реализована —
+        // это только таксономия + толщина на плане.
+        { value: 'c115_1_ps50',  label: 'С115.1 — двойной ПС50 (2+2 слоя)',  abbr: '115.1·50'  },
+        { value: 'c115_1_ps75',  label: 'С115.1 — двойной ПС75 (2+2 слоя)',  abbr: '115.1·75'  },
+        { value: 'c115_1_ps100', label: 'С115.1 — двойной ПС100 (2+2 слоя)', abbr: '115.1·100' },
+        { value: 'c115_2_ps50',  label: 'С115.2 — двойной ПС50 + разделитель',  abbr: '115.2·50'  },
+        { value: 'c115_2_ps75',  label: 'С115.2 — двойной ПС75 + разделитель',  abbr: '115.2·75'  },
+        { value: 'c115_2_ps100', label: 'С115.2 — двойной ПС100 + разделитель', abbr: '115.2·100' },
+        { value: 'c115_3_ps50',  label: 'С115.3 — двойной ПС50 (2+3, асимметрично)',  abbr: '115.3·50'  },
+        { value: 'c115_3_ps75',  label: 'С115.3 — двойной ПС75 (2+3, асимметрично)',  abbr: '115.3·75'  },
+        { value: 'c115_3_ps100', label: 'С115.3 — двойной ПС100 (2+3, асимметрично)', abbr: '115.3·100' },
+        { value: 'c116_ps50',    label: 'С116 — двойной ПС50 (зазор под коммуникации)',  abbr: '116·50'  },
+        { value: 'c116_ps75',    label: 'С116 — двойной ПС75 (зазор под коммуникации)',  abbr: '116·75'  },
+        { value: 'c116_ps100',   label: 'С116 — двойной ПС100 (зазор под коммуникации)', abbr: '116·100' },
       ],
     },
     {
@@ -261,14 +279,86 @@ const GKL_STUD_THICKNESS: Record<string, number> = {
   ps50: 75, ps75: 100, ps100: 125, ps125: 150, double: 200,
 }
 
+// ─── Двойной каркас (С115.1/.2/.3, С116) ─────────────────────────────────────
+// D — НЕ таблица, а формула (подтверждено пользователем на реальных примерах,
+// см. КОНСПЕКТ.md): профиль1 + профиль2 + Σ(толщина слоёв обшивки) + ~3мм
+// (допуск на уплотнительную ленту). Профиль одинаковый с обеих сторон.
+
+const DOUBLE_FRAME_TYPES: DoubleFrameType[] = ['c115_1', 'c115_2', 'c115_3', 'c116']
+
+/** Дефолт толщины листа для оценки D, пока spec не хранит фактический layer1/layer2 здесь. */
+const DEFAULT_LAYER_THICKNESS_MM = 12.5
+/** Допуск на уплотнительную ленту в формуле D. */
+const DOUBLE_FRAME_TOLERANCE_MM = 3
+/** Визуальный дефолт зазора С116, пока на линии не задан gapMm явно (см. PlanLineSpec.gapMm). */
+const DEFAULT_C116_GAP_MM = 100
+
+/** Число слоёв обшивки с каждой стороны + наличие листа-разделителя в зазоре. */
+export function getDoubleFrameLayerCounts(
+  dfType: DoubleFrameType,
+): { sideA: number; sideB: number; hasSeparator: boolean } {
+  switch (dfType) {
+    case 'c115_1': return { sideA: 2, sideB: 2, hasSeparator: false }
+    case 'c115_2': return { sideA: 2, sideB: 2, hasSeparator: true }
+    case 'c115_3': return { sideA: 2, sideB: 3, hasSeparator: false }
+    case 'c116':   return { sideA: 2, sideB: 2, hasSeparator: false }
+  }
+}
+
+/**
+ * Разбирает subtype вида 'c115_1_ps50' на тип двойного каркаса + профиль.
+ * Возвращает null для обычных (не двойных) подтипов ('ps50', 'double', ...).
+ */
+export function parseDoubleFrameSubtype(
+  subtype?: string,
+): { dfType: DoubleFrameType; profile: ProfileType } | null {
+  if (!subtype) return null
+  for (const dfType of DOUBLE_FRAME_TYPES) {
+    const prefix = `${dfType}_`
+    if (subtype.startsWith(prefix)) {
+      const profile = subtype.slice(prefix.length)
+      if (profile === 'ps50' || profile === 'ps75' || profile === 'ps100') {
+        return { dfType, profile }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Толщина перегородки (D) для двойного каркаса, мм.
+ * gapMm — только для С116 (зазор под коммуникации), для остальных типов
+ * игнорируется. Не задан для С116 → используется визуальный дефолт
+ * DEFAULT_C116_GAP_MM (реальный зазор монтажник задаёт по месту,
+ * см. PlanLineSpec.gapMm).
+ */
+export function getDoubleFrameThicknessMm(
+  dfType: DoubleFrameType,
+  profile: ProfileType,
+  gapMm?: number,
+): number {
+  const profileWidth = getProfile(profile).width
+  const { sideA, sideB, hasSeparator } = getDoubleFrameLayerCounts(dfType)
+  const sheetsCount = sideA + sideB + (hasSeparator ? 1 : 0)
+  const boardsThickness = sheetsCount * DEFAULT_LAYER_THICKNESS_MM
+  const gap = dfType === 'c116' ? (gapMm ?? DEFAULT_C116_GAP_MM) : 0
+  return profileWidth * 2 + boardsThickness + gap + DOUBLE_FRAME_TOLERANCE_MM
+}
+
 const LINING_THICKNESS: Record<string, number> = {
   glued: 12, frame_pn28: 40, frame_ps50: 65, frame_ps75: 90,
 }
 
-export function getWallThicknessMm(type: PlanLineType, material?: string, subtype?: string): number {
+export function getWallThicknessMm(
+  type: PlanLineType, material?: string, subtype?: string, gapMm?: number,
+): number {
   if (type === 'wall_new') {
     if (!material) return 0  // нет spec → не рисуем трапецию
-    if (material === 'gkl') return GKL_STUD_THICKNESS[subtype ?? ''] ?? 100
+    if (material === 'gkl') {
+      const df = parseDoubleFrameSubtype(subtype)
+      if (df) return getDoubleFrameThicknessMm(df.dfType, df.profile, gapMm)
+      return GKL_STUD_THICKNESS[subtype ?? ''] ?? 100
+    }
     if (material === 'brick' || material === 'gasblock' || material === 'foamblock')
       return parseInt(subtype ?? '0') || 200
   }
@@ -325,8 +415,9 @@ export function getLineVisual(
   type: PlanLineType,
   material?: string,
   subtype?: string,
+  gapMm?: number,
 ): LineVisualSpec {
-  const thicknessMm = getWallThicknessMm(type, material, subtype)
+  const thicknessMm = getWallThicknessMm(type, material, subtype, gapMm)
   const fillKey = material ? `${type}:${material}` : type
   const fillColor = DOUBLE_LINE_FILLS[fillKey] ?? 'rgba(200,200,200,0.3)'
   const contourFill = getContourFill(type, material, subtype) ?? 'transparent'
@@ -399,7 +490,10 @@ export function getSpecAbbr(
   if (material === 'gkl') {
     const boardAbbr = getBoardSubtypeAbbr(boardSubtype)
     if (boardAbbr) abbr = `${abbr}·${boardAbbr}`
-    if (layers === 2) abbr = `${abbr}·2сл`
+    // Для двойного каркаса число слоёв фиксировано системой (уже видно
+    // в l2.abbr, например '115.3·50' = 2+3 слоя) — spec.layers сюда не
+    // относится и показывать "·2сл"/"·1сл" было бы вводящим в заблуждение.
+    if (layers === 2 && !parseDoubleFrameSubtype(subtype)) abbr = `${abbr}·2сл`
   }
   return abbr
 }

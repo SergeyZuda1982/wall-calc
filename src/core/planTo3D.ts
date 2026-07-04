@@ -44,7 +44,7 @@ export function pxToM(px: number, scaleMmPx: number): number {
 export function wallThicknessMm(line: PlanLine): number {
   if (line.type === 'rib_beam') return line.sectionWidthMm ?? DEFAULT_RIB_SECTION_MM
   if (!line.spec?.material) return 0
-  return getLineVisual(line.type, line.spec.material, line.spec.subtype).thicknessMm
+  return getLineVisual(line.type, line.spec.material, line.spec.subtype, line.spec.gapMm).thicknessMm
 }
 
 /**
