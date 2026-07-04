@@ -9,6 +9,7 @@ import {
   P113_FRAME_RATES, P113_SHEET_RATES, P113_HANGER_STEP,
   P131_FRAME_RATES, P131_SPECIAL_RATES, P131_SHEET_RATES,
 } from '../data/ceilingData'
+import { calcP112FrameGeometry, HANGER_LABEL } from './calcP112Frame'
 
 // ─── Результат расчёта ────────────────────────────────────────────────────────
 
@@ -110,11 +111,95 @@ export function calcCeiling(spec: CeilingSpec): CeilingCalcResult {
   if (type === 'p112' || type === 'p113') {
     const hangerStep = getHangerStep(type, stepC)
 
-    // ПП 60×27: основные + несущие профили
-    const pp_qty = ceil(frameRates.pp6027_lm * areaSqm)
-    materials.push({ name: 'Профиль ПП 60×27', unit: 'пог.м', qty: pp_qty, ratePerSqm: frameRates.pp6027_lm })
+    // П112: точный геометрический расчёт, если заданы размеры помещения и
+    // зазор до плиты (см. calcP112Frame.ts, КОНСПЕКТ.md сессия 05.07.2026).
+    // Без этих данных — старый усреднённый расход на м² (fallback ниже).
+    const full = spec as CeilingSpecFull
+    const hasPreciseGeometry = type === 'p112'
+      && !!full.roomLengthMm && !!full.roomWidthMm && !!full.slabGapMm
 
-    // ПН 28×27 по периметру (только П113)
+    if (hasPreciseGeometry) {
+      const stepB = full.stepB ?? (P112_HANGER_STEP[stepC] ?? 1000)
+      const bearingAlongLength = full.bearingAlongLength ?? true
+      const geo = calcP112FrameGeometry(
+        full.roomLengthMm, full.roomWidthMm, stepC, stepB, full.slabGapMm!, bearingAlongLength,
+      )
+
+      materials.push({ name: 'Профиль ПП 60×27 (несущий, верхний уровень)', unit: 'пог.м', qty: ceil(geo.bearingTotalLm) })
+      materials.push({ name: 'Профиль ПП 60×27 (основной, нижний уровень)', unit: 'пог.м', qty: ceil(geo.mainTotalLm) })
+      const extendersTotal = geo.bearingExtenders + geo.mainExtenders
+      if (extendersTotal > 0) {
+        materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotal })
+      }
+      materials.push({ name: 'Соединитель двухуровневый ПП 60×27', unit: 'шт', qty: geo.connectorsTotal })
+      materials.push({ name: HANGER_LABEL[geo.hangerKind], unit: 'шт', qty: geo.hangersTotal })
+      materials.push({ name: 'Анкер-клин (крепление подвеса к плите)', unit: 'шт', qty: geo.hangersTotal })
+      // Шуруп LN — крепление несущего профиля в подвесе, 2 шт на узел (типовая
+      // практика обжима/крепления, не табличное значение).
+      materials.push({ name: 'Шуруп LN (крепление в подвесе)', unit: 'шт', qty: geo.hangersTotal * 2 })
+      if (geo.hangerWarning) warnings.push(geo.hangerWarning)
+    } else {
+      // ─── Fallback: старый усреднённый расход на м² ──────────────────────
+      if (type === 'p112') {
+        warnings.push(
+          'П112: нет размеров помещения (длина/ширина) и/или зазора до плиты ' +
+          '— расчёт каркаса по среднему расходу на м², может отличаться от факта. ' +
+          'Заполните размеры и зазор для точного расчёта.',
+        )
+      }
+
+      // ПП 60×27: основные + несущие профили
+      const pp_qty = ceil(frameRates.pp6027_lm * areaSqm)
+      materials.push({ name: 'Профиль ПП 60×27', unit: 'пог.м', qty: pp_qty, ratePerSqm: frameRates.pp6027_lm })
+
+      // Соединитель
+      if (type === 'p112' && frameRates.connector2lvl) {
+        materials.push({
+          name: 'Соединитель двухуровневый ПП 60×27',
+          unit: 'шт',
+          qty: ceil(frameRates.connector2lvl * areaSqm),
+          ratePerSqm: frameRates.connector2lvl,
+        })
+      }
+
+      // Удлинитель ПП
+      if (frameRates.extender_pp > 0) {
+        materials.push({
+          name: 'Удлинитель ПП 60×27',
+          unit: 'шт',
+          qty: ceil(frameRates.extender_pp * areaSqm),
+          ratePerSqm: frameRates.extender_pp,
+        })
+      }
+
+      // Подвесы
+      const hanger_qty = ceil(frameRates.hanger_direct * areaSqm)
+      materials.push({
+        name: 'Подвес прямой ПП 60×27',
+        unit: 'шт',
+        qty: hanger_qty,
+        ratePerSqm: frameRates.hanger_direct,
+      })
+
+      // Шуруп LN (крепление ПП в подвесе)
+      materials.push({
+        name: 'Шуруп LN (крепление в подвесе)',
+        unit: 'шт',
+        qty: ceil(frameRates.screw_ln * areaSqm),
+        ratePerSqm: frameRates.screw_ln,
+      })
+
+      // Дюбели анкерные
+      materials.push({
+        name: 'Дюбель анкерный',
+        unit: 'шт',
+        qty: ceil(frameRates.dowel * areaSqm),
+        ratePerSqm: frameRates.dowel,
+      })
+    }
+
+    // ПН 28×27 по периметру (только П113) — считается всегда одинаково,
+    // не зависит от точной/усреднённой ветки выше.
     if (frameRates.pn2827_perimeter) {
       const pn_qty = ceil(perimeterM)
       materials.push({ name: 'Профиль ПН 28×27', unit: 'пог.м', qty: pn_qty })
@@ -124,15 +209,8 @@ export function calcCeiling(spec: CeilingSpec): CeilingCalcResult {
       materials.push({ name: 'Дюбель для ПН 28×27', unit: 'шт', qty: pn_dowels })
     }
 
-    // Соединитель
-    if (type === 'p112' && frameRates.connector2lvl) {
-      materials.push({
-        name: 'Соединитель двухуровневый ПП 60×27',
-        unit: 'шт',
-        qty: ceil(frameRates.connector2lvl * areaSqm),
-        ratePerSqm: frameRates.connector2lvl,
-      })
-    }
+    // Соединитель одноуровневый (П113) — остаётся по среднему расходу,
+    // точная геометрия сделана пока только для П112 (см. план дальше).
     if (type === 'p113' && frameRates.connector1lvl) {
       materials.push({
         name: 'Соединитель одноуровневый ПП 60×27',
@@ -141,41 +219,6 @@ export function calcCeiling(spec: CeilingSpec): CeilingCalcResult {
         ratePerSqm: frameRates.connector1lvl,
       })
     }
-
-    // Удлинитель ПП
-    if (frameRates.extender_pp > 0) {
-      materials.push({
-        name: 'Удлинитель ПП 60×27',
-        unit: 'шт',
-        qty: ceil(frameRates.extender_pp * areaSqm),
-        ratePerSqm: frameRates.extender_pp,
-      })
-    }
-
-    // Подвесы
-    const hanger_qty = ceil(frameRates.hanger_direct * areaSqm)
-    materials.push({
-      name: 'Подвес прямой ПП 60×27',
-      unit: 'шт',
-      qty: hanger_qty,
-      ratePerSqm: frameRates.hanger_direct,
-    })
-
-    // Шуруп LN (крепление ПП в подвесе)
-    materials.push({
-      name: 'Шуруп LN (крепление в подвесе)',
-      unit: 'шт',
-      qty: ceil(frameRates.screw_ln * areaSqm),
-      ratePerSqm: frameRates.screw_ln,
-    })
-
-    // Дюбели анкерные
-    materials.push({
-      name: 'Дюбель анкерный',
-      unit: 'шт',
-      qty: ceil(frameRates.dowel * areaSqm),
-      ratePerSqm: frameRates.dowel,
-    })
 
     // Предупреждение если шаг не в таблице
     if (hangerStep === 0) {
