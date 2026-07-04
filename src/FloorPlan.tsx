@@ -9,7 +9,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { Stage, Layer, Line, Circle, Text, Rect, Group, Image as KonvaImage } from 'react-konva'
+import { Stage, Layer, Line, Circle, Text, Rect, Group, Shape, Image as KonvaImage } from 'react-konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
@@ -81,7 +81,7 @@ function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
 }
 
-type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase'
+type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -346,11 +346,13 @@ export default function FloorPlan() {
     addContour, addRoom, updateRoom, removeRoom, updateContour,
     setBackgroundImage, updateBackgroundImage,
     levels, activeLevelId, addLevel, duplicateLevel, removeLevel, renameLevel, setLevelElevation, selectLevel,
+    addSlab, addSlabHole,
   } = useProjectStore()
 
   const lines     = floorPlan?.lines    ?? []
   const contours  = floorPlan?.contours ?? []
   const rooms     = floorPlan?.rooms    ?? []
+  const slabs     = floorPlan?.slabs    ?? []
   const scaleMmPx = floorPlan?.scaleMmPerPx ?? 10
 
   // ── UI-состояние ──────────────────────────────────────────────────────────
@@ -362,6 +364,8 @@ export default function FloorPlan() {
   const [drawSagittaMm, setDrawSagittaMm] = useState('0')  // стрела дуги для новых линий, 0 = прямая
   const [drawRibWidthMm, setDrawRibWidthMm] = useState('300')  // ригель: ширина сечения по плану, мм
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
+  const [pencilPts, setPencilPts] = useState<{ x: number; y: number }[]>([])       // карандаш: накопленные точки контура
+  const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
   const [drawStep, setDrawStep] = useState('600')
   const [drawLayer1, setDrawLayer1] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
   const [drawLayer2, setDrawLayer2] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
@@ -814,6 +818,9 @@ export default function FloorPlan() {
       setChainStartPt(null)
       setChainLineIds([])
     }
+    if (mode === 'pencil') {
+      setPencilPts([])
+    }
   }
 
   // ── Ограничение черчения внутри периметра ─────────────────────────────────
@@ -845,6 +852,22 @@ export default function FloorPlan() {
       // Снап к существующим линиям не нужен — калибруемся по точкам на подложке/чертеже
       if (scaleStep === 0) { setScalePt1({ x: pos.x, y: pos.y }); setScaleStep(1) }
       else if (scaleStep === 1) { setScalePt2({ x: pos.x, y: pos.y }); setScaleStep(2); setShowScaleDialog(true) }
+      return
+    }
+
+    if (mode === 'pencil') {
+      const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
+      const closing = pencilPts.length >= 3 && dist(pos.x, pos.y, pencilPts[0].x, pencilPts[0].y) <= closeThresh
+      if (closing) {
+        if (pencilHoleTargetId) {
+          addSlabHole(pencilHoleTargetId, pencilPts)
+        } else {
+          addSlab(pencilPts)
+        }
+        setPencilPts([])
+        return
+      }
+      setPencilPts(prev => [...prev, { x: pos.x, y: pos.y }])
       return
     }
 
@@ -969,7 +992,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1004,6 +1027,7 @@ export default function FloorPlan() {
         switchMode('select')
       } else {
         setDrawing(null); setSelected(null); setScaleStep(0); setScalePt1(null); setScalePt2(null)
+        setPencilPts([])
       }
     }
     if (e.key === 'Delete') {
@@ -1534,6 +1558,52 @@ export default function FloorPlan() {
             </div>
           </div>
 
+          {/* Карандаш — свободный контур плиты (пол/потолок этажа) + вырезание
+              дырок (лестницы/шахты). Отметка плиты — с самого этажа (Level),
+              своего поля высоты у плиты нет. */}
+          <div>
+            <div style={{ ...sectionHeaderStyle, color: '#8d99ae' }}>Плита (карандаш)</div>
+            <button
+              onClick={() => { setPencilHoleTargetId(null); setPencilPts([]); setMode('pencil') }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 14px', background: 'transparent', border: 'none',
+                cursor: 'pointer', width: '100%', textAlign: 'left',
+                borderLeft: (mode === 'pencil' && !pencilHoleTargetId) ? '3px solid #8d99ae' : '3px solid transparent',
+                color: (mode === 'pencil' && !pencilHoleTargetId) ? '#fff' : '#8a9ac8', fontSize: 12,
+              }}>
+              <span style={{ fontSize: 14, minWidth: 16, textAlign: 'center' }}>✏️</span>
+              <span>Нарисовать плиту</span>
+            </button>
+            {mode === 'pencil' && (
+              <div style={{ padding: '2px 14px 8px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
+                Клик — точка контура. Клик рядом с первой точкой — замкнуть.
+                ПКМ или Esc — отменить текущий контур.
+                {pencilPts.length > 0 && <div style={{ marginTop: 2 }}>Точек: {pencilPts.length}</div>}
+              </div>
+            )}
+            {slabs.length > 0 && (
+              <div style={{ padding: '4px 14px 8px' }}>
+                <div style={{ fontSize: 10, color: '#8a9ac8', marginBottom: 4, textTransform: 'uppercase' }}>
+                  Вырезать проём в плите
+                </div>
+                {slabs.map(sl => (
+                  <button key={sl.id}
+                    onClick={() => { setPencilHoleTargetId(sl.id); setPencilPts([]); setMode('pencil') }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', marginBottom: 3,
+                      fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                      border: pencilHoleTargetId === sl.id ? '1px solid #8d99ae' : '1px solid #3a4060',
+                      background: pencilHoleTargetId === sl.id ? '#8d99ae' : 'transparent',
+                      color: pencilHoleTargetId === sl.id ? '#1a1f33' : '#8a9ac8',
+                    }}>
+                    {sl.label} {sl.holes.length > 0 && `(${sl.holes.length} проём${sl.holes.length > 1 ? 'а' : ''})`}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
 
           {/* Инструменты */}
@@ -1910,6 +1980,46 @@ export default function FloorPlan() {
                       </Group>
                     )
                   })}
+
+                  {/* Плиты (карандаш) — под контурами/стенами, дырки через evenodd */}
+                  {slabs.map(sl => (
+                    <Shape
+                      key={sl.id}
+                      fill={pencilHoleTargetId === sl.id ? '#8d99ae33' : '#8d99ae22'}
+                      stroke="#8d99ae"
+                      strokeWidth={1.5}
+                      listening={false}
+                      sceneFunc={(ctx, shape) => {
+                        ctx.beginPath()
+                        ctx.moveTo(sl.outer[0].x, sl.outer[0].y)
+                        for (let i = 1; i < sl.outer.length; i++) ctx.lineTo(sl.outer[i].x, sl.outer[i].y)
+                        ctx.closePath()
+                        for (const hole of sl.holes) {
+                          if (hole.length < 3) continue
+                          ctx.moveTo(hole[0].x, hole[0].y)
+                          for (let i = 1; i < hole.length; i++) ctx.lineTo(hole[i].x, hole[i].y)
+                          ctx.closePath()
+                        }
+                        ctx.fillStrokeShape(shape)
+                      }}
+                    />
+                  ))}
+
+                  {/* Превью текущего контура карандаша — точки + отрезок до курсора */}
+                  {mode === 'pencil' && pencilPts.length > 0 && (
+                    <>
+                      {cursor && (
+                        <Line
+                          points={[...pencilPts.flatMap(p => [p.x, p.y]), cursor.x, cursor.y]}
+                          stroke="#8d99ae" strokeWidth={1.5} dash={[6, 3]} listening={false}
+                        />
+                      )}
+                      {pencilPts.map((p, i) => (
+                        <Circle key={i} x={p.x} y={p.y} radius={i === 0 ? 5 : 3}
+                          fill={i === 0 ? '#e53935' : '#8d99ae'} listening={false} />
+                      ))}
+                    </>
+                  )}
 
                   {/* Контуры */}
                   {contours.map(c => {

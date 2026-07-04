@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 
 const PROFILE_LETTER: Record<string, string> = {
@@ -97,6 +97,12 @@ export interface ProjectStore {
   addRoom: (room: Omit<Room, 'id'>) => void
   removeRoom: (id: string) => void
   updateRoom: (id: string, patch: Partial<Room>) => void
+  // плиты (пол/потолок этажа) — свободный контур + вырезы
+  addSlab: (outer: { x: number; y: number }[]) => string
+  removeSlab: (id: string) => void
+  updateSlabOuter: (id: string, outer: { x: number; y: number }[]) => void
+  addSlabHole: (id: string, hole: { x: number; y: number }[]) => void
+  removeSlabHole: (id: string, holeIndex: number) => void
 }
 
 function emptyProject(name: string): ProjectEntry {
@@ -492,6 +498,42 @@ export const useProjectStore = create<ProjectStore>()(
           ...fp, rooms: (fp.rooms ?? []).map(r => r.id === id ? { ...r, ...patch } : r),
         })))
       },
+
+      // ─── Плиты (пол/потолок этажа) ─────────────────────────────────────────
+
+      addSlab: (outer) => {
+        const id = `sl_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const count = (s.floorPlan?.slabs ?? []).length + 1
+          const newSlab: Slab = { id, outer, holes: [], label: `Плита ${count}` }
+          return updateActiveFloorPlan(s, fp => ({ ...fp, slabs: [...(fp.slabs ?? []), newSlab] }))
+        })
+        return id
+      },
+
+      removeSlab: (id) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, slabs: (fp.slabs ?? []).filter(sl => sl.id !== id),
+        })))
+      },
+
+      updateSlabOuter: (id, outer) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, slabs: (fp.slabs ?? []).map(sl => sl.id === id ? { ...sl, outer } : sl),
+        })))
+      },
+
+      addSlabHole: (id, hole) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, slabs: (fp.slabs ?? []).map(sl => sl.id === id ? { ...sl, holes: [...sl.holes, hole] } : sl),
+        })))
+      },
+
+      removeSlabHole: (id, holeIndex) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, slabs: (fp.slabs ?? []).map(sl => sl.id === id ? { ...sl, holes: sl.holes.filter((_, i) => i !== holeIndex) } : sl),
+        })))
+      },
     }),
     {
       name: 'wall-calc-projects', // ключ в localStorage
@@ -509,13 +551,13 @@ export const useProjectStore = create<ProjectStore>()(
           state.projects = state.projects.map(p => {
             const legacy = p as unknown as { floorPlan?: FloorPlan; levels?: Level[]; activeLevelId?: string }
             const levels: Level[] = legacy.levels && legacy.levels.length > 0
-              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [] } }))
+              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [] } }))
               : [{
                   id: `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`,
                   name: 'Этаж 1',
                   elevationMm: 0,
                   floorPlan: legacy.floorPlan
-                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [] }
+                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [] }
                     : { ...DEFAULT_FLOOR_PLAN, lines: [], contours: [] },
                 }]
             const activeLevelId = legacy.activeLevelId && levels.some(lv => lv.id === legacy.activeLevelId)
