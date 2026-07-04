@@ -3,7 +3,7 @@ import { CANVAS_W, PAD } from '../constants'
 import type { WallInput, CalcResult, DrawingSnap, EdgeProfile, BoardSpec } from '../types'
 import { DEFAULT_BOARD_SPEC } from '../types'
 import { getProfile, DEFAULT_PROFILE } from '../data/profiles'
-import { getMaxHeight } from '../data/maxHeight'
+import { getMaxHeight, resolveMaxHeightGroup } from '../data/maxHeight'
 import { buildPositions, buildFromPhase } from '../core/buildPositions'
 import { calcResults } from '../core/calcResults'
 import { normalizeProfile, maxStudHeight } from '../core/profileGeometry'
@@ -98,7 +98,8 @@ export function useWallCalc(): UseWallCalcReturn {
     const floorProfile: EdgeProfile = normalizeProfile(input.floorProfile, l, 0)
     const worstH = maxStudHeight(ceilingProfile, floorProfile, l)
 
-    const maxH = getMaxHeight(wallType, profileType, s, profileThickness)
+    const heightGroup = resolveMaxHeightGroup(input.layer1?.material ?? DEFAULT_BOARD_SPEC.material)
+    const maxH = getMaxHeight(wallType, profileType, s, profileThickness, heightGroup)
     if (maxH > 0 && worstH > maxH) {
       const thickLabel = profileThickness === '06' ? '0.6' : '0.7'
       setHeightWarning(
