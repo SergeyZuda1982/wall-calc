@@ -477,6 +477,28 @@ export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   backgroundImage: null,
 }
 
+/**
+ * Этаж объекта. У каждого этажа — свой план (свои стены, помещения,
+ * подложка) и отметка по высоте (мм, от условного нуля объекта).
+ * "Дублировать этаж" — копия floorPlan на новую отметку, дальше правится
+ * независимо (никакой магической синхронизации между этажами нет).
+ */
+export interface Level {
+  id: string
+  name: string          // "Этаж 1", "Цоколь", "Кровля" и т.д.
+  elevationMm: number    // отметка низа этажа от условного нуля объекта
+  floorPlan: FloorPlan
+}
+
+export function emptyLevel(name: string, elevationMm: number): Level {
+  return {
+    id: `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    name,
+    elevationMm,
+    floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
+  }
+}
+
 /** Активный вид на холсте */
 export type PlanView = 'top' | 'side'
 

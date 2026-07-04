@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room } from '../types'
-import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level } from '../types'
+import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 
 const PROFILE_LETTER: Record<string, string> = {
   ps50: 'А', ps75: 'В', ps100: 'С',
@@ -28,7 +28,8 @@ export interface ProjectEntry {
   walls: WallEntry[]
   linings: LiningEntry[]
   profileTemplates: ProfileTemplate[]
-  floorPlan: FloorPlan
+  levels: Level[]
+  activeLevelId: string
   createdAt: string
 }
 
@@ -42,7 +43,9 @@ export interface ProjectStore {
   walls: WallEntry[]
   linings: LiningEntry[]
   profileTemplates: ProfileTemplate[]
-  floorPlan: FloorPlan
+  levels: Level[]
+  activeLevelId: string | null
+  floorPlan: FloorPlan  // = план АКТИВНОГО этажа (levels.find(activeLevelId).floorPlan)
   activeWallId: string | null
   activeLiningId: string | null
 
@@ -70,7 +73,15 @@ export interface ProjectStore {
   removeProfileTemplate: (id: string) => void
   renameProfileTemplate: (id: string, name: string) => void
 
-  // план объекта
+  // этажи
+  addLevel: (name: string, elevationMm: number) => string
+  duplicateLevel: (id: string, name: string, elevationMm: number) => string
+  removeLevel: (id: string) => void
+  renameLevel: (id: string, name: string) => void
+  setLevelElevation: (id: string, elevationMm: number) => void
+  selectLevel: (id: string) => void
+
+  // план объекта (всегда пишет в план АКТИВНОГО этажа)
   setFloorPlanScale: (scaleMmPerPx: number) => void
   setBackgroundImage: (img: import('../types').BackgroundImage | null) => void
   updateBackgroundImage: (patch: Partial<import('../types').BackgroundImage>) => void
@@ -89,27 +100,59 @@ export interface ProjectStore {
 }
 
 function emptyProject(name: string): ProjectEntry {
+  const level = emptyLevel('Этаж 1', 0)
   return {
     id: `p_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     name,
     walls: [],
     linings: [],
     profileTemplates: [],
-    floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
+    levels: [level],
+    activeLevelId: level.id,
     createdAt: new Date().toISOString(),
   }
 }
 
-// Синхронизирует плоские поля (projectName, walls, linings) с активным объектом
+/** Достаёт активный этаж проекта — с защитой, если activeLevelId не совпал ни с чем (берёт первый). */
+function getActiveLevel(p: ProjectEntry | undefined): Level | undefined {
+  if (!p) return undefined
+  return p.levels.find(lv => lv.id === p.activeLevelId) ?? p.levels[0]
+}
+
+// Синхронизирует плоские поля (projectName, walls, linings, floorPlan активного этажа) с активным объектом
 function syncActive(projects: ProjectEntry[], activeProjectId: string | null) {
   const p = projects.find(p => p.id === activeProjectId)
+  const activeLevel = getActiveLevel(p)
   return {
     projectName: p?.name ?? '',
     walls: p?.walls ?? [],
     linings: p?.linings ?? [],
     profileTemplates: p?.profileTemplates ?? [],
-    floorPlan: p?.floorPlan ?? { ...DEFAULT_FLOOR_PLAN, lines: [] },
+    levels: p?.levels ?? [],
+    activeLevelId: activeLevel?.id ?? null,
+    floorPlan: activeLevel?.floorPlan ?? { ...DEFAULT_FLOOR_PLAN, lines: [] },
   }
+}
+
+/**
+ * Общий помощник для всех действий, которые правят план АКТИВНОГО этажа
+ * активного объекта. Раньше (до этажей) каждое действие вручную собирало
+ * { ...floorPlan, ... } и подставляло в projects — теперь это в одном месте.
+ */
+function updateActiveFloorPlan(
+  s: { projects: ProjectEntry[]; activeProjectId: string | null; floorPlan: FloorPlan },
+  updater: (fp: FloorPlan) => FloorPlan,
+) {
+  const prevFloorPlan = s.floorPlan ?? DEFAULT_FLOOR_PLAN
+  const floorPlan = updater(prevFloorPlan)
+  const projects = s.projects.map(p => {
+    if (p.id !== s.activeProjectId) return p
+    const activeLevel = getActiveLevel(p)
+    if (!activeLevel) return p
+    const levels = p.levels.map(lv => lv.id === activeLevel.id ? { ...lv, floorPlan } : lv)
+    return { ...p, levels }
+  })
+  return { floorPlan, projects }
 }
 
 export const useProjectStore = create<ProjectStore>()(
@@ -121,6 +164,8 @@ export const useProjectStore = create<ProjectStore>()(
       walls: [],
       linings: [],
       profileTemplates: [],
+      levels: [],
+      activeLevelId: null,
       floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
       activeWallId: null,
       activeLiningId: null,
@@ -284,37 +329,104 @@ export const useProjectStore = create<ProjectStore>()(
         })
       },
 
-      // ─── План объекта ────────────────────────────────────────────────────
+      // ─── Этажи ───────────────────────────────────────────────────────────
 
-      setFloorPlanScale: (scaleMmPerPx) => {
+      addLevel: (name, elevationMm) => {
+        const level = emptyLevel(name, elevationMm)
         set(s => {
-          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), scaleMmPerPx }
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+            p.id === s.activeProjectId ? { ...p, levels: [...p.levels, level], activeLevelId: level.id } : p
           )
-          return { floorPlan, projects }
+          return { projects, ...syncActive(projects, s.activeProjectId) }
+        })
+        return level.id
+      },
+
+      duplicateLevel: (id, name, elevationMm) => {
+        let newId = ''
+        set(s => {
+          const p = s.projects.find(p => p.id === s.activeProjectId)
+          const src = p?.levels.find(lv => lv.id === id)
+          if (!p || !src) return {}
+          newId = `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`
+          const copy: Level = {
+            id: newId,
+            name,
+            elevationMm,
+            floorPlan: {
+              ...src.floorPlan,
+              lines: src.floorPlan.lines.map(l => ({ ...l, id: `pl_${Date.now()}_${Math.random().toString(36).slice(2)}_${l.id}` })),
+              rooms: src.floorPlan.rooms.map(r => ({ ...r, id: `rm_${Date.now()}_${Math.random().toString(36).slice(2)}` })),
+              contours: src.floorPlan.contours.map(c => ({ ...c, id: `pc_${Date.now()}_${Math.random().toString(36).slice(2)}` })),
+            },
+          }
+          const projects = s.projects.map(pr =>
+            pr.id === s.activeProjectId ? { ...pr, levels: [...pr.levels, copy], activeLevelId: copy.id } : pr
+          )
+          return { projects, ...syncActive(projects, s.activeProjectId) }
+        })
+        return newId
+      },
+
+      removeLevel: (id) => {
+        set(s => {
+          const p = s.projects.find(p => p.id === s.activeProjectId)
+          if (!p || p.levels.length <= 1) return {} // последний этаж не удаляем — иначе объект без плана
+          const levels = p.levels.filter(lv => lv.id !== id)
+          const activeLevelId = p.activeLevelId === id ? levels[0].id : p.activeLevelId
+          const projects = s.projects.map(pr =>
+            pr.id === s.activeProjectId ? { ...pr, levels, activeLevelId } : pr
+          )
+          return { projects, ...syncActive(projects, s.activeProjectId) }
         })
       },
 
-      setBackgroundImage: (img) => {
+      renameLevel: (id, name) => {
         set(s => {
-          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), backgroundImage: img }
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
+            p.id === s.activeProjectId
+              ? { ...p, levels: p.levels.map(lv => lv.id === id ? { ...lv, name } : lv) }
+              : p
           )
-          return { floorPlan, projects }
+          return { projects, ...syncActive(projects, s.activeProjectId) }
         })
+      },
+
+      setLevelElevation: (id, elevationMm) => {
+        set(s => {
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId
+              ? { ...p, levels: p.levels.map(lv => lv.id === id ? { ...lv, elevationMm } : lv) }
+              : p
+          )
+          return { projects, ...syncActive(projects, s.activeProjectId) }
+        })
+      },
+
+      selectLevel: (id) => {
+        set(s => {
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId ? { ...p, activeLevelId: id } : p
+          )
+          return { projects, ...syncActive(projects, s.activeProjectId) }
+        })
+      },
+
+      // ─── План объекта (пишет в план активного этажа) ──────────────────────
+
+      setFloorPlanScale: (scaleMmPerPx) => {
+        set(s => updateActiveFloorPlan(s, fp => ({ ...fp, scaleMmPerPx })))
+      },
+
+      setBackgroundImage: (img) => {
+        set(s => updateActiveFloorPlan(s, fp => ({ ...fp, backgroundImage: img })))
       },
 
       updateBackgroundImage: (patch) => {
         set(s => {
           const cur = s.floorPlan?.backgroundImage
           if (!cur) return {}
-          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), backgroundImage: { ...cur, ...patch } }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
+          return updateActiveFloorPlan(s, fp => ({ ...fp, backgroundImage: { ...cur, ...patch } }))
         })
       },
 
@@ -322,115 +434,63 @@ export const useProjectStore = create<ProjectStore>()(
         const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2)}`
         set(s => {
           const newLine: PlanLine = { ...line, id }
-          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines: [...(s.floorPlan?.lines ?? []), newLine] }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
+          return updateActiveFloorPlan(s, fp => ({ ...fp, lines: [...fp.lines, newLine] }))
         })
         return id
       },
 
       updatePlanLine: (id, patch) => {
-        set(s => {
-          const lines = (s.floorPlan?.lines ?? []).map(l => l.id === id ? { ...l, ...patch } : l)
-          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
-        })
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, lines: fp.lines.map(l => l.id === id ? { ...l, ...patch } : l),
+        })))
       },
 
       removePlanLine: (id) => {
-        set(s => {
-          const lines = (s.floorPlan?.lines ?? []).filter(l => l.id !== id)
-          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
-        })
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, lines: fp.lines.filter(l => l.id !== id),
+        })))
       },
 
       clearFloorPlan: () => {
-        set(s => {
-          const floorPlan = { ...(s.floorPlan ?? DEFAULT_FLOOR_PLAN), lines: [], contours: [] }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
-        })
+        set(s => updateActiveFloorPlan(s, fp => ({ ...fp, lines: [], contours: [] })))
       },
 
       addContour: (contour) => {
         set(s => {
           const newContour: PlanContour = { ...contour, id: `pc_${Date.now()}_${Math.random().toString(36).slice(2)}` }
-          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
-          const floorPlan = { ...prev, contours: [...(prev.contours ?? []), newContour] }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
+          return updateActiveFloorPlan(s, fp => ({ ...fp, contours: [...(fp.contours ?? []), newContour] }))
         })
       },
 
       removeContour: (id) => {
-        set(s => {
-          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
-          const floorPlan = { ...prev, contours: (prev.contours ?? []).filter(c => c.id !== id) }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
-        })
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, contours: (fp.contours ?? []).filter(c => c.id !== id),
+        })))
       },
 
       updateContour: (id, patch) => {
-        set(s => {
-          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
-          const contours = (prev.contours ?? []).map(c => c.id === id ? { ...c, ...patch } : c)
-          const floorPlan = { ...prev, contours }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
-        })
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, contours: (fp.contours ?? []).map(c => c.id === id ? { ...c, ...patch } : c),
+        })))
       },
 
       addRoom: (room) => {
         set(s => {
           const newRoom: Room = { ...room, id: `rm_${Date.now()}_${Math.random().toString(36).slice(2)}` }
-          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
-          const floorPlan = { ...prev, rooms: [...(prev.rooms ?? []), newRoom] }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
+          return updateActiveFloorPlan(s, fp => ({ ...fp, rooms: [...(fp.rooms ?? []), newRoom] }))
         })
       },
 
       removeRoom: (id) => {
-        set(s => {
-          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
-          const floorPlan = { ...prev, rooms: (prev.rooms ?? []).filter(r => r.id !== id) }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
-        })
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, rooms: (fp.rooms ?? []).filter(r => r.id !== id),
+        })))
       },
 
       updateRoom: (id, patch) => {
-        set(s => {
-          const prev = s.floorPlan ?? DEFAULT_FLOOR_PLAN
-          const rooms = (prev.rooms ?? []).map(r => r.id === id ? { ...r, ...patch } : r)
-          const floorPlan = { ...prev, rooms }
-          const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, floorPlan } : p
-          )
-          return { floorPlan, projects }
-        })
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, rooms: (fp.rooms ?? []).map(r => r.id === id ? { ...r, ...patch } : r),
+        })))
       },
     }),
     {
@@ -441,34 +501,51 @@ export const useProjectStore = create<ProjectStore>()(
       }),
       onRehydrateStorage: () => (state) => {
         // После загрузки из localStorage синхронизируем плоские поля.
-        // Миграция: старые объекты могли хранить layer1/layer2 как строку ('gkl')
-        // или без плоских полей profileTemplates / plywoodInserts.
+        // Миграция 1 (старая): layer1/layer2 как строка ('gkl') вместо объекта.
+        // Миграция 2 (03.07.2026, этажи): у старых проектов было одно
+        // floorPlan прямо на проекте — теперь это levels: Level[]. Если у
+        // проекта нет levels — оборачиваем старый floorPlan в один этаж.
         if (state) {
-          state.projects = state.projects.map(p => ({
-            ...p,
-            profileTemplates: p.profileTemplates ?? [],
-            floorPlan: p.floorPlan
-              ? { ...p.floorPlan, contours: p.floorPlan.contours ?? [] }
-              : { ...DEFAULT_FLOOR_PLAN, lines: [], contours: [] },
-            walls: p.walls.map(w => ({
-              ...w,
-              input: {
-                ...w.input,
-                layer1: migrateBoard((w.input as any).layer1 ?? DEFAULT_BOARD_SPEC),
-                layer2: migrateBoard((w.input as any).layer2 ?? DEFAULT_BOARD_SPEC),
-                plywoodInserts: w.input.plywoodInserts ?? [],
-              },
-            })),
-            linings: p.linings.map(l => ({
-              ...l,
-              input: {
-                ...l.input,
-                layer1: migrateBoard((l.input as any).layer1 ?? DEFAULT_BOARD_SPEC),
-                layer2: migrateBoard((l.input as any).layer2 ?? DEFAULT_BOARD_SPEC),
-                plywoodInserts: l.input.plywoodInserts ?? [],
-              },
-            })),
-          }))
+          state.projects = state.projects.map(p => {
+            const legacy = p as unknown as { floorPlan?: FloorPlan; levels?: Level[]; activeLevelId?: string }
+            const levels: Level[] = legacy.levels && legacy.levels.length > 0
+              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [] } }))
+              : [{
+                  id: `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                  name: 'Этаж 1',
+                  elevationMm: 0,
+                  floorPlan: legacy.floorPlan
+                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [] }
+                    : { ...DEFAULT_FLOOR_PLAN, lines: [], contours: [] },
+                }]
+            const activeLevelId = legacy.activeLevelId && levels.some(lv => lv.id === legacy.activeLevelId)
+              ? legacy.activeLevelId
+              : levels[0].id
+            return {
+              ...p,
+              profileTemplates: p.profileTemplates ?? [],
+              levels,
+              activeLevelId,
+              walls: p.walls.map(w => ({
+                ...w,
+                input: {
+                  ...w.input,
+                  layer1: migrateBoard((w.input as any).layer1 ?? DEFAULT_BOARD_SPEC),
+                  layer2: migrateBoard((w.input as any).layer2 ?? DEFAULT_BOARD_SPEC),
+                  plywoodInserts: w.input.plywoodInserts ?? [],
+                },
+              })),
+              linings: p.linings.map(l => ({
+                ...l,
+                input: {
+                  ...l.input,
+                  layer1: migrateBoard((l.input as any).layer1 ?? DEFAULT_BOARD_SPEC),
+                  layer2: migrateBoard((l.input as any).layer2 ?? DEFAULT_BOARD_SPEC),
+                  plywoodInserts: l.input.plywoodInserts ?? [],
+                },
+              })),
+            }
+          })
           const synced = syncActive(state.projects, state.activeProjectId)
           Object.assign(state, synced)
         }

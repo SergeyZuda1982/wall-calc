@@ -344,6 +344,7 @@ export default function FloorPlan() {
     setFloorPlanScale, clearFloorPlan,
     addContour, addRoom, updateRoom, removeRoom, updateContour,
     setBackgroundImage, updateBackgroundImage,
+    levels, activeLevelId, addLevel, duplicateLevel, removeLevel, renameLevel, setLevelElevation, selectLevel,
   } = useProjectStore()
 
   const lines     = floorPlan?.lines    ?? []
@@ -1243,6 +1244,84 @@ export default function FloorPlan() {
           </button>
         )}
         <span style={{ fontSize: 15, fontWeight: 700, color: '#1e2433' }}>План объекта</span>
+
+        {/* Этажи — переключатель + добавить/дублировать/удалить */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+          {levels.map(lv => (
+            <button key={lv.id} onClick={() => selectLevel(lv.id)}
+              title={`Отметка ${lv.elevationMm} мм`}
+              style={{
+                padding: '4px 10px', fontSize: 12, cursor: 'pointer', borderRadius: 5,
+                border: lv.id === activeLevelId ? '1px solid #3a7bd5' : '1px solid #ddd',
+                background: lv.id === activeLevelId ? '#3a7bd5' : '#fff',
+                color: lv.id === activeLevelId ? '#fff' : '#555', fontWeight: lv.id === activeLevelId ? 600 : 400,
+              }}>
+              {lv.name} <span style={{ opacity: 0.75 }}>({lv.elevationMm}мм)</span>
+            </button>
+          ))}
+          <button
+            onClick={() => {
+              const name = window.prompt('Название нового этажа', `Этаж ${levels.length + 1}`)
+              if (!name) return
+              const elevStr = window.prompt('Отметка низа этажа, мм', '0')
+              if (elevStr === null) return
+              addLevel(name, parseFloat(elevStr) || 0)
+            }}
+            title="Добавить этаж" style={{ ...toolBtnStyle(false), padding: '4px 10px', fontSize: 12 }}>
+            + этаж
+          </button>
+          {activeLevelId && (
+            <button
+              onClick={() => {
+                const src = levels.find(lv => lv.id === activeLevelId)
+                if (!src) return
+                const name = window.prompt('Название этажа-копии', `${src.name} (копия)`)
+                if (!name) return
+                const elevStr = window.prompt('Отметка низа нового этажа, мм', String(src.elevationMm + 3000))
+                if (elevStr === null) return
+                duplicateLevel(src.id, name, parseFloat(elevStr) || src.elevationMm + 3000)
+              }}
+              title="Дублировать текущий этаж на новую отметку" style={{ ...toolBtnStyle(false), padding: '4px 10px', fontSize: 12 }}>
+              ⧉ дублировать
+            </button>
+          )}
+          {activeLevelId && levels.length > 1 && (
+            <button
+              onClick={() => {
+                const src = levels.find(lv => lv.id === activeLevelId)
+                if (src && window.confirm(`Удалить этаж «${src.name}» вместе с его планом?`)) removeLevel(src.id)
+              }}
+              title="Удалить текущий этаж" style={{ ...toolBtnStyle(false), padding: '4px 10px', fontSize: 12, color: '#c0392b' }}>
+              🗑
+            </button>
+          )}
+          {activeLevelId && (
+            <button
+              onClick={() => {
+                const src = levels.find(lv => lv.id === activeLevelId)
+                if (!src) return
+                const name = window.prompt('Новое название этажа', src.name)
+                if (name) renameLevel(src.id, name)
+              }}
+              title="Переименовать этаж" style={{ ...toolBtnStyle(false), padding: '4px 8px', fontSize: 12 }}>
+              ✎
+            </button>
+          )}
+          {activeLevelId && (
+            <button
+              onClick={() => {
+                const src = levels.find(lv => lv.id === activeLevelId)
+                if (!src) return
+                const elevStr = window.prompt('Новая отметка низа этажа, мм', String(src.elevationMm))
+                if (elevStr === null) return
+                setLevelElevation(src.id, parseFloat(elevStr) || src.elevationMm)
+              }}
+              title="Изменить отметку" style={{ ...toolBtnStyle(false), padding: '4px 8px', fontSize: 12 }}>
+              ↕ отметка
+            </button>
+          )}
+        </div>
+
         <div style={{ flex: 1 }} />
         {!isMobile && (
           <span style={{ fontSize: 12, color: '#888' }}>
