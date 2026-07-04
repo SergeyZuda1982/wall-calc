@@ -16,7 +16,7 @@
  *   было от чего повесить ригель
  */
 
-import type { PlanLine, PlanLineType, Room, Slab } from '../types'
+import type { PlanLine, PlanLineType, Room, Slab, RoundColumn } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 
@@ -139,6 +139,35 @@ export interface RoomPolygon3D {
   /** точки контура в метрах, план сверху (x,z) — по часовой/против часовой,
    *  как пришли из extractContourPoints, без изменений */
   points: { x: number; z: number }[]
+}
+
+export interface ColumnCylinder3D {
+  id: string
+  /** центр в метрах, план сверху (x,z) */
+  cx: number
+  cz: number
+  radius: number
+  /** высота колонны, метры — до отметки потолка (та же логика, что у прямоугольной колонны-Room) */
+  heightM: number
+}
+
+/**
+ * Круглые колонны → цилиндры в метрах, для Scene3D (CylinderGeometry).
+ * Высота — до общей отметки потолка этажа (estimateCeilingMm), как и у
+ * прямоугольной колонны (Room с isColumn: true, extrude на всю высоту потолка).
+ */
+export function roundColumnsToCylinders3D(
+  roundColumns: RoundColumn[], scaleMmPx: number, ceilingMm: number,
+): ColumnCylinder3D[] {
+  return roundColumns
+    .filter(rc => rc.diameterMm > 0)
+    .map(rc => ({
+      id: rc.id,
+      cx: pxToM(rc.cx, scaleMmPx),
+      cz: pxToM(rc.cy, scaleMmPx),
+      radius: mmToM(rc.diameterMm) / 2,
+      heightM: mmToM(ceilingMm),
+    }))
 }
 
 /** Контуры помещений/колонн → полигоны в метрах, для заливки пола/потолка
