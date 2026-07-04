@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { calcCeiling } from '../calcCeiling'
 import type { CeilingSpecFull } from '../../data/ceilingData'
+import { calcP112FrameGeometry } from '../calcP112Frame'
 
 // Помещение 4000×5000мм = 20м², периметр 18м
 const BASE: CeilingSpecFull = {
@@ -16,11 +17,12 @@ const BASE: CeilingSpecFull = {
   sheetLengthMm: 2500,
 }
 
-describe('calcCeiling — П112.1 (20м², шаг 600мм)', () => {
+describe('calcCeiling — П112.1, fallback без slabGapMm (20м², шаг 600мм)', () => {
   const res = calcCeiling(BASE)
 
-  it('нет предупреждений', () => {
-    expect(res.warnings).toHaveLength(0)
+  it('есть предупреждение — нет зазора до плиты, расчёт по среднему расходу', () => {
+    expect(res.warnings.length).toBeGreaterThan(0)
+    expect(res.warnings[0]).toContain('среднему расходу')
   })
 
   it('площадь и периметр переданы корректно', () => {
@@ -68,6 +70,59 @@ describe('calcCeiling — П112.1 (20м², шаг 600мм)', () => {
     const item = res.materials.find(m => m.name.includes('разделительная'))
     expect(item).toBeDefined()
     expect(item!.qty).toBe(18)
+  })
+})
+
+describe('calcCeiling — П112, точная геометрия (с slabGapMm)', () => {
+  const PRECISE: CeilingSpecFull = { ...BASE, slabGapMm: 50, stepB: 900, bearingAlongLength: true }
+  const res = calcCeiling(PRECISE)
+  const expectedGeo = calcP112FrameGeometry(5000, 4000, 600, 900, 50, true)
+
+  it('нет предупреждения о fallback', () => {
+    expect(res.warnings.find(w => w.includes('среднему расходу'))).toBeUndefined()
+  })
+
+  it('несущий профиль — по geometrии (bearingTotalLm)', () => {
+    const item = res.materials.find(m => m.name.includes('несущий, верхний'))
+    expect(item).toBeDefined()
+    expect(item!.qty).toBe(Math.ceil(expectedGeo.bearingTotalLm))
+  })
+
+  it('основной профиль — по геометрии (mainTotalLm)', () => {
+    const item = res.materials.find(m => m.name.includes('основной, нижний'))
+    expect(item).toBeDefined()
+    expect(item!.qty).toBe(Math.ceil(expectedGeo.mainTotalLm))
+  })
+
+  it('соединитель двухуровневый — по пересечениям рядов', () => {
+    const item = res.materials.find(m => m.name.includes('двухуровневый'))
+    expect(item).toBeDefined()
+    expect(item!.qty).toBe(expectedGeo.connectorsTotal)
+  })
+
+  it('подвесы — по факту (bearingCount × hangersPerBearing), не по среднему расходу', () => {
+    const item = res.materials.find(m => m.name.includes('Подвес прямой ПП'))
+    expect(item).toBeDefined()
+    expect(item!.qty).toBe(expectedGeo.hangersTotal)
+  })
+
+  it('анкер-клин — по числу подвесов', () => {
+    const item = res.materials.find(m => m.name.includes('Анкер-клин'))
+    expect(item).toBeDefined()
+    expect(item!.qty).toBe(expectedGeo.hangersTotal)
+  })
+
+  it('зазор 50мм → обычный прямой подвес (не тяга)', () => {
+    const item = res.materials.find(m => m.name.includes('Тяга'))
+    expect(item).toBeUndefined()
+  })
+
+  it('большой зазор до плиты → материал "Тяга", не "Подвес прямой"', () => {
+    const far = calcCeiling({ ...PRECISE, slabGapMm: 700 })
+    const rod = far.materials.find(m => m.name.includes('Тяга'))
+    expect(rod).toBeDefined()
+    const direct = far.materials.find(m => m.name === 'Подвес прямой ПП 60×27')
+    expect(direct).toBeUndefined()
   })
 })
 

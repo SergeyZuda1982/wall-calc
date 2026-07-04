@@ -7,10 +7,11 @@
 import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Line, Text, Group } from 'react-konva'
 import type { CeilingSpecFull } from './data/ceilingData'
-import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS } from './data/ceilingData'
+import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP } from './data/ceilingData'
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult } from './core/calcCeiling'
+import { calcFrameRowPositions } from './core/calcP112Frame'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
 
@@ -232,6 +233,35 @@ export default function CeilingCalc() {
                 <option value={3000}>3000</option>
               </select>
             </div>
+          </Card>
+        )}
+
+        {/* Точный расчёт каркаса П112 — см. calcP112Frame.ts, КОНСПЕКТ.md 05.07.2026 */}
+        {form.type === 'p112' && (
+          <Card title="ТОЧНЫЙ РАСЧЁТ КАРКАСА">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+              <div>
+                <label style={lbl}>Зазор плита→каркас, мм</label>
+                <input style={inp} type="number" min={0} step={10}
+                  value={form.slabGapMm ?? ''} onChange={e => setField('slabGapMm', +e.target.value || undefined)} />
+              </div>
+              <div>
+                <label style={lbl}>Шаг несущего (b), мм</label>
+                <input style={inp} type="number" min={0} step={50}
+                  placeholder={String(P112_HANGER_STEP[form.stepC] ?? 1000)}
+                  value={form.stepB ?? ''} onChange={e => setField('stepB', +e.target.value || undefined)} />
+              </div>
+            </div>
+            <label style={{ ...lbl, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={form.bearingAlongLength ?? true}
+                onChange={e => setField('bearingAlongLength', e.target.checked)} />
+              Несущий профиль вдоль длины (снять — вдоль ширины)
+            </label>
+            {!form.slabGapMm && (
+              <div style={{ marginTop: 6, fontSize: 11, color: C.warning }}>
+                Без зазора каркас считается по среднему расходу на м² (менее точно).
+              </div>
+            )}
           </Card>
         )}
 
@@ -473,29 +503,41 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
 
   // ── Основные профили (X, шаг c) ──
   const stepC = form.stepC
-  const mainPosX: number[] = []
-  const x0 = shiftMainMm % stepC
-  for (let x = x0; x <= L; x += stepC) mainPosX.push(x * scale)
+  // Реальная позиция рядов (см. calcP112Frame.ts): первый ряд на расстоянии
+  // шага от стены, последний просто ближе к дальней стене — не наивная
+  // сетка от 0. shiftMainMm — ручной сдвиг всей гребёнки поверх этого.
+  const mainPosX = calcFrameRowPositions(L, stepC)
+    .map(p => (p + shiftMainMm) * scale)
+    .filter(x => x >= 0 && x <= L * scale)
 
-  // ── Несущие профили (Y, шаг b=500) ──
-  const stepB = 500
-  const bearingPosY: number[] = []
-  const y0 = shiftBearingMm % stepB
-  for (let y = y0; y <= W_room; y += stepB) bearingPosY.push(y * scale)
+  // ── Несущие профили (Y, шаг b) ──
+  // Раньше был захардкожен неверный шаг 500мм — реальный шаг несущего
+  // профиля берём из формы (или дефолт из той же таблицы, что и подвесы,
+  // см. КОНСПЕКТ.md — на объекте это одно и то же расстояние).
+  const stepB = form.stepB ?? (P112_HANGER_STEP[stepC] ?? 1000)
+  const bearingPosY = calcFrameRowPositions(W_room, stepB)
+    .map(p => (p + shiftBearingMm) * scale)
+    .filter(y => y >= 0 && y <= W_room * scale)
 
   // ── Подвесы ──
-  const stepA = layout?.stepA ?? 1000
+  // Вдоль каждого несущего профиля, с тем же шагом b (НЕ пол-шага — это
+  // правило для стоек в перегородках, здесь по-другому, см. КОНСПЕКТ.md).
+  const hangerPosXMm = calcFrameRowPositions(L, stepB)
   const hangers: { x: number; y: number }[] = []
   // Рисуем подвесы только если их не слишком много (иначе каша)
-  const hangerCount = mainPosX.length * Math.ceil(W_room / stepA)
+  const hangerCount = bearingPosY.length * hangerPosXMm.length
   const showHangers = hangerCount <= 200
   if (showHangers) {
-    for (const px of mainPosX) {
-      for (let ya = stepA / 2; ya < W_room; ya += stepA) {
-        hangers.push({ x: px, y: ya * scale })
+    for (const py of bearingPosY) {
+      for (const hxMm of hangerPosXMm) {
+        hangers.push({ x: hxMm * scale, y: py })
       }
     }
   }
+
+  // Известное упрощение (см. КОНСПЕКТ.md): эта иллюстрация всегда рисует
+  // несущий вдоль длины — разворот каркаса (form.bearingAlongLength=false)
+  // сейчас учитывается только в смете (calcCeiling), не в картинке.
 
   // ── Листы ГКЛ (шаг 4) ──
   const sheets: { x: number; y: number; w: number; h: number; isCut: boolean }[] = []
