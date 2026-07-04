@@ -45,6 +45,18 @@ const KIND_LABELS: Record<BoardPiece['kind'], string> = {
 
 const STUD_RULER_H = 28  // px — высота шкалы стоек сверху
 
+/**
+ * Округление размера куска для подписи на схеме.
+ * Реальный расчёт (площадь, отходы) считается по точной дробной высоте
+ * из линейной интерполяции уклона — это нужно для точности сметы.
+ * Но резать лист монтажник может только по целому мм, поэтому в подписи
+ * на схеме дробь (типа 1257.4675324675327) округляем до целого мм —
+ * иначе цифры на экране не читаются и не имеют смысла на объекте.
+ */
+function fmtMm(n: number): number {
+  return Math.round(n)
+}
+
 export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW, firstStud, step }: Props) {
   const drawW = canvasW - PAD * 2
   const scaleX = wallL > 0 ? drawW / wallL : 1
@@ -190,7 +202,7 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW, first
                       <Text
                         x={px + 3} y={py + ph / 2 - 8}
                         width={pw - 6}
-                        text={`${p.w}×${p.h}`}
+                        text={`${fmtMm(p.w)}×${fmtMm(p.h)}`}
                         fontSize={9}
                         fill="#fff"
                         align="center"
@@ -221,7 +233,7 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW, first
                     <Text
                       x={px + 3} y={py + ph / 2 - 8}
                       width={pw - 6}
-                      text={`${p.w}×${p.h}`}
+                      text={`${fmtMm(p.w)}×${fmtMm(p.h)}`}
                       fontSize={9}
                       fill="#fff"
                       align="center"
