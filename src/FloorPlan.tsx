@@ -460,6 +460,13 @@ export default function FloorPlan() {
   const [bgPageCount, setBgPageCount]   = useState(1)
   const [bgPageInput, setBgPageInput]   = useState('1')
   const bgFileInputRef = useRef<HTMLInputElement>(null)
+  // Исходный файл PDF — только в памяти текущей сессии (сами байты PDF
+  // никуда не сохраняются, чтобы не раздувать localStorage/Supabase).
+  // lastRenderedDataUrl нужен, чтобы не пытаться дорендерить чужую
+  // подложку после переключения этажа (там свой PDF или его вообще нет).
+  const bgSourceRef = useRef<{ file: File; pageNum: number; lastRenderedDataUrl: string } | null>(null)
+  const bgRerenderTimeoutRef = useRef<number | null>(null)
+  const bgRerenderingRef = useRef(false)
 
   // Загружаем HTMLImageElement из dataUrl при изменении подложки в сторе
   useEffect(() => {
@@ -469,6 +476,48 @@ export default function FloorPlan() {
     img.onload = () => setBgImageEl(img)
     img.src = url
   }, [floorPlan?.backgroundImage?.dataUrl])
+
+  // Дорендер подложки из исходного PDF при сильном зуме холста — если
+  // текущая картинка растягивается заметно крупнее, чем позволяет её
+  // родное разрешение (отсюда и размытие), перерисовываем страницу из
+  // PDF заново под нужный масштаб. Работает только пока файл ещё жив
+  // в памяти этой сессии (bgSourceRef) и относится именно к ТЕКУЩЕЙ
+  // подложке (lastRenderedDataUrl) — иначе после переключения этажа
+  // на другую подложку тут пытались бы дорендерить чужой PDF.
+  useEffect(() => {
+    const bg = floorPlan?.backgroundImage
+    const src = bgSourceRef.current
+    if (!bg || !bgImageEl || !src) return
+    if (bg.dataUrl !== src.lastRenderedDataUrl) return  // подложка сменилась не через этот PDF (другой этаж/файл)
+    if (bgRerenderingRef.current) return
+
+    const displayedLongSidePx = Math.max(bg.width, bg.height) * stageScale
+    const nativeLongSidePx = Math.max(bgImageEl.naturalWidth, bgImageEl.naturalHeight)
+    const MARGIN = 1.3  // не пересчитываем из-за каждого пикселя — только когда реально не хватает
+    if (displayedLongSidePx <= nativeLongSidePx * MARGIN) return
+
+    if (bgRerenderTimeoutRef.current) window.clearTimeout(bgRerenderTimeoutRef.current)
+    bgRerenderTimeoutRef.current = window.setTimeout(async () => {
+      const s = bgSourceRef.current
+      if (!s) return
+      bgRerenderingRef.current = true
+      try {
+        const targetLongSidePx = displayedLongSidePx * 1.3  // с запасом, чтобы не пересчитывать на каждый чих
+        const res = await renderPdfPageToImage(s.file, s.pageNum, { targetLongSidePx })
+        bgSourceRef.current = { ...s, lastRenderedDataUrl: res.dataUrl }
+        // Мировые width/height (позиция и размер на плане) НЕ трогаем —
+        // меняется только сама картинка, она просто чётче в текущем зуме
+        updateBackgroundImage({ dataUrl: res.dataUrl })
+      } catch {
+        // тихо не получилось (например, файл больше недоступен) — остаёмся
+        // на текущей картинке, не мешаем работе всплывающими ошибками
+      } finally {
+        bgRerenderingRef.current = false
+      }
+    }, 500)
+
+    return () => { if (bgRerenderTimeoutRef.current) window.clearTimeout(bgRerenderTimeoutRef.current) }
+  }, [stageScale, floorPlan?.backgroundImage, bgImageEl, updateBackgroundImage])
 
   // Автоцентрирование канваса сразу после загрузки/смены подложки — чтобы не потерять её из виду
   useEffect(() => {
@@ -489,6 +538,7 @@ export default function FloorPlan() {
       } else {
         setBgUploading(true)
         const res = await renderPdfPageToImage(file, 1)
+        bgSourceRef.current = { file, pageNum: 1, lastRenderedDataUrl: res.dataUrl }
         setBackgroundImage({
           dataUrl: res.dataUrl, x: 0, y: 0,
           width: res.width, height: res.height,
@@ -509,6 +559,7 @@ export default function FloorPlan() {
     setBgError(null)
     try {
       const res = await renderPdfPageToImage(bgPendingFile, page)
+      bgSourceRef.current = { file: bgPendingFile, pageNum: page, lastRenderedDataUrl: res.dataUrl }
       setBackgroundImage({
         dataUrl: res.dataUrl, x: 0, y: 0,
         width: res.width, height: res.height,
@@ -1707,7 +1758,7 @@ export default function FloorPlan() {
                 style={{ fontSize: 11, padding: '6px 10px', borderRadius: 4, border: '1px solid #3a4060', background: mode === 'scale' ? '#7c8fcf' : 'transparent', color: '#fff', cursor: 'pointer' }}>
                 📐 Откалибровать масштаб
               </button>
-              <button onClick={() => { if (window.confirm('Удалить подложку?')) setBackgroundImage(null) }}
+              <button onClick={() => { if (window.confirm('Удалить подложку?')) { bgSourceRef.current = null; setBackgroundImage(null) } }}
                 style={{ fontSize: 11, padding: '6px 10px', borderRadius: 4, border: '1px solid #3a4060', background: 'transparent', color: '#e57373', cursor: 'pointer' }}>
                 Удалить подложку
               </button>
