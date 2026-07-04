@@ -1360,7 +1360,7 @@ export default function App() {
                                   : area > 80000  ? '#42a5f5'
                                   : '#ff9800'
                                 return (
-                                  <div key={idx} title={`${o.w}×${o.h}мм — ${(area/1e6).toFixed(3)} м²`}
+                                  <div key={idx} title={`${Math.round(o.w)}×${Math.round(o.h)}мм — ${(area/1e6).toFixed(3)} м²`}
                                     style={{
                                       width: dw, height: dh,
                                       background: bg, borderRadius: 3, opacity: 0.85,
@@ -1665,7 +1665,7 @@ export default function App() {
                                   : '#ff9800'
                                 return (
                                   <div key={idx}
-                                    title={`${o.w}×${o.h}мм — ${(area / 1e6).toFixed(3)} м²`}
+                                    title={`${Math.round(o.w)}×${Math.round(o.h)}мм — ${(area / 1e6).toFixed(3)} м²`}
                                     style={{
                                       width: dw, height: dh,
                                       background: bg, borderRadius: 3, opacity: 0.85,
