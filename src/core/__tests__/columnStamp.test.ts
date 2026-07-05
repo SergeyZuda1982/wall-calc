@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   mmToPx, rectColumnCornersPx, angleTo, snapAngleToStep, rectPerimeterMm, rectAreaM2,
+  snapToColumnRow,
 } from '../columnStamp'
 
 describe('mmToPx', () => {
@@ -84,5 +85,38 @@ describe('rectPerimeterMm / rectAreaM2', () => {
   })
   it('площадь прямоугольника 400×600мм = 0.24 м²', () => {
     expect(rectAreaM2(400, 600)).toBeCloseTo(0.24)
+  })
+})
+
+describe('snapToColumnRow', () => {
+  it('нет колонн — точка не меняется', () => {
+    expect(snapToColumnRow(123, 456, [])).toEqual({ x: 123, y: 456 })
+  })
+
+  it('курсор почти на одной высоте с соседней колонной — прилипает по Y (горизонтальный ряд)', () => {
+    // соседняя колонна (100,200), курсор (305,203) — по Y ближе (3px), чем по X (205px)
+    const r = snapToColumnRow(305, 203, [{ cx: 100, cy: 200 }])
+    expect(r).toEqual({ x: 305, y: 200 })
+  })
+
+  it('курсор почти на одном X с соседней колонной — прилипает по X (вертикальный ряд)', () => {
+    // соседняя колонна (100,200), курсор (103,450) — по X ближе (3px), чем по Y (250px)
+    const r = snapToColumnRow(103, 450, [{ cx: 100, cy: 200 }])
+    expect(r).toEqual({ x: 100, y: 450 })
+  })
+
+  it('несколько колонн — берёт БЛИЖАЙШУЮ по прямому расстоянию, а не первую в списке', () => {
+    const existing = [
+      { cx: 1000, cy: 1000 },  // далеко
+      { cx: 100, cy: 205 },    // рядом с курсором
+    ]
+    const r = snapToColumnRow(105, 500, existing)
+    // ближайшая — вторая (100,205); от неё курсор ближе по X (5px) чем по Y (295px)
+    expect(r).toEqual({ x: 100, y: 500 })
+  })
+
+  it('равное расстояние по X и Y — прилипает по X (детерминированный тай-брейк)', () => {
+    const r = snapToColumnRow(150, 250, [{ cx: 100, cy: 200 }]) // dx=50, dy=50
+    expect(r).toEqual({ x: 100, y: 250 })
   })
 })
