@@ -250,3 +250,29 @@ export function infiniteLineIntersection(
   const t = ((x3 - x1) * d2y - (y3 - y1) * d2x) / denom
   return { x: x1 + t * d1x, y: y1 + t * d1y }
 }
+
+/**
+ * Инструмент "Проём" (клик по стене на плане, см. FloorPlan.tsx,
+ * placeOpeningOnLine) — офсет проёма считается ВСЕГДА от точки (x1,y1)
+ * линии в данных (PlanOpening.offsetMm), но линия могла быть начерчена
+ * с любого конца. Пользователь целится глазом в точку на подложке —
+ * эта функция проецирует клик на ось линии и центрирует проём на нём,
+ * без ручного счёта "от какого конца я вообще чертил эту стену".
+ *
+ * @param lineLengthMm  длина линии в мм (для итогового офсета — не px*scale,
+ *   чтобы не разойтись с уже сохранённым PlanLine.lengthMm при округлениях)
+ * @returns null, если ширина проёма больше длины самой линии (стена слишком короткая)
+ */
+export function openingOffsetFromClick(
+  x1: number, y1: number, x2: number, y2: number, lineLengthMm: number,
+  clickX: number, clickY: number, widthMm: number,
+): number | null {
+  if (widthMm > lineLengthMm) return null
+  const dx = x2 - x1, dy = y2 - y1
+  const lenPx2 = dx * dx + dy * dy
+  if (lenPx2 === 0) return null
+  const t = ((clickX - x1) * dx + (clickY - y1) * dy) / lenPx2
+  const tClamped = Math.max(0, Math.min(1, t))
+  const rawOffsetMm = tClamped * lineLengthMm
+  return Math.max(0, Math.min(lineLengthMm - widthMm, rawOffsetMm - widthMm / 2))
+}

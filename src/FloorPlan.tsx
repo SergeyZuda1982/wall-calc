@@ -34,7 +34,7 @@ import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
 import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
 import { extractContourPoints } from './core/contour'
-import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection } from './core/geometry2d'
+import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
 }
 
-type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim'
+type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim' | 'opening'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -1276,11 +1276,16 @@ export default function FloorPlan() {
       }
       return
     }
+    if (mode === 'opening') {
+      const line = lines.find(l => l.id === id)
+      if (line) placeOpeningOnLine(line, pos.x, pos.y)
+      return
+    }
     if (mode === 'select') {
       startDragLine(id, 'line', pos.x, pos.y)
     }
     setSelected(id)
-  }, [mode, lines, trimSourceId])
+  }, [mode, lines, trimSourceId, openingType, openingWidth, openingHeight, openingSill])
 
   /**
    * Обрезать/продлить линию source до пересечения с бесконечным продолжением
@@ -1462,6 +1467,33 @@ export default function FloorPlan() {
     const opening: PlanOpening = { id, type, offsetMm, widthMm, heightMm, label }
     if (type !== 'door' && sillHeightMm !== undefined && sillHeightMm >= 0) opening.sillHeightMm = sillHeightMm
     updatePlanLine(lineId, { openings: [...(line.openings ?? []), opening] })
+  }
+
+  /**
+   * Инструмент "Проём" (режим 'opening', см. handleLinePointerDown) — клик
+   * прямо по стене на плане, без захода в инспектор и без ручного счёта
+   * отступа. Проблема, которую решает: offsetMm в данных всегда считается
+   * от точки (x1,y1) линии — а на подложке PDF размер до проёма часто дан
+   * от ДРУГОГО конца стены, и линия не всегда начерчена с той стороны,
+   * откуда идёт размер. Клик — сразу по месту на глаз/по сетке, без
+   * пересчёта "от какого конца я вообще чертил эту стену".
+   *
+   * Проём центрируется на точке клика (спроецированной на ось линии) —
+   * не начинается от неё, чтобы клик "в середину дверного проёма на
+   * подложке" естественно попадал серединой, а не левым краем.
+   */
+  function placeOpeningOnLine(line: PlanLine, clickX: number, clickY: number) {
+    const defaultWidth = openingType === 'window' ? 1500 : 900
+    const width = parseFloat(openingWidth) > 0 ? parseFloat(openingWidth) : defaultWidth
+    const height = parseFloat(openingHeight) > 0 ? parseFloat(openingHeight) : (openingType === 'window' ? 1200 : 2000)
+    const sill = openingType !== 'door' ? (parseFloat(openingSill) || 0) : undefined
+
+    const offset = openingOffsetFromClick(line.x1, line.y1, line.x2, line.y2, line.lengthMm, clickX, clickY, width)
+    if (offset === null) {
+      window.alert(`Эта стена короче ширины проёма: стена ${Math.round(line.lengthMm)}мм, проём ${width}мм.`)
+      return
+    }
+    addOpening(line.id, openingType, offset, width, height, sill)
   }
 
   function removeOpening(lineId: string, openingId: string) {
@@ -1882,6 +1914,52 @@ export default function FloorPlan() {
                 {pencilPts.length > 0 && <div style={{ marginTop: 2 }}>Точек: {pencilPts.length}</div>}
               </div>
             )}
+            {mode === 'opening' && (
+              <div style={{ padding: '2px 14px 10px' }}>
+                <div style={{ fontSize: 10, color: '#8a9ac8', lineHeight: 1.4, marginBottom: 8 }}>
+                  Клик по стене на плане — проём ставится сразу там, по центру
+                  клика. Открывать панель каждой стены по отдельности не нужно.
+                </div>
+                <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+                  {(['door', 'window', 'opening'] as const).map(t => {
+                    const color = t === 'door' ? '#c9a68a' : t === 'window' ? '#7ba9e0' : '#9aa5ad'
+                    return (
+                      <button key={t}
+                        onClick={() => {
+                          setOpeningType(t)
+                          setOpeningHeight(t === 'window' ? '1200' : '2000')
+                          setOpeningWidth(t === 'window' ? '1500' : '900')
+                          if (t === 'opening') setOpeningSill('0')
+                          else if (t === 'window') setOpeningSill('900')
+                        }}
+                        style={{
+                          flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 4, cursor: 'pointer',
+                          border: `1px solid ${openingType === t ? color : '#3a4060'}`,
+                          background: openingType === t ? color : 'transparent',
+                          color: openingType === t ? '#1a1f33' : '#8a9ac8',
+                        }}>
+                        {t === 'door' ? 'Дверь' : t === 'window' ? 'Окно' : 'Проём'}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                  <input type="number" placeholder="ширина, мм" value={openingWidth}
+                    onChange={e => setOpeningWidth(e.target.value)}
+                    style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff', minWidth: 0 }} />
+                  <input type="number"
+                    placeholder={openingType === 'window' ? 'высота окна, мм' : 'высота, мм'}
+                    value={openingHeight}
+                    onChange={e => setOpeningHeight(e.target.value)}
+                    style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff', minWidth: 0 }} />
+                </div>
+                {(openingType === 'window' || openingType === 'opening') && (
+                  <input type="number" placeholder="низ от пола, мм (0 — от пола)" value={openingSill}
+                    onChange={e => setOpeningSill(e.target.value)}
+                    style={{ width: '100%', fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff', boxSizing: 'border-box' as const }} />
+                )}
+              </div>
+            )}
             {slabs.length > 0 && (
               <div style={{ padding: '4px 14px 8px' }}>
                 <div style={{ fontSize: 10, color: '#8a9ac8', marginBottom: 4, textTransform: 'uppercase' }}>
@@ -1988,6 +2066,7 @@ export default function FloorPlan() {
             ['contour', '⬡', 'Замкнуть контур'],
             ['scale',   '⬛', 'Масштаб'],
             ['trim',    '✂', 'Обрезать/продлить'],
+            ['opening', '🚪', 'Проём (дверь/окно/проход)'],
           ] as [Mode, string, string][]).map(([m, icon, label]) => (
             <button key={m} onClick={() => switchMode(m)}
               style={{
@@ -2281,6 +2360,11 @@ export default function FloorPlan() {
                   {!trimSourceId ? '✂ Кликните линию, которую обрезать/продлить' : '✂ Теперь кликните линию, до которой тянуть'}
                 </span>
               )}
+              {mode === 'opening' && (
+                <span style={{ fontSize: 11, color: '#8d6e63', fontWeight: 600 }}>
+                  🚪 Кликайте по стенам — проём ставится сразу, без открытия панели
+                </span>
+              )}
             </div>
           </div>
 
@@ -2289,7 +2373,7 @@ export default function FloorPlan() {
               style={{
                 border: '1px solid #dde', borderRadius: 8, overflow: 'hidden', background: '#fafafa',
                 cursor: spaceDown ? (panStartRef.current ? 'grabbing' : 'grab')
-                  : mode === 'draw' ? 'crosshair' : mode === 'select' ? 'default' : mode === 'erase' ? 'pointer' : mode === 'trim' ? 'crosshair' : 'default',
+                  : mode === 'draw' ? 'crosshair' : mode === 'select' ? 'default' : mode === 'erase' ? 'pointer' : mode === 'trim' ? 'crosshair' : mode === 'opening' ? 'crosshair' : 'default',
                 touchAction: 'none',
                 boxShadow: '0 1px 6px rgba(0,0,0,0.08)',
               }}>
