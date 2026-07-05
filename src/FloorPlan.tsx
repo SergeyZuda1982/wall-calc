@@ -13,14 +13,14 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Shape, Image as KonvaIma
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, Room, FinishBaseStage, FinishCoveringType } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, FinishBaseStage, FinishCoveringType } from './types'
 import { DEFAULT_BOARD_SPEC } from './types'
 import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { useTemplateStore } from './store/useTemplateStore'
 import {
-  rectColumnCornersPx, angleTo, snapAngleToStep, rectPerimeterMm, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
+  rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
 } from './core/columnStamp'
 import { computeWallJoins } from './core/wallJoin'
 import type { WallForJoin } from './core/wallJoin'
@@ -379,6 +379,7 @@ export default function FloorPlan() {
     levels, activeLevelId, addLevel, duplicateLevel, removeLevel, renameLevel, setLevelElevation, selectLevel,
     addSlab, addSlabHole,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
+    addRectColumn, updateRectColumn, removeRectColumn,
   } = useProjectStore()
 
   const { templates, addTemplate, removeTemplate } = useTemplateStore()
@@ -388,6 +389,7 @@ export default function FloorPlan() {
   const rooms     = floorPlan?.rooms    ?? []
   const slabs     = floorPlan?.slabs    ?? []
   const roundColumns = floorPlan?.roundColumns ?? []
+  const rectColumns  = floorPlan?.rectColumns  ?? []
   const scaleMmPx = floorPlan?.scaleMmPerPx ?? 10
 
   // ── UI-состояние ──────────────────────────────────────────────────────────
@@ -413,7 +415,8 @@ export default function FloorPlan() {
   // в один ряд с Ctrl при штамповке, см. snapToColumnRow в columnStamp.ts.
   const existingColumnCenters = useMemo(() => {
     const fromRound = roundColumns.map(rc => ({ cx: rc.cx, cy: rc.cy }))
-    const fromRect = rooms
+    const fromRect = rectColumns.map(rc => ({ cx: rc.cx, cy: rc.cy }))
+    const fromLegacyRoomColumns = rooms
       .filter(r => r.isColumn)
       .map(r => {
         const pts = extractContourPoints(r.lineIds, lines)
@@ -423,8 +426,8 @@ export default function FloorPlan() {
         return { cx, cy }
       })
       .filter((c): c is { cx: number; cy: number } => c !== null)
-    return [...fromRound, ...fromRect]
-  }, [roundColumns, rooms, lines])
+    return [...fromRound, ...fromRect, ...fromLegacyRoomColumns]
+  }, [roundColumns, rectColumns, rooms, lines])
   const [drawStep, setDrawStep] = useState('600')
   const [drawLayer1, setDrawLayer1] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
   const [drawLayer2, setDrawLayer2] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
@@ -447,6 +450,7 @@ export default function FloorPlan() {
   const [inspectorId, setInspectorId]   = useState<string | null>(null)
   const [inspectorRoomId, setInspectorRoomId] = useState<string | null>(null)
   const [inspectorRoundColumnId, setInspectorRoundColumnId] = useState<string | null>(null)
+  const [inspectorRectColumnId, setInspectorRectColumnId] = useState<string | null>(null)
   // Цепочка рисования периметра
   const [chainStartPt, setChainStartPt] = useState<{ x: number; y: number } | null>(null)
   const [chainLineIds, setChainLineIds] = useState<string[]>([])
@@ -699,6 +703,15 @@ export default function FloorPlan() {
     const name = window.prompt('Название шаблона:', rc.label || 'Колонна')
     if (!name) return
     addTemplate({ kind: 'roundColumn', name, diameterMm: rc.diameterMm, spec: rc.spec })
+  }
+
+  // Сохранение шаблона от прямоугольной колонны-СУЩНОСТИ (RectColumn, с 05.07.2026).
+  // Старую saveRectColumnAsTemplate(room: Room) выше не трогаем — она нужна
+  // для уже расставленных ранее колонн старого образца (Room+4 линии).
+  function saveRectColumnEntityAsTemplate(rc: RectColumn) {
+    const name = window.prompt('Название шаблона:', rc.label || 'Колонна')
+    if (!name) return
+    addTemplate({ kind: 'rectColumn', name, widthMm: rc.widthMm, depthMm: rc.depthMm, spec: rc.spec })
   }
 
   function confirmErase(ids: string[]) {
@@ -1052,28 +1065,11 @@ export default function FloorPlan() {
 
       let angle = angleTo(stampCenter.x, stampCenter.y, pos.x, pos.y)
       if (orthoMode) angle = snapAngleToStep(angle, 15)
-      const corners = rectColumnCornersPx(stampCenter.x, stampCenter.y, tpl.widthMm, tpl.depthMm, angle, scaleMmPx)
 
-      const lineIds: string[] = []
-      for (let i = 0; i < 4; i++) {
-        const p1 = corners[i]
-        const p2 = corners[(i + 1) % 4]
-        const segMm = lineLengthMm(p1.x, p1.y, p2.x, p2.y, scaleMmPx)
-        const freshLines = useProjectStore.getState().floorPlan?.lines ?? []
-        const id = addPlanLine({
-          x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
-          type: 'wall_existing', lengthMm: segMm, label: genLabel('wall_existing', freshLines),
-          spec: tpl.spec, category: 'capital', workStatus: 'existing', heightMm: 3000,
-        })
-        lineIds.push(id)
-      }
-      const roomCount = (useProjectStore.getState().floorPlan?.rooms ?? []).length + 1
-      addRoom({
-        lineIds,
-        areaM2: rectAreaM2(tpl.widthMm, tpl.depthMm),
-        perimeterMm: rectPerimeterMm(tpl.widthMm, tpl.depthMm),
-        label: `Колонна ${roomCount}`,
-        isColumn: true,
+      const count = (useProjectStore.getState().floorPlan?.rectColumns ?? []).length + 1
+      addRectColumn({
+        cx: stampCenter.x, cy: stampCenter.y, widthMm: tpl.widthMm, depthMm: tpl.depthMm, angleRad: angle,
+        spec: tpl.spec, category: 'capital', workStatus: 'existing', label: `Колонна ${count}`,
       })
       setStampCenter(null)
       return
@@ -1224,7 +1220,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, templates, stampTemplateId, stampCenter, addRoundColumn, addRoom, ctrlDown, existingColumnCenters])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -2354,6 +2350,44 @@ export default function FloorPlan() {
                     )
                   })}
 
+                  {/* Прямоугольные колонны-сущности (RectColumn, с 05.07.2026) — та же
+                      штриховка, что у круглых (генерик, не зависит от материала, см.
+                      комментарий у roundColumns.map выше) и у старых Room-колонн. */}
+                  {rectColumns.map(rc => {
+                    const corners = rectColumnCornersPx(rc.cx, rc.cy, rc.widthMm, rc.depthMm, rc.angleRad, scaleMmPx)
+                    const flat = corners.flatMap(p => [p.x, p.y])
+                    const minX = Math.min(...corners.map(p => p.x)), maxX = Math.max(...corners.map(p => p.x))
+                    const minY = Math.min(...corners.map(p => p.y)), maxY = Math.max(...corners.map(p => p.y))
+                    return (
+                      <Group key={rc.id} listening={false}>
+                        <Line points={flat} closed fill="rgba(120,144,156,0.08)" stroke="#78909c" strokeWidth={1.5} listening={false} />
+                        <Group listening={false} clipFunc={ctx => {
+                          ctx.beginPath()
+                          corners.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+                          ctx.closePath()
+                        }}>
+                          {(() => {
+                            const step = 14
+                            const diag = (maxX - minX) + (maxY - minY)
+                            const strokes = []
+                            for (let d = -diag; d < diag; d += step) {
+                              strokes.push(
+                                <Line key={d}
+                                  points={[minX + d, minY, minX + d + (maxY - minY), maxY]}
+                                  stroke="#78909c" strokeWidth={1} listening={false} />
+                              )
+                            }
+                            return strokes
+                          })()}
+                        </Group>
+                        <Text x={rc.cx - 70} y={rc.cy - 18} width={140}
+                          text={rc.label || 'Колонна'} fontSize={11} fill="#78909c" align="center" fontStyle="bold" listening={false} />
+                        <Text x={rc.cx - 70} y={rc.cy - 2} width={140}
+                          text={`${rectAreaM2(rc.widthMm, rc.depthMm).toFixed(2)} м²`} fontSize={13} fill="#78909c" align="center" fontStyle="bold" listening={false} />
+                      </Group>
+                    )
+                  })}
+
                   {/* Превью текущего контура карандаша — точки + отрезок до курсора */}
                   {mode === 'pencil' && pencilPts.length > 0 && (
                     <>
@@ -2695,8 +2729,8 @@ export default function FloorPlan() {
                     const r = 9 / stageScale
                     return (
                       <Group key={'marker-' + room.id}
-                        onClick={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setSelected(null) }}
-                        onTap={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setSelected(null) }}>
+                        onClick={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setSelected(null) }}
+                        onTap={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setSelected(null) }}>
                         <Circle x={cx} y={cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
                         <Text x={cx - r} y={cy - r} width={r * 2} height={r * 2} text={room.isColumn ? '▦' : '⛶'}
                           fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
@@ -2709,10 +2743,23 @@ export default function FloorPlan() {
                     const r = 9 / stageScale
                     return (
                       <Group key={'marker-' + rc.id}
-                        onClick={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setSelected(null) }}
-                        onTap={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setSelected(null) }}>
+                        onClick={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRectColumnId(null); setSelected(null) }}
+                        onTap={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRectColumnId(null); setSelected(null) }}>
                         <Circle x={rc.cx} y={rc.cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
                         <Text x={rc.cx - r} y={rc.cy - r} width={r * 2} height={r * 2} text="⬤"
+                          fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
+                      </Group>
+                    )
+                  })}
+
+                  {mode === 'select' && rectColumns.map(rc => {
+                    const r = 9 / stageScale
+                    return (
+                      <Group key={'marker-' + rc.id}
+                        onClick={e => { e.cancelBubble = true; setInspectorRectColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setSelected(null) }}
+                        onTap={e => { e.cancelBubble = true; setInspectorRectColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setSelected(null) }}>
+                        <Rect x={rc.cx - r} y={rc.cy - r} width={r * 2} height={r * 2} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
+                        <Text x={rc.cx - r} y={rc.cy - r} width={r * 2} height={r * 2} text="▦"
                           fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
                       </Group>
                     )
@@ -3640,6 +3687,68 @@ export default function FloorPlan() {
                   💾 Сохранить как шаблон
                 </button>
                 <button onClick={() => { removeRoundColumn(rc.id); setInspectorRoundColumnId(null) }}
+                  style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
+                  🗑 Удалить колонну
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+
+        {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && inspectorRectColumnId && (() => {
+          const rc = rectColumns.find(r => r.id === inspectorRectColumnId)
+          if (!rc) return null
+          return (
+            <div style={isMobile ? {
+              ...rightPanelStyle,
+              position: 'absolute', top: 0, bottom: 0, right: 0, zIndex: 21,
+              width: Math.min(RIGHT_W, window.innerWidth - 32),
+              minWidth: 0, maxWidth: Math.min(RIGHT_W, window.innerWidth - 32),
+              boxShadow: '-4px 0 16px rgba(0,0,0,0.25)',
+            } : rightPanelStyle}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px 10px', borderBottom: '1px solid #e0e4ee', background: '#fff',
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>Колонна (прямоугольная)</div>
+                <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorRectColumnId(null)}>✕</button>
+              </div>
+              <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <label style={{ fontSize: 12, color: '#555' }}>
+                  Название
+                  <input value={rc.label} onChange={e => updateRectColumn(rc.id, { label: e.target.value })}
+                    style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                    Ширина, мм
+                    <input type="number" value={rc.widthMm}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateRectColumn(rc.id, { widthMm: v }) }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                  </label>
+                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                    Глубина, мм
+                    <input type="number" value={rc.depthMm}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateRectColumn(rc.id, { depthMm: v }) }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                  </label>
+                </div>
+                <label style={{ fontSize: 12, color: '#555' }}>
+                  Поворот, °
+                  <input type="number" value={Math.round(rc.angleRad * 180 / Math.PI)}
+                    onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) updateRectColumn(rc.id, { angleRad: v * Math.PI / 180 }) }}
+                    style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                </label>
+                <ConstructionSpecSelector planType="wall_existing" value={rc.spec}
+                  onChange={spec => updateRectColumn(rc.id, { spec })} />
+                <div style={{ fontSize: 12, color: '#888' }}>
+                  Площадь сечения: <b>{rectAreaM2(rc.widthMm, rc.depthMm).toFixed(2)} м²</b>
+                </div>
+                <button onClick={() => saveRectColumnEntityAsTemplate(rc)}
+                  style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #c5a880', borderRadius: 5, color: '#8a6d3b', background: '#fdf6ec', cursor: 'pointer' }}>
+                  💾 Сохранить как шаблон
+                </button>
+                <button onClick={() => { removeRectColumn(rc.id); setInspectorRectColumnId(null) }}
                   style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
                   🗑 Удалить колонну
                 </button>

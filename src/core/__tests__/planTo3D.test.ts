@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   wallThicknessMm, wallToBox3D, wallsToBoxes3D, estimateCeilingMm,
-  roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, wallToBoxesWithOpenings3D, pxToM, mmToM,
+  roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM,
 } from '../planTo3D'
-import type { PlanLine, Room, Slab, RoundColumn, PlanOpening } from '../../types'
+import type { PlanLine, Room, Slab, RoundColumn, RectColumn, PlanOpening } from '../../types'
 
 function baseLine(overrides: Partial<PlanLine>): PlanLine {
   return {
@@ -314,5 +314,39 @@ describe('wallToBoxesWithOpenings3D', () => {
     const line = wallLine([op({ offsetMm: 500, widthMm: 800, heightMm: 2000 })])
     const boxes = wallsToBoxes3D([line], 10)
     expect(boxes).toHaveLength(3) // seg + lintel + tail, как в тесте с одной дверью
+  })
+})
+
+describe('rectColumnsToBoxes3D', () => {
+  function baseRectColumn(overrides: Partial<RectColumn>): RectColumn {
+    return { id: 'rc1', cx: 100, cy: 200, widthMm: 400, depthMm: 600, angleRad: 0, label: 'Колонна 1', ...overrides }
+  }
+
+  it('переводит центр/размеры в метры, высота = отметка потолка, центр по Y = половина высоты', () => {
+    const boxes = rectColumnsToBoxes3D([baseRectColumn({})], 10, 3000) // 10мм/px, потолок 3000мм
+    expect(boxes).toHaveLength(1)
+    expect(boxes[0].center.x).toBeCloseTo(1)   // 100px*10мм = 1000мм = 1м
+    expect(boxes[0].center.z).toBeCloseTo(2)   // 200px*10мм = 2000мм = 2м
+    expect(boxes[0].center.y).toBeCloseTo(1.5) // половина потолка (3м) — стоит от пола до потолка
+    expect(boxes[0].size.sx).toBeCloseTo(0.4)  // ширина 400мм
+    expect(boxes[0].size.sz).toBeCloseTo(0.6)  // глубина 600мм
+    expect(boxes[0].size.sy).toBeCloseTo(3)    // высота = потолок
+  })
+
+  it('rotationY = -angleRad', () => {
+    const boxes = rectColumnsToBoxes3D([baseRectColumn({ angleRad: Math.PI / 4 })], 10, 3000)
+    expect(boxes[0].rotationY).toBeCloseTo(-Math.PI / 4)
+  })
+
+  it('колонна с нулевой шириной или глубиной — пропущена', () => {
+    expect(rectColumnsToBoxes3D([baseRectColumn({ widthMm: 0 })], 10, 3000)).toHaveLength(0)
+    expect(rectColumnsToBoxes3D([baseRectColumn({ depthMm: 0 })], 10, 3000)).toHaveLength(0)
+  })
+
+  it('несколько колонн — все переведены', () => {
+    const boxes = rectColumnsToBoxes3D(
+      [baseRectColumn({ id: 'a' }), baseRectColumn({ id: 'b', cx: 300 })], 10, 2700,
+    )
+    expect(boxes.map(b => b.id)).toEqual(['a', 'b'])
   })
 })

@@ -19,7 +19,7 @@
  *   было от чего повесить ригель
  */
 
-import type { PlanLine, PlanLineType, Room, Slab, RoundColumn } from '../types'
+import type { PlanLine, PlanLineType, Room, Slab, RoundColumn, RectColumn } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 
@@ -262,8 +262,42 @@ export function roundColumnsToCylinders3D(
     }))
 }
 
-/** Контуры помещений/колонн → полигоны в метрах, для заливки пола/потолка
- *  и объёма колонн в Scene3D (extrude по высоте средствами three.js). */
+export interface RectColumnBox3D {
+  id: string
+  /** центр коробки, метры; x/z — план (сверху), y — вертикаль (вверх) */
+  center: { x: number; y: number; z: number }
+  /** размеры, метры: sx — вдоль ширины (widthMm), sy — высота, sz — вдоль глубины (depthMm) */
+  size: { sx: number; sy: number; sz: number }
+  /** поворот вокруг вертикальной оси Y, радианы */
+  rotationY: number
+}
+
+/**
+ * Прямоугольные колонны (самостоятельная сущность, см. types/index.ts) →
+ * коробки в метрах, для Scene3D (BoxGeometry). Высота — до общей отметки
+ * потолка этажа, как и у круглой колонны (roundColumnsToCylinders3D) —
+ * тот же принцип, колонна стоит от пола до потолка целиком.
+ *
+ * rotationY = -angleRad: тот же знак, что и wallToBox3D выше выводит из
+ * (dx,dz) направления линии (rotationY = atan2(-dz,dx)) — там для линии,
+ * направленной как (cos θ, sin θ) в px-пространстве (θ = angleRad плана),
+ * dz берётся БЕЗ инверсии (z = pxToM(y) впрямую), так что то же направление
+ * даёт rotationY = atan2(-sin θ, cos θ) = -θ.
+ */
+export function rectColumnsToBoxes3D(
+  rectColumns: RectColumn[], scaleMmPx: number, ceilingMm: number,
+): RectColumnBox3D[] {
+  return rectColumns
+    .filter(rc => rc.widthMm > 0 && rc.depthMm > 0)
+    .map(rc => ({
+      id: rc.id,
+      center: { x: pxToM(rc.cx, scaleMmPx), y: mmToM(ceilingMm) / 2, z: pxToM(rc.cy, scaleMmPx) },
+      size: { sx: mmToM(rc.widthMm), sy: mmToM(ceilingMm), sz: mmToM(rc.depthMm) },
+      rotationY: -rc.angleRad,
+    }))
+}
+
+
 export function roomsToPolygons3D(rooms: Room[], lines: PlanLine[], scaleMmPx: number): RoomPolygon3D[] {
   return rooms
     .map(room => {
