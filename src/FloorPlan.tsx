@@ -34,7 +34,7 @@ import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
 import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
 import { extractContourPoints } from './core/contour'
-import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius } from './core/geometry2d'
+import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection } from './core/geometry2d'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
 }
 
-type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp'
+type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -395,6 +395,7 @@ export default function FloorPlan() {
   // ── UI-состояние ──────────────────────────────────────────────────────────
   const [planView, setPlanView]         = useState<PlanView>('top')
   const [mode, setMode]                 = useState<Mode>('draw')
+  const [trimSourceId, setTrimSourceId] = useState<string | null>(null)  // первый клик инструмента "обрезать/продлить"
   const [drawType, setDrawType]         = useState<PlanLineType>('wall_new')
   const [drawSpec, setDrawSpec]         = useState<PlanLineSpec | null>(null)
   const [drawHeightMm, setDrawHeightMm] = useState('3000')
@@ -676,6 +677,7 @@ export default function FloorPlan() {
     if (m !== 'select') setSelected(null)
     if (m !== 'erase') setEraseIds([])
     if (m !== 'stamp') { setStampTemplateId(null); setStampCenter(null) }
+    if (m !== 'trim') setTrimSourceId(null)
     if (isMobile && m === 'draw') setMobileLeftOpen(false)
   }
 
@@ -1242,11 +1244,56 @@ export default function FloorPlan() {
       setContourIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
       return
     }
+    if (mode === 'trim') {
+      if (!trimSourceId) {
+        setTrimSourceId(id)               // первый клик — что обрезаем/продлеваем
+      } else if (trimSourceId === id) {
+        setTrimSourceId(null)             // клик по той же линии — отмена
+      } else {
+        performTrim(trimSourceId, id)     // второй клик — до чего обрезаем/продлеваем
+        setTrimSourceId(null)
+      }
+      return
+    }
     if (mode === 'select') {
       startDragLine(id, 'line', pos.x, pos.y)
     }
     setSelected(id)
-  }, [mode, lines])
+  }, [mode, lines, trimSourceId])
+
+  /**
+   * Обрезать/продлить линию source до пересечения с бесконечным продолжением
+   * линии target — двигаем тот конец source, что БЛИЖЕ к точке пересечения
+   * (если он был "недотянут" — продлеваем, если "перелетел" — обрезаем;
+   * одна операция покрывает оба случая, как их обычно и понимают на объекте).
+   *
+   * Пока только для прямых линий — дуга (sagittaMm) требует пересечения
+   * с окружностью, это другая геометрия, не реализовано (см. KONSPEKT.md).
+   */
+  function performTrim(sourceId: string, targetId: string) {
+    const source = lines.find(l => l.id === sourceId)
+    const target = lines.find(l => l.id === targetId)
+    if (!source || !target) return
+    if (source.sagittaMm || target.sagittaMm) {
+      window.alert('Обрезка/продление пока не поддерживает дуги — только прямые линии.')
+      return
+    }
+    const ip = infiniteLineIntersection(source.x1, source.y1, source.x2, source.y2, target.x1, target.y1, target.x2, target.y2)
+    if (!ip) {
+      window.alert('Эти линии параллельны — обрезать/продлить одну до другой нельзя.')
+      return
+    }
+    const d1 = dist(source.x1, source.y1, ip.x, ip.y)
+    const d2 = dist(source.x2, source.y2, ip.x, ip.y)
+    if (d1 <= d2) {
+      const lengthMm = lineLengthMm(ip.x, ip.y, source.x2, source.y2, scaleMmPx)
+      updatePlanLine(sourceId, { x1: ip.x, y1: ip.y, lengthMm })
+    } else {
+      const lengthMm = lineLengthMm(source.x1, source.y1, ip.x, ip.y, scaleMmPx)
+      updatePlanLine(sourceId, { x2: ip.x, y2: ip.y, lengthMm })
+    }
+    setSelected(sourceId)
+  }
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -1255,6 +1302,8 @@ export default function FloorPlan() {
         switchMode('select')
       } else if (mode === 'stamp') {
         setStampCenter(null)
+      } else if (mode === 'trim') {
+        setTrimSourceId(null)
       } else {
         setDrawing(null); setSelected(null); setScaleStep(0); setScalePt1(null); setScalePt2(null)
         setPencilPts([])
@@ -1904,6 +1953,7 @@ export default function FloorPlan() {
             ['select',  '✥', 'Двигать'],
             ['contour', '⬡', 'Замкнуть контур'],
             ['scale',   '⬛', 'Масштаб'],
+            ['trim',    '✂', 'Обрезать/продлить'],
           ] as [Mode, string, string][]).map(([m, icon, label]) => (
             <button key={m} onClick={() => switchMode(m)}
               style={{
@@ -2192,6 +2242,11 @@ export default function FloorPlan() {
                   ⬡ Выделено линий: {contourIds.length}
                 </span>
               )}
+              {mode === 'trim' && (
+                <span style={{ fontSize: 11, color: '#00897b', fontWeight: 600 }}>
+                  {!trimSourceId ? '✂ Кликните линию, которую обрезать/продлить' : '✂ Теперь кликните линию, до которой тянуть'}
+                </span>
+              )}
             </div>
           </div>
 
@@ -2200,7 +2255,7 @@ export default function FloorPlan() {
               style={{
                 border: '1px solid #dde', borderRadius: 8, overflow: 'hidden', background: '#fafafa',
                 cursor: spaceDown ? (panStartRef.current ? 'grabbing' : 'grab')
-                  : mode === 'draw' ? 'crosshair' : mode === 'select' ? 'default' : mode === 'erase' ? 'pointer' : 'default',
+                  : mode === 'draw' ? 'crosshair' : mode === 'select' ? 'default' : mode === 'erase' ? 'pointer' : mode === 'trim' ? 'crosshair' : 'default',
                 touchAction: 'none',
                 boxShadow: '0 1px 6px rgba(0,0,0,0.08)',
               }}>
@@ -2459,12 +2514,13 @@ export default function FloorPlan() {
                     const isSelected = l.id === selectedId
                     const inContour  = contourIds.includes(l.id)
                     const inErase    = eraseIds.includes(l.id)
+                    const inTrimSrc  = mode === 'trim' && l.id === trimSourceId
                     const baseColor  = LINE_COLORS[l.type]
 
                     const vis       = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
                     const specColor = vis.colorOverride ?? baseColor
-                    const stroke    = inErase ? '#e53935' : inContour ? '#ff9800' : isSelected ? '#ff5722' : specColor
-                    const dash      = (inErase || inContour || isSelected) ? undefined : (vis.dash ?? undefined)
+                    const stroke    = inErase ? '#e53935' : inContour ? '#ff9800' : inTrimSrc ? '#00897b' : isSelected ? '#ff5722' : specColor
+                    const dash      = (inErase || inContour || isSelected || inTrimSrc) ? undefined : (vis.dash ?? undefined)
 
                     const mx = (l.x1 + l.x2) / 2
                     const my = (l.y1 + l.y2) / 2

@@ -169,6 +169,42 @@ export function computeWallJoins(walls: WallForJoin[]): Map<string, JoinedWall> 
   return res
 }
 
+/**
+ * Позиция точки вдоль оси стены (в тех же мировых px, что и координаты) —
+ * растёт от x1,y1 к x2,y2. Не путать с projT() — та возвращает t∈[0,1]
+ * от длины, а тут — абсолютное расстояние, чтобы сравнивать точки без
+ * лишнего деления.
+ */
+function axisPos(w: WallForJoin, wi: WInfo, p: Pt): number {
+  return (p.x - w.x1) * wi.ux + (p.y - w.y1) * wi.uy
+}
+
+/**
+ * Защита от перекручивания короткой стены под острым углом (см. KONSPEKT.md,
+ * "ступенька" на диагональном примыкании — реальный кейс с объекта).
+ *
+ * Митровый стык может "утянуть" угловую точку НАЗАД за уже зафиксированную
+ * точку на другом конце той же стены — если стена короткая, а угол между
+ * ней и соседкой острый. Тогда верхняя и нижняя грани стены меняются
+ * местами по ходу оси, и заливка получается перекрученной (самопересечение).
+ *
+ * Проверяем: не нарушает ли кандидат порядок точек вдоль оси относительно
+ * уже зафиксированной точки на другом конце. Если нарушает — откатываемся
+ * на исходную (не митрованную) точку конца стены: это оставит небольшой
+ * зазор в самом углу вместо развёрнутого клина, что при таких коротких
+ * отрезках заметно безопаснее.
+ */
+function safeCorner(
+  w: WallForJoin, wi: WInfo, end: 'end1' | 'end2',
+  candidate: Pt, fallback: Pt, otherEndCurrent: Pt,
+): Pt {
+  const MARGIN = 1 // px, запас на числовую погрешность
+  const tCand = axisPos(w, wi, candidate)
+  const tOther = axisPos(w, wi, otherEndCurrent)
+  const ok = end === 'end2' ? tCand > tOther + MARGIN : tCand < tOther - MARGIN
+  return ok ? candidate : fallback
+}
+
 // ─── L-стык: митровый стык, обе линии корректируются ──────────────────────
 
 function applyL(
@@ -189,18 +225,39 @@ function applyL(
   const Imm = rayX(aPm.x, aPm.y, ai.ux, ai.uy, bPm.x, bPm.y, bi.ux, bi.uy)
   if (!Ipp || !Imm) return
 
-  // Устанавливаем скорректированные точки (только если конец ещё не обработан)
-  setEnd(ja, aEnd, Ipp, Imm)
-  setEnd(jb, bEnd, Ipp, Imm)
+  // Точки на ДРУГОМ конце той же стены (для проверки порядка вдоль оси)
+  const aOtherPp = aEnd === 'end1' ? ja.p2p : ja.p1p
+  const aOtherPm = aEnd === 'end1' ? ja.p2m : ja.p1m
+  const bOtherPp = bEnd === 'end1' ? jb.p2p : jb.p1p
+  const bOtherPm = bEnd === 'end1' ? jb.p2m : jb.p1m
 
-  // Расширяем оси для заливки:
+  const aSafePp = safeCorner(a, ai, aEnd, Ipp, aPp, aOtherPp)
+  const aSafePm = safeCorner(a, ai, aEnd, Imm, aPm, aOtherPm)
+  const bSafePp = safeCorner(b, bi, bEnd, Ipp, bPp, bOtherPp)
+  const bSafePm = safeCorner(b, bi, bEnd, Imm, bPm, bOtherPm)
+
+  // Устанавливаем скорректированные точки (только если конец ещё не обработан)
+  setEnd(ja, aEnd, aSafePp, aSafePm)
+  setEnd(jb, bEnd, bSafePp, bSafePm)
+
+  // Расширяем оси для заливки — но только со стороны, где реально
+  // применился митр (не откат на fallback): иначе при коротком отрезке
+  // под острым углом ось "уедет" дальше, чем реально прорисованные грани,
+  // и получится нахлёст в другом месте.
+  const aUsedMiter = aSafePp === Ipp && aSafePm === Imm
+  const bUsedMiter = bSafePp === Ipp && bSafePm === Imm
+
   // Конец A продлевается вдоль dir_A на halfB (чтобы заливка дошла до внешнего угла)
-  if (aEnd === 'end2') { ja.ax2 += ai.ux * b.halfPx; ja.ay2 += ai.uy * b.halfPx }
-  else                  { ja.ax1 -= ai.ux * b.halfPx; ja.ay1 -= ai.uy * b.halfPx }
+  if (aUsedMiter) {
+    if (aEnd === 'end2') { ja.ax2 += ai.ux * b.halfPx; ja.ay2 += ai.uy * b.halfPx }
+    else                  { ja.ax1 -= ai.ux * b.halfPx; ja.ay1 -= ai.uy * b.halfPx }
+  }
 
   // Конец B продлевается вдоль dir_B на halfA
-  if (bEnd === 'end2') { jb.ax2 += bi.ux * a.halfPx; jb.ay2 += bi.uy * a.halfPx }
-  else                  { jb.ax1 -= bi.ux * a.halfPx; jb.ay1 -= bi.uy * a.halfPx }
+  if (bUsedMiter) {
+    if (bEnd === 'end2') { jb.ax2 += bi.ux * a.halfPx; jb.ay2 += bi.uy * a.halfPx }
+    else                  { jb.ax1 -= bi.ux * a.halfPx; jb.ay1 -= bi.uy * a.halfPx }
+  }
 }
 
 // ─── T-стык: attached обрезается до ближней грани main ───────────────────
