@@ -483,6 +483,13 @@ export default function FloorPlan() {
   const bgSourceRef = useRef<{ file: File; pageNum: number; lastRenderedDataUrl: string } | null>(null)
   const bgRerenderTimeoutRef = useRef<number | null>(null)
   const bgRerenderingRef = useRef(false)
+  // true между "дорендер подложки закончился" и следующим прогоном эффекта
+  // автоцентрирования — говорит ему: это не новая подложка, а та же картинка
+  // просто перерисована чётче на том же месте, экран трогать не нужно.
+  // Без этого флага автоцентрирование срабатывало прямо во время рисования
+  // карандашом (стоило зуму спровоцировать дорендер) — экран "отлетал"
+  // от пользователя посреди работы, см. КОНСПЕКТ по багу 05.07.2026.
+  const bgRerenderSkipFitRef = useRef(false)
 
   // Загружаем HTMLImageElement из dataUrl при изменении подложки в сторе
   useEffect(() => {
@@ -522,7 +529,10 @@ export default function FloorPlan() {
         const res = await renderPdfPageToImage(s.file, s.pageNum, { targetLongSidePx })
         bgSourceRef.current = { ...s, lastRenderedDataUrl: res.dataUrl }
         // Мировые width/height (позиция и размер на плане) НЕ трогаем —
-        // меняется только сама картинка, она просто чётче в текущем зуме
+        // меняется только сама картинка, она просто чётче в текущем зуме.
+        // Это не "новая подложка" — эффект автоцентрирования ниже должен
+        // это обновление пропустить (см. bgRerenderSkipFitRef выше).
+        bgRerenderSkipFitRef.current = true
         updateBackgroundImage({ dataUrl: res.dataUrl })
       } catch {
         // тихо не получилось (например, файл больше недоступен) — остаёмся
@@ -535,8 +545,12 @@ export default function FloorPlan() {
     return () => { if (bgRerenderTimeoutRef.current) window.clearTimeout(bgRerenderTimeoutRef.current) }
   }, [stageScale, floorPlan?.backgroundImage, bgImageEl, updateBackgroundImage])
 
-  // Автоцентрирование канваса сразу после загрузки/смены подложки — чтобы не потерять её из виду
+  // Автоцентрирование канваса сразу после загрузки/смены подложки — чтобы не потерять её из виду.
+  // Пропускаем, если это не новая подложка, а просто дорендер той же картинки
+  // на резкость (bgRerenderSkipFitRef) — иначе экран "отлетал" прямо во время
+  // рисования, стоило зуму спровоцировать дорендер (баг 05.07.2026).
   useEffect(() => {
+    if (bgRerenderSkipFitRef.current) { bgRerenderSkipFitRef.current = false; return }
     if (!floorPlan?.backgroundImage) return
     const t = setTimeout(() => fitToContent(), 50)
     return () => clearTimeout(t)
@@ -938,7 +952,7 @@ export default function FloorPlan() {
       setChainLineIds([])
     }
     if (mode === 'pencil') {
-      setPencilPts([])
+      setPencilPts(prev => prev.slice(0, -1))
     }
     if (mode === 'stamp') {
       setStampCenter(null)
@@ -1039,6 +1053,13 @@ export default function FloorPlan() {
           addSlab(pencilPts)
         }
         setPencilPts([])
+        return
+      }
+      // Клик рядом с уже поставленной точкой контура (не первой — та замыкает,
+      // см. выше) — удалить именно её, не только последнюю через ПКМ.
+      const hitIdx = pencilPts.findIndex((p, i) => i > 0 && dist(pt.x, pt.y, p.x, p.y) <= closeThresh)
+      if (hitIdx !== -1) {
+        setPencilPts(prev => prev.filter((_, i) => i !== hitIdx))
         return
       }
       setPencilPts(prev => [...prev, { x: pt.x, y: pt.y }])
