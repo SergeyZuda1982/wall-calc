@@ -462,7 +462,7 @@ export default function FloorPlan() {
   // Уточнение масштаба по уже начерченной линии
   const [recalInput, setRecalInput]           = useState('')
   // Добавление проёма (дверь/окно) на выбранной линии
-  const [openingType, setOpeningType]         = useState<'door' | 'window'>('door')
+  const [openingType, setOpeningType]         = useState<'door' | 'window' | 'opening'>('door')
   const [openingOffset, setOpeningOffset]     = useState('')
   const [openingWidth, setOpeningWidth]       = useState('')
   const [openingHeight, setOpeningHeight]     = useState('2000')
@@ -1333,9 +1333,9 @@ export default function FloorPlan() {
     }
   }
 
-  /** Следующий порядковый номер проёма данного типа (Д-N / О-N) — сквозная нумерация по всему плану */
-  function nextOpeningLabel(type: 'door' | 'window'): string {
-    const prefix = type === 'door' ? 'Д' : 'О'
+  /** Следующий порядковый номер проёма данного типа (Д-N / О-N / Пр-N) — сквозная нумерация по всему плану */
+  function nextOpeningLabel(type: 'door' | 'window' | 'opening'): string {
+    const prefix = type === 'door' ? 'Д' : type === 'window' ? 'О' : 'Пр'
     let maxN = 0
     for (const l of lines) {
       for (const op of l.openings ?? []) {
@@ -1348,7 +1348,7 @@ export default function FloorPlan() {
   }
 
   function addOpening(
-    lineId: string, type: 'door' | 'window',
+    lineId: string, type: 'door' | 'window' | 'opening',
     offsetMm: number, widthMm: number, heightMm: number, sillHeightMm?: number,
   ) {
     const line = lines.find(l => l.id === lineId)
@@ -1357,7 +1357,7 @@ export default function FloorPlan() {
     const id = `op_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
     const label = nextOpeningLabel(type)
     const opening: PlanOpening = { id, type, offsetMm, widthMm, heightMm, label }
-    if (type === 'window' && sillHeightMm !== undefined) opening.sillHeightMm = sillHeightMm
+    if (type !== 'door' && sillHeightMm !== undefined && sillHeightMm >= 0) opening.sillHeightMm = sillHeightMm
     updatePlanLine(lineId, { openings: [...(line.openings ?? []), opening] })
   }
 
@@ -3213,11 +3213,13 @@ export default function FloorPlan() {
                       <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
                         {(inspectorLine.openings ?? []).map(op => (
                           <div key={op.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '4px 6px', background: '#f7f8fb', borderRadius: 4 }}>
-                            <span style={{ fontWeight: 600, color: op.type === 'door' ? '#8d6e63' : '#42a5f5', minWidth: 32 }}>{op.label}</span>
+                            <span style={{ fontWeight: 600, color: op.type === 'door' ? '#8d6e63' : op.type === 'window' ? '#42a5f5' : '#78909c', minWidth: 32 }}>{op.label}</span>
                             <span style={{ color: '#666' }}>
                               {op.type === 'door'
                                 ? `дверь, отступ ${op.offsetMm}, ${op.widthMm}×${op.heightMm}мм`
-                                : `окно, отступ ${op.offsetMm}, ${op.widthMm}×${op.heightMm}мм, низ от пола ${op.sillHeightMm ?? 900}мм`}
+                                : op.type === 'window'
+                                  ? `окно, отступ ${op.offsetMm}, ${op.widthMm}×${op.heightMm}мм, низ от пола ${op.sillHeightMm ?? 900}мм`
+                                  : `проём, отступ ${op.offsetMm}, ${op.widthMm}×${op.heightMm}мм${op.sillHeightMm ? `, низ от пола ${op.sillHeightMm}мм` : ''}`}
                             </span>
                             <button onClick={() => removeOpening(inspectorLine.id, op.id)}
                               style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: '#e57373', cursor: 'pointer', fontSize: 13, padding: '0 4px' }}>✕</button>
@@ -3227,17 +3229,26 @@ export default function FloorPlan() {
                     )}
 
                     <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-                      {(['door', 'window'] as const).map(t => (
-                        <button key={t} onClick={() => { setOpeningType(t); setOpeningHeight(t === 'door' ? '2000' : '1200') }}
-                          style={{
-                            flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer',
-                            border: `1px solid ${openingType === t ? (t === 'door' ? '#8d6e63' : '#42a5f5') : '#dde'}`,
-                            background: openingType === t ? (t === 'door' ? '#8d6e6320' : '#42a5f520') : '#fff',
-                            color: openingType === t ? (t === 'door' ? '#8d6e63' : '#42a5f5') : '#888',
-                          }}>
-                          {t === 'door' ? 'Дверь' : 'Окно'}
-                        </button>
-                      ))}
+                      {(['door', 'window', 'opening'] as const).map(t => {
+                        const color = t === 'door' ? '#8d6e63' : t === 'window' ? '#42a5f5' : '#78909c'
+                        return (
+                          <button key={t}
+                            onClick={() => {
+                              setOpeningType(t)
+                              setOpeningHeight(t === 'window' ? '1200' : '2000')
+                              if (t === 'opening') setOpeningSill('0')
+                              else if (t === 'window') setOpeningSill('900')
+                            }}
+                            style={{
+                              flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer',
+                              border: `1px solid ${openingType === t ? color : '#dde'}`,
+                              background: openingType === t ? color + '20' : '#fff',
+                              color: openingType === t ? color : '#888',
+                            }}>
+                            {t === 'door' ? 'Дверь' : t === 'window' ? 'Окно' : 'Проём'}
+                          </button>
+                        )
+                      })}
                     </div>
                     <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
                       <input type="number" placeholder="отступ, мм" value={openingOffset}
@@ -3249,12 +3260,12 @@ export default function FloorPlan() {
                     </div>
                     <div style={{ display: 'flex', gap: 4 }}>
                       <input type="number"
-                        placeholder={openingType === 'door' ? 'высота от пола, мм' : 'высота окна, мм'}
+                        placeholder={openingType === 'window' ? 'высота окна, мм' : 'высота проёма, мм'}
                         value={openingHeight}
                         onChange={e => setOpeningHeight(e.target.value)}
                         style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #dde', minWidth: 0 }} />
-                      {openingType === 'window' && (
-                        <input type="number" placeholder="низ окна от пола, мм" value={openingSill}
+                      {(openingType === 'window' || openingType === 'opening') && (
+                        <input type="number" placeholder="низ от пола, мм (0 — от пола)" value={openingSill}
                           onChange={e => setOpeningSill(e.target.value)}
                           style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #dde', minWidth: 0 }} />
                       )}
@@ -3263,7 +3274,7 @@ export default function FloorPlan() {
                       onClick={() => {
                         const offset = parseFloat(openingOffset), width = parseFloat(openingWidth)
                         const height = parseFloat(openingHeight)
-                        const sill = openingType === 'window' ? parseFloat(openingSill) : undefined
+                        const sill = openingType !== 'door' ? parseFloat(openingSill) : undefined
                         if (offset >= 0 && width > 0 && height > 0) {
                           addOpening(inspectorLine.id, openingType, offset, width, height, sill)
                           setOpeningOffset(''); setOpeningWidth('')

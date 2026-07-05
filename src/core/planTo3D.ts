@@ -7,7 +7,10 @@
  * (extrude, материалы, цвета) — в Scene3D.tsx.
  *
  * v1 упрощения (сознательно, см. KONSPEKT.md):
- * - проёмы (двери/окна) НЕ вырезаются из объёма стены — сплошной короб
+ * - проёмы (дверь/окно/просто проём) вырезаются как прямые прямоугольные
+ *   разрезы вдоль оси стены (см. wallToBoxesWithOpenings3D) — без скосов
+ *   и без арок; откос/четверть проёма не моделируются, просто чистый
+ *   прямоугольный вырез на всю толщину стены
  * - митры/стыки стен (wallJoin) не учитываются — стены просто накладываются
  *   друг на друга по углам, как коробки; визуально это уже "стена", а не
  *   голая линия, довести до идеального стыка можно отдельным шагом
@@ -104,9 +107,98 @@ export function wallToBox3D(line: PlanLine, scaleMmPx: number, ceilingMm: number
 
 export function wallsToBoxes3D(lines: PlanLine[], scaleMmPx: number): WallBox3D[] {
   const ceilingMm = estimateCeilingMm(lines)
-  return lines
-    .map(l => wallToBox3D(l, scaleMmPx, ceilingMm))
-    .filter((b): b is WallBox3D => b !== null)
+  return lines.flatMap(l => wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm))
+}
+
+/**
+ * Стена (короб) с вырезанными проёмами (дверь/окно/просто проём).
+ *
+ * Вместо булевой геометрии (CSG) — которой в проекте нет и на three.js r128
+ * заводить её ради этого не стоит — короб просто режется на несколько
+ * коробов поменьше вдоль оси линии, ровно как это уже делает 2D-рендер для
+ * плана (см. FloorPlan.tsx, computeOpeningSegments): сплошные участки между
+ * проёмами — целые короба на всю высоту стены; под и над самим проёмом,
+ * если там есть материал стены (подоконник ниже низа проёма, перемычка выше
+ * его верха) — отдельные короба пониже; сам проём — просто дырка, там
+ * никакого короба нет.
+ *
+ * sillHeightMm трактуется одинаково для всех трёх типов проёма (окно/дверь/
+ * просто проём) — просто "от пола" (для двери и сквозного проёма обычно 0).
+ */
+export function wallToBoxesWithOpenings3D(line: PlanLine, scaleMmPx: number, ceilingMm: number): WallBox3D[] {
+  const baseOrNull = wallToBox3D(line, scaleMmPx, ceilingMm)
+  if (!baseOrNull) return []
+  const base: WallBox3D = baseOrNull
+
+  const lengthM = base.size.sx
+  const openings = (line.openings ?? [])
+    .filter(o => o.widthMm > 0 && o.heightMm > 0)
+    .map(o => ({
+      id: o.id,
+      // клэмпим к длине стены — защита от рассинхрона, если линию укоротили после того,
+      // как проём был добавлен (проём на плане в этом случае тоже "обрежется" по факту)
+      startM: Math.min(Math.max(mmToM(o.offsetMm), 0), lengthM),
+      endM: Math.min(Math.max(mmToM(o.offsetMm + o.widthMm), 0), lengthM),
+      sillM: Math.max(mmToM(o.sillHeightMm ?? 0), 0),
+      heightM: mmToM(o.heightMm),
+    }))
+    .filter(o => o.endM > o.startM)
+    .sort((a, b) => a.startM - b.startM)
+
+  if (openings.length === 0) return [base]
+
+  const wallHeightM = base.size.sy
+  const bottomY = base.center.y - wallHeightM / 2   // низ стены (обычно 0, стена стоит на полу)
+  const ux = Math.cos(base.rotationY), uz = -Math.sin(base.rotationY) // см. rotationY = atan2(-dz, dx) в wallToBox3D
+  const startX = base.center.x - ux * lengthM / 2
+  const startZ = base.center.z - uz * lengthM / 2
+
+  const boxes: WallBox3D[] = []
+
+  function pushAlong(fromM: number, toM: number, suffix: string) {
+    const segLen = toM - fromM
+    if (segLen <= 0.001) return
+    const midM = (fromM + toM) / 2
+    boxes.push({
+      id: `${line.id}__${suffix}`,
+      planLineType: line.type,
+      center: { x: startX + ux * midM, y: base.center.y, z: startZ + uz * midM },
+      size: { sx: segLen, sy: wallHeightM, sz: base.size.sz },
+      rotationY: base.rotationY,
+    })
+  }
+
+  function pushVertical(fromM: number, toM: number, yFrom: number, yTo: number, suffix: string) {
+    const segLen = toM - fromM
+    const h = yTo - yFrom
+    if (segLen <= 0.001 || h <= 0.001) return
+    const midM = (fromM + toM) / 2
+    boxes.push({
+      id: `${line.id}__${suffix}`,
+      planLineType: line.type,
+      center: { x: startX + ux * midM, y: yFrom + h / 2, z: startZ + uz * midM },
+      size: { sx: segLen, sy: h, sz: base.size.sz },
+      rotationY: base.rotationY,
+    })
+  }
+
+  let curM = 0
+  for (const op of openings) {
+    // Часть проёма, ещё не вырезанная предыдущим (на случай двух проёмов внахлёст на
+    // одной линии — редкий, но возможный пользовательский ввод): не досчитываем
+    // подоконник/перемычку там, где стена уже вырезана целиком предыдущим проёмом.
+    const cutStartM = Math.max(op.startM, curM)
+    if (cutStartM >= op.endM) continue // полностью перекрыт предыдущим проёмом — пропускаем целиком
+
+    pushAlong(curM, op.startM, `seg_${op.id}`)
+    const topM = Math.min(wallHeightM, op.sillM + op.heightM)
+    pushVertical(cutStartM, op.endM, bottomY, bottomY + op.sillM, `sill_${op.id}`)          // подоконник (если есть)
+    pushVertical(cutStartM, op.endM, bottomY + topM, bottomY + wallHeightM, `lintel_${op.id}`) // перемычка (если есть)
+    curM = Math.max(curM, op.endM)
+  }
+  pushAlong(curM, lengthM, 'tail')
+
+  return boxes
 }
 
 export interface SlabPolygon3D {
