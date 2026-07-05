@@ -520,9 +520,14 @@ export interface Slab {
 /**
  * Круглая колонна — лёгкая самостоятельная сущность (не Room, не набор линий),
  * по аналогии с тем, как Slab существует параллельно старому коду линий/помещений.
- * Прямоугольные колонны по-прежнему остаются обычным Room с isColumn: true
- * (4 линии wall_existing, замкнутые в контур) — здесь только для круглых,
- * т.к. окружность нельзя без искажений собрать из прямых линий в Room.
+ *
+ * ⚠️ Прямоугольные колонны — тоже самостоятельная сущность, см. RectColumn ниже
+ * (с 05.07.2026). До этой даты штамповка прямоугольного шаблона создавала
+ * 4 линии wall_existing + Room с isColumn: true — старые, уже расставленные
+ * на реальных объектах колонны ТАК И ОСТАЮТСЯ (не мигрированы, риск потери
+ * данных при автомиграции сочли выше пользы), Room.isColumn всё ещё
+ * поддерживается везде в коде ради них. Новые прямоугольные колонны с этой
+ * даты — уже RectColumn.
  */
 export interface RoundColumn {
   id: string
@@ -530,6 +535,27 @@ export interface RoundColumn {
   cy: number
   diameterMm: number
   spec?: PlanLineSpec    // тот же тип spec, что у wall_existing (материал/подтип)
+  category?: LineCategory   // по умолчанию 'capital'
+  workStatus?: WorkStatus   // по умолчанию 'existing'
+  label: string
+}
+
+/**
+ * Прямоугольная колонна — самостоятельная сущность (см. комментарий у
+ * RoundColumn выше про историю до/после 05.07.2026). Геометрия — центр +
+ * ширина/глубина (мм) + угол поворота (радианы, 0 = ширина вдоль оси X
+ * плана), та же математика, что уже была в core/columnStamp.ts
+ * (rectColumnCornersPx) для штамповки — теперь она просто хранится как
+ * поля объекта, а не "запекается" в 4 отдельные линии.
+ */
+export interface RectColumn {
+  id: string
+  cx: number
+  cy: number
+  widthMm: number
+  depthMm: number
+  angleRad: number
+  spec?: PlanLineSpec
   category?: LineCategory   // по умолчанию 'capital'
   workStatus?: WorkStatus   // по умолчанию 'existing'
   label: string
@@ -543,6 +569,7 @@ export interface FloorPlan {
   rooms: Room[]
   slabs: Slab[]
   roundColumns: RoundColumn[]
+  rectColumns: RectColumn[]
   backgroundImage?: BackgroundImage | null
 }
 
@@ -553,6 +580,7 @@ export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   rooms: [],
   slabs: [],
   roundColumns: [],
+  rectColumns: [],
   backgroundImage: null,
 }
 

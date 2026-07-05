@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, RoundColumn } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, RoundColumn, RectColumn } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 
 const PROFILE_LETTER: Record<string, string> = {
@@ -107,6 +107,10 @@ export interface ProjectStore {
   addRoundColumn: (col: Omit<RoundColumn, 'id'>) => string
   updateRoundColumn: (id: string, patch: Partial<RoundColumn>) => void
   removeRoundColumn: (id: string) => void
+  // прямоугольные колонны (с 05.07.2026 — самостоятельная сущность, см. types/index.ts)
+  addRectColumn: (col: Omit<RectColumn, 'id'>) => string
+  updateRectColumn: (id: string, patch: Partial<RectColumn>) => void
+  removeRectColumn: (id: string) => void
 }
 
 function emptyProject(name: string): ProjectEntry {
@@ -561,6 +565,29 @@ export const useProjectStore = create<ProjectStore>()(
           ...fp, roundColumns: (fp.roundColumns ?? []).filter(rc => rc.id !== id),
         })))
       },
+
+      // ─── Прямоугольные колонны (самостоятельная сущность с 05.07.2026) ─────
+
+      addRectColumn: (col) => {
+        const id = `rectcol_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const newCol: RectColumn = { ...col, id }
+          return updateActiveFloorPlan(s, fp => ({ ...fp, rectColumns: [...(fp.rectColumns ?? []), newCol] }))
+        })
+        return id
+      },
+
+      updateRectColumn: (id, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, rectColumns: (fp.rectColumns ?? []).map(rc => rc.id === id ? { ...rc, ...patch } : rc),
+        })))
+      },
+
+      removeRectColumn: (id) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, rectColumns: (fp.rectColumns ?? []).filter(rc => rc.id !== id),
+        })))
+      },
     }),
     {
       name: 'wall-calc-projects', // ключ в localStorage
@@ -578,13 +605,13 @@ export const useProjectStore = create<ProjectStore>()(
           state.projects = state.projects.map(p => {
             const legacy = p as unknown as { floorPlan?: FloorPlan; levels?: Level[]; activeLevelId?: string }
             const levels: Level[] = legacy.levels && legacy.levels.length > 0
-              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], roundColumns: lv.floorPlan.roundColumns ?? [] } }))
+              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], roundColumns: lv.floorPlan.roundColumns ?? [], rectColumns: lv.floorPlan.rectColumns ?? [] } }))
               : [{
                   id: `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`,
                   name: 'Этаж 1',
                   elevationMm: 0,
                   floorPlan: legacy.floorPlan
-                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [] }
+                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [], rectColumns: legacy.floorPlan.rectColumns ?? [] }
                     : { ...DEFAULT_FLOOR_PLAN, lines: [], contours: [] },
                 }]
             const activeLevelId = legacy.activeLevelId && levels.some(lv => lv.id === legacy.activeLevelId)

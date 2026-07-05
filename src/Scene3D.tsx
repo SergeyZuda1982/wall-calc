@@ -16,9 +16,9 @@ import { OrbitControls, Grid, FlyControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { useProjectStore } from './store/useProjectStore'
 import {
-  wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, estimateCeilingMm, mmToM,
+  wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
-  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D,
+  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D,
 } from './core/planTo3D'
 import type { PlanLineType } from './types'
 
@@ -148,6 +148,21 @@ function RoundColumnMesh({ cyl }: { cyl: ColumnCylinder3D }) {
   )
 }
 
+/**
+ * Прямоугольная колонна (самостоятельная сущность) → коробка three.js.
+ * Тот же принцип, что и WallMesh (боковая коробка стены) — но свой
+ * фиксированный цвет COLUMN_COLOR, как и у круглой колонны, а не цвет
+ * из TYPE_COLOR_3D (колонна не привязана к PlanLineType).
+ */
+function RectColumnMesh({ box }: { box: RectColumnBox3D }) {
+  return (
+    <mesh position={[box.center.x, box.center.y, box.center.z]} rotation={[0, box.rotationY, 0]} castShadow receiveShadow>
+      <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
+      <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} />
+    </mesh>
+  )
+}
+
 export default function Scene3D() {
   const [cameraMode, setCameraMode] = useState<'orbit' | 'fly'>('orbit')
   const floorPlan = useProjectStore(s => s.floorPlan)
@@ -155,6 +170,7 @@ export default function Scene3D() {
   const rooms = floorPlan?.rooms ?? []
   const slabs = floorPlan?.slabs ?? []
   const roundColumns = floorPlan?.roundColumns ?? []
+  const rectColumns = floorPlan?.rectColumns ?? []
   const scaleMmPx = floorPlan?.scaleMmPerPx ?? 10
 
   const boxes = useMemo(() => wallsToBoxes3D(lines, scaleMmPx), [lines, scaleMmPx])
@@ -165,9 +181,13 @@ export default function Scene3D() {
     () => roundColumnsToCylinders3D(roundColumns, scaleMmPx, ceilingMm),
     [roundColumns, scaleMmPx, ceilingMm],
   )
+  const rectColumnBoxes = useMemo(
+    () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm),
+    [rectColumns, scaleMmPx, ceilingMm],
+  )
   const hasHandDrawnSlabs = slabPolygons.length > 0
 
-  const isEmpty = boxes.length === 0 && polygons.length === 0 && slabPolygons.length === 0 && columnCylinders.length === 0
+  const isEmpty = boxes.length === 0 && polygons.length === 0 && slabPolygons.length === 0 && columnCylinders.length === 0 && rectColumnBoxes.length === 0
 
   if (isEmpty) {
     return (
@@ -216,6 +236,7 @@ export default function Scene3D() {
         {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} />)}
         {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} />)}
         {columnCylinders.map(cyl => <RoundColumnMesh key={cyl.id} cyl={cyl} />)}
+        {rectColumnBoxes.map(box => <RectColumnMesh key={box.id} box={box} />)}
         {cameraMode === 'orbit'
           ? <OrbitControls makeDefault />
           : <FlyControls makeDefault dragToLook movementSpeed={4} rollSpeed={0.6} />}
