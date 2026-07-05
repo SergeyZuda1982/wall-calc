@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, RoundColumn, RectColumn } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 
@@ -48,6 +48,14 @@ export interface ProjectStore {
   floorPlan: FloorPlan  // = план АКТИВНОГО этажа (levels.find(activeLevelId).floorPlan)
   activeWallId: string | null
   activeLiningId: string | null
+
+  /**
+   * Ошибка последнего сохранения на диск (см. safeLocalStorage выше).
+   * null — сохранение прошло успешно (или ещё не было ошибок).
+   * Непустая строка — данные живут только в памяти, диск переполнен.
+   */
+  saveError: string | null
+  clearSaveError: () => void
 
   // управление объектами
   createProject: (name: string) => ProjectEntry
@@ -169,6 +177,79 @@ function updateActiveFloorPlan(
   return { floorPlan, projects }
 }
 
+/**
+ * СРОЧНЫЙ фикс 05.07.2026: JSON.stringify всего state на КАЖДОЕ изменение
+ * стора (так работает zustand persist) при наличии PDF-подложек как base64
+ * внутри projects — это не только упирается в quota (см. safeLocalStorage
+ * ниже), а ещё и просто ДОЛГО считается синхронно на большом объёме данных,
+ * подвешивая вкладку на реальных действиях (создание/выбор проекта).
+ *
+ * Временное решение: вообще не пишем dataUrl подложек на диск. Сама
+ * подложка остаётся в памяти на время сессии (можно откалибровать план,
+ * пользоваться), но пропадёт при перезагрузке страницы — до тех пор,
+ * пока подложки не переедут в IndexedDB (отдельная задача, TASKS.md).
+ * Явный компромисс, согласован с пользователем как временный.
+ */
+export function stripHeavyDataForPersist(projects: ProjectEntry[]): ProjectEntry[] {
+  return projects.map(p => ({
+    ...p,
+    levels: p.levels.map(lv => {
+      if (!lv.floorPlan.backgroundImage) return lv
+      // dataUrl вырезаем, остальные поля (x/y/width/height/opacity/locked)
+      // оставляем — они лёгкие, пригодятся, чтобы не терять калибровку
+      // геометрии, если подложку потом перезагрузят по новой.
+      const { dataUrl: _dataUrl, ...rest } = lv.floorPlan.backgroundImage
+      return { ...lv, floorPlan: { ...lv.floorPlan, backgroundImage: { ...rest, dataUrl: '' } } }
+    }),
+  }))
+}
+
+/**
+ * Обёртка над localStorage, которая не роняет приложение при переполнении
+ * хранилища (баг найден 05.07.2026 — реальный QuotaExceededError на
+ * проде, PDF-подложки как base64 быстро съедают лимит ~5-10МБ на сайт).
+ * По умолчанию zustand persist вызывает storage.setItem НАПРЯМУЮ, без
+ * try/catch — при переполнении это Uncaught QuotaExceededError, которое
+ * прерывает текущий колбэк (например, onClick создания проекта) ДО того,
+ * как он успевает доделать остальную работу. Здесь просто глотаем ошибку
+ * и логируем — потерять последнее сохранение на диск лучше, чем сломать
+ * текущее выполнение кода на середине.
+ *
+ * ⚠️ Это НЕ решает переполнение — оно всё ещё будет происходить, если
+ * PDF-подложек много. Настоящий фикс — перенос подложек в IndexedDB
+ * (отдельная задача, см. TASKS.md). Здесь только защита от падения.
+ */
+// Заполняется сразу после create() ниже — нужна, чтобы safeLocalStorage.setItem
+// мог сообщить в стор об ошибке сохранения (см. saveError в ProjectStore).
+let storeSetStateRef: ((partial: { saveError: string | null }) => void) | undefined
+
+const safeLocalStorage = {
+  getItem: (name: string): string | null => {
+    try {
+      return window.localStorage.getItem(name)
+    } catch (e) {
+      console.error('[wall-calc] localStorage.getItem упал:', e)
+      return null
+    }
+  },
+  setItem: (name: string, value: string): void => {
+    try {
+      window.localStorage.setItem(name, value)
+      storeSetStateRef?.({ saveError: null })
+    } catch (e) {
+      console.error('[wall-calc] Не удалось сохранить проект в localStorage (переполнено хранилище?). Изменения останутся только в памяти до перезагрузки страницы.', e)
+      storeSetStateRef?.({ saveError: 'Не удалось сохранить изменения на диск — переполнено хранилище браузера. Работа продолжается только в памяти: не закрывайте и не перезагружайте вкладку, пока не освободите место (например, удалите PDF-подложки на неиспользуемых этажах).' })
+    }
+  },
+  removeItem: (name: string): void => {
+    try {
+      window.localStorage.removeItem(name)
+    } catch (e) {
+      console.error('[wall-calc] localStorage.removeItem упал:', e)
+    }
+  },
+}
+
 export const useProjectStore = create<ProjectStore>()(
   persist(
     (set) => ({
@@ -183,6 +264,8 @@ export const useProjectStore = create<ProjectStore>()(
       floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
       activeWallId: null,
       activeLiningId: null,
+      saveError: null,
+      clearSaveError: () => set({ saveError: null }),
 
       // ─── Объекты ────────────────────────────────────────────────────────────
 
@@ -591,8 +674,9 @@ export const useProjectStore = create<ProjectStore>()(
     }),
     {
       name: 'wall-calc-projects', // ключ в localStorage
+      storage: createJSONStorage(() => safeLocalStorage),
       partialize: (s) => ({       // сохраняем только данные, не функции
-        projects: s.projects,
+        projects: stripHeavyDataForPersist(s.projects),
         activeProjectId: s.activeProjectId,
       }),
       onRehydrateStorage: () => (state) => {
@@ -649,3 +733,6 @@ export const useProjectStore = create<ProjectStore>()(
     }
   )
 )
+
+// Заполняем ссылку, использованную в safeLocalStorage.setItem (см. выше).
+storeSetStateRef = useProjectStore.setState

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clipRectBySlopedTop, polygonArea, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection } from '../geometry2d'
+import { clipRectBySlopedTop, polygonArea, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from '../geometry2d'
 
 describe('polygonArea', () => {
   it('площадь прямоугольника', () => {
@@ -235,5 +235,50 @@ describe('clipRectBySlopedTop', () => {
   it('вырожденный случай x2<=x1 — пустой массив, не падает', () => {
     expect(clipRectBySlopedTop(10, 10, 0, 50, 30, 70)).toEqual([])
     expect(clipRectBySlopedTop(20, 10, 0, 50, 30, 70)).toEqual([])
+  })
+})
+
+describe('openingOffsetFromClick', () => {
+  // Горизонтальная линия 0..1000px, 1000px == 5000мм (масштаб не участвует
+  // в самой функции — она работает в px по осям x1..x2, мм только у длины)
+  const x1 = 0, y1 = 0, x2 = 1000, y2 = 0, lengthMm = 5000
+
+  it('клик точно в середине линии — проём центрируется по клику', () => {
+    // клик в px=500 (середина) → 2500мм от начала; проём 900мм → офсет 2500-450=2050
+    const offset = openingOffsetFromClick(x1, y1, x2, y2, lengthMm, 500, 0, 900)
+    expect(offset).toBeCloseTo(2050)
+  })
+
+  it('клик рядом с началом линии — офсет прижимается к 0, не уходит в минус', () => {
+    // клик в px=10 → 50мм от начала; проём 900мм центрированный ушёл бы в минус — clamp к 0
+    const offset = openingOffsetFromClick(x1, y1, x2, y2, lengthMm, 10, 0, 900)
+    expect(offset).toBe(0)
+  })
+
+  it('клик рядом с концом линии — офсет прижимается к (длина - ширина), не выходит за стену', () => {
+    const offset = openingOffsetFromClick(x1, y1, x2, y2, lengthMm, 995, 0, 900)
+    expect(offset).toBeCloseTo(lengthMm - 900)
+  })
+
+  it('клик НЕ на самой линии (сбоку) — всё равно проецируется на её ось', () => {
+    // клик в (500, 300) — далеко в стороне по Y, но проекция на ось X та же (500px)
+    const offset = openingOffsetFromClick(x1, y1, x2, y2, lengthMm, 500, 300, 900)
+    expect(offset).toBeCloseTo(2050)
+  })
+
+  it('не зависит от направления линии — та же точка на развёрнутой линии (x1,x2 поменяны местами) даёт симметричный офсет', () => {
+    // та же физическая точка проёма, но линия начерчена с другого конца —
+    // офсет должен получиться таким, чтобы проём оказался в том же месте
+    const offsetReversed = openingOffsetFromClick(x2, y2, x1, y1, lengthMm, 500, 0, 900)
+    // от конца (x2=1000) до клика (500) — тоже 500px = 2500мм, симметрично середине
+    expect(offsetReversed).toBeCloseTo(2050)
+  })
+
+  it('ширина проёма больше самой линии — null (стена слишком короткая)', () => {
+    expect(openingOffsetFromClick(x1, y1, x2, y2, lengthMm, 500, 0, 6000)).toBeNull()
+  })
+
+  it('вырожденная линия (нулевой длины в px) — null, не делится на 0', () => {
+    expect(openingOffsetFromClick(100, 100, 100, 100, 5000, 100, 100, 900)).toBeNull()
   })
 })
