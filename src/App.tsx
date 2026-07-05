@@ -181,7 +181,7 @@ export default function App() {
   } = useProjectStore()
 
   // ─── Объекты (localStorage) ───────────────────────────────────────────────
-  const { projects, activeProjectId, createProject, deleteProject, selectProject } = useProjectStore()
+  const { projects, activeProjectId, createProject, deleteProject, selectProject, saveError, clearSaveError } = useProjectStore()
   const activeProject = projects.find(p => p.id === activeProjectId) ?? null
 
   const [showProjects, setShowProjects] = useState(false)
@@ -356,6 +356,20 @@ export default function App() {
           📁 Объекты
         </button>
       </div>
+
+      {/* ─── Баннер ошибки сохранения (переполнение localStorage) ─── */}
+      {saveError && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px',
+          background: '#fff3cd', color: '#7a5c00', borderBottom: '2px solid #ffc107', flexShrink: 0, fontSize: 13 }}>
+          <span style={{ fontSize: 18 }}>⚠️</span>
+          <span style={{ flex: 1 }}>{saveError}</span>
+          <button onClick={clearSaveError}
+            style={{ padding: '4px 10px', background: 'transparent', color: '#7a5c00',
+              border: '1px solid #7a5c00', borderRadius: 5, cursor: 'pointer', fontSize: 12 }}>
+            Скрыть
+          </button>
+        </div>
+      )}
 
       {/* ─── Тело ─── */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
