@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, RoundColumn, RectColumn } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
+import { duplicateFloorPlanGeometry } from '../core/duplicateFloorPlan'
 
 const PROFILE_LETTER: Record<string, string> = {
   ps50: 'А', ps75: 'В', ps100: 'С',
@@ -363,17 +364,7 @@ export const useProjectStore = create<ProjectStore>()(
           const src = p?.levels.find(lv => lv.id === id)
           if (!p || !src) return {}
           newId = `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`
-          const copy: Level = {
-            id: newId,
-            name,
-            elevationMm,
-            floorPlan: {
-              ...src.floorPlan,
-              lines: src.floorPlan.lines.map(l => ({ ...l, id: `pl_${Date.now()}_${Math.random().toString(36).slice(2)}_${l.id}` })),
-              rooms: src.floorPlan.rooms.map(r => ({ ...r, id: `rm_${Date.now()}_${Math.random().toString(36).slice(2)}` })),
-              contours: src.floorPlan.contours.map(c => ({ ...c, id: `pc_${Date.now()}_${Math.random().toString(36).slice(2)}` })),
-            },
-          }
+          const copy: Level = { id: newId, name, elevationMm, floorPlan: duplicateFloorPlanGeometry(src.floorPlan) }
           const projects = s.projects.map(pr =>
             pr.id === s.activeProjectId ? { ...pr, levels: [...pr.levels, copy], activeLevelId: copy.id } : pr
           )
