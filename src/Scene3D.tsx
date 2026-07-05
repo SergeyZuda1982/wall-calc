@@ -1,9 +1,15 @@
 /**
- * Scene3D.tsx — первая версия 3D-вида объекта (see KONSPEKT.md, "3D-сцена").
+ * Scene3D.tsx — 3D-вид объекта (see KONSPEKT.md, "3D-сцена").
  *
  * v1: статичный снимок геометрии плана, БЕЗ анимации по статусам работ
  * (это отдельная задача — статусы уже есть в данных, но 3D пока не
  * фильтрует и не анимирует по ним, просто показывает всё как есть).
+ *
+ * С 05.07.2026 — показывает ВСЕ этажи проекта разом, каждый сдвинут по
+ * вертикали на свою Level.elevationMm (см. LevelGroup ниже). До этого
+ * показывался только активный этаж, а elevationMm вообще нигде не
+ * использовалась в 3D — историческая деталь, если попадётся в старых
+ * заметках выше по файлу/в KONSPEKT.md.
  *
  * Вся числовая геометрия (метры, повороты, полигоны) уже посчитана и
  * протестирована в core/planTo3D.ts — здесь только сборка three.js-мешей
@@ -20,7 +26,7 @@ import {
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D,
 } from './core/planTo3D'
-import type { PlanLineType } from './types'
+import type { PlanLineType, FloorPlan } from './types'
 
 const TYPE_COLOR_3D: Record<PlanLineType, string> = {
   wall_new:      '#e57373',
@@ -35,12 +41,12 @@ const FLOOR_COLOR = '#c9c2b4'
 const CEILING_COLOR = '#e8e8ec'
 const COLUMN_COLOR = '#9aa5ad'
 
-function WallMesh({ box }: { box: WallBox3D }) {
+function WallMesh({ box, opacity = 1 }: { box: WallBox3D; opacity?: number }) {
   const color = TYPE_COLOR_3D[box.planLineType]
   return (
     <mesh position={[box.center.x, box.center.y, box.center.z]} rotation={[0, box.rotationY, 0]} castShadow receiveShadow>
       <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
-      <meshStandardMaterial color={color} roughness={0.9} />
+      <meshStandardMaterial color={color} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
     </mesh>
   )
 }
@@ -52,8 +58,9 @@ function WallMesh({ box }: { box: WallBox3D }) {
  * математика). Shape строится как (x, -z), затем rotateX(-90°) кладёт её
  * плашмя так, что итоговые мировые X/Z совпадают с планом без зеркалирования.
  */
-function SlabOrColumn({ room, ceilingMm, skipFloor }: { room: RoomPolygon3D; ceilingMm: number; skipFloor: boolean }) {
+function SlabOrColumn({ room, ceilingMm, skipFloor, opacity = 1 }: { room: RoomPolygon3D; ceilingMm: number; skipFloor: boolean; opacity?: number }) {
   const ceilingM = mmToM(ceilingMm)
+  const transparent = opacity < 1
 
   const floorGeo = useMemo(() => {
     if (room.points.length < 3) return null
@@ -87,7 +94,7 @@ function SlabOrColumn({ room, ceilingMm, skipFloor }: { room: RoomPolygon3D; cei
     if (!columnGeo) return null
     return (
       <mesh geometry={columnGeo} castShadow receiveShadow>
-        <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} />
+        <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} transparent={transparent} opacity={opacity} />
       </mesh>
     )
   }
@@ -96,12 +103,12 @@ function SlabOrColumn({ room, ceilingMm, skipFloor }: { room: RoomPolygon3D; cei
     <>
       {floorGeo && !skipFloor && (
         <mesh geometry={floorGeo} receiveShadow>
-          <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} />
+          <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} transparent={transparent} opacity={opacity} />
         </mesh>
       )}
       {ceilingGeo && (
         <mesh geometry={ceilingGeo} receiveShadow>
-          <meshStandardMaterial color={CEILING_COLOR} roughness={0.9} />
+          <meshStandardMaterial color={CEILING_COLOR} roughness={0.9} transparent={transparent} opacity={opacity} />
         </mesh>
       )}
     </>
@@ -110,11 +117,13 @@ function SlabOrColumn({ room, ceilingMm, skipFloor }: { room: RoomPolygon3D; cei
 
 /**
  * Плита, нарисованная "карандашом" — контур с вырезами (лестницы/шахты).
- * v1: только пол текущего этажа (y=0), без зеркального потолка — потолок
- * появится из плиты этажа ВЫШЕ, когда 3D научится показывать несколько
- * этажей разом (задел на будущее, сейчас Scene3D показывает один этаж).
+ * Рисуется как пол СВОЕГО этажа (y=0 относительно сдвига LevelGroup).
+ * Отдельного зеркального потолка у неё нет и не нужно — если пользователь
+ * нарисовал такую же плиту на этаже выше (с elevationMm побольше), её
+ * низ и станет визуальным "потолком" этого этажа само собой, раз обе
+ * сцены теперь показываются вместе (см. LevelGroup/Scene3D).
  */
-function HandDrawnSlabMesh({ slab }: { slab: SlabPolygon3D }) {
+function HandDrawnSlabMesh({ slab, opacity = 1 }: { slab: SlabPolygon3D; opacity?: number }) {
   const geo = useMemo(() => {
     const shape = new THREE.Shape(slab.outer.map(p => new THREE.Vector2(p.x, -p.z)))
     for (const hole of slab.holes) {
@@ -129,7 +138,7 @@ function HandDrawnSlabMesh({ slab }: { slab: SlabPolygon3D }) {
 
   return (
     <mesh geometry={geo} receiveShadow>
-      <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} />
+      <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
     </mesh>
   )
 }
@@ -139,11 +148,11 @@ function HandDrawnSlabMesh({ slab }: { slab: SlabPolygon3D }) {
  * вдоль оси Y (высота) — ровно то, что нужно (вертикальная колонна от пола
  * до потолка), поворот не требуется в отличие от коробки-стены.
  */
-function RoundColumnMesh({ cyl }: { cyl: ColumnCylinder3D }) {
+function RoundColumnMesh({ cyl, opacity = 1 }: { cyl: ColumnCylinder3D; opacity?: number }) {
   return (
     <mesh position={[cyl.cx, cyl.heightM / 2, cyl.cz]} castShadow receiveShadow>
       <cylinderGeometry args={[cyl.radius, cyl.radius, cyl.heightM, 24]} />
-      <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} />
+      <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
     </mesh>
   )
 }
@@ -154,24 +163,31 @@ function RoundColumnMesh({ cyl }: { cyl: ColumnCylinder3D }) {
  * фиксированный цвет COLUMN_COLOR, как и у круглой колонны, а не цвет
  * из TYPE_COLOR_3D (колонна не привязана к PlanLineType).
  */
-function RectColumnMesh({ box }: { box: RectColumnBox3D }) {
+function RectColumnMesh({ box, opacity = 1 }: { box: RectColumnBox3D; opacity?: number }) {
   return (
     <mesh position={[box.center.x, box.center.y, box.center.z]} rotation={[0, box.rotationY, 0]} castShadow receiveShadow>
       <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
-      <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} />
+      <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
     </mesh>
   )
 }
 
-export default function Scene3D() {
-  const [cameraMode, setCameraMode] = useState<'orbit' | 'fly'>('orbit')
-  const floorPlan = useProjectStore(s => s.floorPlan)
-  const lines = floorPlan?.lines ?? []
-  const rooms = floorPlan?.rooms ?? []
-  const slabs = floorPlan?.slabs ?? []
-  const roundColumns = floorPlan?.roundColumns ?? []
-  const rectColumns = floorPlan?.rectColumns ?? []
-  const scaleMmPx = floorPlan?.scaleMmPerPx ?? 10
+/**
+ * Геометрия ОДНОГО этажа — то, что раньше было прямо в теле Scene3D.
+ * Обёрнута в <group position={[0, offsetY, 0]}> — offsetY = отметка этажа
+ * (Level.elevationMm) в метрах, так все этажи проекта встают друг над
+ * другом на своих реальных высотах в одной сцене. Неактивный этаж (не тот,
+ * что выбран в шапке плана) рисуется полупрозрачным — чтобы было видно
+ * объект целиком, но сразу понятно, какой этаж сейчас редактируется.
+ */
+function LevelGroup({ floorPlan, offsetY, dimmed }: { floorPlan: FloorPlan; offsetY: number; dimmed: boolean }) {
+  const lines = floorPlan.lines ?? []
+  const rooms = floorPlan.rooms ?? []
+  const slabs = floorPlan.slabs ?? []
+  const roundColumns = floorPlan.roundColumns ?? []
+  const rectColumns = floorPlan.rectColumns ?? []
+  const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
+  const opacity = dimmed ? 0.35 : 1
 
   const boxes = useMemo(() => wallsToBoxes3D(lines, scaleMmPx), [lines, scaleMmPx])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
@@ -187,7 +203,37 @@ export default function Scene3D() {
   )
   const hasHandDrawnSlabs = slabPolygons.length > 0
 
-  const isEmpty = boxes.length === 0 && polygons.length === 0 && slabPolygons.length === 0 && columnCylinders.length === 0 && rectColumnBoxes.length === 0
+  return (
+    <group position={[0, offsetY, 0]}>
+      {boxes.map(box => <WallMesh key={box.id} box={box} opacity={opacity} />)}
+      {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} opacity={opacity} />)}
+      {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} opacity={opacity} />)}
+      {columnCylinders.map(cyl => <RoundColumnMesh key={cyl.id} cyl={cyl} opacity={opacity} />)}
+      {rectColumnBoxes.map(box => <RectColumnMesh key={box.id} box={box} opacity={opacity} />)}
+    </group>
+  )
+}
+
+/** Есть ли вообще что рисовать на этаже (та же проверка, что раньше была одна на весь Scene3D) */
+function levelHasGeometry(floorPlan: FloorPlan): boolean {
+  const lines = floorPlan.lines ?? []
+  const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
+  const ceilingMm = estimateCeilingMm(lines)
+  return (
+    wallsToBoxes3D(lines, scaleMmPx).length > 0 ||
+    roomsToPolygons3D(floorPlan.rooms ?? [], lines, scaleMmPx).length > 0 ||
+    slabsToPolygons3D(floorPlan.slabs ?? [], scaleMmPx).length > 0 ||
+    roundColumnsToCylinders3D(floorPlan.roundColumns ?? [], scaleMmPx, ceilingMm).length > 0 ||
+    rectColumnsToBoxes3D(floorPlan.rectColumns ?? [], scaleMmPx, ceilingMm).length > 0
+  )
+}
+
+export default function Scene3D() {
+  const [cameraMode, setCameraMode] = useState<'orbit' | 'fly'>('orbit')
+  const levels = useProjectStore(s => s.levels)
+  const activeLevelId = useProjectStore(s => s.activeLevelId)
+
+  const isEmpty = useMemo(() => levels.every(lv => !levelHasGeometry(lv.floorPlan)), [levels])
 
   if (isEmpty) {
     return (
@@ -227,16 +273,28 @@ export default function Scene3D() {
             Зажать мышь и потянуть — посмотреть по сторонам.
           </div>
         )}
+        {levels.length > 1 && (
+          <div style={{
+            padding: '6px 10px', fontSize: 12, color: '#444', background: '#fff',
+            border: '1px solid #dde', borderRadius: 6, maxWidth: 220, lineHeight: 1.4,
+          }}>
+            Показаны все этажи ({levels.length}) на своих отметках. Текущий —
+            непрозрачный, остальные — полупрозрачные для ориентира.
+          </div>
+        )}
       </div>
       <Canvas shadows camera={{ position: [10, 10, 10], fov: 50 }}>
         <ambientLight intensity={0.6} />
         <directionalLight position={[8, 12, 6]} intensity={1} castShadow />
         <Grid args={[100, 100]} cellColor="#c9ccd6" sectionColor="#9aa0b0" fadeDistance={40} position={[0, -0.001, 0]} />
-        {boxes.map(box => <WallMesh key={box.id} box={box} />)}
-        {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} />)}
-        {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} />)}
-        {columnCylinders.map(cyl => <RoundColumnMesh key={cyl.id} cyl={cyl} />)}
-        {rectColumnBoxes.map(box => <RectColumnMesh key={box.id} box={box} />)}
+        {levels.map(lv => (
+          <LevelGroup
+            key={lv.id}
+            floorPlan={lv.floorPlan}
+            offsetY={mmToM(lv.elevationMm)}
+            dimmed={lv.id !== activeLevelId}
+          />
+        ))}
         {cameraMode === 'orbit'
           ? <OrbitControls makeDefault />
           : <FlyControls makeDefault dragToLook movementSpeed={4} rollSpeed={0.6} />}
