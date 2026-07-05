@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clipRectBySlopedTop, polygonArea, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius } from '../geometry2d'
+import { clipRectBySlopedTop, polygonArea, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection } from '../geometry2d'
 
 describe('polygonArea', () => {
   it('площадь прямоугольника', () => {
@@ -149,6 +149,39 @@ describe('arcLengthFromSagitta', () => {
   it('длина дуги всегда больше длины хорды (для любой ненулевой стрелы)', () => {
     expect(arcLengthFromSagitta(1000, 50)).toBeGreaterThan(1000)
     expect(arcLengthFromSagitta(1000, 900)).toBeGreaterThan(1000)
+  })
+})
+
+describe('infiniteLineIntersection', () => {
+  it('две перпендикулярные линии — обычное пересечение', () => {
+    const p = infiniteLineIntersection(0, 0, 10, 0, 5, -5, 5, 5)
+    expect(p).not.toBeNull()
+    expect(p!.x).toBeCloseTo(5, 6)
+    expect(p!.y).toBeCloseTo(0, 6)
+  })
+
+  it('точка пересечения ЗА пределами обоих отрезков — всё равно находится (это и есть смысл "продлить")', () => {
+    // Отрезок 1: (0,0)-(1,0). Отрезок 2: (5,-1)-(5,1). Пересечение при x=5 — далеко за концом первого отрезка.
+    const p = infiniteLineIntersection(0, 0, 1, 0, 5, -1, 5, 1)
+    expect(p).not.toBeNull()
+    expect(p!.x).toBeCloseTo(5, 6)
+    expect(p!.y).toBeCloseTo(0, 6)
+  })
+
+  it('параллельные линии — null', () => {
+    expect(infiniteLineIntersection(0, 0, 10, 0, 0, 5, 10, 5)).toBeNull()
+  })
+
+  it('совпадающие линии — null (нет однозначной точки)', () => {
+    expect(infiniteLineIntersection(0, 0, 10, 0, 2, 0, 8, 0)).toBeNull()
+  })
+
+  it('наклонные линии под произвольным углом', () => {
+    // y = x  и  y = -x + 10  → пересечение в (5,5)
+    const p = infiniteLineIntersection(0, 0, 1, 1, 0, 10, 10, 0)
+    expect(p).not.toBeNull()
+    expect(p!.x).toBeCloseTo(5, 6)
+    expect(p!.y).toBeCloseTo(5, 6)
   })
 })
 

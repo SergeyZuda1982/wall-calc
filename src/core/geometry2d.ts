@@ -229,3 +229,24 @@ export function clipRectBySlopedTop(
   }
   return out
 }
+
+/**
+ * Пересечение двух БЕСКОНЕЧНЫХ прямых (каждая задана двумя точками).
+ * В отличие от пересечения ОТРЕЗКОВ — неважно, лежит ли точка пересечения
+ * в пределах самих отрезков: линия как раз для того и обрезается/
+ * продлевается ДО этой точки инструментом "обрезать/продлить".
+ *
+ * Возвращает null, если прямые параллельны (или совпадают — в этом
+ * случае "до какой точки продлевать" не определено).
+ */
+export function infiniteLineIntersection(
+  x1: number, y1: number, x2: number, y2: number,
+  x3: number, y3: number, x4: number, y4: number,
+): Point2D | null {
+  const d1x = x2 - x1, d1y = y2 - y1
+  const d2x = x4 - x3, d2y = y4 - y3
+  const denom = d1x * d2y - d1y * d2x
+  if (Math.abs(denom) < 1e-9) return null  // параллельны или вырождены
+  const t = ((x3 - x1) * d2y - (y3 - y1) * d2x) / denom
+  return { x: x1 + t * d1x, y: y1 + t * d1y }
+}
