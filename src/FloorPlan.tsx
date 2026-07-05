@@ -13,7 +13,7 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Shape, Image as KonvaIma
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, Room } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, Room, FinishBaseStage, FinishCoveringType } from './types'
 import { DEFAULT_BOARD_SPEC } from './types'
 import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
@@ -28,6 +28,7 @@ import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentRe
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners } from './core/calcAttachmentFasteners'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
+import { finishMaterialCategoryOf, finishSidesOf, finishBaseStageLabel, FINISH_COVERING_LABEL } from './core/finishResolver'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
@@ -3030,6 +3031,68 @@ export default function FloorPlan() {
                 ))}
               </select>
             </div>
+
+            {/* Стадийная отделка — независимо от статуса работ (та — построена ли конструкция) */}
+            {(() => {
+              const category = finishMaterialCategoryOf(inspectorLine)
+              const sides = finishSidesOf(inspectorLine)
+              if (!category || sides === 0) return null
+              const sideDefs: Array<{ key: 'finishA' | 'finishB'; label: string }> = [
+                { key: 'finishA', label: sides === 1 ? 'Отделка' : 'Сторона A' },
+                ...(sides === 2 ? [{ key: 'finishB' as const, label: 'Сторона B' }] : []),
+              ]
+              return (
+                <div style={{ padding: '6px 16px 10px', borderTop: '1px solid #f0f0f0' }}>
+                  <div style={{ fontSize: 10, color: '#999', marginBottom: 6, textTransform: 'uppercase' }}>Стадийная отделка</div>
+                  {sideDefs.map(({ key, label }) => {
+                    const state = inspectorLine[key] ?? { baseStage: 'naked' as FinishBaseStage, covering: null }
+                    return (
+                      <div key={key} style={{ marginBottom: 8, padding: '6px 8px', background: '#fafbfc', borderRadius: 5, border: '1px solid #eee' }}>
+                        <div style={{ fontSize: 11, color: '#555', marginBottom: 4 }}>{label}</div>
+                        <select
+                          value={state.baseStage}
+                          onChange={e => updatePlanLine(inspectorLine.id, {
+                            [key]: { ...state, baseStage: e.target.value as FinishBaseStage },
+                          } as Partial<PlanLine>)}
+                          style={{ width: '100%', fontSize: 11, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd', marginBottom: 6 }}>
+                          {(['naked', 'base_done', 'puttied'] as FinishBaseStage[]).map(s => (
+                            <option key={s} value={s}>{finishBaseStageLabel(s, category)}</option>
+                          ))}
+                        </select>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <select
+                            value={state.covering?.type ?? ''}
+                            onChange={e => {
+                              const v = e.target.value
+                              updatePlanLine(inspectorLine.id, {
+                                [key]: { ...state, covering: v ? { type: v as FinishCoveringType } : null },
+                              } as Partial<PlanLine>)
+                            }}
+                            style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }}>
+                            <option value="">Без покрытия</option>
+                            {Object.entries(FINISH_COVERING_LABEL).map(([v, l]) => (
+                              <option key={v} value={v}>{l}</option>
+                            ))}
+                          </select>
+                          {state.covering?.type === 'paint' && (
+                            <input type="text" placeholder="RAL код" value={state.covering.ralCode ?? ''}
+                              onChange={e => updatePlanLine(inspectorLine.id, {
+                                [key]: { ...state, covering: { ...state.covering, ralCode: e.target.value } },
+                              } as Partial<PlanLine>)}
+                              style={{ width: 80, fontSize: 11, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
+                          )}
+                        </div>
+                        {state.covering?.type === 'tile' && (
+                          <div style={{ fontSize: 10, color: '#e57373', marginTop: 4 }}>
+                            Раскладка плитки (угол, объём клея/затирки) — отдельная задача, пока только отметка выбора
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
 
             {/* Ригель: своя геометрия вместо материала — сечение по плану + опускание от потолка */}
             {inspectorLine.type === 'rib_beam' && (
