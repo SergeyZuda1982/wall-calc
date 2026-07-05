@@ -451,6 +451,32 @@ export interface FastenerSpec {
   stepMm: number
 }
 
+/**
+ * Стадийная отделка поверхности — НЕЗАВИСИМА от WorkStatus (тот описывает,
+ * построена ли САМА конструкция; это — что сделано с её ПОВЕРХНОСТЬЮ поверх
+ * уже построенного). Единый порядковый прогресс для кладки и ГКЛ, хотя
+ * физический смысл шага 'base_done' разный (см. FINISH_BASE_STAGE_LABEL):
+ *  - кладка (кирпич/блок/монолит): naked=голый, base_done=оштукатурено
+ *  - ГКЛ (каркас): naked=голый каркас, base_done=обшито (зашито листом)
+ * 'puttied' — шпаклёвка, общий финальный этап подготовки перед покрытием
+ * для обоих случаев.
+ */
+export type FinishBaseStage = 'naked' | 'base_done' | 'puttied'
+
+export type FinishCoveringType = 'paint' | 'tile'
+
+export interface FinishCovering {
+  type: FinishCoveringType
+  ralCode?: string   // код RAL — только для paint
+  done?: boolean     // покрытие выбрано (запланировано) vs реально нанесено
+}
+
+/** Состояние отделки ОДНОЙ стороны поверхности (см. PlanLine.finishA/finishB) */
+export interface FinishState {
+  baseStage: FinishBaseStage
+  covering?: FinishCovering | null
+}
+
 export interface PlanLine {
   id: string
   x1: number; y1: number   // координаты на холсте (px)
@@ -490,6 +516,16 @@ export interface PlanLine {
    */
   fastenerStart?: FastenerSpec
   fastenerEnd?: FastenerSpec
+  /**
+   * Стадийная отделка по сторонам. finishA — единственная сторона у
+   * wall_lining (облицовка физически односторонняя) ИЛИ первая сторона
+   * у wall_new/wall_existing (двусторонние). finishB — вторая сторона,
+   * актуальна только когда finishSidesOf(line) === 2. Не задано —
+   * значит отделка ещё не отслеживается для этой линии (эквивалент
+   * baseStage:'naked', covering: null, но без явного объекта).
+   */
+  finishA?: FinishState
+  finishB?: FinishState
 }
 
 /** Подложка — растровое изображение страницы PDF, по которому обводят план */
