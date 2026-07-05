@@ -707,6 +707,27 @@ export default function FloorPlan() {
     addTemplate({ kind: 'roundColumn', name, diameterMm: rc.diameterMm, spec: rc.spec })
   }
 
+  // ── Новый шаблон "с нуля" — без уже нарисованной колонны-образца на плане ──
+  // (материал у такого шаблона не задан — донастраивается после штамповки, у
+  // самой поставленной колонны, как и остальные её параметры)
+  function createRectTemplateFromScratch() {
+    const name = window.prompt('Название шаблона:', 'Колонна')
+    if (!name) return
+    const widthMm = parseFloat(window.prompt('Ширина, мм:', '400') || '')
+    if (!(widthMm > 0)) { window.alert('Ширина должна быть положительным числом.'); return }
+    const depthMm = parseFloat(window.prompt('Глубина, мм:', '400') || '')
+    if (!(depthMm > 0)) { window.alert('Глубина должна быть положительным числом.'); return }
+    addTemplate({ kind: 'rectColumn', name, widthMm, depthMm })
+  }
+
+  function createRoundTemplateFromScratch() {
+    const name = window.prompt('Название шаблона:', 'Колонна')
+    if (!name) return
+    const diameterMm = parseFloat(window.prompt('Диаметр, мм:', '400') || '')
+    if (!(diameterMm > 0)) { window.alert('Диаметр должен быть положительным числом.'); return }
+    addTemplate({ kind: 'roundColumn', name, diameterMm })
+  }
+
   // Сохранение шаблона от прямоугольной колонны-СУЩНОСТИ (RectColumn, с 05.07.2026).
   // Старую saveRectColumnAsTemplate(room: Room) выше не трогаем — она нужна
   // для уже расставленных ранее колонн старого образца (Room+4 линии).
@@ -1885,15 +1906,18 @@ export default function FloorPlan() {
 
           {/* Шаблоны колонн — библиотека общая на все объекты (useTemplateStore),
               штамповка: прямоугольная — 2 клика (центр, потом угол), круглая — 1 клик.
-              Сама библиотека наполняется через инспектор существующей колонны
-              ("Сохранить как шаблон"), см. ниже. */}
+              Библиотека наполняется либо "Сохранить как шаблон" с уже нарисованной
+              колонны (см. инспектор), либо кнопками ниже — шаблон с нуля, без образца
+              на плане (материал у такого шаблона донастраивается уже после штамповки). */}
           <div>
             <div style={{ ...sectionHeaderStyle, color: '#c5a880' }}>Шаблоны колонн</div>
-            {templates.length === 0 ? (
-              <div style={{ padding: '2px 14px 8px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
-                Пока пусто. Выделите нарисованную колонну и нажмите «Сохранить как шаблон» в её панели.
+            {templates.length === 0 && (
+              <div style={{ padding: '2px 14px 6px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
+                Пока пусто. Создайте шаблон кнопками ниже, либо выделите уже
+                нарисованную колонну и нажмите «Сохранить как шаблон» в её панели.
               </div>
-            ) : (
+            )}
+            {templates.length > 0 && (
               <div style={{ padding: '2px 14px 8px' }}>
                 {templates.map(t => (
                   <div key={t.id} style={{
@@ -1929,6 +1953,16 @@ export default function FloorPlan() {
                 ))}
               </div>
             )}
+            <div style={{ display: 'flex', gap: 4, padding: '0 14px 8px' }}>
+              <button onClick={createRectTemplateFromScratch}
+                style={{ flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer', border: '1px dashed #c5a880', background: 'transparent', color: '#c5a880' }}>
+                + ▦ новый
+              </button>
+              <button onClick={createRoundTemplateFromScratch}
+                style={{ flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer', border: '1px dashed #c5a880', background: 'transparent', color: '#c5a880' }}>
+                + ⬤ новый
+              </button>
+            </div>
             {mode === 'stamp' && stampTemplateId && (() => {
               const tpl = templates.find(t => t.id === stampTemplateId)
               if (!tpl) return null
