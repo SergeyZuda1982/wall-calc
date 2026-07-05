@@ -3,6 +3,16 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+
+# Несколько параллельных чатов иногда пушат в main почти одновременно —
+# без этого блока деплой одного пуша конфликтует с ещё идущим деплоем
+# другого (see: https://github.com/orgs/community/discussions/60751).
+# cancel-in-progress: false — не обрываем уже идущий деплой на середине,
+# просто СТАВИМ следующий в очередь (стандартная рекомендация GitHub
+# для официального Pages-workflow).
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
  
 jobs:
   build-and-deploy:
