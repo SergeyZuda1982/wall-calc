@@ -65,7 +65,44 @@ export function snapAngleToStep(angleRad: number, stepDeg = 15): number {
   return Math.round(angleRad / stepRad) * stepRad
 }
 
-/** Периметр прямоугольника (мм) — для заполнения Room.perimeterMm без похода в extractContourPoints */
+/**
+ * Снап центра новой колонны в ряд с уже поставленными — Ctrl во время
+ * штамповки, аналогично orthoMode (⊾ 90°) для черчения линий. Проблема
+ * без этого: на объекте десятки одинаковых колонн, вручную попасть точно
+ * в один ряд по X или Y почти нереально — колонна чуть съезжает в сторону.
+ *
+ * Берём ближайшую уже поставленную колонну (по прямому расстоянию центров)
+ * и прилипаем к той её координате (X или Y), по которой курсор уже ближе —
+ * то есть достраиваем ряд в том направлении, в котором он уже начат.
+ * Если колонн ещё нет — возвращаем точку без изменений (нечему прилипать).
+ */
+/** Ближайшая уже поставленная колонна к точке (для превью-линии снапа в ряд) */
+export function nearestColumnCenter(
+  x: number, y: number,
+  existing: { cx: number; cy: number }[],
+): { cx: number; cy: number } | null {
+  if (existing.length === 0) return null
+  let nearest = existing[0]
+  let bestDist = Infinity
+  for (const c of existing) {
+    const d = Math.hypot(c.cx - x, c.cy - y)
+    if (d < bestDist) { bestDist = d; nearest = c }
+  }
+  return nearest
+}
+
+export function snapToColumnRow(
+  x: number, y: number,
+  existing: { cx: number; cy: number }[],
+): Point2D {
+  const nearest = nearestColumnCenter(x, y, existing)
+  if (!nearest) return { x, y }
+  const dx = Math.abs(nearest.cx - x)
+  const dy = Math.abs(nearest.cy - y)
+  return dx <= dy ? { x: nearest.cx, y } : { x, y: nearest.cy }
+}
+
+
 export function rectPerimeterMm(widthMm: number, depthMm: number): number {
   return 2 * (widthMm + depthMm)
 }

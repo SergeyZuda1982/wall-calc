@@ -20,7 +20,7 @@ import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { useTemplateStore } from './store/useTemplateStore'
 import {
-  rectColumnCornersPx, angleTo, snapAngleToStep, rectPerimeterMm, rectAreaM2, mmToPx,
+  rectColumnCornersPx, angleTo, snapAngleToStep, rectPerimeterMm, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
 } from './core/columnStamp'
 import { computeWallJoins } from './core/wallJoin'
 import type { WallForJoin } from './core/wallJoin'
@@ -406,6 +406,24 @@ export default function FloorPlan() {
   const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
   const [stampTemplateId, setStampTemplateId] = useState<string | null>(null)  // активный шаблон для штамповки колонн
   const [stampCenter, setStampCenter] = useState<{ x: number; y: number } | null>(null) // прямоугольный шаблон: центр зафиксирован, ждём 2-й клик (угол)
+
+  // Центры уже поставленных колонн (круглые — прямо, прямоугольные — центроид
+  // их 4-точечного контура Room с isColumn:true) — для снапа новой колонны
+  // в один ряд с Ctrl при штамповке, см. snapToColumnRow в columnStamp.ts.
+  const existingColumnCenters = useMemo(() => {
+    const fromRound = roundColumns.map(rc => ({ cx: rc.cx, cy: rc.cy }))
+    const fromRect = rooms
+      .filter(r => r.isColumn)
+      .map(r => {
+        const pts = extractContourPoints(r.lineIds, lines)
+        if (pts.length === 0) return null
+        const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length
+        const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
+        return { cx, cy }
+      })
+      .filter((c): c is { cx: number; cy: number } => c !== null)
+    return [...fromRound, ...fromRect]
+  }, [roundColumns, rooms, lines])
   const [drawStep, setDrawStep] = useState('600')
   const [drawLayer1, setDrawLayer1] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
   const [drawLayer2, setDrawLayer2] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
@@ -624,6 +642,19 @@ export default function FloorPlan() {
   useEffect(() => {
     const down = (e: KeyboardEvent) => { if (e.code === 'Space' && !e.repeat) { e.preventDefault(); setSpaceDown(true) } }
     const up   = (e: KeyboardEvent) => { if (e.code === 'Space') { setSpaceDown(false); panStartRef.current = null } }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup',   up)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
+  }, [])
+
+  // Ctrl (или Cmd на Mac) — снап новой колонны в ряд с уже поставленными
+  // (штамповка шаблона, см. handleStageClick, mode==='stamp'). Держим как
+  // состояние (не читаем ctrlKey только в момент клика), чтобы превью до
+  // клика тоже подсвечивало, куда прилипнет — аналогично spaceDown выше.
+  const [ctrlDown, setCtrlDown] = useState(false)
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if ((e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'MetaLeft' || e.code === 'MetaRight') && !e.repeat) setCtrlDown(true) }
+    const up   = (e: KeyboardEvent) => { if (e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'MetaLeft' || e.code === 'MetaRight') setCtrlDown(false) }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup',   up)
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
@@ -998,18 +1029,23 @@ export default function FloorPlan() {
       if (tpl.kind === 'roundColumn') {
         // Круглая колонна — поворот не нужен, один клик и готово
         const pt = applySnap(pos.x, pos.y)
+        const ctrlHeld = ctrlDown || ('ctrlKey' in e.evt && e.evt.ctrlKey) || ('metaKey' in e.evt && e.evt.metaKey)
+        const final = ctrlHeld ? snapToColumnRow(pt.x, pt.y, existingColumnCenters) : pt
         const count = (useProjectStore.getState().floorPlan?.roundColumns ?? []).length + 1
         addRoundColumn({
-          cx: pt.x, cy: pt.y, diameterMm: tpl.diameterMm, spec: tpl.spec,
+          cx: final.x, cy: final.y, diameterMm: tpl.diameterMm, spec: tpl.spec,
           category: 'capital', workStatus: 'existing', label: `Колонна ${count}`,
         })
         return
       }
 
-      // Прямоугольная колонна: 1-й клик — центр, 2-й — угол поворота (Shift — привязка к 15°)
+      // Прямоугольная колонна: 1-й клик — центр (Ctrl — снап в ряд с соседними
+      // колоннами), 2-й — угол поворота (Shift/⊾90° — привязка к 15°)
       if (!stampCenter) {
         const pt = applySnap(pos.x, pos.y)
-        setStampCenter({ x: pt.x, y: pt.y })
+        const ctrlHeld = ctrlDown || ('ctrlKey' in e.evt && e.evt.ctrlKey) || ('metaKey' in e.evt && e.evt.metaKey)
+        const final = ctrlHeld ? snapToColumnRow(pt.x, pt.y, existingColumnCenters) : pt
+        setStampCenter({ x: final.x, y: final.y })
         return
       }
 
@@ -1187,7 +1223,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, templates, stampTemplateId, stampCenter, addRoundColumn, addRoom])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, templates, stampTemplateId, stampCenter, addRoundColumn, addRoom, ctrlDown, existingColumnCenters])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1853,10 +1889,10 @@ export default function FloorPlan() {
               return (
                 <div style={{ padding: '2px 14px 8px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
                   {tpl.kind === 'roundColumn'
-                    ? 'Клик — поставить колонну.'
+                    ? 'Клик — поставить колонну. Ctrl — прилипнуть в ряд с соседней.'
                     : stampCenter
                       ? 'Клик — зафиксировать угол поворота (Shift — привязка к 15°). Esc — отменить.'
-                      : 'Клик — поставить центр колонны.'}
+                      : 'Клик — поставить центр колонны. Ctrl — прилипнуть в ряд с соседней.'}
                 </div>
               )
             })()}
@@ -2686,22 +2722,40 @@ export default function FloorPlan() {
                     const tpl = templates.find(t => t.id === stampTemplateId)
                     if (!tpl) return null
 
+                    // До того, как центр зафиксирован (круглая колонна — всегда;
+                    // прямоугольная — только 1-й клик) — с Ctrl подсвечиваем, куда
+                    // прилипнет центр (ряд с соседней колонной), и саму соседнюю линию ряда.
+                    const rowSnapActive = ctrlDown && !stampCenter
+                    const rowNeighbor = rowSnapActive ? nearestColumnCenter(cursor.x, cursor.y, existingColumnCenters) : null
+                    const previewCursor = rowNeighbor ? snapToColumnRow(cursor.x, cursor.y, existingColumnCenters) : cursor
+
                     if (tpl.kind === 'roundColumn') {
                       const r = mmToPx(tpl.diameterMm, scaleMmPx) / 2
                       return (
-                        <Circle x={cursor.x} y={cursor.y} radius={r}
-                          stroke="#c5a880" strokeWidth={1.5} dash={[6, 3]} fill="rgba(197,168,128,0.12)" listening={false} />
+                        <>
+                          {rowNeighbor && (
+                            <Line points={[rowNeighbor.cx, rowNeighbor.cy, previewCursor.x, previewCursor.y]}
+                              stroke="#4caf50" strokeWidth={1} dash={[4, 4]} listening={false} />
+                          )}
+                          <Circle x={previewCursor.x} y={previewCursor.y} radius={r}
+                            stroke="#c5a880" strokeWidth={1.5} dash={[6, 3]} fill="rgba(197,168,128,0.12)" listening={false} />
+                        </>
                       )
                     }
 
-                    // rectColumn: до 1-го клика — превью по курсору без поворота; после — крутится вокруг center
-                    const center = stampCenter ?? cursor
+                    // rectColumn: до 1-го клика — превью по курсору (с учётом снапа
+                    // в ряд) без поворота; после — крутится вокруг зафиксированного center
+                    const center = stampCenter ?? previewCursor
                     let angle = stampCenter ? angleTo(stampCenter.x, stampCenter.y, cursor.x, cursor.y) : 0
                     if (stampCenter && orthoMode) angle = snapAngleToStep(angle, 15)
                     const corners = rectColumnCornersPx(center.x, center.y, tpl.widthMm, tpl.depthMm, angle, scaleMmPx)
                     const flat = corners.flatMap(p => [p.x, p.y])
                     return (
                       <>
+                        {rowNeighbor && (
+                          <Line points={[rowNeighbor.cx, rowNeighbor.cy, previewCursor.x, previewCursor.y]}
+                            stroke="#4caf50" strokeWidth={1} dash={[4, 4]} listening={false} />
+                        )}
                         <Line points={flat} closed stroke="#c5a880" strokeWidth={1.5} dash={[6, 3]}
                           fill="rgba(197,168,128,0.12)" listening={false} />
                         {stampCenter && (
