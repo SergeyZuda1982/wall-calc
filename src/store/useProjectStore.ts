@@ -178,6 +178,33 @@ function updateActiveFloorPlan(
 }
 
 /**
+ * СРОЧНЫЙ фикс 05.07.2026: JSON.stringify всего state на КАЖДОЕ изменение
+ * стора (так работает zustand persist) при наличии PDF-подложек как base64
+ * внутри projects — это не только упирается в quota (см. safeLocalStorage
+ * ниже), а ещё и просто ДОЛГО считается синхронно на большом объёме данных,
+ * подвешивая вкладку на реальных действиях (создание/выбор проекта).
+ *
+ * Временное решение: вообще не пишем dataUrl подложек на диск. Сама
+ * подложка остаётся в памяти на время сессии (можно откалибровать план,
+ * пользоваться), но пропадёт при перезагрузке страницы — до тех пор,
+ * пока подложки не переедут в IndexedDB (отдельная задача, TASKS.md).
+ * Явный компромисс, согласован с пользователем как временный.
+ */
+export function stripHeavyDataForPersist(projects: ProjectEntry[]): ProjectEntry[] {
+  return projects.map(p => ({
+    ...p,
+    levels: p.levels.map(lv => {
+      if (!lv.floorPlan.backgroundImage) return lv
+      // dataUrl вырезаем, остальные поля (x/y/width/height/opacity/locked)
+      // оставляем — они лёгкие, пригодятся, чтобы не терять калибровку
+      // геометрии, если подложку потом перезагрузят по новой.
+      const { dataUrl: _dataUrl, ...rest } = lv.floorPlan.backgroundImage
+      return { ...lv, floorPlan: { ...lv.floorPlan, backgroundImage: { ...rest, dataUrl: '' } } }
+    }),
+  }))
+}
+
+/**
  * Обёртка над localStorage, которая не роняет приложение при переполнении
  * хранилища (баг найден 05.07.2026 — реальный QuotaExceededError на
  * проде, PDF-подложки как base64 быстро съедают лимит ~5-10МБ на сайт).
@@ -649,7 +676,7 @@ export const useProjectStore = create<ProjectStore>()(
       name: 'wall-calc-projects', // ключ в localStorage
       storage: createJSONStorage(() => safeLocalStorage),
       partialize: (s) => ({       // сохраняем только данные, не функции
-        projects: s.projects,
+        projects: stripHeavyDataForPersist(s.projects),
         activeProjectId: s.activeProjectId,
       }),
       onRehydrateStorage: () => (state) => {
