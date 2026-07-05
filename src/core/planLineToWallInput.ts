@@ -68,7 +68,9 @@ export function resolveAbutment(attachments: LineAttachments | undefined): Abutm
 function mapOpenings(line: PlanLine): Opening[] {
   return (line.openings ?? []).map(o => ({
     id: o.id,
-    type: o.type,
+    // 'opening' (просто проём, без двери/окна) для расчёта материала считаем как дверь —
+    // структурно то же самое: сплошной вырез от пола, требует такого же обрамления
+    type: o.type === 'window' ? 'window' : 'door',
     pos: o.offsetMm,
     width: o.widthMm,
     height: o.heightMm,
