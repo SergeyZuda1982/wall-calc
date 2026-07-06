@@ -32,6 +32,8 @@ export interface ProjectEntry {
   levels: Level[]
   activeLevelId: string
   createdAt: string
+  /** Пользовательские шаблоны этапов работ ("Сохранить как шаблон" в инспекторе) */
+  customWorkStageTemplates?: import('../types').WorkStageTemplate[]
 }
 
 export interface ProjectStore {
@@ -120,6 +122,11 @@ export interface ProjectStore {
   addRectColumn: (col: Omit<RectColumn, 'id'>) => string
   updateRectColumn: (id: string, patch: Partial<RectColumn>) => void
   removeRectColumn: (id: string) => void
+
+  // пользовательские шаблоны этапов работ (объектные — свои на каждый проект)
+  customWorkStageTemplates: import('../types').WorkStageTemplate[]
+  addCustomWorkStageTemplate: (template: import('../types').WorkStageTemplate) => void
+  removeCustomWorkStageTemplate: (id: string) => void
 }
 
 function emptyProject(name: string): ProjectEntry {
@@ -133,6 +140,7 @@ function emptyProject(name: string): ProjectEntry {
     levels: [level],
     activeLevelId: level.id,
     createdAt: new Date().toISOString(),
+    customWorkStageTemplates: [],
   }
 }
 
@@ -154,6 +162,7 @@ function syncActive(projects: ProjectEntry[], activeProjectId: string | null) {
     levels: p?.levels ?? [],
     activeLevelId: activeLevel?.id ?? null,
     floorPlan: activeLevel?.floorPlan ?? { ...DEFAULT_FLOOR_PLAN, lines: [] },
+    customWorkStageTemplates: p?.customWorkStageTemplates ?? [], // fallback: старые сохранённые проекты без этого поля
   }
 }
 
@@ -283,6 +292,7 @@ export const useProjectStore = create<ProjectStore>()(
       floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
       activeWallId: null,
       activeLiningId: null,
+      customWorkStageTemplates: [],
       saveError: null,
       clearSaveError: () => set({ saveError: null }),
 
@@ -432,6 +442,32 @@ export const useProjectStore = create<ProjectStore>()(
             p.id === s.activeProjectId ? { ...p, profileTemplates } : p
           )
           return { profileTemplates, projects }
+        })
+      },
+
+      // ─── Пользовательские шаблоны этапов работ ("Сохранить как шаблон") ────
+
+      addCustomWorkStageTemplate: (template) => {
+        set(s => {
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId
+              ? { ...p, customWorkStageTemplates: [...(p.customWorkStageTemplates ?? []), template] }
+              : p
+          )
+          const active = projects.find(p => p.id === s.activeProjectId)
+          return { projects, customWorkStageTemplates: active?.customWorkStageTemplates ?? [] }
+        })
+      },
+
+      removeCustomWorkStageTemplate: (id) => {
+        set(s => {
+          const projects = s.projects.map(p =>
+            p.id === s.activeProjectId
+              ? { ...p, customWorkStageTemplates: (p.customWorkStageTemplates ?? []).filter(t => t.id !== id) }
+              : p
+          )
+          const active = projects.find(p => p.id === s.activeProjectId)
+          return { projects, customWorkStageTemplates: active?.customWorkStageTemplates ?? [] }
         })
       },
 

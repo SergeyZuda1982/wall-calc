@@ -13,11 +13,15 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Shape, Image as KonvaIma
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, FinishBaseStage, FinishCoveringType } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, WorkProgress, WorkStageTemplate } from './types'
 import { DEFAULT_BOARD_SPEC } from './types'
 import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
+import { WorkProgressChecklist } from './components/WorkProgressChecklist'
+import { BUILTIN_WORK_STAGE_TEMPLATES } from './data/workStageTemplates'
+import { lineProgressColor, lineProgressSummary } from './core/lineProgress'
+import { aggregateProgressPercent } from './core/workProgress'
 import { useTemplateStore } from './store/useTemplateStore'
 import {
   rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
@@ -28,7 +32,7 @@ import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentRe
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners } from './core/calcAttachmentFasteners'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
-import { finishMaterialCategoryOf, finishSidesOf, finishBaseStageLabel, FINISH_COVERING_LABEL } from './core/finishResolver'
+import { finishMaterialCategoryOf, finishSidesOf } from './core/finishResolver'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
@@ -64,20 +68,6 @@ const LINE_WIDTH: Record<PlanLineType, number> = {
 }
 const HAS_SIDE_VIEW: PlanLineType[] = ['wall_new', 'wall_lining', 'floor']
 
-const STATUS_LABELS: Record<WorkStatus, string> = {
-  demolition:  'Под снос',
-  existing:    'Существует',
-  planned:     'Запланировано',
-  in_progress: 'В работе',
-  done:        'Выполнено',
-}
-const STATUS_COLORS: Record<WorkStatus, string> = {
-  demolition:  '#e53935',
-  existing:    '#78909c',
-  planned:     '#1e88e5',
-  in_progress: '#fb8c00',
-  done:        '#43a047',
-}
 /** Капитал по умолчанию — периметр (wall_existing) и ригели, всё остальное изменяемое */
 function defaultCategory(type: PlanLineType): LineCategory {
   return (type === 'wall_existing' || type === 'rib_beam') ? 'capital' : 'mutable'
@@ -380,7 +370,13 @@ export default function FloorPlan() {
     addSlab, addSlabHole,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
+    customWorkStageTemplates, addCustomWorkStageTemplate,
   } = useProjectStore()
+
+  const allWorkStageTemplates: WorkStageTemplate[] = useMemo(
+    () => [...BUILTIN_WORK_STAGE_TEMPLATES, ...(customWorkStageTemplates ?? [])],
+    [customWorkStageTemplates],
+  )
 
   const { templates, addTemplate, removeTemplate } = useTemplateStore()
 
@@ -1524,6 +1520,37 @@ export default function FloorPlan() {
     [lines],
   )
 
+  // Общий % выполнения по объекту + разбивка по типу работ (см. lineProgress.ts/workProgress.ts).
+  // Учитываются только НАСТРОЕННЫЕ прогрессы (buildProgress + finishProgressA/B с шагами) —
+  // линии без прогресса (legacy/капитал) в эту статистику не попадают, иначе 0% "непонятно
+  // откуда" размывал бы честный процент по тем поверхностям, где прогресс реально ведётся.
+  const progressSummary = useMemo(() => {
+    type Entry = { progress: WorkProgress; workTypeLabel: string }
+    const entries: Entry[] = []
+    for (const l of lines) {
+      if (l.buildProgress && l.buildProgress.steps.length > 0) {
+        entries.push({ progress: l.buildProgress, workTypeLabel: l.buildProgress.sourceTemplateLabel ?? 'Строительство (свой список)' })
+      }
+      for (const key of ['finishProgressA', 'finishProgressB'] as const) {
+        const p = l[key]
+        if (p && p.steps.length > 0) {
+          entries.push({ progress: p, workTypeLabel: p.sourceTemplateLabel ?? 'Отделка (свой список)' })
+        }
+      }
+    }
+    const overallPercent = aggregateProgressPercent(entries.map(e => e.progress))
+    const byType = new Map<string, WorkProgress[]>()
+    for (const e of entries) {
+      const arr = byType.get(e.workTypeLabel) ?? []
+      arr.push(e.progress)
+      byType.set(e.workTypeLabel, arr)
+    }
+    const byTypePercent = Array.from(byType.entries())
+      .map(([label, progresses]) => ({ label, percent: aggregateProgressPercent(progresses) }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+    return { overallPercent, byTypePercent, totalSurfaces: entries.length }
+  }, [lines])
+
   const previewPt    = cursor ?? (drawing ? { x: drawing.x1, y: drawing.y1 } : null)
   const previewX2    = previewPt?.x ?? 0
   const previewY2    = previewPt?.y ?? 0
@@ -1570,15 +1597,6 @@ export default function FloorPlan() {
     })
     return resolveAllAttachments(surfaces)
   }, [lines, scaleMmPx])
-
-  // ── Статус конструкций ────────────────────────────────────────────────────
-  // Статус хранится в label через суффикс или через будущие поля
-  // Сейчас используем простую заглушку — все "Не начата"
-  const getStatus = (_id: string) => 'none' as 'none' | 'in_progress' | 'done'
-  const statusDot = (s: 'none' | 'in_progress' | 'done') =>
-    s === 'done' ? '●' : s === 'in_progress' ? '◐' : '○'
-  const statusColor = (s: 'none' | 'in_progress' | 'done') =>
-    s === 'done' ? '#4caf50' : s === 'in_progress' ? '#ff9800' : '#bbb'
 
   // ── Подсчёт площади выбранной линии ───────────────────────────────────────
   function calcLineArea(l: PlanLine): number {
@@ -2644,7 +2662,7 @@ export default function FloorPlan() {
                     const my = (l.y1 + l.y2) / 2
 
                     const lCategory  = l.category ?? defaultCategory(l.type)
-                    const lStatus    = l.workStatus ?? defaultStatus(lCategory)
+                    const lStatusColor = lineProgressColor(l.buildProgress)
                     const showStatusDot = lCategory === 'mutable' && !inErase
 
                     // Рисуем двойную линию (трапецию) ТОЛЬКО если spec задан явно
@@ -2714,7 +2732,7 @@ export default function FloorPlan() {
                               <Group x={midPt.x} y={midPt.y - 12} listening={false}>
                                 <Text x={-40} width={80} text={l.label} fontSize={10}
                                   fill={stroke} align="center" fontStyle="bold" listening={false} />
-                                {showStatusDot && <Circle x={44} y={5} radius={3.5} fill={STATUS_COLORS[lStatus]} listening={false} />}
+                                {showStatusDot && <Circle x={44} y={5} radius={3.5} fill={lStatusColor} listening={false} />}
                               </Group>
                             )}
                             {isSelected && mode === 'select' && <>
@@ -2816,7 +2834,7 @@ export default function FloorPlan() {
                                 <Group x={mx} y={my} rotation={rot} listening={false}>
                                   <Text x={-35} y={-7} width={70} text={l.label} fontSize={10}
                                     fill={stroke} align="center" fontStyle="bold" listening={false} />
-                                  {showStatusDot && <Circle x={38} y={-2} radius={3.5} fill={STATUS_COLORS[lStatus]} listening={false} />}
+                                  {showStatusDot && <Circle x={38} y={-2} radius={3.5} fill={lStatusColor} listening={false} />}
                                 </Group>
                               )
                             }
@@ -2824,7 +2842,7 @@ export default function FloorPlan() {
                               <Group x={mx} y={my-12} listening={false}>
                                 <Text x={-40} width={80} text={l.label} fontSize={10}
                                   fill={stroke} align="center" fontStyle="bold" listening={false} />
-                                {showStatusDot && <Circle x={44} y={5} radius={3.5} fill={STATUS_COLORS[lStatus]} listening={false} />}
+                                {showStatusDot && <Circle x={44} y={5} radius={3.5} fill={lStatusColor} listening={false} />}
                               </Group>
                             ) : null
                           })()}
@@ -2867,7 +2885,7 @@ export default function FloorPlan() {
                             <Group x={mx} y={my-12} listening={false}>
                               <Text x={-40} width={80} text={l.label} fontSize={10}
                                 fill={stroke} align="center" fontStyle="bold" listening={false} />
-                              {showStatusDot && <Circle x={44} y={5} radius={3.5} fill={STATUS_COLORS[lStatus]} listening={false} />}
+                              {showStatusDot && <Circle x={44} y={5} radius={3.5} fill={lStatusColor} listening={false} />}
                             </Group>
                           ) : null
                         })()}
@@ -3064,7 +3082,18 @@ export default function FloorPlan() {
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433' }}>
                   Конструкции на плане
                 </div>
-                {sheetSummary.surfaces.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {progressSummary.totalSurfaces > 0 && (
+                    <div title={progressSummary.byTypePercent.map(t => `${t.label}: ${t.percent}%`).join(' · ')}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#555' }}>
+                      <span>Прогресс:</span>
+                      <div style={{ width: 60, height: 6, borderRadius: 3, background: '#eee', overflow: 'hidden' }}>
+                        <div style={{ width: `${progressSummary.overallPercent}%`, height: '100%', background: progressSummary.overallPercent === 100 ? '#43a047' : '#3a7bd5' }} />
+                      </div>
+                      <span style={{ fontWeight: 700 }}>{progressSummary.overallPercent}%</span>
+                    </div>
+                  )}
+                  {sheetSummary.surfaces.length > 0 && (
                   <button onClick={() => setShowSheetSummary(true)}
                     style={{
                       fontSize: 11, fontWeight: 600, color: '#fff', background: '#3a7bd5',
@@ -3073,7 +3102,8 @@ export default function FloorPlan() {
                     }}>
                     📋 Смета раскроя ({sheetSummary.totalSheetsNeeded} л.)
                   </button>
-                )}
+                  )}
+                </div>
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
@@ -3090,7 +3120,6 @@ export default function FloorPlan() {
                 </thead>
                 <tbody>
                   {lines.filter(l => l.type !== 'rib_beam').map((l, i) => {
-                    const status = getStatus(l.id)
                     const isSelected = l.id === selectedId
                     return (
                       <tr key={l.id}
@@ -3120,8 +3149,8 @@ export default function FloorPlan() {
                         </td>
                         <td style={tdS}>{calcLineArea(l).toFixed(2)} м²</td>
                         <td style={tdS}>
-                          <span style={{ color: statusColor(status) }}>{statusDot(status)}</span>
-                          {' '}Не начата
+                          <span style={{ color: lineProgressColor(l.buildProgress) }}>●</span>
+                          {' '}{lineProgressSummary(l.buildProgress)}
                         </td>
                         <td style={{ ...tdS, display: 'flex', gap: 4 }}>
                           <button title="Просмотр" style={iconBtnStyle} onClick={e => { e.stopPropagation(); setSelected(l.id); setInspectorId(l.id); setMode('select') }}>👁</button>
@@ -3236,81 +3265,42 @@ export default function FloorPlan() {
               )}
             </div>
 
-            {/* Статус работ */}
-            <div style={{ padding: '6px 16px 8px' }}>
-              <div style={{ fontSize: 10, color: '#999', marginBottom: 4, textTransform: 'uppercase' }}>Статус работ</div>
-              <select
-                value={inspectorLine.workStatus ?? defaultStatus(inspectorLine.category ?? defaultCategory(inspectorLine.type))}
-                onChange={e => updatePlanLine(inspectorLine.id, { workStatus: e.target.value as WorkStatus })}
-                style={{
-                  width: '100%', fontSize: 12, padding: '6px 8px', borderRadius: 5, border: '1px solid #ddd',
-                  color: STATUS_COLORS[inspectorLine.workStatus ?? defaultStatus(inspectorLine.category ?? defaultCategory(inspectorLine.type))],
-                  fontWeight: 600,
-                }}>
-                {(Object.keys(STATUS_LABELS) as WorkStatus[]).map(s => (
-                  <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                ))}
-              </select>
-            </div>
+            {/* Этапы строительства — только для изменяемых конструкций (капитал уже стоит) */}
+            {(inspectorLine.category ?? defaultCategory(inspectorLine.type)) === 'mutable' && (
+              <div style={{ padding: '6px 16px 4px' }}>
+                <div style={{ fontSize: 10, color: '#999', marginBottom: 4, textTransform: 'uppercase' }}>Этапы строительства</div>
+                <WorkProgressChecklist
+                  label="Строительство"
+                  progress={inspectorLine.buildProgress}
+                  templates={allWorkStageTemplates}
+                  onChange={p => updatePlanLine(inspectorLine.id, { buildProgress: p })}
+                  onSaveTemplate={t => addCustomWorkStageTemplate(t)}
+                />
+              </div>
+            )}
 
-            {/* Стадийная отделка — независимо от статуса работ (та — построена ли конструкция) */}
+            {/* Этапы отделки — независимо от прогресса строительства (та — построена ли конструкция) */}
             {(() => {
               const category = finishMaterialCategoryOf(inspectorLine)
               const sides = finishSidesOf(inspectorLine)
               if (!category || sides === 0) return null
-              const sideDefs: Array<{ key: 'finishA' | 'finishB'; label: string }> = [
-                { key: 'finishA', label: sides === 1 ? 'Отделка' : 'Сторона A' },
-                ...(sides === 2 ? [{ key: 'finishB' as const, label: 'Сторона B' }] : []),
+              const sideDefs: Array<{ key: 'finishProgressA' | 'finishProgressB'; label: string }> = [
+                { key: 'finishProgressA', label: sides === 1 ? 'Отделка' : 'Сторона A' },
+                ...(sides === 2 ? [{ key: 'finishProgressB' as const, label: 'Сторона B' }] : []),
               ]
               return (
                 <div style={{ padding: '6px 16px 10px', borderTop: '1px solid #f0f0f0' }}>
-                  <div style={{ fontSize: 10, color: '#999', marginBottom: 6, textTransform: 'uppercase' }}>Стадийная отделка</div>
-                  {sideDefs.map(({ key, label }) => {
-                    const state = inspectorLine[key] ?? { baseStage: 'naked' as FinishBaseStage, covering: null }
-                    return (
-                      <div key={key} style={{ marginBottom: 8, padding: '6px 8px', background: '#fafbfc', borderRadius: 5, border: '1px solid #eee' }}>
-                        <div style={{ fontSize: 11, color: '#555', marginBottom: 4 }}>{label}</div>
-                        <select
-                          value={state.baseStage}
-                          onChange={e => updatePlanLine(inspectorLine.id, {
-                            [key]: { ...state, baseStage: e.target.value as FinishBaseStage },
-                          } as Partial<PlanLine>)}
-                          style={{ width: '100%', fontSize: 11, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd', marginBottom: 6 }}>
-                          {(['naked', 'base_done', 'puttied'] as FinishBaseStage[]).map(s => (
-                            <option key={s} value={s}>{finishBaseStageLabel(s, category)}</option>
-                          ))}
-                        </select>
-                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                          <select
-                            value={state.covering?.type ?? ''}
-                            onChange={e => {
-                              const v = e.target.value
-                              updatePlanLine(inspectorLine.id, {
-                                [key]: { ...state, covering: v ? { type: v as FinishCoveringType } : null },
-                              } as Partial<PlanLine>)
-                            }}
-                            style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }}>
-                            <option value="">Без покрытия</option>
-                            {Object.entries(FINISH_COVERING_LABEL).map(([v, l]) => (
-                              <option key={v} value={v}>{l}</option>
-                            ))}
-                          </select>
-                          {state.covering?.type === 'paint' && (
-                            <input type="text" placeholder="RAL код" value={state.covering.ralCode ?? ''}
-                              onChange={e => updatePlanLine(inspectorLine.id, {
-                                [key]: { ...state, covering: { ...state.covering, ralCode: e.target.value } },
-                              } as Partial<PlanLine>)}
-                              style={{ width: 80, fontSize: 11, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
-                          )}
-                        </div>
-                        {state.covering?.type === 'tile' && (
-                          <div style={{ fontSize: 10, color: '#e57373', marginTop: 4 }}>
-                            Раскладка плитки (угол, объём клея/затирки) — отдельная задача, пока только отметка выбора
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                  <div style={{ fontSize: 10, color: '#999', marginBottom: 6, textTransform: 'uppercase' }}>Этапы отделки</div>
+                  {sideDefs.map(({ key, label }) => (
+                    <WorkProgressChecklist
+                      key={key}
+                      label={label}
+                      progress={inspectorLine[key]}
+                      templates={allWorkStageTemplates}
+                      onChange={p => updatePlanLine(inspectorLine.id, { [key]: p } as Partial<PlanLine>)}
+                      onSaveTemplate={t => addCustomWorkStageTemplate(t)}
+                    />
+                  ))}
                 </div>
               )
             })()}
