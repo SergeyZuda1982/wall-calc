@@ -390,7 +390,13 @@ export default function FloorPlan() {
 
   // ── UI-состояние ──────────────────────────────────────────────────────────
   const [planView, setPlanView]         = useState<PlanView>('top')
-  const [mode, setMode]                 = useState<Mode>('draw')
+  // Дефолт 'select', не 'draw' — иначе любое касание холста сразу после
+  // открытия плана/загрузки подложки ставит точку новой линии, прежде
+  // чем пользователь успел просто посмотреть/приблизить чертёж (жалоба
+  // с мобильного, см. КОНСПЕКТ 06.07.2026). В 'select' одним пальцем
+  // можно панорамировать (см. onTouchStartNative), рисование — по
+  // явному нажатию инструмента.
+  const [mode, setMode]                 = useState<Mode>('select')
   const [trimSourceId, setTrimSourceId] = useState<string | null>(null)  // первый клик инструмента "обрезать/продлить"
   const [drawType, setDrawType]         = useState<PlanLineType>('wall_new')
   const [drawSpec, setDrawSpec]         = useState<PlanLineSpec | null>(null)
@@ -594,6 +600,7 @@ export default function FloorPlan() {
           width: res.width, height: res.height,
           opacity: 0.6, locked: true,
         })
+        setMode('select')
         setBgUploading(false)
       }
     } catch (err) {
@@ -615,6 +622,7 @@ export default function FloorPlan() {
         width: res.width, height: res.height,
         opacity: 0.6, locked: true,
       })
+      setMode('select')
     } catch {
       setBgError('Не удалось отрендерить страницу.')
     }
