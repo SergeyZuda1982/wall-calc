@@ -220,11 +220,12 @@ export function stripHeavyDataForPersist(projects: ProjectEntry[]): ProjectEntry
  * PDF-подложек много. Настоящий фикс — перенос подложек в IndexedDB
  * (отдельная задача, см. TASKS.md). Здесь только защита от падения.
  */
-// Заполняется сразу после create() ниже — нужна, чтобы safeLocalStorage.setItem
+// Заполняются сразу после create() ниже — нужны, чтобы safeLocalStorage.setItem
 // мог сообщить в стор об ошибке сохранения (см. saveError в ProjectStore).
 let storeSetStateRef: ((partial: { saveError: string | null }) => void) | undefined
+let storeGetStateRef: (() => { saveError: string | null }) | undefined
 
-const safeLocalStorage = {
+export const safeLocalStorage = {
   getItem: (name: string): string | null => {
     try {
       return window.localStorage.getItem(name)
@@ -236,10 +237,27 @@ const safeLocalStorage = {
   setItem: (name: string, value: string): void => {
     try {
       window.localStorage.setItem(name, value)
-      storeSetStateRef?.({ saveError: null })
+      /**
+       * КРИТИЧНЫЙ БАГ (найден 05.07.2026, версия до этого фикса вешала
+       * вкладку НАМЕРТВО даже на пустых проектах): zustand persist
+       * подписывается на ВЕСЬ стор, чтобы автосохранять на каждое
+       * изменение. Если здесь безусловно звать setState({saveError:null})
+       * при КАЖДОМ успешном сохранении — это само создаёт новое изменение
+       * стора → persist сохраняет снова → setItem снова успешен → снова
+       * setState → бесконечный синхронный цикл, 100% CPU, вкладка не
+       * отвечает. Фикс: звать setState ТОЛЬКО если saveError реально был
+       * не null — тогда переход в null происходит один раз и цикл не
+       * запускается вообще (второй проход видит saveError уже null,
+       * ничего не меняет, ничего не вызывает).
+       */
+      if (storeGetStateRef?.().saveError !== null) {
+        storeSetStateRef?.({ saveError: null })
+      }
     } catch (e) {
       console.error('[wall-calc] Не удалось сохранить проект в localStorage (переполнено хранилище?). Изменения останутся только в памяти до перезагрузки страницы.', e)
-      storeSetStateRef?.({ saveError: 'Не удалось сохранить изменения на диск — переполнено хранилище браузера. Работа продолжается только в памяти: не закрывайте и не перезагружайте вкладку, пока не освободите место (например, удалите PDF-подложки на неиспользуемых этажах).' })
+      if (storeGetStateRef?.().saveError === null) {
+        storeSetStateRef?.({ saveError: 'Не удалось сохранить изменения на диск — переполнено хранилище браузера. Работа продолжается только в памяти: не закрывайте и не перезагружайте вкладку, пока не освободите место (например, удалите PDF-подложки на неиспользуемых этажах).' })
+      }
     }
   },
   removeItem: (name: string): void => {
@@ -744,3 +762,4 @@ export const useProjectStore = create<ProjectStore>()(
 
 // Заполняем ссылку, использованную в safeLocalStorage.setItem (см. выше).
 storeSetStateRef = useProjectStore.setState
+storeGetStateRef = useProjectStore.getState
