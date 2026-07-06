@@ -78,3 +78,55 @@ describe('useProjectStore — гидратация легаси-проекта (
     expect(finalState.floorPlan.lines[0].id).toBe('l1')
   })
 })
+
+describe('useProjectStore — P0-фикс: старый тяжёлый dataUrl чистится СРАЗУ при гидратации', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    ;(globalThis as any).window = globalThis
+    ;(globalThis as any).localStorage = new FakeStorage()
+  })
+
+  afterEach(() => {
+    delete (globalThis as any).localStorage
+    delete (globalThis as any).window
+  })
+
+  it('легаси-проект с большим dataUrl подложки (сохранён ДО фикса partialize) — после гидратации dataUrl пустой, а не висит в памяти всю сессию', async () => {
+    const heavyDataUrl = 'data:image/png;base64,' + 'A'.repeat(50_000) // имитация тяжёлой подложки
+    const legacyProjectWithHeavyBg = {
+      id: 'p1',
+      name: 'Проект со старой тяжёлой подложкой',
+      walls: [],
+      linings: [],
+      floorPlan: {
+        scaleMmPerPx: 5,
+        lines: [],
+        contours: [],
+        rooms: [],
+        backgroundImage: {
+          dataUrl: heavyDataUrl,
+          x: 0, y: 0, width: 1000, height: 800, opacity: 0.6, locked: true,
+        },
+      },
+    }
+    ;(globalThis as any).localStorage.setItem('wall-calc-projects', JSON.stringify({
+      state: { projects: [legacyProjectWithHeavyBg], activeProjectId: 'p1' },
+      version: 0,
+    }))
+
+    const { useProjectStore } = await import('../useProjectStore')
+
+    await new Promise<void>((resolve) => {
+      if (useProjectStore.persist.hasHydrated()) return resolve()
+      useProjectStore.persist.onFinishHydration(() => resolve())
+    })
+
+    const finalState = useProjectStore.getState()
+    // Сама подложка (позиция/размер/прозрачность) не потеряна — только dataUrl
+    expect(finalState.floorPlan.backgroundImage).not.toBeNull()
+    expect(finalState.floorPlan.backgroundImage?.width).toBe(1000)
+    expect(finalState.floorPlan.backgroundImage?.dataUrl).toBe('')
+    // И в самом массиве projects (не только в плоском floorPlan-зеркале) тоже пусто
+    expect(finalState.projects[0].levels[0].floorPlan.backgroundImage?.dataUrl).toBe('')
+  })
+})
