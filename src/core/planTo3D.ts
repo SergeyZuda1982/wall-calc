@@ -22,6 +22,7 @@
 import type { PlanLine, PlanLineType, Room, Slab, RoundColumn, RectColumn } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
+import { isLineBuiltForRender } from './lineProgress'
 
 export const DEFAULT_HEIGHT_MM = 3000
 export const DEFAULT_RIB_SECTION_MM = 300
@@ -105,9 +106,17 @@ export function wallToBox3D(line: PlanLine, scaleMmPx: number, ceilingMm: number
   }
 }
 
+/**
+ * Линии, у которых явно заведён buildProgress без единого подтверждённого
+ * шага (пользователь осознанно включил отслеживание, но работы ещё не
+ * начаты) — не рисуются в 3D вообще. Линии БЕЗ buildProgress ведут себя
+ * как раньше (всегда видны) — обратная совместимость, см. lineProgress.ts.
+ * estimateCeilingMm намеренно считается по ПОЛНОМУ списку линий (высота
+ * потолка — не то, что должно "пропадать" вместе с ещё не начатой стеной).
+ */
 export function wallsToBoxes3D(lines: PlanLine[], scaleMmPx: number): WallBox3D[] {
   const ceilingMm = estimateCeilingMm(lines)
-  return lines.flatMap(l => wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm))
+  return lines.filter(isLineBuiltForRender).flatMap(l => wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm))
 }
 
 /**

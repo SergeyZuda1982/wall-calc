@@ -98,6 +98,63 @@ describe('wallsToBoxes3D', () => {
     const boxes = wallsToBoxes3D(lines, 10)
     expect(boxes.map(b => b.id)).toEqual(['a', 'c'])
   })
+
+  it('обратная совместимость: линия без buildProgress всегда видна (как до фичи статусов)', () => {
+    const lines: PlanLine[] = [
+      baseLine({ id: 'a', category: 'mutable', spec: { material: 'brick', subtype: '200' } }),
+    ]
+    expect(wallsToBoxes3D(lines, 10).map(b => b.id)).toEqual(['a'])
+  })
+
+  it('mutable с buildProgress без единого подтверждённого шага — скрыта', () => {
+    const lines: PlanLine[] = [
+      baseLine({
+        id: 'a',
+        type: 'wall_new',
+        category: 'mutable',
+        spec: { material: 'gkl' },
+        buildProgress: { steps: [{ stepId: 's1', label: 'Разметка', outcome: 'pending' }] },
+      }),
+    ]
+    expect(wallsToBoxes3D(lines, 10)).toEqual([])
+  })
+
+  it('mutable с хотя бы одним подтверждённым шагом — видна', () => {
+    const lines: PlanLine[] = [
+      baseLine({
+        id: 'a',
+        type: 'wall_new',
+        category: 'mutable',
+        spec: { material: 'gkl' },
+        buildProgress: { steps: [{ stepId: 's1', label: 'Разметка', outcome: 'confirmed', confirmedAt: '2026-07-06T00:00:00.000Z' }] },
+      }),
+    ]
+    expect(wallsToBoxes3D(lines, 10).map(b => b.id)).toEqual(['a'])
+  })
+
+  it('capital всегда видна, даже с не начатым buildProgress (странные данные, но не должно ломать периметр)', () => {
+    const lines: PlanLine[] = [
+      baseLine({
+        id: 'a',
+        category: 'capital',
+        type: 'wall_existing',
+        spec: { material: 'brick', subtype: '200' },
+        buildProgress: { steps: [{ stepId: 's1', label: 'X', outcome: 'pending' }] },
+      }),
+    ]
+    expect(wallsToBoxes3D(lines, 10).map(b => b.id)).toEqual(['a'])
+  })
+
+  it('высота потолка считается по ПОЛНОМУ списку линий, включая скрытые', () => {
+    // существующая стена высотой 2500 видна, но скрытая mutable-стена высотой 3200
+    // не должна пропасть из расчёта потолка (не в скоупе этого резолвера — но
+    // проверяем, что фильтрация видимости не трогает estimateCeilingMm)
+    const lines: PlanLine[] = [
+      baseLine({ id: 'existing', type: 'wall_existing', heightMm: 2500, spec: { material: 'brick', subtype: '200' } }),
+    ]
+    const boxes = wallsToBoxes3D(lines, 10)
+    expect(boxes[0].size.sy).toBeCloseTo(2.5, 5)
+  })
 })
 
 describe('estimateCeilingMm', () => {

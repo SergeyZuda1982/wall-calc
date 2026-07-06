@@ -69,6 +69,18 @@ export function isNotStarted(progress: WorkProgress): boolean {
   return progress.steps.length === 0 || progress.steps.every(s => s.outcome === 'pending')
 }
 
+/**
+ * true, если хотя бы один шаг подтверждён — то есть физически что-то уже
+ * сделано. ОТЛИЧАЕТСЯ от !isNotStarted(): если первый же шаг ОТКЛОНЁН
+ * (ждём материалов и т.п.) без единого подтверждения, isNotStarted() уже
+ * false (шаг тронут), а hasAnyConfirmedStep() всё ещё false (физически
+ * ничего не появилось) — это разные вопросы, используются для разных
+ * целей (список "в работе" vs видимость геометрии в 3D).
+ */
+export function hasAnyConfirmedStep(progress: WorkProgress): boolean {
+  return progress.steps.some(s => s.outcome === 'confirmed')
+}
+
 /** true, если все шаги подтверждены (работа полностью завершена) */
 export function isComplete(progress: WorkProgress): boolean {
   return progress.steps.length > 0 && progress.steps.every(s => s.outcome === 'confirmed')
