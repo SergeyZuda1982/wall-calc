@@ -477,6 +477,74 @@ export interface FinishState {
   covering?: FinishCovering | null
 }
 
+/**
+ * ⚠️ DEPRECATED (06.07.2026) — WorkStatus/FinishBaseStage/FinishCovering/
+ * FinishState заменяются на WorkProgress (см. ниже): пользователь описал
+ * реальный процесс как ПРОИЗВОЛЬНУЮ последовательность этапов на каждую
+ * поверхность (не фиксированный enum на 3-5 шагов), с подтверждением ✓
+ * или отклонением ✗ + причиной на каждом шаге. Старые типы оставлены
+ * в коде и ещё используются в FloorPlan.tsx/finishResolver.ts — сама
+ * миграция вызовов (инспектор, STATUS_COLORS, planTo3D видимость) —
+ * ОТДЕЛЬНАЯ следующая задача после того, как новая модель обкатана.
+ * Не удалять эти типы, пока миграция не завершена и не смержена.
+ */
+
+/** Причина, по которой шаг НЕ подтверждён (outcome: 'rejected') */
+export type StepRejectReason =
+  | 'waiting_materials'   // ждём материалов
+  | 'waiting_trades'      // ждём смежников
+  | 'changes'             // вносим изменения (переделка/уточнение проекта)
+  | 'other'               // своя причина — см. rejectNote
+
+export const STEP_REJECT_REASON_LABEL: Record<StepRejectReason, string> = {
+  waiting_materials: 'Ждём материалов',
+  waiting_trades: 'Ждём смежников',
+  changes: 'Вносим изменения',
+  other: 'Другая причина',
+}
+
+/** Один именованный шаг в шаблоне ("Грунтовка", "Каркас", "Плитка"...) */
+export interface WorkStageTemplateStep {
+  id: string
+  label: string
+}
+
+/**
+ * Именованный шаблон последовательности этапов — заготовка, из которой
+ * можно "проштамповать" список на новую линию/поверхность. НЕ является
+ * источником истины для уже применённого прогресса (WorkProgress копирует
+ * шаги себе и живёт дальше независимо — правки шаблона задним числом не
+ * трогают уже начатые линии, см. applyTemplate()).
+ */
+export interface WorkStageTemplate {
+  id: string
+  label: string                    // "Стена под покраску", "ГКЛ перегородка"...
+  steps: WorkStageTemplateStep[]
+}
+
+export type StepOutcome = 'pending' | 'confirmed' | 'rejected'
+
+/** Фактическое состояние одного шага на конкретной линии/поверхности */
+export interface StepProgress {
+  stepId: string
+  label: string             // копия label на момент применения шаблона (шаблон могли поменять/удалить позже)
+  outcome: StepOutcome
+  rejectReason?: StepRejectReason
+  rejectNote?: string       // текст своей причины, если rejectReason === 'other'
+  confirmedAt?: string      // ISO-дата, для истории/отчёта
+}
+
+/**
+ * Полный прогресс по ОДНОЙ поверхности (одна сторона линии, пол, потолок...).
+ * templateId/sourceTemplateLabel — просто след происхождения (для UI/отчёта),
+ * steps живут и редактируются независимо от шаблона после применения.
+ */
+export interface WorkProgress {
+  templateId?: string
+  sourceTemplateLabel?: string
+  steps: StepProgress[]
+}
+
 export interface PlanLine {
   id: string
   x1: number; y1: number   // координаты на холсте (px)
