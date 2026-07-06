@@ -64,6 +64,11 @@ export function calcResults(
   layer1: BoardSpec = DEFAULT_BOARD_SPEC,
   layer2: BoardSpec = DEFAULT_BOARD_SPEC,
   plywoodInserts: PlywoodInsert[] = [],
+  // 2 — перегородка (обшивка с обеих сторон, дефолт, как раньше).
+  // 1 — облицовка ИЛИ один независимый ряд двойного каркаса С115/С116
+  // (обшивка только с внешней стороны, вторая сторона ряда обращена
+  // в зазор между каркасами и ничем не обшивается сама по себе).
+  sides: 1 | 2 = 2,
 ): CalcResult {
   const activeOpenings = openings.filter(o => o.width > 0)
 
@@ -120,7 +125,7 @@ export function calcResults(
 
   const openingsArea = activeOpenings.reduce((s, o) => s + o.width * o.height, 0)
   const wallArea = integrateHeight(ceilingProfile, floorProfile, 0, l)
-  const gklArea = ((wallArea - openingsArea) * 2 * gklLayers) / 1_000_000
+  const gklArea = ((wallArea - openingsArea) * sides * gklLayers) / 1_000_000
 
   const firstOpening = activeOpenings[0]
   const aboveStudHeight = firstOpening
@@ -160,7 +165,7 @@ export function calcResults(
     layer1,
     layer2,
     gklLayers as 1 | 2,
-    2, // перегородка — две стороны
+    sides,
     overlap,
     plywoodInserts,
     positions,

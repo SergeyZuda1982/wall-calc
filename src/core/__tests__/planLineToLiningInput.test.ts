@@ -22,6 +22,11 @@ describe('resolveLiningType', () => {
     expect(resolveLiningType('frame_ps50', undefined)).toBe('c625')
     expect(resolveLiningType('frame_ps75', 1)).toBe('c625')
   })
+  it('frame_ps100 + layers 1 (или не задано) -> c625, + layers 2 -> c626', () => {
+    expect(resolveLiningType('frame_ps100', undefined)).toBe('c625')
+    expect(resolveLiningType('frame_ps100', 1)).toBe('c625')
+    expect(resolveLiningType('frame_ps100', 2)).toBe('c626')
+  })
   it('frame_ps50/frame_ps75 + layers 2 -> c626', () => {
     expect(resolveLiningType('frame_ps50', 2)).toBe('c626')
     expect(resolveLiningType('frame_ps75', 2)).toBe('c626')
@@ -41,6 +46,9 @@ describe('resolveLiningProfileType', () => {
   it('frame_ps50 -> ps50, frame_ps75 -> ps75', () => {
     expect(resolveLiningProfileType('frame_ps50')).toBe('ps50')
     expect(resolveLiningProfileType('frame_ps75')).toBe('ps75')
+  })
+  it('frame_ps100 -> ps100', () => {
+    expect(resolveLiningProfileType('frame_ps100')).toBe('ps100')
   })
   it('glued/неизвестный -> null', () => {
     expect(resolveLiningProfileType('glued')).toBeNull()
@@ -85,6 +93,12 @@ describe('planLineToLiningInput — резолв систем С623/625/626', ()
     const res = planLineToLiningInput(liningLine({ spec: { material: 'gkl', subtype: 'frame_ps50', layers: 2 } }))!
     expect(res.liningType).toBe('c626')
     expect(res.profileType).toBe('ps50')
+    expect(res.gklLayers).toBe(2)
+  })
+  it('frame_ps100 + layers 2 -> c626, 2 слоя, profileType ps100', () => {
+    const res = planLineToLiningInput(liningLine({ spec: { material: 'gkl', subtype: 'frame_ps100', layers: 2 } }))!
+    expect(res.liningType).toBe('c626')
+    expect(res.profileType).toBe('ps100')
     expect(res.gklLayers).toBe(2)
   })
 })

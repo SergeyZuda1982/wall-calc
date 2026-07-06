@@ -102,6 +102,7 @@ export const TAXONOMY: Record<PlanLineType, TaxNode[]> = {
         { value: 'frame_pn28', label: 'Каркас ПН/ПС 28 (~40мм)', abbr: 'К28' },
         { value: 'frame_ps50', label: 'Каркас ПС 50 (~65мм)',    abbr: 'К50' },
         { value: 'frame_ps75', label: 'Каркас ПС 75 (~90мм)',    abbr: 'К75' },
+        { value: 'frame_ps100', label: 'Каркас ПС 100 (~115мм)', abbr: 'К100' },
       ],
     },
     {
@@ -346,7 +347,7 @@ export function getDoubleFrameThicknessMm(
 }
 
 const LINING_THICKNESS: Record<string, number> = {
-  glued: 12, frame_pn28: 40, frame_ps50: 65, frame_ps75: 90,
+  glued: 12, frame_pn28: 40, frame_ps50: 65, frame_ps75: 90, frame_ps100: 115,
 }
 
 export function getWallThicknessMm(
