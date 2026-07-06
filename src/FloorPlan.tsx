@@ -30,8 +30,8 @@ import { computeWallJoins } from './core/wallJoin'
 import type { WallForJoin } from './core/wallJoin'
 import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
-import { calcLineFasteners } from './core/calcAttachmentFasteners'
-import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
+import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
+import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf } from './core/finishResolver'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
@@ -439,6 +439,7 @@ export default function FloorPlan() {
   const [contourSpec, setContourSpec]   = useState<PlanLineSpec | undefined>(undefined)
   const [eraseIds, setEraseIds]         = useState<string[]>([])
   const [showSheetSummary, setShowSheetSummary] = useState(false)
+  const [showFastenerSummary, setShowFastenerSummary] = useState(false)
   const [showParallelDialog, setShowParallelDialog] = useState(false)
   const [parallelDist, setParallelDist]             = useState('100')
   const [rightTab, setRightTab]         = useState<'construction' | 'finish' | 'materials' | 'calc'>('construction')
@@ -1597,6 +1598,35 @@ export default function FloorPlan() {
     })
     return resolveAllAttachments(surfaces)
   }, [lines, scaleMmPx])
+
+  // ── Смета крепежа боковых примыканий по всему проекту ─────────────────────
+  // Переиспользует уже готовые calcLineFasteners (по линии) и calcProjectFasteners
+  // (агрегат по типу) — просто выводит их на UI, сама механика не менялась.
+  const fastenerSummary = useMemo(() => {
+    type LineFastenerRow = {
+      id: string
+      label: string
+      startLabel: string | null
+      endLabel: string | null
+    }
+    const rows: LineFastenerRow[] = []
+    for (const l of lines) {
+      const res = calcLineFasteners(l, lineAttachments.get(l.id))
+      if (!res.start && !res.end) continue
+      rows.push({
+        id: l.id,
+        label: l.label,
+        startLabel: res.start ? `${FASTENER_LABEL[res.start.spec.type]} × ${res.start.qty}` : null,
+        endLabel: res.end ? `${FASTENER_LABEL[res.end.spec.type]} × ${res.end.qty}` : null,
+      })
+    }
+    const totals = calcProjectFasteners(lines, lineAttachments)
+    const totalsList = Array.from(totals.entries())
+      .map(([type, qty]) => ({ type, label: FASTENER_LABEL[type as keyof typeof FASTENER_LABEL] ?? type, qty }))
+      .sort((a, b) => b.qty - a.qty)
+    const totalQty = totalsList.reduce((s, t) => s + t.qty, 0)
+    return { rows, totalsList, totalQty }
+  }, [lines, lineAttachments])
 
   // ── Подсчёт площади выбранной линии ───────────────────────────────────────
   function calcLineArea(l: PlanLine): number {
@@ -3103,6 +3133,16 @@ export default function FloorPlan() {
                     📋 Смета раскроя ({sheetSummary.totalSheetsNeeded} л.)
                   </button>
                   )}
+                  {fastenerSummary.totalQty > 0 && (
+                  <button onClick={() => setShowFastenerSummary(true)}
+                    style={{
+                      fontSize: 11, fontWeight: 600, color: '#fff', background: '#6a4fb5',
+                      border: 'none', borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 5,
+                    }}>
+                    🔩 Смета крепежа ({fastenerSummary.totalQty} шт)
+                  </button>
+                  )}
                 </div>
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -3996,6 +4036,69 @@ export default function FloorPlan() {
                   <div style={{ fontSize: 10, color: '#aaa', marginTop: 8 }}>
                     Обрезки переносятся последовательно между конструкциями — порядок совпадает
                     с порядком в таблице «Конструкции на плане».
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Смета крепежа боковых примыканий (проектный расчёт) ── */}
+      {showFastenerSummary && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          onClick={() => setShowFastenerSummary(false)}>
+          <div style={{ background: '#fff', borderRadius: 10, padding: 0, width: 640, maxWidth: '92vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.25)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #e0e4ee' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#1e2433' }}>🔩 Смета крепежа боковых примыканий</div>
+              <button onClick={() => setShowFastenerSummary(false)} style={iconBtnStyle2}>✕</button>
+            </div>
+
+            {fastenerSummary.rows.length === 0 ? (
+              <div style={{ padding: 24, fontSize: 12, color: '#888', textAlign: 'center' }}>
+                Нет линий с определённым боковым примыканием — крепёж считается только там,
+                где конец конструкции упирается в другую (стену, монолит, блок и т.п.)
+              </div>
+            ) : (
+              <>
+                <div style={{ overflowY: 'auto', padding: '0 20px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: '#f5f7fb' }}>
+                        <th style={thS}>№</th>
+                        <th style={thS}>Конструкция</th>
+                        <th style={thS}>Начало</th>
+                        <th style={thS}>Конец</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fastenerSummary.rows.map((r, i) => (
+                        <tr key={r.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                          <td style={tdS}>{i + 1}</td>
+                          <td style={tdS}>{r.label}</td>
+                          <td style={tdS}>{r.startLabel ?? <span style={{ color: '#ccc' }}>—</span>}</td>
+                          <td style={tdS}>{r.endLabel ?? <span style={{ color: '#ccc' }}>—</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ padding: '14px 20px', borderTop: '1px solid #e0e4ee', background: '#f5f7fb' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433', marginBottom: 8 }}>
+                    Итого по типам:
+                  </div>
+                  {fastenerSummary.totalsList.map(t => (
+                    <div key={t.type} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555', marginBottom: 3 }}>
+                      <span>{t.label}</span>
+                      <span style={{ fontWeight: 600 }}>{t.qty} шт</span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 10, color: '#aaa', marginTop: 8 }}>
+                    Крепёж по умолчанию подобран автоматически по материалу соседней
+                    конструкции — тип и шаг можно переопределить вручную в инспекторе
+                    линии, раздел «Боковое примыкание и крепёж».
                   </div>
                 </div>
               </>
