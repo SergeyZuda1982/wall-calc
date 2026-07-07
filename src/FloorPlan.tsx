@@ -472,6 +472,15 @@ export default function FloorPlan() {
   // Touch: панорама одним пальцем (когда не рисуем/не двигаем линию) и pinch-zoom двумя
   const touchPanRef   = useRef<{ x: number; y: number; sx: number; sy: number } | null>(null)
   const pinchRef       = useRef<{ dist: number; scale: number; midX: number; midY: number } | null>(null)
+  // Konva слушает touch-события САМА (для своего onTap/onClick), независимо от наших
+  // кастомных обработчиков ниже. Из-за этого после пинч-зума (или панорамы) Konva иногда
+  // всё равно засчитывает жест как "тап" по первому пальцу и вызывает handleStageClick —
+  // отсюда баг "любой зум ставит точку". Этот флаг взводится, как только в текущей
+  // тач-последовательности случился пинч (2 пальца) или реальная панорама, и проверяется
+  // в начале handleStageClick — если взведён, тач-клик игнорируется целиком. Сбрасывается
+  // не по touchend (порядок срабатывания слушателей относительно Konva не гарантирован),
+  // а в начале СЛЕДУЮЩЕЙ последовательности (первый палец новой последовательности).
+  const touchGestureRef = useRef(false)
 
   // Зум и панорамирование
   const [stageScale, setStageScale] = useState(1)
@@ -874,6 +883,7 @@ export default function FloorPlan() {
 
       if (te.touches.length === 2) {
         touchPanRef.current = null
+        touchGestureRef.current = true
         const m = touchMid(te.touches[0], te.touches[1])
         pinchRef.current = {
           dist: touchDist(te.touches[0], te.touches[1]),
@@ -884,6 +894,9 @@ export default function FloorPlan() {
       }
 
       if (te.touches.length === 1) {
+        // Новая тач-последовательность (первый палец) — сбрасываем метку
+        // предыдущего жеста, чтобы не заблокировать следующий обычный тап.
+        touchGestureRef.current = false
         // Не начинаем панораму если уже идёт драг линии/точки или мы рисуем
         if (modeRef.current !== 'draw' && !dragRef.current) {
           const sx = te.touches[0].clientX - rect.left
@@ -899,6 +912,7 @@ export default function FloorPlan() {
       // Pinch-zoom двумя пальцами
       if (te.touches.length === 2 && pinchRef.current) {
         te.preventDefault()
+        touchGestureRef.current = true
         const d = touchDist(te.touches[0], te.touches[1])
         const m = touchMid(te.touches[0], te.touches[1])
         const ratio = d / pinchRef.current.dist
@@ -915,6 +929,7 @@ export default function FloorPlan() {
       // Панорама одним пальцем
       if (te.touches.length === 1 && touchPanRef.current) {
         te.preventDefault()
+        touchGestureRef.current = true
         const sx = te.touches[0].clientX - rect.left
         const sy = te.touches[0].clientY - rect.top
         setStagePos({
@@ -1067,6 +1082,11 @@ export default function FloorPlan() {
       lineWasClickedRef.current = false
       return
     }
+    // Konva сама детектирует 'tap' по touch-событиям, независимо от нашего
+    // кастомного пинч/пан-кода ниже. Если в этой тач-последовательности уже
+    // был пинч или реальная панорама — это хвост жеста, а не настоящий тап,
+    // игнорируем целиком (см. комментарий у touchGestureRef).
+    if ('changedTouches' in e.evt && touchGestureRef.current) return
     // Только ЛКМ (для мышиных событий)
     if ('button' in e.evt && e.evt.button !== 0) return
 
@@ -2979,7 +2999,7 @@ export default function FloorPlan() {
                     return (
                       <Group key={'marker-' + room.id}
                         onClick={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setSelected(null) }}
-                        onTap={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setSelected(null) }}>
+                        onTap={e => { if (touchGestureRef.current) return; e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setSelected(null) }}>
                         <Circle x={cx} y={cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
                         <Text x={cx - r} y={cy - r} width={r * 2} height={r * 2} text={room.isColumn ? '▦' : '⛶'}
                           fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
@@ -2993,7 +3013,7 @@ export default function FloorPlan() {
                     return (
                       <Group key={'marker-' + rc.id}
                         onClick={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRectColumnId(null); setSelected(null) }}
-                        onTap={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRectColumnId(null); setSelected(null) }}>
+                        onTap={e => { if (touchGestureRef.current) return; e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRectColumnId(null); setSelected(null) }}>
                         <Circle x={rc.cx} y={rc.cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
                         <Text x={rc.cx - r} y={rc.cy - r} width={r * 2} height={r * 2} text="⬤"
                           fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
@@ -3006,7 +3026,7 @@ export default function FloorPlan() {
                     return (
                       <Group key={'marker-' + rc.id}
                         onClick={e => { e.cancelBubble = true; setInspectorRectColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setSelected(null) }}
-                        onTap={e => { e.cancelBubble = true; setInspectorRectColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setSelected(null) }}>
+                        onTap={e => { if (touchGestureRef.current) return; e.cancelBubble = true; setInspectorRectColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setSelected(null) }}>
                         <Rect x={rc.cx - r} y={rc.cy - r} width={r * 2} height={r * 2} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
                         <Text x={rc.cx - r} y={rc.cy - r} width={r * 2} height={r * 2} text="▦"
                           fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
