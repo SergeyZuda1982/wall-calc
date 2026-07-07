@@ -1,56 +1,34 @@
-// Синхронизирует текущий открытый объект (walls + linings) с Supabase.
-// Вызывается из App.tsx после каждого изменения.
+// Синхронизирует активный объект (walls + linings + levels + profileTemplates)
+// с Supabase, пока пользователь вошёл и открытый объект — облачный.
+// Дебаунс ~1 сек после последнего изменения (план на активном этаже меняется
+// на каждое действие мышью — писать в облако на каждый пиксель нельзя).
 
-import { useCallback } from 'react'
-import { supabase } from '../lib/supabase'
-import type { WallEntry, LiningEntry } from '../store/useProjectStore'
+import { useCallback, useRef, useEffect } from 'react'
+import { syncFullProjectToCloud, fetchProjectContent, type CloudProjectContent } from '../lib/projectCloud'
 
-export function useSupabaseSync(projectId: string | null) {
+const DEBOUNCE_MS = 1000
 
-  const saveWall = useCallback(async (wall: WallEntry) => {
-    if (!projectId) return
-    await supabase.from('walls').upsert({
-      id: wall.id,
-      project_id: projectId,
-      label: wall.label,
-      input: wall.input,
-      result: wall.result,
-      positions: wall.positions,
-    })
-    // обновим updated_at у проекта
-    await supabase.from('projects')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('id', projectId)
-  }, [projectId])
+export function useSupabaseSync(activeCloudProjectId: string | null) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const deleteWall = useCallback(async (wallId: string) => {
-    if (!projectId) return
-    await supabase.from('walls').delete().eq('id', wallId)
-  }, [projectId])
+  // при смене/закрытии облачного объекта — отменяем отложенное сохранение по
+  // старому id, чтобы случайно не перезаписать чужой/предыдущий объект
+  useEffect(() => {
+    return () => {
+      if (timer.current) clearTimeout(timer.current)
+    }
+  }, [activeCloudProjectId])
 
-  const saveLining = useCallback(async (lining: LiningEntry) => {
-    if (!projectId) return
-    await supabase.from('linings').upsert({
-      id: lining.id,
-      project_id: projectId,
-      label: lining.label,
-      input: lining.input,
-      result: lining.result,
-    })
-  }, [projectId])
+  const scheduleSync = useCallback((content: CloudProjectContent) => {
+    if (!activeCloudProjectId) return
+    if (timer.current) clearTimeout(timer.current)
+    const pid = activeCloudProjectId
+    timer.current = setTimeout(() => {
+      syncFullProjectToCloud(pid, content).catch(e => console.error('[wall-calc] облачная синхронизация упала:', e))
+    }, DEBOUNCE_MS)
+  }, [activeCloudProjectId])
 
-  const deleteLining = useCallback(async (liningId: string) => {
-    if (!projectId) return
-    await supabase.from('linings').delete().eq('id', liningId)
-  }, [projectId])
+  const loadProject = useCallback((pid: string) => fetchProjectContent(pid), [])
 
-  const loadProject = useCallback(async (pid: string) => {
-    const [{ data: walls }, { data: linings }] = await Promise.all([
-      supabase.from('walls').select('*').eq('project_id', pid).order('created_at'),
-      supabase.from('linings').select('*').eq('project_id', pid).order('created_at'),
-    ])
-    return { walls: walls ?? [], linings: linings ?? [] }
-  }, [])
-
-  return { saveWall, deleteWall, saveLining, deleteLining, loadProject }
+  return { scheduleSync, loadProject }
 }

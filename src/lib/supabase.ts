@@ -7,7 +7,12 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON)
 
 export type DbProject = {
   id: string
+  user_id: string
   name: string
   created_at: string
   updated_at: string
+  // Полностью сериализованные массивы (как input/result у стен и обшивок) —
+  // без раскладки на нормальные колонки, см. KONSPEKT от 06.07.2026.
+  levels_data: unknown | null
+  profile_templates: unknown | null
 }

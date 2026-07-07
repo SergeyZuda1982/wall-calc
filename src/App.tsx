@@ -10,6 +10,10 @@ import { CANVAS_W as CANVAS_W_MAX, PAD } from './constants'
 import { useContainerWidth } from './hooks/useContainerWidth'
 import { MIN_GAP } from './core/buildPositions'
 import { useProjectStore } from './store/useProjectStore'
+import { useProjectsStore } from './store/useProjectsStore'
+import { useAuthStore } from './store/useAuthStore'
+import { useSupabaseSync } from './hooks/useSupabaseSync'
+import { AuthModal } from './components/AuthModal'
 import LiningCalc from './LiningCalc'
 import FloorPlan from './FloorPlan'
 import Scene3D from './Scene3D'
@@ -182,9 +186,77 @@ export default function App() {
 
   // ─── Объекты (localStorage) ───────────────────────────────────────────────
   const { projects, activeProjectId, createProject, deleteProject, selectProject, saveError, clearSaveError } = useProjectStore()
+  const hydrateProject = useProjectStore(s => s.hydrateProject)
   const activeProject = projects.find(p => p.id === activeProjectId) ?? null
 
   const [showProjects, setShowProjects] = useState(false)
+
+  // ─── Облако: вход и синхронизация объектов ─────────────────────────────────
+  // Общий принцип (см. KONSPEKT от 06.07.2026): приложение работает и без
+  // входа — как раньше, целиком на localStorage. Вход и облако — добавка.
+  const { user, loading: authLoading, init: initAuth, signOut } = useAuthStore()
+  const cloud = useProjectsStore()
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [migrationNotice, setMigrationNotice] = useState<string | null>(null)
+
+  useEffect(() => { initAuth() }, [initAuth])
+
+  // При появлении пользователя (вход) — тянем список объектов из облака и,
+  // если это первый вход, переносим локальные объекты (не удаляя их).
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    ;(async () => {
+      await cloud.fetchProjects()
+      const localProjects = useProjectStore.getState().projects
+      const result = await cloud.migrateLocalIfNeeded(localProjects, user.id)
+      if (!cancelled && result) {
+        setMigrationNotice(
+          result.errors.length > 0
+            ? `Перенесено объектов: ${result.migrated}. Ошибки: ${result.errors.join('; ')}`
+            : `Локальные объекты (${result.migrated}) перенесены в облако.`
+        )
+      }
+    })()
+    return () => { cancelled = true }
+  }, [user])
+
+  // Активный объект — облачный, если его id есть в списке cloud.projects.
+  const isCloudActive = !!user && !!activeProjectId && cloud.projects.some(p => p.id === activeProjectId)
+  const { scheduleSync } = useSupabaseSync(isCloudActive ? activeProjectId : null)
+
+  async function openCloudProject(id: string) {
+    const entry = await cloud.loadActiveProjectEntry(id)
+    if (entry) { hydrateProject(entry); cloud.setActiveProject(id) }
+    setShowProjects(false)
+  }
+
+  async function createCloudProject(name: string) {
+    const row = await cloud.createProject(name)
+    if (row) await openCloudProject(row.id)
+  }
+
+  async function deleteCloudProject(id: string) {
+    await cloud.deleteProject(id)
+    if (activeProjectId === id) selectProject(null)
+  }
+
+  function handleSignOut() {
+    // Данные объекта пропадают из вида (не с сервера — просто перестаём
+    // показывать активный объект), пока не войдут снова.
+    if (isCloudActive) selectProject(null)
+    signOut()
+  }
+
+  // Полный слепок активного объекта — для дебаунс-синхронизации с облаком
+  // (сами мутации плана происходят в десятках функций useProjectStore, вклинивать
+  // облачный вызов в каждую было бы огромной переделкой — см. projectCloud.ts).
+  const levels = useProjectStore(s => s.levels)
+  const profileTemplates = useProjectStore(s => s.profileTemplates)
+  useEffect(() => {
+    if (!isCloudActive) return
+    scheduleSync({ walls, linings, levels, profileTemplates })
+  }, [isCloudActive, walls, linings, levels, profileTemplates, scheduleSync])
 
   function set<K extends keyof WallInput>(key: K, value: WallInput[K]) {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -349,6 +421,23 @@ export default function App() {
           </span>
         )}
         <div style={{ flex: 1 }} />
+        {!authLoading && (
+          <div
+            onClick={() => user ? handleSignOut() : setShowAuthModal(true)}
+            title={user ? `Выйти (${user.email ?? user.phone})` : 'Войти'}
+            style={{
+              width: 30, height: 30, background: '#e4e2dc', borderRadius: 5,
+              border: '1px solid rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', cursor: 'pointer', flexShrink: 0,
+            }}>
+            <div style={{
+              width: 20, height: 20, background: '#fbfbf9', border: '1px solid #c2c0b9',
+              borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <div style={{ width: 9, height: 3, borderRadius: 1.5, background: user ? '#5fb8e8' : '#8a8a8a' }} />
+            </div>
+          </div>
+        )}
         <button onClick={() => setShowProjects(p => !p)}
           style={{ padding: '5px 14px', background: showProjects ? '#3a7bd5' : 'rgba(255,255,255,0.15)',
             color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6,
@@ -356,6 +445,21 @@ export default function App() {
           📁 Объекты
         </button>
       </div>
+
+      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+
+      {migrationNotice && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px',
+          background: '#e8f5e9', color: '#2e5c31', borderBottom: '2px solid #7fae6a', flexShrink: 0, fontSize: 13 }}>
+          <span style={{ fontSize: 16 }}>☁️</span>
+          <span style={{ flex: 1 }}>{migrationNotice}</span>
+          <button onClick={() => setMigrationNotice(null)}
+            style={{ padding: '4px 10px', background: 'transparent', color: '#2e5c31',
+              border: '1px solid #2e5c31', borderRadius: 5, cursor: 'pointer', fontSize: 12 }}>
+            Скрыть
+          </button>
+        </div>
+      )}
 
       {/* ─── Баннер ошибки сохранения (переполнение localStorage) ─── */}
       {saveError && (
@@ -378,18 +482,25 @@ export default function App() {
         {showProjects && (
           <div style={{ width: 220, maxWidth: '70vw', background: '#f5f5f5', borderRight: '1px solid #ddd',
             padding: 16, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', flexShrink: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: '#333', marginBottom: 4 }}>📁 Объекты</div>
-            {projects.length === 0 && (
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#333', marginBottom: 4 }}>
+              📁 Объекты {user && <span style={{ fontWeight: 400, fontSize: 11, color: '#3a7bd5' }}>(облако)</span>}
+            </div>
+            {(user ? cloud.projects : projects).length === 0 && (
               <div style={{ fontSize: 12, color: '#999' }}>Нет объектов</div>
             )}
-            {projects.map(p => (
-              <div key={p.id} onClick={() => { selectProject(p.id); setShowProjects(false) }}
+            {(user ? cloud.projects : projects).map(p => (
+              <div key={p.id}
+                onClick={() => user ? openCloudProject(p.id) : (selectProject(p.id), setShowProjects(false))}
                 style={{ padding: '7px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
                   background: p.id === activeProjectId ? '#3a7bd5' : '#fff',
                   color: p.id === activeProjectId ? '#fff' : '#333',
                   border: '1px solid #ddd', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ flex: 1 }}>{p.name}</span>
-                <span onClick={e => { e.stopPropagation(); if (window.confirm('Удалить объект?')) deleteProject(p.id) }}
+                <span onClick={e => {
+                  e.stopPropagation()
+                  if (!window.confirm('Удалить объект?')) return
+                  user ? deleteCloudProject(p.id) : deleteProject(p.id)
+                }}
                   style={{ color: p.id === activeProjectId ? '#fcc' : '#e05', fontSize: 12, cursor: 'pointer' }}>✕</span>
               </div>
             ))}
@@ -400,13 +511,16 @@ export default function App() {
                   if (e.key === 'Enter') {
                     const input = e.currentTarget
                     const name = input.value.trim()
-                    if (name) { createProject(name); input.value = ''; setShowProjects(false) }
+                    if (!name) return
+                    user ? createCloudProject(name) : createProject(name)
+                    input.value = ''
+                    setShowProjects(false)
                   }
                 }} />
               <button onClick={() => {
                 const input = document.getElementById('new-project-name') as HTMLInputElement
                 const name = input?.value.trim() || 'Новый объект'
-                createProject(name)
+                user ? createCloudProject(name) : createProject(name)
                 if (input) input.value = ''
                 setShowProjects(false)
               }} style={{ padding: '7px', background: '#3a7bd5', color: '#fff',
