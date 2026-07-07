@@ -19,7 +19,7 @@
  *   было от чего повесить ригель
  */
 
-import type { PlanLine, PlanLineType, Room, Slab, RoundColumn, RectColumn } from '../types'
+import type { PlanLine, PlanLineType, Room, Slab, RoundColumn, RectColumn, FreeformStructure } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 import { isLineBuiltForRender } from './lineProgress'
@@ -319,4 +319,35 @@ export function roomsToPolygons3D(rooms: Room[], lines: PlanLine[], scaleMmPx: n
       }
     })
     .filter((r): r is RoomPolygon3D => r !== null)
+}
+
+export interface FreeformPrism3D {
+  id: string
+  kind: 'wall' | 'column'
+  /** точки контура в метрах, план сверху (x,z) */
+  points: { x: number; z: number }[]
+  /** высота призмы, метры — своя (heightMm) либо высота потолка этажа */
+  heightM: number
+}
+
+/**
+ * Обведённые карандашом стены/перегородки и колонны произвольной формы →
+ * призмы для Scene3D (THREE.Shape + ExtrudeGeometry, та же техника, что
+ * уже применяется в Scene3D.tsx для колонн-Room, см. SlabOrColumn/
+ * columnGeo). Оба вида (kind) — геометрически одна и та же операция,
+ * extrude контура на всю высоту; kind нужен Scene3D только для выбора
+ * цвета (стена — TYPE_COLOR_3D.wall_existing, колонна — COLUMN_COLOR),
+ * геометрически они неразличимы.
+ */
+export function freeformStructuresToPrisms3D(
+  structures: FreeformStructure[], scaleMmPx: number, ceilingMm: number,
+): FreeformPrism3D[] {
+  return structures
+    .filter(fs => fs.outer.length >= 3)
+    .map(fs => ({
+      id: fs.id,
+      kind: fs.kind,
+      points: fs.outer.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
+      heightM: mmToM(fs.heightMm ?? ceilingMm),
+    }))
 }

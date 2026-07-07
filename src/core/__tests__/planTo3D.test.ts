@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest'
 import {
   wallThicknessMm, wallToBox3D, wallsToBoxes3D, estimateCeilingMm,
   roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM,
+  freeformStructuresToPrisms3D,
 } from '../planTo3D'
-import type { PlanLine, Room, Slab, RoundColumn, RectColumn, PlanOpening } from '../../types'
+import type { PlanLine, Room, Slab, RoundColumn, RectColumn, PlanOpening, FreeformStructure } from '../../types'
 
 function baseLine(overrides: Partial<PlanLine>): PlanLine {
   return {
@@ -405,5 +406,47 @@ describe('rectColumnsToBoxes3D', () => {
       [baseRectColumn({ id: 'a' }), baseRectColumn({ id: 'b', cx: 300 })], 10, 2700,
     )
     expect(boxes.map(b => b.id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('freeformStructuresToPrisms3D', () => {
+  function baseFreeform(overrides: Partial<FreeformStructure>): FreeformStructure {
+    return {
+      id: 'fs1', kind: 'column', label: 'Конструкция 1',
+      outer: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+      ...overrides,
+    }
+  }
+
+  it('переводит контур в метры, высота — по умолчанию отметка потолка', () => {
+    const prisms = freeformStructuresToPrisms3D([baseFreeform({})], 10, 2700) // 10мм/px, потолок 2700мм
+    expect(prisms).toHaveLength(1)
+    expect(prisms[0].points[1]).toEqual({ x: 1, z: 0 }) // 100px*10мм = 1м
+    expect(prisms[0].heightM).toBeCloseTo(2.7)
+    expect(prisms[0].kind).toBe('column')
+  })
+
+  it('своя heightMm перекрывает высоту потолка', () => {
+    const prisms = freeformStructuresToPrisms3D([baseFreeform({ heightMm: 1000 })], 10, 2700)
+    expect(prisms[0].heightM).toBeCloseTo(1)
+  })
+
+  it('kind сохраняется как есть (wall/column)', () => {
+    const prisms = freeformStructuresToPrisms3D([baseFreeform({ kind: 'wall' })], 10, 2700)
+    expect(prisms[0].kind).toBe('wall')
+  })
+
+  it('контур менее 3 точек — пропущен', () => {
+    const prisms = freeformStructuresToPrisms3D(
+      [baseFreeform({ outer: [{ x: 0, y: 0 }, { x: 1, y: 1 }] })], 10, 2700,
+    )
+    expect(prisms).toHaveLength(0)
+  })
+
+  it('несколько конструкций — id сохраняются в порядке', () => {
+    const prisms = freeformStructuresToPrisms3D(
+      [baseFreeform({ id: 'a' }), baseFreeform({ id: 'b', kind: 'wall' })], 10, 2700,
+    )
+    expect(prisms.map(p => p.id)).toEqual(['a', 'b'])
   })
 })

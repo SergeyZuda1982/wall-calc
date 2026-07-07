@@ -23,8 +23,9 @@ import * as THREE from 'three'
 import { useProjectStore } from './store/useProjectStore'
 import {
   wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM,
+  freeformStructuresToPrisms3D,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
-  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D,
+  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D,
 } from './core/planTo3D'
 import type { PlanLineType, FloorPlan } from './types'
 
@@ -173,6 +174,31 @@ function RectColumnMesh({ box, opacity = 1 }: { box: RectColumnBox3D; opacity?: 
 }
 
 /**
+ * Обведённая карандашом стена/перегородка или колонна произвольной формы
+ * (FreeformStructure, см. types/index.ts) → призма three.js. Та же техника
+ * extrude, что и у колонны-Room (SlabOrColumn/columnGeo) — контур просто
+ * тянется вверх на heightM. kind влияет только на цвет (стена — тот же
+ * TYPE_COLOR_3D, что у обычных wall_existing коробов; колонна — COLUMN_COLOR,
+ * как у остальных колонн) — геометрически оба вида не различаются.
+ */
+function FreeformStructureMesh({ prism, opacity = 1 }: { prism: FreeformPrism3D; opacity?: number }) {
+  const geo = useMemo(() => {
+    if (prism.points.length < 3) return null
+    const shape = new THREE.Shape(prism.points.map(p => new THREE.Vector2(p.x, -p.z)))
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: prism.heightM, bevelEnabled: false, steps: 1 })
+    geo.rotateX(-Math.PI / 2)
+    return geo
+  }, [prism.points, prism.heightM])
+  if (!geo) return null
+  const color = prism.kind === 'column' ? COLUMN_COLOR : TYPE_COLOR_3D.wall_existing
+  return (
+    <mesh geometry={geo} castShadow receiveShadow>
+      <meshStandardMaterial color={color} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
+    </mesh>
+  )
+}
+
+/**
  * Геометрия ОДНОГО этажа — то, что раньше было прямо в теле Scene3D.
  * Обёрнута в <group position={[0, offsetY, 0]}> — offsetY = отметка этажа
  * (Level.elevationMm) в метрах, так все этажи проекта встают друг над
@@ -186,6 +212,7 @@ function LevelGroup({ floorPlan, offsetY, dimmed }: { floorPlan: FloorPlan; offs
   const slabs = floorPlan.slabs ?? []
   const roundColumns = floorPlan.roundColumns ?? []
   const rectColumns = floorPlan.rectColumns ?? []
+  const freeformStructures = floorPlan.freeformStructures ?? []
   const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
   const opacity = dimmed ? 0.35 : 1
 
@@ -201,6 +228,10 @@ function LevelGroup({ floorPlan, offsetY, dimmed }: { floorPlan: FloorPlan; offs
     () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm),
     [rectColumns, scaleMmPx, ceilingMm],
   )
+  const freeformPrisms = useMemo(
+    () => freeformStructuresToPrisms3D(freeformStructures, scaleMmPx, ceilingMm),
+    [freeformStructures, scaleMmPx, ceilingMm],
+  )
   const hasHandDrawnSlabs = slabPolygons.length > 0
 
   return (
@@ -210,6 +241,7 @@ function LevelGroup({ floorPlan, offsetY, dimmed }: { floorPlan: FloorPlan; offs
       {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} opacity={opacity} />)}
       {columnCylinders.map(cyl => <RoundColumnMesh key={cyl.id} cyl={cyl} opacity={opacity} />)}
       {rectColumnBoxes.map(box => <RectColumnMesh key={box.id} box={box} opacity={opacity} />)}
+      {freeformPrisms.map(prism => <FreeformStructureMesh key={prism.id} prism={prism} opacity={opacity} />)}
     </group>
   )
 }
@@ -224,7 +256,8 @@ function levelHasGeometry(floorPlan: FloorPlan): boolean {
     roomsToPolygons3D(floorPlan.rooms ?? [], lines, scaleMmPx).length > 0 ||
     slabsToPolygons3D(floorPlan.slabs ?? [], scaleMmPx).length > 0 ||
     roundColumnsToCylinders3D(floorPlan.roundColumns ?? [], scaleMmPx, ceilingMm).length > 0 ||
-    rectColumnsToBoxes3D(floorPlan.rectColumns ?? [], scaleMmPx, ceilingMm).length > 0
+    rectColumnsToBoxes3D(floorPlan.rectColumns ?? [], scaleMmPx, ceilingMm).length > 0 ||
+    freeformStructuresToPrisms3D(floorPlan.freeformStructures ?? [], scaleMmPx, ceilingMm).length > 0
   )
 }
 

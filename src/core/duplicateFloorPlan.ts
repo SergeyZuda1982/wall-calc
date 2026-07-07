@@ -44,5 +44,6 @@ export function duplicateFloorPlanGeometry(src: FloorPlan, idGen: IdGen = defaul
     slabs: (src.slabs ?? []).map(sl => ({ ...sl, id: idGen('sb') })),
     roundColumns: (src.roundColumns ?? []).map(rc => ({ ...rc, id: idGen('rc') })),
     rectColumns: (src.rectColumns ?? []).map(rc => ({ ...rc, id: idGen('rec') })),
+    freeformStructures: (src.freeformStructures ?? []).map(fs => ({ ...fs, id: idGen('fs') })),
   }
 }
