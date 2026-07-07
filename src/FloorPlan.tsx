@@ -15,7 +15,7 @@ import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
 import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, WorkProgress, WorkStageTemplate } from './types'
 import { DEFAULT_BOARD_SPEC } from './types'
-import { getLineVisual, getContourFill, TAXONOMY } from './data/constructionTaxonomy'
+import { getLineVisual, getContourFill, TAXONOMY, isLiningLayersFixed } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { WorkProgressChecklist } from './components/WorkProgressChecklist'
@@ -1903,10 +1903,13 @@ export default function FloorPlan() {
                           <button key={child.value}
                             onClick={() => {
                               setDrawType(type)
+                              // ПС50 для облицовки — всегда 2 слоя (С626), однослойной С625
+                              // на ПС50 по нормам Кнауф не бывает (см. isLiningLayersFixed).
+                              const prevLayers = drawSpec?.material === node.value ? drawSpec?.layers : 1
                               setDrawSpec({
                                 material: node.value, subtype: child.value,
                                 boardSubtype: drawSpec?.material === node.value ? drawSpec?.boardSubtype : 'standard',
-                                layers: drawSpec?.material === node.value ? drawSpec?.layers : 1,
+                                layers: isLiningLayersFixed(type, child.value) ? 2 : prevLayers,
                               })
                               setExpandedMaterial(null)
                               switchMode('draw')
@@ -1942,20 +1945,26 @@ export default function FloorPlan() {
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span style={{ fontSize: 10, color: '#7a8ab0', minWidth: 50 }}>Слоёв:</span>
-                            <div style={{ display: 'flex', gap: 4, flex: 1 }}>
-                              {([1, 2] as const).map(n => (
-                                <button key={n}
-                                  onClick={() => setDrawSpec({ ...drawSpec, layers: n })}
-                                  style={{
-                                    flex: 1, fontSize: 11, padding: '3px 0', borderRadius: 4,
-                                    border: '1px solid #3a4060', cursor: 'pointer',
-                                    background: (drawSpec.layers ?? 1) === n ? '#7c8fcf' : 'transparent',
-                                    color: (drawSpec.layers ?? 1) === n ? '#fff' : '#8a9ac8',
-                                  }}>
-                                  {n} слой{n === 2 ? 'я' : ''}
-                                </button>
-                              ))}
-                            </div>
+                            {isLiningLayersFixed(type, drawSpec.subtype) ? (
+                              <span style={{ fontSize: 11, color: '#7a8ab0' }} title="По нормам Кнауф однослойной С625 на ПС50 не бывает — только С626">
+                                фикс. 2 (С626)
+                              </span>
+                            ) : (
+                              <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                                {([1, 2] as const).map(n => (
+                                  <button key={n}
+                                    onClick={() => setDrawSpec({ ...drawSpec, layers: n })}
+                                    style={{
+                                      flex: 1, fontSize: 11, padding: '3px 0', borderRadius: 4,
+                                      border: '1px solid #3a4060', cursor: 'pointer',
+                                      background: (drawSpec.layers ?? 1) === n ? '#7c8fcf' : 'transparent',
+                                      color: (drawSpec.layers ?? 1) === n ? '#fff' : '#8a9ac8',
+                                    }}>
+                                    {n} слой{n === 2 ? 'я' : ''}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
@@ -3605,21 +3614,33 @@ export default function FloorPlan() {
                           style={{ width: 70, fontSize: 12, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
                         <span style={{ fontSize: 11, color: '#666' }}>мм</span>
                       </div>
-                      <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
-                        Лист 1-го слоя{(inspectorLine.spec?.layers ?? 1) === 2 ? ' / 2-го слоя' : ''}:
-                      </div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
-                        <BoardSpecSelector
-                          value={inspectorLine.spec?.layer1 ?? DEFAULT_BOARD_SPEC}
-                          onChange={layer1 => { if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, layer1 } }) }}
-                        />
-                        {(inspectorLine.spec?.layers ?? 1) === 2 && (
-                          <BoardSpecSelector
-                            value={inspectorLine.spec?.layer2 ?? DEFAULT_BOARD_SPEC}
-                            onChange={layer2 => { if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, layer2 } }) }}
-                          />
-                        )}
-                      </div>
+                      {(() => {
+                        // ПС50-облицовка фиксирована на 2 слоя (С626) независимо от того,
+                        // что записано в spec.layers у уже существующих (старых) линий —
+                        // см. isLiningLayersFixed. Показываем лист 2-го слоя и в этом случае,
+                        // чтобы выбор материала соответствовал фактическому расчёту.
+                        const effectiveTwoLayers = isLiningLayersFixed(inspectorLine.type, inspectorLine.spec?.subtype)
+                          || (inspectorLine.spec?.layers ?? 1) === 2
+                        return (
+                          <>
+                            <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
+                              Лист 1-го слоя{effectiveTwoLayers ? ' / 2-го слоя' : ''}:
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                              <BoardSpecSelector
+                                value={inspectorLine.spec?.layer1 ?? DEFAULT_BOARD_SPEC}
+                                onChange={layer1 => { if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, layer1 } }) }}
+                              />
+                              {effectiveTwoLayers && (
+                                <BoardSpecSelector
+                                  value={inspectorLine.spec?.layer2 ?? DEFAULT_BOARD_SPEC}
+                                  onChange={layer2 => { if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, layer2 } }) }}
+                                />
+                              )}
+                            </div>
+                          </>
+                        )
+                      })()}
                     </div>
                   )}
 
