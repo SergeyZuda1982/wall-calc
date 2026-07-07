@@ -209,7 +209,17 @@ function updateActiveFloorPlan(
     return { ...p, levels }
   })
   const activeProject = projects.find(p => p.id === s.activeProjectId)
-  return { floorPlan, projects, levels: activeProject?.levels ?? [] }
+  // ⚠️ Защита от регресса (07.07.2026): если активный проект не нашёлся
+  // (activeProjectId разошёлся с projects — само по себе отдельный
+  // потенциальный баг, но не повод портить состояние ещё сильнее) — НЕ
+  // возвращаем levels вообще, чтобы не затереть верхнеуровневое зеркало
+  // пустым массивом. Раньше (до фикса levels-mirror-stale-on-edit) эта
+  // функция вообще не трогала levels в такой ситуации — оставляем то же
+  // безопасное поведение, а не подменяем на [], которое ломает 3D и
+  // панель этажей (обе читают state.levels напрямую).
+  return activeProject
+    ? { floorPlan, projects, levels: activeProject.levels }
+    : { floorPlan, projects }
 }
 
 /**

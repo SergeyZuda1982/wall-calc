@@ -107,4 +107,28 @@ describe('useProjectStore — state.levels остаётся в синхроне 
     const activeLevel = state.levels.find(lv => lv.id === state.activeLevelId)
     expect(activeLevel?.floorPlan.roundColumns?.length).toBe(3)
   })
+
+  it('РЕГРЕСС 07.07.2026: если activeProjectId не совпадает ни с одним проектом (пустой список или рассинхрон), правка плана НЕ должна затирать state.levels пустым массивом', async () => {
+    const { useProjectStore } = await import('../useProjectStore')
+    // Ни одного проекта не создано — activeProjectId остаётся null,
+    // но 2D-план всё равно рисуется поверх state.floorPlan "по умолчанию"
+    // (FloorPlan.tsx не требует выбранного объекта для показа вкладки
+    // "План" — это отдельная, уже существующая особенность интерфейса).
+    expect(useProjectStore.getState().activeProjectId).toBeNull()
+    const levelsBefore = useProjectStore.getState().levels
+
+    useProjectStore.getState().addSlab([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }])
+
+    const state = useProjectStore.getState()
+    // floorPlan-зеркало обновляется всегда (как и раньше — иначе бы не
+    // рисовалось на самом 2D-плане)
+    expect(state.floorPlan.slabs?.length).toBe(1)
+    // а вот верхнеуровневый levels — НЕ должен превратиться в [] только
+    // из-за того, что нет активного проекта. Раньше (до защитного фикса)
+    // именно это и происходило: `levels: activeProject?.levels ?? []`
+    // подставляло пустой массив, что ломало и 3D (пусто), и панель
+    // этажей в FloorPlan.tsx (видна только кнопка "+ этаж", остальные
+    // кнопки скрыты по условию `activeLevelId &&`).
+    expect(state.levels).toBe(levelsBefore)
+  })
 })
