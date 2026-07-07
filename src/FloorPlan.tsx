@@ -949,6 +949,19 @@ export default function FloorPlan() {
     }
 
     function onTouchEndNative(te: TouchEvent) {
+      // Без preventDefault браузер после touchend сам генерирует "призрачную"
+      // последовательность mouseover/mousedown/mouseup/click (совместимость со
+      // старым кодом, не знающим про touch) — а Konva слушает НА STAGE и touch,
+      // и mouse-события одновременно (см. node_modules/konva/lib/Stage.js,
+      // EVENTS_MAP). Итог: один физический тап по пустому месту канваса (фон/
+      // сетка нарисованы с listening=false — сама Konva тогда НЕ вызывает
+      // preventDefault по своим внутренним правилам) вызывал handleStageClick
+      // ДВАЖДЫ — второй раз от призрачного click сразу после первого. Именно
+      // из-за этого мастер калибровки масштаба "проглатывал" точку 2 — второй
+      // тап никогда физически не успевал случиться, второй вызов приходил от
+      // призрачного клика после ПЕРВОГО тапа. cancelable проверяем на всякий
+      // случай — passive:false для этого слушателя, preventDefault разрешён.
+      if (te.cancelable) te.preventDefault()
       if (te.touches.length < 2) pinchRef.current = null
       if (te.touches.length === 0) {
         touchPanRef.current = null
@@ -958,8 +971,8 @@ export default function FloorPlan() {
 
     el.addEventListener('touchstart', onTouchStartNative, { passive: true })
     el.addEventListener('touchmove', onTouchMoveNative, { passive: false })
-    el.addEventListener('touchend', onTouchEndNative, { passive: true })
-    el.addEventListener('touchcancel', onTouchEndNative, { passive: true })
+    el.addEventListener('touchend', onTouchEndNative, { passive: false })
+    el.addEventListener('touchcancel', onTouchEndNative, { passive: false })
     return () => {
       el.removeEventListener('touchstart', onTouchStartNative)
       el.removeEventListener('touchmove', onTouchMoveNative)
