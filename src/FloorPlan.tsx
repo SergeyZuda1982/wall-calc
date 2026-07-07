@@ -412,6 +412,12 @@ export default function FloorPlan() {
   const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
   const [stampTemplateId, setStampTemplateId] = useState<string | null>(null)  // активный шаблон для штамповки колонн
   const [stampCenter, setStampCenter] = useState<{ x: number; y: number } | null>(null) // прямоугольный шаблон: центр зафиксирован, ждём 2-й клик (угол)
+  // Последняя поставленная штампом колонна (круглая или прямоугольная) — чтобы
+  // ПКМ могла отменить именно её, если сейчас нет промежуточного шага (ожидания
+  // клика по углу поворота). Обновляется при каждой успешной штамповке, гасится
+  // при выходе из режима stamp (см. switchMode) — отмена работает только "назад
+  // на один шаг" в рамках текущей сессии штамповки, не полноценный undo-стек.
+  const lastStampedRef = useRef<{ id: string; kind: 'round' | 'rect' } | null>(null)
 
   // Центры уже поставленных колонн (круглые — прямо, прямоугольные — центроид
   // их 4-точечного контура Room с isColumn:true) — для снапа новой колонны
@@ -681,7 +687,7 @@ export default function FloorPlan() {
     dragMovedRef.current = false
     if (m !== 'select') setSelected(null)
     if (m !== 'erase') setEraseIds([])
-    if (m !== 'stamp') { setStampTemplateId(null); setStampCenter(null) }
+    if (m !== 'stamp') { setStampTemplateId(null); setStampCenter(null); lastStampedRef.current = null }
     if (m !== 'trim') setTrimSourceId(null)
     if (isMobile && m === 'draw') setMobileLeftOpen(false)
   }
@@ -1028,7 +1034,17 @@ export default function FloorPlan() {
       setPencilPts(prev => prev.slice(0, -1))
     }
     if (mode === 'stamp') {
-      setStampCenter(null)
+      if (stampCenter) {
+        // Прямоугольная колонна: ждём 2-й клик (угол) — отменяем именно этот
+        // промежуточный шаг, колонна ещё не поставлена.
+        setStampCenter(null)
+      } else if (lastStampedRef.current) {
+        // Ничего не ожидаем — отменяем последнюю реально поставленную колонну.
+        const { id, kind } = lastStampedRef.current
+        if (kind === 'round') removeRoundColumn(id)
+        else removeRectColumn(id)
+        lastStampedRef.current = null
+      }
     }
   }
 
@@ -1074,10 +1090,11 @@ export default function FloorPlan() {
         const ctrlHeld = ctrlDown || ('ctrlKey' in e.evt && e.evt.ctrlKey) || ('metaKey' in e.evt && e.evt.metaKey)
         const final = ctrlHeld ? snapToColumnRow(pt.x, pt.y, existingColumnCenters) : pt
         const count = (useProjectStore.getState().floorPlan?.roundColumns ?? []).length + 1
-        addRoundColumn({
+        const newId = addRoundColumn({
           cx: final.x, cy: final.y, diameterMm: tpl.diameterMm, spec: tpl.spec,
           category: 'capital', workStatus: 'existing', label: `Колонна ${count}`,
         })
+        lastStampedRef.current = { id: newId, kind: 'round' }
         return
       }
 
@@ -1095,10 +1112,11 @@ export default function FloorPlan() {
       if (orthoMode) angle = snapAngleToStep(angle, 15)
 
       const count = (useProjectStore.getState().floorPlan?.rectColumns ?? []).length + 1
-      addRectColumn({
+      const newId = addRectColumn({
         cx: stampCenter.x, cy: stampCenter.y, widthMm: tpl.widthMm, depthMm: tpl.depthMm, angleRad: angle,
         spec: tpl.spec, category: 'capital', workStatus: 'existing', label: `Колонна ${count}`,
       })
+      lastStampedRef.current = { id: newId, kind: 'rect' }
       setStampCenter(null)
       return
     }
@@ -1332,7 +1350,8 @@ export default function FloorPlan() {
         setEraseIds([])
         switchMode('select')
       } else if (mode === 'stamp') {
-        setStampCenter(null)
+        if (stampCenter) setStampCenter(null)  // сначала отменяем только промежуточный шаг (ждём угол)
+        else switchMode('select')              // нечего отменять — выходим из режима штампа целиком
       } else if (mode === 'trim') {
         setTrimSourceId(null)
       } else {
@@ -1357,7 +1376,7 @@ export default function FloorPlan() {
       }
     }
     if (e.key === 'Shift') setOrthoMode(true)
-  }, [selectedId, removePlanLine, mode, eraseIds])
+  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter])
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Shift') setOrthoMode(false)
@@ -2103,10 +2122,10 @@ export default function FloorPlan() {
               return (
                 <div style={{ padding: '2px 14px 8px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
                   {tpl.kind === 'roundColumn'
-                    ? 'Клик — поставить колонну. Ctrl — прилипнуть в ряд с соседней.'
+                    ? 'Клик — поставить колонну. Ctrl — прилипнуть в ряд с соседней. ПКМ — отменить последнюю поставленную. Esc — выйти в «Двигать».'
                     : stampCenter
-                      ? 'Клик — зафиксировать угол поворота (Shift — привязка к 15°). Esc — отменить.'
-                      : 'Клик — поставить центр колонны. Ctrl — прилипнуть в ряд с соседней.'}
+                      ? 'Клик — зафиксировать угол поворота (Shift — привязка к 15°). ПКМ/Esc — отменить этот шаг.'
+                      : 'Клик — поставить центр колонны. Ctrl — прилипнуть в ряд с соседней. ПКМ — отменить последнюю поставленную. Esc — выйти в «Двигать».'}
                 </div>
               )
             })()}
