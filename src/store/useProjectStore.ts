@@ -65,6 +65,7 @@ export interface ProjectStore {
   deleteProject: (id: string) => void
   renameProject: (id: string, name: string) => void
   selectProject: (id: string | null) => void
+  hydrateProject: (entry: ProjectEntry) => void
 
   // управление перегородками
   setProjectName: (name: string) => void
@@ -331,6 +332,29 @@ export const useProjectStore = create<ProjectStore>()(
           activeWallId: null,
           activeLiningId: null,
         }))
+      },
+
+      // Подставляет объект, загруженный из облака (см. useProjectsStore →
+      // loadActiveProjectEntry), в общий localStorage-стор и делает его
+      // активным — дальше все существующие функции (addWall, addRoomColumn
+      // и т.д.) работают с ним точно так же, как с локальным объектом.
+      // Не путать с обычным добавлением: если объект с таким id уже есть
+      // в списке (повторное открытие того же облачного объекта) — заменяем
+      // его содержимое, а не дублируем.
+      hydrateProject: (entry) => {
+        set(s => {
+          const exists = s.projects.some(p => p.id === entry.id)
+          const projects = exists
+            ? s.projects.map(p => p.id === entry.id ? entry : p)
+            : [entry, ...s.projects]
+          return {
+            projects,
+            activeProjectId: entry.id,
+            ...syncActive(projects, entry.id),
+            activeWallId: null,
+            activeLiningId: null,
+          }
+        })
       },
 
       // ─── Название объекта ────────────────────────────────────────────────
