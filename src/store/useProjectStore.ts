@@ -171,6 +171,25 @@ function syncActive(projects: ProjectEntry[], activeProjectId: string | null) {
  * Общий помощник для всех действий, которые правят план АКТИВНОГО этажа
  * активного объекта. Раньше (до этажей) каждое действие вручную собирало
  * { ...floorPlan, ... } и подставляло в projects — теперь это в одном месте.
+ *
+ * ⚠️ БАГФИКС 07.07.2026: раньше отсюда наружу возвращались только
+ * { floorPlan, projects } — верхнеуровневое зеркало `state.levels`
+ * (отдельное поле стора, НЕ то же самое, что `projects[...].levels`)
+ * оставалось нетронутым. `state.floorPlan` (то, что реально читает 2D-план,
+ * FloorPlan.tsx) обновлялся исправно — поэтому баг был незаметен на самом
+ * плане. Но Scene3D.tsx читает именно верхнеуровневый `state.levels`
+ * (нужен для показа ВСЕХ этажей разом, не только активного) — он
+ * оставался старым снимком до первого действия, которое ЯВНО пересчитывает
+ * levels через syncActive (addLevel/duplicateLevel/renameLevel/
+ * setLevelElevation/selectLevel/removeLevel, см. их вызовы ниже). Отсюда
+ * репортнутое поведение: нарисовал плиту и колонны на плане → в 3D видна
+ * только плита (успела попасть в levels на предыдущей синхронизации), а
+ * колонны — нет; нажал "Дублировать этаж" (вызывает syncActive) → колонны
+ * наконец появились, причём сразу на ОБОИХ этажах (дубликат получил уже
+ * актуальные данные, а заодно досинхронизировался и оригинал). Тот же
+ * пробел бил и по дебаунс-синхронизации с облаком в App.tsx (она следит
+ * именно за `levels` через useEffect) — правками этой функции чинится
+ * заодно и это, отдельно доказывать не пришлось.
  */
 function updateActiveFloorPlan(
   s: { projects: ProjectEntry[]; activeProjectId: string | null; floorPlan: FloorPlan },
@@ -185,7 +204,8 @@ function updateActiveFloorPlan(
     const levels = p.levels.map(lv => lv.id === activeLevel.id ? { ...lv, floorPlan } : lv)
     return { ...p, levels }
   })
-  return { floorPlan, projects }
+  const activeProject = projects.find(p => p.id === s.activeProjectId)
+  return { floorPlan, projects, levels: activeProject?.levels ?? [] }
 }
 
 /**
