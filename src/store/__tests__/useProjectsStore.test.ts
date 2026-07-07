@@ -20,7 +20,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 const insertMock = vi.fn()
-const selectMock = vi.fn()
 const singleMock = vi.fn()
 const getUserMock = vi.fn()
 
@@ -47,7 +46,7 @@ describe('useProjectsStore — облачный объект всегда пол
   it('createProject вставляет levels_data с одним стартовым этажом', async () => {
     getUserMock.mockResolvedValue({ data: { user: { id: 'u1' } } })
     singleMock.mockResolvedValue({
-      data: { id: 'p1', user_id: 'u1', name: 'Объект', created_at: 't', updated_at: 't', levels_data: null },
+      data: { id: 'p1', user_id: 'u1', name: 'Объект', created_at: 't', updated_at: 't', levels_data: null, profile_templates: null },
       error: null,
     })
 
@@ -66,7 +65,7 @@ describe('useProjectsStore — облачный объект всегда пол
     vi.mocked(fetchProjectContent).mockResolvedValue({ walls: [], linings: [], levels: [], profileTemplates: [] })
 
     useProjectsStore.setState({
-      projects: [{ id: 'p1', user_id: 'u1', name: 'Старый объект', created_at: 't', updated_at: 't', levels_data: null }],
+      projects: [{ id: 'p1', user_id: 'u1', name: 'Старый объект', created_at: 't', updated_at: 't', levels_data: null, profile_templates: null }],
     })
 
     const entry = await useProjectsStore.getState().loadActiveProjectEntry('p1')
@@ -83,7 +82,7 @@ describe('useProjectsStore — облачный объект всегда пол
     vi.mocked(fetchProjectContent).mockResolvedValue({ walls: [], linings: [], levels: [existingLevel as any], profileTemplates: [] })
 
     useProjectsStore.setState({
-      projects: [{ id: 'p1', user_id: 'u1', name: 'Объект', created_at: 't', updated_at: 't', levels_data: [existingLevel] }],
+      projects: [{ id: 'p1', user_id: 'u1', name: 'Объект', created_at: 't', updated_at: 't', levels_data: [existingLevel], profile_templates: null }],
     })
 
     const entry = await useProjectsStore.getState().loadActiveProjectEntry('p1')
