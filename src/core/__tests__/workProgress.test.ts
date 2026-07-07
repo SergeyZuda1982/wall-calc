@@ -214,3 +214,25 @@ describe('aggregateProgressPercent', () => {
     expect(aggregateProgressPercent([a, { steps: [] }])).toBe(100)
   })
 })
+
+describe('userId на StepProgress (кто подтвердил/отклонил шаг)', () => {
+  it('confirmStep пишет userId последним аргументом, не ломая старый вызов с confirmedAt', () => {
+    let p = applyTemplate(gklTemplate)
+    p = confirmStep(p, 0, '2026-07-06T00:00:00.000Z', 'user-1')
+    expect(p.steps[0].confirmedAt).toBe('2026-07-06T00:00:00.000Z')
+    expect(p.steps[0].userId).toBe('user-1')
+  })
+
+  it('confirmStep без userId оставляет поле undefined', () => {
+    let p = applyTemplate(gklTemplate)
+    p = confirmStep(p, 0)
+    expect(p.steps[0].userId).toBeUndefined()
+  })
+
+  it('rejectStep пишет userId пятым аргументом', () => {
+    let p = applyTemplate(gklTemplate)
+    p = rejectStep(p, 0, 'waiting_trades', undefined, 'user-2')
+    expect(p.steps[0].userId).toBe('user-2')
+    expect(p.steps[0].rejectReason).toBe('waiting_trades')
+  })
+})

@@ -532,6 +532,7 @@ export interface StepProgress {
   rejectReason?: StepRejectReason
   rejectNote?: string       // текст своей причины, если rejectReason === 'other'
   confirmedAt?: string      // ISO-дата, для истории/отчёта
+  userId?: string           // кто подтвердил/отклонил шаг — заполняется автоматически из текущего пользователя
 }
 
 /**
