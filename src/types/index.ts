@@ -685,6 +685,39 @@ export interface RectColumn {
   label: string
 }
 
+/**
+ * Обведённая карандашом стена/перегородка ИЛИ колонна произвольной формы —
+ * единый контур по реальным граням (px), БЕЗ деления на прямые отрезки, в
+ * отличие от обычных wall_new/wall_existing (x1/y1/x2/y2 + перпендикулярная
+ * толщина). Нужна там, где реальная геометрия не укладывается в "ось +
+ * толщина" — неровные колонны разной формы на одном объекте, кривые
+ * фрагменты периметра со скана чертежа и т.п.
+ *
+ * Технически — тот же паттерн, что и у Slab (contour, см. выше): свободный
+ * контур, не привязанный к линиям/помещениям. `kind` влияет только на
+ * дефолтную подпись/категорию и на то, каким цветом/штриховкой рисовать —
+ * геометрия и материал (через тот же PlanLineSpec/wall_existing-таксономию,
+ * что у RectColumn/RoundColumn) одинаковы для обоих видов.
+ *
+ * ⚠️ Сознательное упрощение v1 (см. KONSPEKT.md): НЕ участвует в обычном
+ * расчётном движке стен (calcResults/calcSheetLayout/calcAttachmentFasteners) —
+ * это геометрия + материал для плана/сметы площадей/3D, а не для раскроя
+ * листов конкретно этой конструкции. Проёмы на такой стене тоже не
+ * поддерживаются (как и на дуге, `sagittaMm`).
+ */
+export type FreeformKind = 'wall' | 'column'
+
+export interface FreeformStructure {
+  id: string
+  kind: FreeformKind
+  outer: { x: number; y: number }[]   // контур, px (как у Slab.outer)
+  spec?: PlanLineSpec                  // та же таксономия, что у RectColumn/RoundColumn (wall_existing)
+  category?: LineCategory              // по умолчанию 'capital'
+  workStatus?: WorkStatus              // по умолчанию 'existing'
+  heightMm?: number                    // своя высота; не задано — высота потолка этажа, как у обычных стен
+  label: string
+}
+
 /** План объекта */
 export interface FloorPlan {
   scaleMmPerPx: number
@@ -694,6 +727,7 @@ export interface FloorPlan {
   slabs: Slab[]
   roundColumns: RoundColumn[]
   rectColumns: RectColumn[]
+  freeformStructures: FreeformStructure[]
   backgroundImage?: BackgroundImage | null
 }
 
@@ -705,6 +739,7 @@ export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   slabs: [],
   roundColumns: [],
   rectColumns: [],
+  freeformStructures: [],
   backgroundImage: null,
 }
 

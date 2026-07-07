@@ -76,7 +76,7 @@ function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
 }
 
-type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim' | 'opening'
+type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim' | 'opening' | 'freeform'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -370,6 +370,7 @@ export default function FloorPlan() {
     addSlab, addSlabHole,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
+    addFreeformStructure, updateFreeformStructure, removeFreeformStructure,
     customWorkStageTemplates, addCustomWorkStageTemplate,
   } = useProjectStore()
 
@@ -386,6 +387,7 @@ export default function FloorPlan() {
   const slabs     = floorPlan?.slabs    ?? []
   const roundColumns = floorPlan?.roundColumns ?? []
   const rectColumns  = floorPlan?.rectColumns  ?? []
+  const freeformStructures = floorPlan?.freeformStructures ?? []
   const scaleMmPx = floorPlan?.scaleMmPerPx ?? 10
 
   // ── UI-состояние ──────────────────────────────────────────────────────────
@@ -410,6 +412,8 @@ export default function FloorPlan() {
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
   const [pencilPts, setPencilPts] = useState<{ x: number; y: number }[]>([])       // карандаш: накопленные точки контура
   const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
+  const [freeformPts, setFreeformPts] = useState<{ x: number; y: number }[]>([])   // обводка (стена/колонна произвольной формы): накопленные точки контура
+  const [freeformKind, setFreeformKind] = useState<'wall' | 'column'>('column')     // что создаём при замыкании контура
   const [stampTemplateId, setStampTemplateId] = useState<string | null>(null)  // активный шаблон для штамповки колонн
   const [stampCenter, setStampCenter] = useState<{ x: number; y: number } | null>(null) // прямоугольный шаблон: центр зафиксирован, ждём 2-й клик (угол)
 
@@ -455,6 +459,7 @@ export default function FloorPlan() {
   const [inspectorRoomId, setInspectorRoomId] = useState<string | null>(null)
   const [inspectorRoundColumnId, setInspectorRoundColumnId] = useState<string | null>(null)
   const [inspectorRectColumnId, setInspectorRectColumnId] = useState<string | null>(null)
+  const [inspectorFreeformId, setInspectorFreeformId] = useState<string | null>(null)
   // Цепочка рисования периметра
   const [chainStartPt, setChainStartPt] = useState<{ x: number; y: number } | null>(null)
   const [chainLineIds, setChainLineIds] = useState<string[]>([])
@@ -1027,6 +1032,9 @@ export default function FloorPlan() {
     if (mode === 'pencil') {
       setPencilPts(prev => prev.slice(0, -1))
     }
+    if (mode === 'freeform') {
+      setFreeformPts(prev => prev.slice(0, -1))
+    }
     if (mode === 'stamp') {
       setStampCenter(null)
     }
@@ -1124,6 +1132,35 @@ export default function FloorPlan() {
         return
       }
       setPencilPts(prev => [...prev, { x: pt.x, y: pt.y }])
+      return
+    }
+
+    if (mode === 'freeform') {
+      const pt = applySnap(pos.x, pos.y)
+      const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
+      const closing = freeformPts.length >= 3 && dist(pt.x, pt.y, freeformPts[0].x, freeformPts[0].y) <= closeThresh
+      if (closing) {
+        const count = freeformStructures.length + 1
+        const newId = addFreeformStructure({
+          kind: freeformKind,
+          outer: freeformPts,
+          category: 'capital',
+          workStatus: 'existing',
+          label: freeformKind === 'column' ? `Колонна ${count}` : `Конструкция ${count}`,
+        })
+        setFreeformPts([])
+        // Сразу открываем инспектор — материал ещё не задан, самое время его выбрать
+        setInspectorFreeformId(newId)
+        setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null)
+        return
+      }
+      // Клик рядом с уже поставленной точкой контура (не первой) — удалить именно её
+      const hitIdx = freeformPts.findIndex((p, i) => i > 0 && dist(pt.x, pt.y, p.x, p.y) <= closeThresh)
+      if (hitIdx !== -1) {
+        setFreeformPts(prev => prev.filter((_, i) => i !== hitIdx))
+        return
+      }
+      setFreeformPts(prev => [...prev, { x: pt.x, y: pt.y }])
       return
     }
 
@@ -1338,6 +1375,7 @@ export default function FloorPlan() {
       } else {
         setDrawing(null); setSelected(null); setScaleStep(0); setScalePt1(null); setScalePt2(null)
         setPencilPts([])
+        setFreeformPts([])
       }
     }
     if (e.key === 'Delete') {
@@ -2038,6 +2076,69 @@ export default function FloorPlan() {
             )}
           </div>
 
+          {/* Обводка произвольной формы (07.07.2026) — тот же принцип, что у
+              плиты-карандаша (реальный контур, не деление на отрезки), но для
+              стен/перегородок ИЛИ колонн неровной/разной формы, где шаблон
+              прямоугольник/круг неудобен. Материал/параметры задаются ПОСЛЕ
+              замыкания контура, в инспекторе — сама обводка контура сначала. */}
+          <div>
+            <div style={{ ...sectionHeaderStyle, color: '#8d99ae' }}>Обводка (стена/колонна)</div>
+            <div style={{ display: 'flex', gap: 4, padding: '0 14px 6px' }}>
+              {(['wall', 'column'] as const).map(k => (
+                <button key={k}
+                  onClick={() => setFreeformKind(k)}
+                  style={{
+                    flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer',
+                    border: `1px solid ${freeformKind === k ? '#6a4fb5' : '#3a4060'}`,
+                    background: freeformKind === k ? '#6a4fb5' : 'transparent',
+                    color: freeformKind === k ? '#fff' : '#8a9ac8',
+                  }}>
+                  {k === 'wall' ? 'Стена/перегородка' : 'Колонна'}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => { setFreeformPts([]); setMode('freeform') }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 14px', background: 'transparent', border: 'none',
+                cursor: 'pointer', width: '100%', textAlign: 'left',
+                borderLeft: mode === 'freeform' ? '3px solid #6a4fb5' : '3px solid transparent',
+                color: mode === 'freeform' ? '#fff' : '#8a9ac8', fontSize: 12,
+              }}>
+              <span style={{ fontSize: 14, minWidth: 16, textAlign: 'center' }}>⌁</span>
+              <span>Обвести контур</span>
+            </button>
+            {mode === 'freeform' && (
+              <div style={{ padding: '2px 14px 8px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
+                Клик — точка контура (по реальным граням стены/колонны, не по
+                оси). Клик рядом с первой точкой — замкнуть и сразу задать
+                материал. ПКМ или Esc — отменить текущую точку/контур.
+                {freeformPts.length > 0 && <div style={{ marginTop: 2 }}>Точек: {freeformPts.length}</div>}
+              </div>
+            )}
+            {freeformStructures.length > 0 && (
+              <div style={{ padding: '4px 14px 8px' }}>
+                {freeformStructures.map(fs => (
+                  <button key={fs.id}
+                    onClick={() => {
+                      setInspectorFreeformId(fs.id); setInspectorId(null); setInspectorRoomId(null)
+                      setInspectorRoundColumnId(null); setInspectorRectColumnId(null)
+                    }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', marginBottom: 3,
+                      fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                      border: inspectorFreeformId === fs.id ? '1px solid #6a4fb5' : '1px solid #3a4060',
+                      background: inspectorFreeformId === fs.id ? '#6a4fb5' : 'transparent',
+                      color: inspectorFreeformId === fs.id ? '#fff' : '#8a9ac8',
+                    }}>
+                    {fs.kind === 'column' ? '▦' : '⌁'} {fs.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Шаблоны колонн — библиотека общая на все объекты (useTemplateStore),
               штамповка: прямоугольная — 2 клика (центр, потом угол), круглая — 1 клик.
               Библиотека наполняется либо "Сохранить как шаблон" с уже нарисованной
@@ -2617,6 +2718,62 @@ export default function FloorPlan() {
                     )
                   })}
 
+                  {/* Обведённые карандашом стены/перегородки и колонны произвольной
+                      формы (FreeformStructure, с 07.07.2026) — тот же принцип, что
+                      у плиты (реальный контур), плюс материал (как у RectColumn).
+                      Колонна — штриховка (та же генерик-штриховка, что у прямоугольной/
+                      круглой колонны), стена — плоская заливка по материалу
+                      (getLineVisual('wall_existing', ...)), чтобы визуально читалась
+                      как обычная стена, несмотря на неправильную форму. */}
+                  {freeformStructures.map(fs => {
+                    const flat = fs.outer.flatMap(p => [p.x, p.y])
+                    const cx = fs.outer.reduce((s, p) => s + p.x, 0) / fs.outer.length
+                    const cy = fs.outer.reduce((s, p) => s + p.y, 0) / fs.outer.length
+                    const areaM2 = polygonAreaM2(fs.outer, scaleMmPx)
+                    if (fs.kind === 'column') {
+                      const minX = Math.min(...fs.outer.map(p => p.x)), maxX = Math.max(...fs.outer.map(p => p.x))
+                      const minY = Math.min(...fs.outer.map(p => p.y)), maxY = Math.max(...fs.outer.map(p => p.y))
+                      return (
+                        <Group key={fs.id} listening={false}>
+                          <Line points={flat} closed fill="rgba(120,144,156,0.08)" stroke="#78909c" strokeWidth={1.5} listening={false} />
+                          <Group listening={false} clipFunc={ctx => {
+                            ctx.beginPath()
+                            fs.outer.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+                            ctx.closePath()
+                          }}>
+                            {(() => {
+                              const step = 14
+                              const diag = (maxX - minX) + (maxY - minY)
+                              const strokes = []
+                              for (let d = -diag; d < diag; d += step) {
+                                strokes.push(
+                                  <Line key={d}
+                                    points={[minX + d, minY, minX + d + (maxY - minY), maxY]}
+                                    stroke="#78909c" strokeWidth={1} listening={false} />
+                                )
+                              }
+                              return strokes
+                            })()}
+                          </Group>
+                          <Text x={cx - 70} y={cy - 18} width={140}
+                            text={fs.label} fontSize={11} fill="#78909c" align="center" fontStyle="bold" listening={false} />
+                          <Text x={cx - 70} y={cy - 2} width={140}
+                            text={`${areaM2.toFixed(2)} м²`} fontSize={13} fill="#78909c" align="center" fontStyle="bold" listening={false} />
+                        </Group>
+                      )
+                    }
+                    const vis = getLineVisual('wall_existing', fs.spec?.material, fs.spec?.subtype)
+                    return (
+                      <Group key={fs.id} listening={false}>
+                        <Line points={flat} closed fill={vis.fillColor ?? 'rgba(120,144,156,0.15)'} stroke={vis.colorOverride ?? '#78909c'} strokeWidth={1.5} listening={false} />
+                        <Text x={cx - 70} y={cy - 18} width={140}
+                          text={fs.label} fontSize={11} fill="#546e7a" align="center" fontStyle="bold" listening={false} />
+                        <Text x={cx - 70} y={cy - 2} width={140}
+                          text={`${areaM2.toFixed(2)} м²`} fontSize={13} fill="#546e7a" align="center" fontStyle="bold" listening={false} />
+                      </Group>
+                    )
+                  })}
+
                   {/* Превью текущего контура карандаша — точки + отрезок до курсора */}
                   {mode === 'pencil' && pencilPts.length > 0 && (
                     <>
@@ -2653,6 +2810,22 @@ export default function FloorPlan() {
                         ) : (
                           <Circle key={i} x={p.x} y={p.y} radius={3} fill="#8d99ae" listening={false} />
                         )
+                      ))}
+                    </>
+                  )}
+
+                  {/* Превью текущего контура обводки (freeform: стена/колонна произвольной формы) */}
+                  {mode === 'freeform' && freeformPts.length > 0 && (
+                    <>
+                      {cursor && (
+                        <Line
+                          points={[...freeformPts.flatMap(p => [p.x, p.y]), cursor.x, cursor.y]}
+                          stroke="#6a4fb5" strokeWidth={1.5} dash={[6, 3]} listening={false}
+                        />
+                      )}
+                      {freeformPts.map((p, i) => (
+                        <Circle key={i} x={p.x} y={p.y} radius={i === 0 ? 5 : 3}
+                          fill={i === 0 ? '#6a4fb5' : '#9575cd'} listening={false} />
                       ))}
                     </>
                   )}
@@ -2959,8 +3132,8 @@ export default function FloorPlan() {
                     const r = 9 / stageScale
                     return (
                       <Group key={'marker-' + room.id}
-                        onClick={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setSelected(null) }}
-                        onTap={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setSelected(null) }}>
+                        onClick={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}
+                        onTap={e => { e.cancelBubble = true; setInspectorRoomId(room.id); setInspectorId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}>
                         <Circle x={cx} y={cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
                         <Text x={cx - r} y={cy - r} width={r * 2} height={r * 2} text={room.isColumn ? '▦' : '⛶'}
                           fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
@@ -2973,8 +3146,8 @@ export default function FloorPlan() {
                     const r = 9 / stageScale
                     return (
                       <Group key={'marker-' + rc.id}
-                        onClick={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRectColumnId(null); setSelected(null) }}
-                        onTap={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRectColumnId(null); setSelected(null) }}>
+                        onClick={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}
+                        onTap={e => { e.cancelBubble = true; setInspectorRoundColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}>
                         <Circle x={rc.cx} y={rc.cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
                         <Text x={rc.cx - r} y={rc.cy - r} width={r * 2} height={r * 2} text="⬤"
                           fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
@@ -2986,10 +3159,26 @@ export default function FloorPlan() {
                     const r = 9 / stageScale
                     return (
                       <Group key={'marker-' + rc.id}
-                        onClick={e => { e.cancelBubble = true; setInspectorRectColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setSelected(null) }}
-                        onTap={e => { e.cancelBubble = true; setInspectorRectColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setSelected(null) }}>
+                        onClick={e => { e.cancelBubble = true; setInspectorRectColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorFreeformId(null); setSelected(null) }}
+                        onTap={e => { e.cancelBubble = true; setInspectorRectColumnId(rc.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorFreeformId(null); setSelected(null) }}>
                         <Rect x={rc.cx - r} y={rc.cy - r} width={r * 2} height={r * 2} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
                         <Text x={rc.cx - r} y={rc.cy - r} width={r * 2} height={r * 2} text="▦"
+                          fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
+                      </Group>
+                    )
+                  })}
+
+                  {/* Select-маркер обведённых стен/перегородок и колонн произвольной формы */}
+                  {mode === 'select' && freeformStructures.map(fs => {
+                    const r = 9 / stageScale
+                    const cx = fs.outer.reduce((s, p) => s + p.x, 0) / fs.outer.length
+                    const cy = fs.outer.reduce((s, p) => s + p.y, 0) / fs.outer.length
+                    return (
+                      <Group key={'marker-' + fs.id}
+                        onClick={e => { e.cancelBubble = true; setInspectorFreeformId(fs.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setSelected(null) }}
+                        onTap={e => { e.cancelBubble = true; setInspectorFreeformId(fs.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setSelected(null) }}>
+                        <Circle x={cx} y={cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
+                        <Text x={cx - r} y={cy - r} width={r * 2} height={r * 2} text={fs.kind === 'column' ? '▦' : '⌁'}
                           fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
                       </Group>
                     )
@@ -3963,6 +4152,99 @@ export default function FloorPlan() {
                 <button onClick={() => { removeRectColumn(rc.id); setInspectorRectColumnId(null) }}
                   style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
                   🗑 Удалить колонну
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+
+        {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && !inspectorRectColumnId && inspectorFreeformId && (() => {
+          const fs = freeformStructures.find(f => f.id === inspectorFreeformId)
+          if (!fs) return null
+          const areaM2 = polygonAreaM2(fs.outer, scaleMmPx)
+          const category = fs.category ?? 'capital'
+          return (
+            <div style={isMobile ? {
+              ...rightPanelStyle,
+              position: 'absolute', top: 0, bottom: 0, right: 0, zIndex: 21,
+              width: Math.min(RIGHT_W, window.innerWidth - 32),
+              minWidth: 0, maxWidth: Math.min(RIGHT_W, window.innerWidth - 32),
+              boxShadow: '-4px 0 16px rgba(0,0,0,0.25)',
+            } : rightPanelStyle}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px 10px', borderBottom: '1px solid #e0e4ee', background: '#fff',
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>
+                  Обводка: {fs.kind === 'column' ? 'колонна произвольной формы' : 'стена/перегородка'}
+                </div>
+                <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorFreeformId(null)}>✕</button>
+              </div>
+              <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <label style={{ fontSize: 12, color: '#555' }}>
+                  Название
+                  <input value={fs.label} onChange={e => updateFreeformStructure(fs.id, { label: e.target.value })}
+                    style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                </label>
+
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {(['wall', 'column'] as const).map(k => (
+                    <button key={k}
+                      onClick={() => updateFreeformStructure(fs.id, { kind: k })}
+                      style={{
+                        flex: 1, fontSize: 11, padding: '6px 8px', borderRadius: 5, cursor: 'pointer',
+                        border: fs.kind === k ? '1.5px solid #6a4fb5' : '1px solid #ddd',
+                        background: fs.kind === k ? '#f1ecfa' : '#fff',
+                        color: fs.kind === k ? '#6a4fb5' : '#666', fontWeight: fs.kind === k ? 700 : 400,
+                      }}>
+                      {k === 'wall' ? 'Стена/перегородка' : 'Колонна'}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {(['capital', 'mutable'] as LineCategory[]).map(cat => (
+                    <button key={cat}
+                      onClick={() => updateFreeformStructure(fs.id, {
+                        category: cat,
+                        workStatus: fs.workStatus ?? defaultStatus(cat),
+                      })}
+                      style={{
+                        flex: 1, fontSize: 11, padding: '6px 8px', borderRadius: 5, cursor: 'pointer',
+                        border: category === cat ? '1.5px solid #3a7bd5' : '1px solid #ddd',
+                        background: category === cat ? '#eaf2fd' : '#fff',
+                        color: category === cat ? '#3a7bd5' : '#666', fontWeight: category === cat ? 700 : 400,
+                      }}>
+                      {cat === 'capital' ? '🔒 Капитал' : '✏️ Изменяемая'}
+                    </button>
+                  ))}
+                </div>
+
+                <label style={{ fontSize: 12, color: '#555' }}>
+                  Высота, мм (пусто — как высота потолка этажа)
+                  <input type="number" value={fs.heightMm ?? ''} placeholder="высота потолка"
+                    onChange={e => {
+                      const v = e.target.value
+                      updateFreeformStructure(fs.id, { heightMm: v === '' ? undefined : parseFloat(v) })
+                    }}
+                    style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                </label>
+
+                <ConstructionSpecSelector planType="wall_existing" value={fs.spec}
+                  onChange={spec => updateFreeformStructure(fs.id, { spec })} />
+
+                <div style={{ fontSize: 12, color: '#888' }}>
+                  Площадь контура: <b>{areaM2.toFixed(2)} м²</b>
+                </div>
+                <div style={{ fontSize: 10, color: '#aaa', lineHeight: 1.4 }}>
+                  Эта конструкция не участвует в обычном расчёте материала
+                  (раскрой ГКЛ, крепёж) — только геометрия и материал для плана
+                  и 3D-вида, площадь/периметр посчитаны по факту обведённого
+                  контура.
+                </div>
+                <button onClick={() => { removeFreeformStructure(fs.id); setInspectorFreeformId(null) }}
+                  style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
+                  🗑 Удалить
                 </button>
               </div>
             </div>

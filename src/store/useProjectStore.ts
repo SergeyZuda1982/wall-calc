@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, RoundColumn, RectColumn } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, RoundColumn, RectColumn, FreeformStructure } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 import { duplicateFloorPlanGeometry } from '../core/duplicateFloorPlan'
 
@@ -122,6 +122,10 @@ export interface ProjectStore {
   addRectColumn: (col: Omit<RectColumn, 'id'>) => string
   updateRectColumn: (id: string, patch: Partial<RectColumn>) => void
   removeRectColumn: (id: string) => void
+
+  addFreeformStructure: (fs: Omit<FreeformStructure, 'id'>) => string
+  updateFreeformStructure: (id: string, patch: Partial<FreeformStructure>) => void
+  removeFreeformStructure: (id: string) => void
 
   // пользовательские шаблоны этапов работ (объектные — свои на каждый проект)
   customWorkStageTemplates: import('../types').WorkStageTemplate[]
@@ -716,6 +720,32 @@ export const useProjectStore = create<ProjectStore>()(
           ...fp, rectColumns: (fp.rectColumns ?? []).filter(rc => rc.id !== id),
         })))
       },
+
+      // ─── Обводка произвольной формы: стена/перегородка или колонна (07.07.2026) ──
+
+      addFreeformStructure: (fsInput) => {
+        const id = `freeform_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const newFs: FreeformStructure = { ...fsInput, id }
+          return updateActiveFloorPlan(s, fp => ({
+            ...fp, freeformStructures: [...(fp.freeformStructures ?? []), newFs],
+          }))
+        })
+        return id
+      },
+
+      updateFreeformStructure: (id, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          freeformStructures: (fp.freeformStructures ?? []).map(fs => fs.id === id ? { ...fs, ...patch } : fs),
+        })))
+      },
+
+      removeFreeformStructure: (id) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, freeformStructures: (fp.freeformStructures ?? []).filter(fs => fs.id !== id),
+        })))
+      },
     }),
     {
       name: 'wall-calc-projects', // ключ в localStorage
@@ -734,13 +764,13 @@ export const useProjectStore = create<ProjectStore>()(
           state.projects = state.projects.map(p => {
             const legacy = p as unknown as { floorPlan?: FloorPlan; levels?: Level[]; activeLevelId?: string }
             const levels: Level[] = legacy.levels && legacy.levels.length > 0
-              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], roundColumns: lv.floorPlan.roundColumns ?? [], rectColumns: lv.floorPlan.rectColumns ?? [] } }))
+              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], roundColumns: lv.floorPlan.roundColumns ?? [], rectColumns: lv.floorPlan.rectColumns ?? [], freeformStructures: lv.floorPlan.freeformStructures ?? [] } }))
               : [{
                   id: `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`,
                   name: 'Этаж 1',
                   elevationMm: 0,
                   floorPlan: legacy.floorPlan
-                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [], rectColumns: legacy.floorPlan.rectColumns ?? [] }
+                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [], rectColumns: legacy.floorPlan.rectColumns ?? [], freeformStructures: legacy.floorPlan.freeformStructures ?? [] }
                     : { ...DEFAULT_FLOOR_PLAN, lines: [], contours: [] },
                 }]
             const activeLevelId = legacy.activeLevelId && levels.some(lv => lv.id === legacy.activeLevelId)
