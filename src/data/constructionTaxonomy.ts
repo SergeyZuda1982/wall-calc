@@ -294,6 +294,17 @@ const DOUBLE_FRAME_TOLERANCE_MM = 3
 /** Визуальный дефолт зазора С116, пока на линии не задан gapMm явно (см. PlanLineSpec.gapMm). */
 const DEFAULT_C116_GAP_MM = 100
 
+/**
+ * ПС50 для облицовки (wall_lining) физически существует только как С626
+ * (2 слоя ГКЛ) — по нормам Кнауф однослойной С625 на профиле ПС50 не бывает
+ * (нет в таблице максимальных высот, подтверждено пользователем 07.07.2026).
+ * Число слоёв для этой комбинации не выбор монтажника, а фиксированный факт —
+ * тот же принцип, что и у двойного каркаса (см. parseDoubleFrameSubtype).
+ */
+export function isLiningLayersFixed(planType: PlanLineType, subtype?: string): boolean {
+  return planType === 'wall_lining' && subtype === 'frame_ps50'
+}
+
 /** Число слоёв обшивки с каждой стороны + наличие листа-разделителя в зазоре. */
 export function getDoubleFrameLayerCounts(
   dfType: DoubleFrameType,
@@ -494,7 +505,11 @@ export function getSpecAbbr(
     // Для двойного каркаса число слоёв фиксировано системой (уже видно
     // в l2.abbr, например '115.3·50' = 2+3 слоя) — spec.layers сюда не
     // относится и показывать "·2сл"/"·1сл" было бы вводящим в заблуждение.
-    if (layers === 2 && !parseDoubleFrameSubtype(subtype)) abbr = `${abbr}·2сл`
+    // Аналогично для ПС50-облицовки: система всегда С626 (2 слоя),
+    // независимо от того, что записано в spec.layers у старых линий.
+    if (!parseDoubleFrameSubtype(subtype) && (layers === 2 || isLiningLayersFixed(type, subtype))) {
+      abbr = `${abbr}·2сл`
+    }
   }
   return abbr
 }

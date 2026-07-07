@@ -9,7 +9,7 @@
  */
 
 import type { PlanLineType, PlanLineSpec } from '../types'
-import { TAXONOMY, parseDoubleFrameSubtype } from '../data/constructionTaxonomy'
+import { TAXONOMY, parseDoubleFrameSubtype, isLiningLayersFixed } from '../data/constructionTaxonomy'
 
 interface Props {
   planType: PlanLineType
@@ -43,9 +43,12 @@ export default function ConstructionSpecSelector({ planType, value, onChange, co
 
   function handleL2(subtype: string) {
     if (!value?.material) return
+    // ПС50 для облицовки — всегда 2 слоя (С626), однослойной С625 на ПС50
+    // по нормам Кнауф не бывает (см. isLiningLayersFixed).
+    const layers = isLiningLayersFixed(planType, subtype || undefined) ? 2 : value.layers
     onChange({
       material: value.material, subtype: subtype || undefined,
-      boardSubtype: value.boardSubtype, layers: value.layers,
+      boardSubtype: value.boardSubtype, layers,
     })
   }
 
@@ -70,6 +73,7 @@ export default function ConstructionSpecSelector({ planType, value, onChange, co
   // а не выбором монтажника, поэтому обычный селектор "1/2 слоя" здесь
   // не показываем (см. constructionTaxonomy.ts, getDoubleFrameLayerCounts).
   const doubleFrame = parseDoubleFrameSubtype(value?.subtype)
+  const liningLayersFixed = isLiningLayersFixed(planType, value?.subtype)
 
   const gap = compact ? 6 : 8
   const labelStyle: React.CSSProperties = compact
@@ -122,6 +126,10 @@ export default function ConstructionSpecSelector({ planType, value, onChange, co
           {doubleFrame ? (
             <span style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
               слоёв: фикс. по системе
+            </span>
+          ) : liningLayersFixed ? (
+            <span style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }} title="По нормам Кнауф однослойной С625 на ПС50 не бывает — только С626">
+              слоёв: фикс. 2 (С626)
             </span>
           ) : (
             <select

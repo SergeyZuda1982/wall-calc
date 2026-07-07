@@ -18,8 +18,8 @@ describe('resolveLiningType', () => {
     expect(resolveLiningType('frame_pn28', undefined)).toBe('c623')
     expect(resolveLiningType('frame_pn28', 2)).toBe('c623')
   })
-  it('frame_ps50/frame_ps75 + layers 1 (или не задано) -> c625', () => {
-    expect(resolveLiningType('frame_ps50', undefined)).toBe('c625')
+  it('frame_ps75 + layers 1 (или не задано) -> c625', () => {
+    expect(resolveLiningType('frame_ps75', undefined)).toBe('c625')
     expect(resolveLiningType('frame_ps75', 1)).toBe('c625')
   })
   it('frame_ps100 + layers 1 (или не задано) -> c625, + layers 2 -> c626', () => {
@@ -27,9 +27,13 @@ describe('resolveLiningType', () => {
     expect(resolveLiningType('frame_ps100', 1)).toBe('c625')
     expect(resolveLiningType('frame_ps100', 2)).toBe('c626')
   })
-  it('frame_ps50/frame_ps75 + layers 2 -> c626', () => {
-    expect(resolveLiningType('frame_ps50', 2)).toBe('c626')
+  it('frame_ps75 + layers 2 -> c626', () => {
     expect(resolveLiningType('frame_ps75', 2)).toBe('c626')
+  })
+  it('frame_ps50 -> ВСЕГДА c626, независимо от layers (по нормам Кнауф однослойной С625 на ПС50 не бывает)', () => {
+    expect(resolveLiningType('frame_ps50', undefined)).toBe('c626')
+    expect(resolveLiningType('frame_ps50', 1)).toBe('c626')
+    expect(resolveLiningType('frame_ps50', 2)).toBe('c626')
   })
   it('glued (С611) -> null, нет калькулятора', () => {
     expect(resolveLiningType('glued', 1)).toBeNull()
@@ -94,6 +98,14 @@ describe('planLineToLiningInput — резолв систем С623/625/626', ()
     expect(res.liningType).toBe('c626')
     expect(res.profileType).toBe('ps50')
     expect(res.gklLayers).toBe(2)
+  })
+  it('frame_ps50 без layers (или layers 1, устаревшие данные) -> ВСЁ РАВНО c626, 2 слоя — не c625', () => {
+    const res1 = planLineToLiningInput(liningLine({ spec: { material: 'gkl', subtype: 'frame_ps50' } }))!
+    expect(res1.liningType).toBe('c626')
+    expect(res1.gklLayers).toBe(2)
+    const res2 = planLineToLiningInput(liningLine({ spec: { material: 'gkl', subtype: 'frame_ps50', layers: 1 } }))!
+    expect(res2.liningType).toBe('c626')
+    expect(res2.gklLayers).toBe(2)
   })
   it('frame_ps100 + layers 2 -> c626, 2 слоя, profileType ps100', () => {
     const res = planLineToLiningInput(liningLine({ spec: { material: 'gkl', subtype: 'frame_ps100', layers: 2 } }))!
