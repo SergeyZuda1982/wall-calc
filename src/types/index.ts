@@ -702,10 +702,38 @@ export interface RectColumn {
  * ⚠️ Сознательное упрощение v1 (см. KONSPEKT.md): НЕ участвует в обычном
  * расчётном движке стен (calcResults/calcSheetLayout/calcAttachmentFasteners) —
  * это геометрия + материал для плана/сметы площадей/3D, а не для раскроя
- * листов конкретно этой конструкции. Проёмы на такой стене тоже не
- * поддерживаются (как и на дуге, `sagittaMm`).
+ * листов конкретно этой конструкции.
+ *
+ * Проёмы (07.07.2026, см. FreeformOpening ниже) — поддержаны на уровне
+ * геометрии (вырез в плане и в 3D; откос/четверть не моделируются, чистый
+ * прямоугольный/произвольный вырез, как и у прямых стен), но так же НЕ
+ * участвуют в расчётном движке — площадь проёма не вычитается из сметы
+ * материала (у freeform-стены и без проёмов нет сметы материала, см. выше).
  */
 export type FreeformKind = 'wall' | 'column'
+
+/**
+ * Проём на обведённой карандашом стене (FreeformStructure, kind: 'wall') —
+ * с 07.07.2026. В отличие от PlanOpening (прямая стена, offsetMm вдоль оси),
+ * у freeform-стены нет единой оси, поэтому проём задаётся так же, как и сама
+ * стена — обводом реального контура (клик-клик, замыкание у первой точки),
+ * тем же паттерном, что и outer. Контур проёма должен целиком лежать внутри
+ * outer (не проверяется геометрически при вводе — ответственность
+ * пользователя, как и у обычной обводки).
+ *
+ * sillHeightMm/heightMm — тот же смысл, что у PlanOpening (высота низа от
+ * пола / высота самого проёма); heightMm не задан → проём на всю высоту
+ * стены (частый случай для простого проёма/ниши). sillHeightMm не задан →
+ * от пола (0), как и у обычных проёмов.
+ */
+export interface FreeformOpening {
+  id: string
+  type: 'door' | 'window' | 'opening'
+  contour: { x: number; y: number }[]   // контур проёма, px, тот же формат, что и outer
+  sillHeightMm?: number
+  heightMm?: number                      // не задано — на всю высоту стены (bottomMm..heightMm стены)
+  label: string
+}
 
 export interface FreeformStructure {
   id: string
@@ -715,6 +743,8 @@ export interface FreeformStructure {
   category?: LineCategory              // по умолчанию 'capital'
   workStatus?: WorkStatus              // по умолчанию 'existing'
   heightMm?: number                    // своя высота; не задано — высота потолка этажа, как у обычных стен
+  /** Проёмы (только имеют смысл для kind: 'wall'; для колонны UI их не предлагает) */
+  openings?: FreeformOpening[]
   label: string
 }
 

@@ -449,4 +449,79 @@ describe('freeformStructuresToPrisms3D', () => {
     )
     expect(prisms.map(p => p.id)).toEqual(['a', 'b'])
   })
+
+  it('без проёмов — один призм с пустыми holes и bottomM=0', () => {
+    const prisms = freeformStructuresToPrisms3D([baseFreeform({})], 10, 2700)
+    expect(prisms).toHaveLength(1)
+    expect(prisms[0].holes).toEqual([])
+    expect(prisms[0].bottomM).toBe(0)
+  })
+
+  it('проём без heightMm — вырез на всю высоту стены, один band с дыркой', () => {
+    const fs = baseFreeform({
+      kind: 'wall',
+      openings: [{ id: 'op1', type: 'opening', label: 'Пр-1', contour: [{ x: 20, y: 20 }, { x: 80, y: 20 }, { x: 80, y: 80 }, { x: 20, y: 80 }] }],
+    })
+    const prisms = freeformStructuresToPrisms3D([fs], 10, 2700)
+    expect(prisms).toHaveLength(1)
+    expect(prisms[0].bottomM).toBe(0)
+    expect(prisms[0].heightM).toBeCloseTo(2.7)
+    expect(prisms[0].holes).toHaveLength(1)
+    expect(prisms[0].holes[0]).toEqual([{ x: 0.2, z: 0.2 }, { x: 0.8, z: 0.2 }, { x: 0.8, z: 0.8 }, { x: 0.2, z: 0.8 }])
+  })
+
+  it('окно (sillHeightMm+heightMm) — режет стену на 3 band, дырка только в среднем', () => {
+    const fs = baseFreeform({
+      kind: 'wall', heightMm: 2700,
+      openings: [{
+        id: 'op1', type: 'window', label: 'Окно 1', sillHeightMm: 900, heightMm: 1200,
+        contour: [{ x: 20, y: 20 }, { x: 80, y: 20 }, { x: 80, y: 80 }, { x: 20, y: 80 }],
+      }],
+    })
+    const prisms = freeformStructuresToPrisms3D([fs], 10, 2700)
+    expect(prisms).toHaveLength(3)
+    // band'ы отсортированы по возрастанию высоты (снизу вверх)
+    expect(prisms[0].bottomM).toBeCloseTo(0)
+    expect(prisms[0].heightM).toBeCloseTo(0.9)
+    expect(prisms[0].holes).toEqual([])
+
+    expect(prisms[1].bottomM).toBeCloseTo(0.9)
+    expect(prisms[1].heightM).toBeCloseTo(1.2)
+    expect(prisms[1].holes).toHaveLength(1)
+
+    expect(prisms[2].bottomM).toBeCloseTo(2.1)
+    expect(prisms[2].heightM).toBeCloseTo(0.6)
+    expect(prisms[2].holes).toEqual([])
+  })
+
+  it('два проёма на разной высоте на одной стене — независимые band', () => {
+    const fs = baseFreeform({
+      kind: 'wall', heightMm: 2700,
+      openings: [
+        { id: 'door', type: 'door', label: 'Дверь', sillHeightMm: 0, heightMm: 2000,
+          contour: [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 30 }, { x: 0, y: 30 }] },
+        { id: 'win', type: 'window', label: 'Окно', sillHeightMm: 900, heightMm: 1200,
+          contour: [{ x: 50, y: 0 }, { x: 80, y: 0 }, { x: 80, y: 30 }, { x: 50, y: 30 }] },
+      ],
+    })
+    const prisms = freeformStructuresToPrisms3D([fs], 10, 2700)
+    // границы: 0, 0.9, 2.0, 2.1, 2.7 → 4 band: [0,0.9) дверь; [0.9,2.0) дверь+окно; [2.0,2.1) окно; [2.1,2.7) пусто
+    expect(prisms).toHaveLength(4)
+    const withHoles = prisms.filter(p => p.holes.length > 0)
+    expect(withHoles).toHaveLength(3)
+    expect(prisms.reduce((s, p) => s + p.holes.length, 0)).toBe(4) // 1 + 2 + 1 + 0
+  })
+
+  it('проём с heightMm=0 или контуром <3 точек — игнорируется', () => {
+    const fs = baseFreeform({
+      kind: 'wall',
+      openings: [
+        { id: 'bad1', type: 'opening', label: 'bad', heightMm: 0, contour: [{ x: 20, y: 20 }, { x: 80, y: 20 }, { x: 80, y: 80 }] },
+        { id: 'bad2', type: 'opening', label: 'bad2', contour: [{ x: 20, y: 20 }, { x: 80, y: 20 }] },
+      ],
+    })
+    const prisms = freeformStructuresToPrisms3D([fs], 10, 2700)
+    expect(prisms).toHaveLength(1)
+    expect(prisms[0].holes).toEqual([])
+  })
 })

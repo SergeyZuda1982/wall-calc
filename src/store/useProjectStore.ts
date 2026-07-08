@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, RoundColumn, RectColumn, FreeformStructure } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, RoundColumn, RectColumn, FreeformStructure, FreeformOpening } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 import { duplicateFloorPlanGeometry } from '../core/duplicateFloorPlan'
 
@@ -127,6 +127,9 @@ export interface ProjectStore {
   addFreeformStructure: (fs: Omit<FreeformStructure, 'id'>) => string
   updateFreeformStructure: (id: string, patch: Partial<FreeformStructure>) => void
   removeFreeformStructure: (id: string) => void
+  addFreeformOpening: (structureId: string, opening: Omit<FreeformOpening, 'id'>) => string
+  updateFreeformOpening: (structureId: string, openingId: string, patch: Partial<FreeformOpening>) => void
+  removeFreeformOpening: (structureId: string, openingId: string) => void
 
   // пользовательские шаблоны этапов работ (объектные — свои на каждый проект)
   customWorkStageTemplates: import('../types').WorkStageTemplate[]
@@ -788,6 +791,40 @@ export const useProjectStore = create<ProjectStore>()(
       removeFreeformStructure: (id) => {
         set(s => updateActiveFloorPlan(s, fp => ({
           ...fp, freeformStructures: (fp.freeformStructures ?? []).filter(fs => fs.id !== id),
+        })))
+      },
+
+      // ─── Проёмы на обведённых стенах (FreeformOpening, 07.07.2026) ──
+
+      addFreeformOpening: (structureId, openingInput) => {
+        const id = `freeform_opening_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          freeformStructures: (fp.freeformStructures ?? []).map(fs =>
+            fs.id === structureId
+              ? { ...fs, openings: [...(fs.openings ?? []), { ...openingInput, id }] }
+              : fs),
+        })))
+        return id
+      },
+
+      updateFreeformOpening: (structureId, openingId, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          freeformStructures: (fp.freeformStructures ?? []).map(fs =>
+            fs.id === structureId
+              ? { ...fs, openings: (fs.openings ?? []).map(o => o.id === openingId ? { ...o, ...patch } : o) }
+              : fs),
+        })))
+      },
+
+      removeFreeformOpening: (structureId, openingId) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          freeformStructures: (fp.freeformStructures ?? []).map(fs =>
+            fs.id === structureId
+              ? { ...fs, openings: (fs.openings ?? []).filter(o => o.id !== openingId) }
+              : fs),
         })))
       },
     }),

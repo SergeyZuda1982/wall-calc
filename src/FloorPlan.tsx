@@ -76,7 +76,7 @@ function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
 }
 
-type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim' | 'opening' | 'freeform'
+type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim' | 'opening' | 'freeform' | 'freeformOpening'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -371,6 +371,7 @@ export default function FloorPlan() {
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
     addFreeformStructure, updateFreeformStructure, removeFreeformStructure,
+    addFreeformOpening, updateFreeformOpening, removeFreeformOpening,
     customWorkStageTemplates, addCustomWorkStageTemplate,
   } = useProjectStore()
 
@@ -412,8 +413,9 @@ export default function FloorPlan() {
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
   const [pencilPts, setPencilPts] = useState<{ x: number; y: number }[]>([])       // карандаш: накопленные точки контура
   const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
-  const [freeformPts, setFreeformPts] = useState<{ x: number; y: number }[]>([])   // обводка (стена/колонна произвольной формы): накопленные точки контура
-  const [freeformKind, setFreeformKind] = useState<'wall' | 'column'>('column')     // что создаём при замыкании контура
+  const [freeformPts, setFreeformPts] = useState<{ x: number; y: number }[]>([])   // обводка (стена/колонна произвольной формы) ИЛИ проём на ней: накопленные точки контура (переиспользуется, режимы взаимоисключающие)
+  const [freeformKind, setFreeformKind] = useState<'wall' | 'column'>('column')     // что создаём при замыкании контура (режим 'freeform')
+  const [openingTargetFreeformId, setOpeningTargetFreeformId] = useState<string | null>(null) // режим 'freeformOpening': в какую стену вписываем проём
   const [stampTemplateId, setStampTemplateId] = useState<string | null>(null)  // активный шаблон для штамповки колонн
   const [stampCenter, setStampCenter] = useState<{ x: number; y: number } | null>(null) // прямоугольный шаблон: центр зафиксирован, ждём 2-й клик (угол)
   // Последняя поставленная штампом колонна (круглая или прямоугольная) — чтобы
@@ -703,6 +705,8 @@ export default function FloorPlan() {
     if (m !== 'erase') setEraseIds([])
     if (m !== 'stamp') { setStampTemplateId(null); setStampCenter(null); lastStampedRef.current = null }
     if (m !== 'trim') setTrimSourceId(null)
+    if (m !== 'freeformOpening') setOpeningTargetFreeformId(null)
+    if (m !== 'freeform' && m !== 'freeformOpening') setFreeformPts([])
     if (isMobile && m === 'draw') setMobileLeftOpen(false)
   }
 
@@ -1069,6 +1073,9 @@ export default function FloorPlan() {
     if (mode === 'freeform') {
       setFreeformPts(prev => prev.slice(0, -1))
     }
+    if (mode === 'freeformOpening') {
+      setFreeformPts(prev => prev.slice(0, -1))
+    }
     if (mode === 'stamp') {
       if (stampCenter) {
         // Прямоугольная колонна: ждём 2-й клик (угол) — отменяем именно этот
@@ -1206,6 +1213,33 @@ export default function FloorPlan() {
         return
       }
       // Клик рядом с уже поставленной точкой контура (не первой) — удалить именно её
+      const hitIdx = freeformPts.findIndex((p, i) => i > 0 && dist(pt.x, pt.y, p.x, p.y) <= closeThresh)
+      if (hitIdx !== -1) {
+        setFreeformPts(prev => prev.filter((_, i) => i !== hitIdx))
+        return
+      }
+      setFreeformPts(prev => [...prev, { x: pt.x, y: pt.y }])
+      return
+    }
+
+    if (mode === 'freeformOpening' && openingTargetFreeformId) {
+      const pt = applySnap(pos.x, pos.y)
+      const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
+      const closing = freeformPts.length >= 3 && dist(pt.x, pt.y, freeformPts[0].x, freeformPts[0].y) <= closeThresh
+      if (closing) {
+        const target = freeformStructures.find(f => f.id === openingTargetFreeformId)
+        const count = (target?.openings ?? []).length + 1
+        addFreeformOpening(openingTargetFreeformId, {
+          type: 'opening',
+          contour: freeformPts,
+          label: `Пр-${count}`,
+        })
+        setFreeformPts([])
+        setMode('select')
+        setOpeningTargetFreeformId(null)
+        setInspectorFreeformId(openingTargetFreeformId)
+        return
+      }
       const hitIdx = freeformPts.findIndex((p, i) => i > 0 && dist(pt.x, pt.y, p.x, p.y) <= closeThresh)
       if (hitIdx !== -1) {
         setFreeformPts(prev => prev.filter((_, i) => i !== hitIdx))
@@ -1428,6 +1462,7 @@ export default function FloorPlan() {
         setDrawing(null); setSelected(null); setScaleStep(0); setScalePt1(null); setScalePt2(null)
         setPencilPts([])
         setFreeformPts([])
+        if (mode === 'freeformOpening') { setOpeningTargetFreeformId(null); switchMode('select') }
       }
     }
     if (e.key === 'Delete') {
@@ -2824,9 +2859,40 @@ export default function FloorPlan() {
                       )
                     }
                     const vis = getLineVisual('wall_existing', fs.spec?.material, fs.spec?.subtype)
+                    const fsOpenings = fs.openings ?? []
                     return (
                       <Group key={fs.id} listening={false}>
-                        <Line points={flat} closed fill={vis.fillColor ?? 'rgba(120,144,156,0.15)'} stroke={vis.colorOverride ?? '#78909c'} strokeWidth={1.5} listening={false} />
+                        <Shape
+                          listening={false}
+                          fillRule="evenodd"
+                          fill={vis.fillColor ?? 'rgba(120,144,156,0.15)'}
+                          stroke={vis.colorOverride ?? '#78909c'}
+                          strokeWidth={1.5}
+                          sceneFunc={(ctx, shapeNode) => {
+                            ctx.beginPath()
+                            fs.outer.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+                            ctx.closePath()
+                            for (const op of fsOpenings) {
+                              if (op.contour.length < 3) continue
+                              op.contour.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y))
+                              ctx.closePath()
+                            }
+                            ctx.fillStrokeShape(shapeNode)
+                          }}
+                        />
+                        {fsOpenings.map(op => {
+                          if (op.contour.length < 3) return null
+                          const ocx = op.contour.reduce((s, p) => s + p.x, 0) / op.contour.length
+                          const ocy = op.contour.reduce((s, p) => s + p.y, 0) / op.contour.length
+                          return (
+                            <Group key={op.id} listening={false}>
+                              <Line points={op.contour.flatMap(p => [p.x, p.y])} closed
+                                stroke="#c62828" strokeWidth={1} dash={[4, 3]} listening={false} />
+                              <Text x={ocx - 40} y={ocy - 6} width={80} align="center"
+                                text={op.label} fontSize={9} fill="#c62828" listening={false} />
+                            </Group>
+                          )
+                        })}
                         <Text x={cx - 70} y={cy - 18} width={140}
                           text={fs.label} fontSize={11} fill="#546e7a" align="center" fontStyle="bold" listening={false} />
                         <Text x={cx - 70} y={cy - 2} width={140}
@@ -2875,18 +2941,21 @@ export default function FloorPlan() {
                     </>
                   )}
 
-                  {/* Превью текущего контура обводки (freeform: стена/колонна произвольной формы) */}
-                  {mode === 'freeform' && freeformPts.length > 0 && (
+                  {/* Превью текущего контура обводки (freeform: стена/колонна произвольной формы,
+                      ИЛИ проём на существующей стене — переиспользует freeformPts) */}
+                  {(mode === 'freeform' || mode === 'freeformOpening') && freeformPts.length > 0 && (
                     <>
                       {cursor && (
                         <Line
                           points={[...freeformPts.flatMap(p => [p.x, p.y]), cursor.x, cursor.y]}
-                          stroke="#6a4fb5" strokeWidth={1.5} dash={[6, 3]} listening={false}
+                          stroke={mode === 'freeformOpening' ? '#c62828' : '#6a4fb5'} strokeWidth={1.5} dash={[6, 3]} listening={false}
                         />
                       )}
                       {freeformPts.map((p, i) => (
                         <Circle key={i} x={p.x} y={p.y} radius={i === 0 ? 5 : 3}
-                          fill={i === 0 ? '#6a4fb5' : '#9575cd'} listening={false} />
+                          fill={i === 0
+                            ? (mode === 'freeformOpening' ? '#c62828' : '#6a4fb5')
+                            : (mode === 'freeformOpening' ? '#e57373' : '#9575cd')} listening={false} />
                       ))}
                     </>
                   )}
@@ -4305,6 +4374,66 @@ export default function FloorPlan() {
 
                 <ConstructionSpecSelector planType="wall_existing" value={fs.spec}
                   onChange={spec => updateFreeformStructure(fs.id, { spec })} />
+
+                {fs.kind === 'wall' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid #eee', paddingTop: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#555' }}>Проёмы</div>
+                    {(fs.openings ?? []).length === 0 && (
+                      <div style={{ fontSize: 11, color: '#999' }}>Проёмов пока нет</div>
+                    )}
+                    {(fs.openings ?? []).map(op => (
+                      <div key={op.id} style={{ border: '1px solid #eee', borderRadius: 6, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input value={op.label} onChange={e => updateFreeformOpening(fs.id, op.id, { label: e.target.value })}
+                            style={{ flex: 1, padding: '4px 6px', border: '1px solid #ccc', borderRadius: 4, fontSize: 12 }} />
+                          <button title="Удалить проём" onClick={() => removeFreeformOpening(fs.id, op.id)}
+                            style={{ fontSize: 12, padding: '4px 8px', border: '1px solid #e53935', borderRadius: 4, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
+                            🗑
+                          </button>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {(['door', 'window', 'opening'] as const).map(t => (
+                            <button key={t} onClick={() => updateFreeformOpening(fs.id, op.id, { type: t })}
+                              style={{
+                                flex: 1, fontSize: 10, padding: '4px 6px', borderRadius: 4, cursor: 'pointer',
+                                border: op.type === t ? '1.5px solid #c62828' : '1px solid #ddd',
+                                background: op.type === t ? '#fdecea' : '#fff',
+                                color: op.type === t ? '#c62828' : '#777',
+                              }}>
+                              {t === 'door' ? 'Дверь' : t === 'window' ? 'Окно' : 'Проём'}
+                            </button>
+                          ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <label style={{ fontSize: 10, color: '#777', flex: 1 }}>
+                            Низ от пола, мм
+                            <input type="number" value={op.sillHeightMm ?? 0}
+                              onChange={e => updateFreeformOpening(fs.id, op.id, { sillHeightMm: parseFloat(e.target.value) || 0 })}
+                              style={{ width: '100%', marginTop: 2, padding: '4px 6px', border: '1px solid #ccc', borderRadius: 4, fontSize: 12 }} />
+                          </label>
+                          <label style={{ fontSize: 10, color: '#777', flex: 1 }}>
+                            Высота, мм (пусто — до верха стены)
+                            <input type="number" value={op.heightMm ?? ''} placeholder="до верха"
+                              onChange={e => {
+                                const v = e.target.value
+                                updateFreeformOpening(fs.id, op.id, { heightMm: v === '' ? undefined : (parseFloat(v) || undefined) })
+                              }}
+                              style={{ width: '100%', marginTop: 2, padding: '4px 6px', border: '1px solid #ccc', borderRadius: 4, fontSize: 12 }} />
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => {
+                        setFreeformPts([])
+                        setOpeningTargetFreeformId(fs.id)
+                        setMode('freeformOpening')
+                      }}
+                      style={{ fontSize: 12, padding: '6px 10px', border: '1px solid #c62828', borderRadius: 5, color: '#c62828', background: '#fff', cursor: 'pointer' }}>
+                      ➕ Вырезать проём (обвести контур)
+                    </button>
+                  </div>
+                )}
 
                 <div style={{ fontSize: 12, color: '#888' }}>
                   Площадь контура: <b>{areaM2.toFixed(2)} м²</b>
