@@ -14,6 +14,8 @@ import { useProjectsStore } from './store/useProjectsStore'
 import { useAuthStore } from './store/useAuthStore'
 import { useSupabaseSync } from './hooks/useSupabaseSync'
 import { AuthModal } from './components/AuthModal'
+import { ProjectMembersPanel } from './components/ProjectMembersPanel'
+import { activateInvitesForUser } from './lib/projectMembers'
 import LiningCalc from './LiningCalc'
 import FloorPlan from './FloorPlan'
 import Scene3D from './Scene3D'
@@ -197,6 +199,7 @@ export default function App() {
   const { user, loading: authLoading, init: initAuth, signOut } = useAuthStore()
   const cloud = useProjectsStore()
   const [showAuthModal, setShowAuthModal] = useState(false)
+  const [showMembers, setShowMembers] = useState(false)
   const [migrationNotice, setMigrationNotice] = useState<string | null>(null)
 
   useEffect(() => { initAuth() }, [initAuth])
@@ -217,6 +220,10 @@ export default function App() {
             : `Локальные объекты (${result.migrated}) перенесены в облако.`
         )
       }
+      // Приглашения (project_members с invited_email) активируются по email
+      // при входе — раздел 4г конспекта, п.3. Для входа только по телефону
+      // email отсутствует — активировать нечего.
+      if (user.email) await activateInvitesForUser(user.id, user.email)
     })()
     return () => { cancelled = true }
   }, [user])
@@ -444,7 +451,23 @@ export default function App() {
             cursor: 'pointer', fontSize: 13 }}>
           📁 Объекты
         </button>
+        {isCloudActive && user && (
+          <button onClick={() => setShowMembers(true)}
+            style={{ padding: '5px 14px', background: 'rgba(255,255,255,0.15)',
+              color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6,
+              cursor: 'pointer', fontSize: 13 }}>
+            👥 Участники
+          </button>
+        )}
       </div>
+
+      {showMembers && activeProjectId && user && (
+        <ProjectMembersPanel
+          projectId={activeProjectId}
+          currentUserId={user.id}
+          onClose={() => setShowMembers(false)}
+        />
+      )}
 
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
 
