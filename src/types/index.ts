@@ -763,6 +763,47 @@ export interface FreeformStructure {
   label: string
 }
 
+/**
+ * Инженерные дисциплины поверх архитектурного плана (08.07.2026).
+ * Реальный workflow пользователя: проектировщик присылает единый
+ * многостраничный PDF, где вентиляция/электрика — отдельные страницы того
+ * же файла, а стены/колонны уже отрисованы на каждой странице для
+ * ориентира. Поэтому привязка страниц друг к другу — вручную, по уже
+ * нарисованным на плане колоннам/стенам, тем же существующим инструментом
+ * позиционирования backgroundImage (перетаскивание/масштаб) — отдельного
+ * механизма привязки координат заводить не нужно.
+ */
+export type MepDiscipline = 'ventilation' | 'electrical'
+
+/**
+ * Подложки по дисциплинам — хранятся ОТДЕЛЬНО от основной (архитектурной)
+ * backgroundImage плана, чтобы пользователь мог в любой момент вернуться и
+ * свериться именно с картинкой конкретной дисциплины (в отличие от
+ * архитектурной подложки, которая всегда одна и та же — активная).
+ */
+export type MepBackgrounds = Partial<Record<MepDiscipline, BackgroundImage>>
+
+/**
+ * Трасса инженерной системы — воздуховод/короб вентиляции, кабель-трасса
+ * электрики и т.п. Геометрия — свободный путь точек (как у
+ * FreeformStructure.outer), но не замкнутый контур, а линия прохождения
+ * трассы. sizeMm — либо прямоугольное сечение (короб), либо круглое
+ * (диаметр воздуховода/трубы) — оба поля опциональны, задаётся то, что
+ * применимо к конкретной трассе.
+ */
+export interface MepRoute {
+  id: string
+  discipline: MepDiscipline
+  points: { x: number; y: number }[]   // путь трассы, px, мировые координаты плана
+  elevationMm: number                   // высота прокладки от пола этажа (для будущей проверки коллизий)
+  sizeMm: {
+    widthMm?: number
+    heightMm?: number
+    diameterMm?: number
+  }
+  label: string
+}
+
 /** План объекта */
 export interface FloorPlan {
   scaleMmPerPx: number
@@ -774,6 +815,8 @@ export interface FloorPlan {
   rectColumns: RectColumn[]
   freeformStructures: FreeformStructure[]
   backgroundImage?: BackgroundImage | null
+  mepRoutes: MepRoute[]
+  mepBackgrounds: MepBackgrounds
 }
 
 export const DEFAULT_FLOOR_PLAN: FloorPlan = {
@@ -786,6 +829,8 @@ export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   rectColumns: [],
   freeformStructures: [],
   backgroundImage: null,
+  mepRoutes: [],
+  mepBackgrounds: {},
 }
 
 /**
