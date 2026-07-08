@@ -131,6 +131,14 @@ export interface ProjectStore {
   updateFreeformOpening: (structureId: string, openingId: string, patch: Partial<FreeformOpening>) => void
   removeFreeformOpening: (structureId: string, openingId: string) => void
 
+  // инженерные слои (вентиляция/электрика) поверх архитектурного плана
+  // (08.07.2026, фундамент — см. types/index.ts, MepRoute/MepBackgrounds)
+  addMepRoute: (route: Omit<import('../types').MepRoute, 'id'>) => string
+  updateMepRoute: (id: string, patch: Partial<import('../types').MepRoute>) => void
+  removeMepRoute: (id: string) => void
+  setMepBackground: (discipline: import('../types').MepDiscipline, img: import('../types').BackgroundImage | null) => void
+  updateMepBackground: (discipline: import('../types').MepDiscipline, patch: Partial<import('../types').BackgroundImage>) => void
+
   // пользовательские шаблоны этапов работ (объектные — свои на каждый проект)
   customWorkStageTemplates: import('../types').WorkStageTemplate[]
   addCustomWorkStageTemplate: (template: import('../types').WorkStageTemplate) => void
@@ -837,6 +845,47 @@ export const useProjectStore = create<ProjectStore>()(
               : fs),
         })))
       },
+
+      // ─── Инженерные слои: вентиляция/электрика (08.07.2026, фундамент) ──
+
+      addMepRoute: (routeInput) => {
+        const id = `mep_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, mepRoutes: [...(fp.mepRoutes ?? []), { ...routeInput, id }],
+        })))
+        return id
+      },
+
+      updateMepRoute: (id, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          mepRoutes: (fp.mepRoutes ?? []).map(r => r.id === id ? { ...r, ...patch } : r),
+        })))
+      },
+
+      removeMepRoute: (id) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, mepRoutes: (fp.mepRoutes ?? []).filter(r => r.id !== id),
+        })))
+      },
+
+      setMepBackground: (discipline, img) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          mepBackgrounds: { ...(fp.mepBackgrounds ?? {}), [discipline]: img ?? undefined },
+        })))
+      },
+
+      updateMepBackground: (discipline, patch) => {
+        set(s => {
+          const cur = s.floorPlan?.mepBackgrounds?.[discipline]
+          if (!cur) return {}
+          return updateActiveFloorPlan(s, fp => ({
+            ...fp,
+            mepBackgrounds: { ...(fp.mepBackgrounds ?? {}), [discipline]: { ...cur, ...patch } },
+          }))
+        })
+      },
     }),
     {
       name: 'wall-calc-projects', // ключ в localStorage
@@ -855,13 +904,13 @@ export const useProjectStore = create<ProjectStore>()(
           state.projects = state.projects.map(p => {
             const legacy = p as unknown as { floorPlan?: FloorPlan; levels?: Level[]; activeLevelId?: string }
             const levels: Level[] = legacy.levels && legacy.levels.length > 0
-              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], roundColumns: lv.floorPlan.roundColumns ?? [], rectColumns: lv.floorPlan.rectColumns ?? [], freeformStructures: lv.floorPlan.freeformStructures ?? [] } }))
+              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], roundColumns: lv.floorPlan.roundColumns ?? [], rectColumns: lv.floorPlan.rectColumns ?? [], freeformStructures: lv.floorPlan.freeformStructures ?? [], mepRoutes: lv.floorPlan.mepRoutes ?? [], mepBackgrounds: lv.floorPlan.mepBackgrounds ?? {} } }))
               : [{
                   id: `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`,
                   name: 'Этаж 1',
                   elevationMm: 0,
                   floorPlan: legacy.floorPlan
-                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [], rectColumns: legacy.floorPlan.rectColumns ?? [], freeformStructures: legacy.floorPlan.freeformStructures ?? [] }
+                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [], rectColumns: legacy.floorPlan.rectColumns ?? [], freeformStructures: legacy.floorPlan.freeformStructures ?? [], mepRoutes: legacy.floorPlan.mepRoutes ?? [], mepBackgrounds: legacy.floorPlan.mepBackgrounds ?? {} }
                     : { ...DEFAULT_FLOOR_PLAN, lines: [], contours: [] },
                 }]
             const activeLevelId = legacy.activeLevelId && levels.some(lv => lv.id === legacy.activeLevelId)
