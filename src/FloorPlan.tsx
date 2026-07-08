@@ -15,7 +15,7 @@ import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
 import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, WorkProgress, WorkStageTemplate } from './types'
 import { DEFAULT_BOARD_SPEC } from './types'
-import { getLineVisual, getContourFill, TAXONOMY, isLiningLayersFixed } from './data/constructionTaxonomy'
+import { getLineVisual, getContourFill, TAXONOMY, isLiningLayersFixed, parseDoubleFrameSubtype, getDoubleFrameLayerCounts } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { WorkProgressChecklist } from './components/WorkProgressChecklist'
@@ -2444,7 +2444,9 @@ export default function FloorPlan() {
             </div>
           )}
 
-          {/* Шаг стоек и лист обшивки — глобальный дефолт для новых линий, правится точечно в инспекторе */}
+          {/* Шаг стоек и лист обшивки — глобальный дефолт для новых линий, правится точечно в инспекторе.
+              Для двойного каркаса (С115/С116) не показываем: там своя обшивка на каждый
+              ряд (layerA1/A2/B1/B2/(B3)) — задаётся точечно в инспекторе после рисования. */}
           <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Шаг стоек:</span>
             <input type="number" value={drawStep}
@@ -2452,17 +2454,23 @@ export default function FloorPlan() {
               style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
             <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
           </div>
-          <div style={{ padding: '0 14px 8px' }}>
-            <div style={{ fontSize: 11, color: '#8a9ac8', marginBottom: 4 }}>
-              Лист 1-го слоя{(drawSpec?.layers ?? 1) === 2 ? ' / 2-го слоя' : ''}:
+          {parseDoubleFrameSubtype(drawSpec?.subtype) ? (
+            <div style={{ padding: '0 14px 8px', fontSize: 10, color: '#6a76a0' }}>
+              Двойной каркас — обшивка каждого ряда задаётся в инспекторе после рисования линии.
             </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
-              <BoardSpecSelector value={drawLayer1} onChange={setDrawLayer1} />
-              {(drawSpec?.layers ?? 1) === 2 && (
-                <BoardSpecSelector value={drawLayer2} onChange={setDrawLayer2} />
-              )}
+          ) : (
+            <div style={{ padding: '0 14px 8px' }}>
+              <div style={{ fontSize: 11, color: '#8a9ac8', marginBottom: 4 }}>
+                Лист 1-го слоя{(drawSpec?.layers ?? 1) === 2 ? ' / 2-го слоя' : ''}:
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                <BoardSpecSelector value={drawLayer1} onChange={setDrawLayer1} />
+                {(drawSpec?.layers ?? 1) === 2 && (
+                  <BoardSpecSelector value={drawLayer2} onChange={setDrawLayer2} />
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
 
@@ -3789,7 +3797,78 @@ export default function FloorPlan() {
                   })()}
 
                   {/* Шаг стоек и лист обшивки — переопределение для этой линии (дефолт см. в левой панели при рисовании) */}
-                  {(inspectorLine.type === 'wall_new' || inspectorLine.type === 'wall_lining') && inspectorLine.spec?.material === 'gkl' && (
+                  {(inspectorLine.type === 'wall_new' || inspectorLine.type === 'wall_lining') && inspectorLine.spec?.material === 'gkl' && (() => {
+                    const df = inspectorLine.type === 'wall_new' ? parseDoubleFrameSubtype(inspectorLine.spec?.subtype) : null
+
+                    // ── Двойной каркас (С115.1/.2/.3, С116) — своя форма: два независимых
+                    // ряда стоек, каждый со своей обшивкой (см. calcDoubleFrame.ts).
+                    // Обычные layer1/layer2/layers сюда не относятся вообще.
+                    if (df) {
+                      const { sideB, hasSeparator } = getDoubleFrameLayerCounts(df.dfType)
+                      const setLayer = (key: 'layerA1' | 'layerA2' | 'layerB1' | 'layerB2' | 'layerB3', value: BoardSpec) => {
+                        if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, [key]: value } })
+                      }
+                      return (
+                        <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>
+                          <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            Двойной каркас — два ряда стоек
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                            <span style={{ fontSize: 11, color: '#666' }}>Шаг:</span>
+                            <input type="number" value={inspectorLine.spec?.step ?? ''}
+                              placeholder="600"
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => {
+                                const step = parseFloat(e.target.value)
+                                if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, step: step > 0 ? step : undefined } })
+                              }}
+                              style={{ width: 70, fontSize: 12, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
+                            <span style={{ fontSize: 11, color: '#666' }}>мм</span>
+                          </div>
+
+                          {df.dfType === 'c116' && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                              <span style={{ fontSize: 11, color: '#666' }} title="Зазор под коммуникации — по месту, влияет только на толщину D на плане">Зазор D:</span>
+                              <input type="number" value={inspectorLine.spec?.gapMm ?? ''}
+                                placeholder="100"
+                                onClick={e => e.stopPropagation()}
+                                onChange={e => {
+                                  const gapMm = parseFloat(e.target.value)
+                                  if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, gapMm: gapMm > 0 ? gapMm : undefined } })
+                                }}
+                                style={{ width: 70, fontSize: 12, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
+                              <span style={{ fontSize: 11, color: '#666' }}>мм</span>
+                            </div>
+                          )}
+
+                          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Ряд А (2 слоя):</div>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const, marginBottom: 10 }}>
+                            <BoardSpecSelector value={inspectorLine.spec?.layerA1 ?? DEFAULT_BOARD_SPEC} onChange={v => setLayer('layerA1', v)} />
+                            <BoardSpecSelector value={inspectorLine.spec?.layerA2 ?? DEFAULT_BOARD_SPEC} onChange={v => setLayer('layerA2', v)} />
+                          </div>
+
+                          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
+                            Ряд Б ({sideB} слоя{sideB === 2 ? '' : ', асимметрично'}):
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                            <BoardSpecSelector value={inspectorLine.spec?.layerB1 ?? DEFAULT_BOARD_SPEC} onChange={v => setLayer('layerB1', v)} />
+                            <BoardSpecSelector value={inspectorLine.spec?.layerB2 ?? DEFAULT_BOARD_SPEC} onChange={v => setLayer('layerB2', v)} />
+                            {sideB > 2 && (
+                              <BoardSpecSelector value={inspectorLine.spec?.layerB3 ?? DEFAULT_BOARD_SPEC} onChange={v => setLayer('layerB3', v)} />
+                            )}
+                          </div>
+
+                          {hasSeparator && (
+                            <div style={{ fontSize: 10, color: '#aaa', marginTop: 8 }}>
+                              Лист-разделитель в зазоре (С115.2) считается отдельно, стандартным листом —
+                              собственную спецификацию для него задать пока нельзя.
+                            </div>
+                          )}
+                        </div>
+                      )
+                    }
+
+                    return (
                     <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>
                       <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Шаг стоек и лист</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -3831,7 +3910,8 @@ export default function FloorPlan() {
                         )
                       })()}
                     </div>
-                  )}
+                    )
+                  })()}
 
                   {/* Имя конструкции */}
                   <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>

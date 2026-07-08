@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planLineToSurfaceInput, planLinesToSurfaceInputs } from '../planLineToSurfaceInput'
+import { planLineToSurfaceInput, planLinesToSurfaceInputs, planLineToDoubleFrameSurfaceInputs } from '../planLineToSurfaceInput'
 import type { PlanLine } from '../../types'
 import { DEFAULT_BOARD_SPEC } from '../../types'
 
@@ -112,5 +112,87 @@ describe('planLinesToSurfaceInputs — батч с отбрасыванием nu
     ]
     const res = planLinesToSurfaceInputs(lines)
     expect(res.map(r => r.id)).toEqual(['L1', 'L3'])
+  })
+})
+
+describe('двойной каркас — обычный planLineToSurfaceInput не применим', () => {
+  it('c115_1_ps50 и т.п. -> null из обычного переводчика (своя логика в planLineToDoubleFrameSurfaceInputs)', () => {
+    expect(planLineToSurfaceInput(gklLine({ spec: { material: 'gkl', subtype: 'c115_1_ps50' } }))).toBeNull()
+    expect(planLineToSurfaceInput(gklLine({ spec: { material: 'gkl', subtype: 'c116_ps100' } }))).toBeNull()
+  })
+})
+
+describe('planLineToDoubleFrameSurfaceInputs — разложение на суб-поверхности', () => {
+  it('не двойной каркас / не wall_new / не gkl -> null', () => {
+    expect(planLineToDoubleFrameSurfaceInputs(gklLine({ spec: { material: 'gkl', subtype: 'ps75' } }))).toBeNull()
+    expect(planLineToDoubleFrameSurfaceInputs(gklLine({ type: 'wall_lining', spec: { material: 'gkl', subtype: 'c115_1_ps50' } }))).toBeNull()
+    expect(planLineToDoubleFrameSurfaceInputs(gklLine({ spec: { material: 'brick', subtype: 'c115_1_ps50' } }))).toBeNull()
+  })
+
+  it('С115.1 -> ровно 2 суб-поверхности (сторона А, сторона Б), 2 слоя каждая', () => {
+    const res = planLineToDoubleFrameSurfaceInputs(gklLine({ spec: { material: 'gkl', subtype: 'c115_1_ps50' } }))!
+    expect(res).toHaveLength(2)
+    expect(res[0].label).toContain('сторона А')
+    expect(res[0].gklLayers).toBe(2)
+    expect(res[1].label).toContain('сторона Б')
+    expect(res[1].gklLayers).toBe(2)
+  })
+
+  it('С115.2 -> 3 суб-поверхности (+ разделитель)', () => {
+    const res = planLineToDoubleFrameSurfaceInputs(gklLine({ spec: { material: 'gkl', subtype: 'c115_2_ps75' } }))!
+    expect(res).toHaveLength(3)
+    expect(res[2].label).toContain('разделитель')
+    expect(res[2].gklLayers).toBe(1)
+  })
+
+  it('С115.3 -> 3 суб-поверхности (+ доп. слой Б), сторона Б капается до 2 слоёв', () => {
+    const res = planLineToDoubleFrameSurfaceInputs(gklLine({ spec: { material: 'gkl', subtype: 'c115_3_ps100' } }))!
+    expect(res).toHaveLength(3)
+    expect(res[1].label).toContain('сторона Б')
+    expect(res[1].gklLayers).toBe(2) // капается — CalcResult поддерживает максимум 2 слоя
+    expect(res[2].label).toContain('доп. слой Б')
+    expect(res[2].gklLayers).toBe(1)
+  })
+
+  it('С116 -> 2 суб-поверхности, как С115.1 (зазор не влияет на раскрой)', () => {
+    const res = planLineToDoubleFrameSurfaceInputs(gklLine({ spec: { material: 'gkl', subtype: 'c116_ps50', gapMm: 150 } }))!
+    expect(res).toHaveLength(2)
+  })
+
+  it('спецификации листов пробрасываются из layerA1/A2/B1/B2/B3', () => {
+    const custom = { material: 'gvl' as const, subtype: null, thickness: 10, sheetWidth: 1200, sheetLength: 2500 }
+    const res = planLineToDoubleFrameSurfaceInputs(gklLine({
+      spec: {
+        material: 'gkl', subtype: 'c115_3_ps50',
+        layerA1: custom, layerB3: custom,
+      },
+    }))!
+    expect(res[0].layer1).toEqual(custom)     // сторона А, 1-й слой
+    expect(res[2].layer1).toEqual(custom)     // доп. слой Б использует layerB3
+  })
+
+  it('без layerA1/A2/B1/B2 — DEFAULT_BOARD_SPEC', () => {
+    const res = planLineToDoubleFrameSurfaceInputs(gklLine({ spec: { material: 'gkl', subtype: 'c115_1_ps50' } }))!
+    expect(res[0].layer1).toEqual(DEFAULT_BOARD_SPEC)
+    expect(res[1].layer2).toEqual(DEFAULT_BOARD_SPEC)
+  })
+
+  it('id суб-поверхностей уникальны и содержат id исходной линии', () => {
+    const res = planLineToDoubleFrameSurfaceInputs(gklLine({ id: 'L9', spec: { material: 'gkl', subtype: 'c115_2_ps75' } }))!
+    const ids = res.map(r => r.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    ids.forEach(id => expect(id).toContain('L9'))
+  })
+})
+
+describe('planLinesToSurfaceInputs — раскладывает двойной каркас в батче', () => {
+  it('линия С115.2 в списке разворачивается в 3 записи, соседние линии не трогаются', () => {
+    const lines: PlanLine[] = [
+      gklLine({ id: 'L1', label: 'П-1' }),
+      gklLine({ id: 'L2', label: 'Двойной', spec: { material: 'gkl', subtype: 'c115_2_ps75' } }),
+      gklLine({ id: 'L3', label: 'О-1', type: 'wall_lining' }),
+    ]
+    const res = planLinesToSurfaceInputs(lines)
+    expect(res.map(r => r.id)).toEqual(['L1', 'L2__A', 'L2__B', 'L2__SEP', 'L3'])
   })
 })
