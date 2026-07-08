@@ -13,7 +13,7 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Shape, Image as KonvaIma
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, WorkProgress, WorkStageTemplate } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, WorkProgress, WorkStageTemplate, MepDiscipline } from './types'
 import { DEFAULT_BOARD_SPEC } from './types'
 import { getLineVisual, getContourFill, TAXONOMY, isLiningLayersFixed, parseDoubleFrameSubtype, getDoubleFrameLayerCounts } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
@@ -76,7 +76,7 @@ function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
 }
 
-type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim' | 'opening' | 'freeform' | 'freeformOpening'
+type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim' | 'opening' | 'freeform' | 'freeformOpening' | 'mep_route'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -396,6 +396,7 @@ export default function FloorPlan() {
     addRectColumn, updateRectColumn, removeRectColumn,
     addFreeformStructure, updateFreeformStructure, removeFreeformStructure,
     addFreeformOpening, updateFreeformOpening, removeFreeformOpening,
+    addMepRoute, removeMepRoute, setMepBackground, updateMepBackground,
     customWorkStageTemplates, addCustomWorkStageTemplate,
   } = useProjectStore()
 
@@ -413,6 +414,8 @@ export default function FloorPlan() {
   const roundColumns = floorPlan?.roundColumns ?? []
   const rectColumns  = floorPlan?.rectColumns  ?? []
   const freeformStructures = floorPlan?.freeformStructures ?? []
+  const mepRoutes = floorPlan?.mepRoutes ?? []
+  const mepBackgrounds = floorPlan?.mepBackgrounds ?? {}
   const scaleMmPx = floorPlan?.scaleMmPerPx ?? 10
 
   // ── UI-состояние ──────────────────────────────────────────────────────────
@@ -440,6 +443,31 @@ export default function FloorPlan() {
   const [freeformPts, setFreeformPts] = useState<{ x: number; y: number }[]>([])   // обводка (стена/колонна произвольной формы) ИЛИ проём на ней: накопленные точки контура (переиспользуется, режимы взаимоисключающие)
   const [freeformKind, setFreeformKind] = useState<'wall' | 'column'>('column')     // что создаём при замыкании контура (режим 'freeform')
   const [openingTargetFreeformId, setOpeningTargetFreeformId] = useState<string | null>(null) // режим 'freeformOpening': в какую стену вписываем проём
+
+  // ── Инженерные слои (вентиляция/электрика), 08.07.2026 ──────────────────
+  // activeDiscipline — какая "калька" сейчас активна: 'architecture' — обычный
+  // архитектурный план (backgroundImage + lines/freeformStructures, как раньше,
+  // без изменений), 'ventilation'/'electrical' — показываем СВОЮ подложку
+  // (mepBackgrounds[discipline]) и рисуем трассы (mepRoutes) этой дисциплины.
+  // Идея пользователя: снял кальку одной дисциплины — обвёл — убрал — поставил
+  // следующую; обведённое остаётся на плане независимо от того, какая подложка
+  // сейчас активна (см. TASKS.md, feat/mep-layers-foundation).
+  const [activeDiscipline, setActiveDiscipline] = useState<'architecture' | MepDiscipline>('architecture')
+  // Видимость трасс по дисциплинам на холсте — независимо от того, какая
+  // подложка сейчас активна (можно скрыть вентиляцию, пока сверяешь электрику,
+  // и наоборот, чтобы план не превращался в кашу).
+  const [mepVisible, setMepVisible] = useState<Record<MepDiscipline, boolean>>({ ventilation: true, electrical: true })
+  const [mepRoutePts, setMepRoutePts] = useState<{ x: number; y: number }[]>([])   // накопленные точки трассы (открытый путь, не замкнутый контур)
+  const [mepDrawDiameterMm, setMepDrawDiameterMm] = useState('160')  // сечение новой трассы: диаметр (круглый воздуховод/труба) ...
+  const [mepDrawWidthMm, setMepDrawWidthMm] = useState('')            // ...ЛИБО прямоугольное сечение (короб) — ширина
+  const [mepDrawHeightSectionMm, setMepDrawHeightSectionMm] = useState('') // ...и высота короба (заполняется вместе с шириной)
+  const [mepDrawElevationMm, setMepDrawElevationMm] = useState('2700') // высота прокладки от пола этажа
+  // Подложка активной инженерной дисциплины — отдельная картинка от архитектурной
+  // backgroundImage, грузится лениво при переключении на дисциплину/смене её
+  // dataUrl. В отличие от архитектурной подложки, авто-дорендер на зум и
+  // авто-центрирование камеры для неё пока не заведены (см. TASKS.md) —
+  // не критично для первой версии, страница обычно уже открыта крупно.
+  const [mepBgImageEl, setMepBgImageEl] = useState<HTMLImageElement | null>(null)
   const [stampTemplateId, setStampTemplateId] = useState<string | null>(null)  // активный шаблон для штамповки колонн
   const [stampCenter, setStampCenter] = useState<{ x: number; y: number } | null>(null) // прямоугольный шаблон: центр зафиксирован, ждём 2-й клик (угол)
   // Последняя поставленная штампом колонна (круглая или прямоугольная) — чтобы
@@ -573,6 +601,17 @@ export default function FloorPlan() {
     img.src = url
   }, [floorPlan?.backgroundImage?.dataUrl])
 
+  // То же самое, но для подложки текущей активной инженерной дисциплины
+  // (вентиляция/электрика) — своя картинка, независимая от архитектурной.
+  useEffect(() => {
+    if (activeDiscipline === 'architecture') { setMepBgImageEl(null); return }
+    const url = mepBackgrounds[activeDiscipline]?.dataUrl
+    if (!url) { setMepBgImageEl(null); return }
+    const img = new window.Image()
+    img.onload = () => setMepBgImageEl(img)
+    img.src = url
+  }, [activeDiscipline, mepBackgrounds])
+
   // Дорендер подложки из исходного PDF при сильном зуме холста — если
   // текущая картинка растягивается заметно крупнее, чем позволяет её
   // родное разрешение (отсюда и размытие), перерисовываем страницу из
@@ -630,6 +669,31 @@ export default function FloorPlan() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [floorPlan?.backgroundImage?.dataUrl])
 
+  // Куда именно писать подложку — в архитектурную (как раньше, обратная
+  // совместимость) или в mepBackgrounds[дисциплина], если активна инженерная
+  // дисциплина. Дорендер-на-зум и авто-центрирование (эффекты выше/ниже)
+  // сознательно завязаны только на floorPlan?.backgroundImage — на MEP-подложки
+  // пока не распространяются, см. комментарий у mepBgImageEl.
+  const writeActiveBackground = useCallback((img: Parameters<typeof setBackgroundImage>[0]) => {
+    if (activeDiscipline === 'architecture') setBackgroundImage(img)
+    else setMepBackground(activeDiscipline, img)
+  }, [activeDiscipline, setBackgroundImage, setMepBackground])
+
+  // Текущая подложка (архитектурная или активной инженерной дисциплины) —
+  // единая точка для панели "Подложка" ниже, чтобы не дублировать вёрстку
+  // на каждую дисциплину отдельно.
+  const currentBackground = activeDiscipline === 'architecture' ? floorPlan?.backgroundImage : mepBackgrounds[activeDiscipline]
+
+  const patchActiveBackground = useCallback((patch: Partial<NonNullable<typeof currentBackground>>) => {
+    if (activeDiscipline === 'architecture') updateBackgroundImage(patch)
+    else updateMepBackground(activeDiscipline, patch)
+  }, [activeDiscipline, updateBackgroundImage, updateMepBackground])
+
+  const deleteActiveBackground = useCallback(() => {
+    if (activeDiscipline === 'architecture') { bgSourceRef.current = null; setBackgroundImage(null) }
+    else setMepBackground(activeDiscipline, null)
+  }, [activeDiscipline, setBackgroundImage, setMepBackground])
+
   const handleBgFileSelected = useCallback(async (file: File) => {
     setBgError(null)
     try {
@@ -641,8 +705,8 @@ export default function FloorPlan() {
       } else {
         setBgUploading(true)
         const res = await renderPdfPageToImage(file, 1)
-        bgSourceRef.current = { file, pageNum: 1, lastRenderedDataUrl: res.dataUrl }
-        setBackgroundImage({
+        if (activeDiscipline === 'architecture') bgSourceRef.current = { file, pageNum: 1, lastRenderedDataUrl: res.dataUrl }
+        writeActiveBackground({
           dataUrl: res.dataUrl, x: 0, y: 0,
           width: res.width, height: res.height,
           opacity: 0.6, locked: true,
@@ -654,7 +718,7 @@ export default function FloorPlan() {
       setBgError('Не удалось прочитать PDF. Проверьте файл.')
       setBgUploading(false)
     }
-  }, [setBackgroundImage])
+  }, [activeDiscipline, writeActiveBackground])
 
   const handleBgConfirmPage = useCallback(async () => {
     if (!bgPendingFile) return
@@ -663,8 +727,8 @@ export default function FloorPlan() {
     setBgError(null)
     try {
       const res = await renderPdfPageToImage(bgPendingFile, page)
-      bgSourceRef.current = { file: bgPendingFile, pageNum: page, lastRenderedDataUrl: res.dataUrl }
-      setBackgroundImage({
+      if (activeDiscipline === 'architecture') bgSourceRef.current = { file: bgPendingFile, pageNum: page, lastRenderedDataUrl: res.dataUrl }
+      writeActiveBackground({
         dataUrl: res.dataUrl, x: 0, y: 0,
         width: res.width, height: res.height,
         opacity: 0.6, locked: true,
@@ -675,7 +739,7 @@ export default function FloorPlan() {
     }
     setBgUploading(false)
     setBgPendingFile(null)
-  }, [bgPendingFile, bgPageInput, bgPageCount, setBackgroundImage])
+  }, [bgPendingFile, bgPageInput, bgPageCount, activeDiscipline, writeActiveBackground])
 
   // Адаптивная ширина холста
   const containerRef = useRef<HTMLDivElement>(null)
@@ -731,7 +795,29 @@ export default function FloorPlan() {
     if (m !== 'trim') setTrimSourceId(null)
     if (m !== 'freeformOpening') setOpeningTargetFreeformId(null)
     if (m !== 'freeform' && m !== 'freeformOpening') setFreeformPts([])
+    if (m !== 'mep_route') setMepRoutePts([])
     if (isMobile && m === 'draw') setMobileLeftOpen(false)
+  }
+
+  // Завершить трассу инженерной дисциплины (открытый путь — не может сам себя
+  // замкнуть кликом, как freeform, поэтому завершение отдельной кнопкой).
+  // Нужно минимум 2 точки — одна точка не трасса.
+  function finishMepRoute() {
+    if (activeDiscipline === 'architecture' || mepRoutePts.length < 2) return
+    const count = mepRoutes.filter(r => r.discipline === activeDiscipline).length + 1
+    const disciplineLabel = activeDiscipline === 'ventilation' ? 'Воздуховод' : 'Трасса'
+    addMepRoute({
+      discipline: activeDiscipline,
+      points: mepRoutePts,
+      elevationMm: parseFloat(mepDrawElevationMm) || 2700,
+      sizeMm: {
+        diameterMm: mepDrawWidthMm ? undefined : (parseFloat(mepDrawDiameterMm) || undefined),
+        widthMm: mepDrawWidthMm ? (parseFloat(mepDrawWidthMm) || undefined) : undefined,
+        heightMm: mepDrawWidthMm ? (parseFloat(mepDrawHeightSectionMm) || undefined) : undefined,
+      },
+      label: `${disciplineLabel} ${count}`,
+    })
+    setMepRoutePts([])
   }
 
   // Выбор шаблона колонны в левой панели → включает режим штампа сразу с этим шаблоном
@@ -1285,6 +1371,24 @@ export default function FloorPlan() {
       return
     }
 
+    if (mode === 'mep_route' && activeDiscipline !== 'architecture') {
+      // Трасса — открытый путь (не замкнутый контур), поэтому нет "клика по
+      // первой точке = замкнуть", как у freeform/pencil. Клик рядом с уже
+      // поставленной точкой (не первой) — убрать именно её, тот же приём,
+      // что и у freeform, для случайных лишних точек. Завершение — отдельной
+      // кнопкой "Готово" в панели (см. finishMepRoute), т.к. открытый путь
+      // не может сам себя закрыть кликом по стартовой точке.
+      const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
+      const hitIdx = mepRoutePts.findIndex((p, i) => i > 0 && dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
+      if (hitIdx !== -1) {
+        setMepRoutePts(prev => prev.filter((_, i) => i !== hitIdx))
+        return
+      }
+      const pt = applySnap(pos.x, pos.y)
+      setMepRoutePts(prev => [...prev, { x: pt.x, y: pt.y }])
+      return
+    }
+
     if (mode === 'freeformOpening' && openingTargetFreeformId) {
       const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
       // См. фикс в 'freeform'/'pencil' выше — та же причина: контур проёма тоже
@@ -1436,7 +1540,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') setSelected(null)
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1528,8 +1632,12 @@ export default function FloorPlan() {
         setDrawing(null); setSelected(null); setScaleStep(0); setScalePt1(null); setScalePt2(null)
         setPencilPts([])
         setFreeformPts([])
+        setMepRoutePts([])
         if (mode === 'freeformOpening') { setOpeningTargetFreeformId(null); switchMode('select') }
       }
+    }
+    if (e.key === 'Enter' && mode === 'mep_route') {
+      finishMepRoute()
     }
     if (e.key === 'Delete') {
       if (mode === 'erase' && eraseIds.length > 0) {
@@ -1548,7 +1656,7 @@ export default function FloorPlan() {
       }
     }
     if (e.key === 'Shift') setOrthoMode(true)
-  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter])
+  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter, mepRoutePts, activeDiscipline, mepDrawElevationMm, mepDrawDiameterMm, mepDrawWidthMm, mepDrawHeightSectionMm, addMepRoute, mepRoutes])
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Shift') setOrthoMode(false)
@@ -2301,6 +2409,87 @@ export default function FloorPlan() {
             )}
           </div>
 
+          {/* Трасса инженерной системы (08.07.2026) — только когда активна
+              вентиляция/электрика (см. переключатель дисциплин выше). Путь —
+              открытая ломаная, не замкнутый контур, поэтому завершение не по
+              клику на первую точку (там нечем "замыкать"), а кнопкой "Готово"
+              или Enter — см. finishMepRoute. */}
+          {activeDiscipline !== 'architecture' && (
+            <div>
+              <div style={{ ...sectionHeaderStyle, color: '#8d99ae' }}>
+                Трасса ({activeDiscipline === 'ventilation' ? 'вентиляция' : 'электрика'})
+              </div>
+              <div style={{ padding: '0 14px 6px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {activeDiscipline === 'ventilation' ? (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, color: '#8a9ac8' }}>
+                    <span style={{ minWidth: 62 }}>Диаметр, мм</span>
+                    <input type="number" value={mepDrawDiameterMm} onChange={e => setMepDrawDiameterMm(e.target.value)}
+                      style={{ width: 60, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                    <span style={{ fontSize: 10 }}>или сечение короба, мм:</span>
+                    <input type="number" placeholder="Ш" value={mepDrawWidthMm} onChange={e => setMepDrawWidthMm(e.target.value)}
+                      style={{ width: 44, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                    <input type="number" placeholder="В" value={mepDrawHeightSectionMm} onChange={e => setMepDrawHeightSectionMm(e.target.value)}
+                      style={{ width: 44, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 10, color: '#8a9ac8' }}>Кабель-трасса/короб — сечение уточняется в инспекторе трассы (справа).</div>
+                )}
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, color: '#8a9ac8' }}>
+                  <span style={{ minWidth: 62 }}>Высота, мм</span>
+                  <input type="number" value={mepDrawElevationMm} onChange={e => setMepDrawElevationMm(e.target.value)}
+                    style={{ width: 60, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                  <span style={{ fontSize: 10 }}>прокладки от пола этажа (для проверки конфликтов между слоями — позже)</span>
+                </div>
+              </div>
+              <button
+                onClick={() => { setMepRoutePts([]); setMode('mep_route') }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '8px 14px', background: 'transparent', border: 'none',
+                  cursor: 'pointer', width: '100%', textAlign: 'left',
+                  borderLeft: mode === 'mep_route' ? '3px solid #6a4fb5' : '3px solid transparent',
+                  color: mode === 'mep_route' ? '#fff' : '#8a9ac8', fontSize: 12,
+                }}>
+                <span style={{ fontSize: 14, minWidth: 16, textAlign: 'center' }}>{activeDiscipline === 'ventilation' ? '🌀' : '⚡'}</span>
+                <span>Обвести трассу</span>
+              </button>
+              {mode === 'mep_route' && (
+                <div style={{ padding: '2px 14px 8px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
+                  Клик — точка трассы. Клик рядом с уже поставленной точкой —
+                  убрать её. Кнопка «Готово» или Enter — завершить (нужно
+                  минимум 2 точки). Esc — отменить всё.
+                  {mepRoutePts.length > 0 && <div style={{ marginTop: 2 }}>Точек: {mepRoutePts.length}</div>}
+                  <button onClick={finishMepRoute} disabled={mepRoutePts.length < 2}
+                    style={{
+                      marginTop: 6, fontSize: 11, padding: '5px 10px', borderRadius: 4, border: 'none',
+                      background: mepRoutePts.length < 2 ? '#3a4060' : '#6a4fb5', color: '#fff',
+                      cursor: mepRoutePts.length < 2 ? 'default' : 'pointer',
+                    }}>
+                    ✓ Готово
+                  </button>
+                </div>
+              )}
+              {mepRoutes.filter(r => r.discipline === activeDiscipline).length > 0 && (
+                <div style={{ padding: '4px 14px 8px' }}>
+                  {mepRoutes.filter(r => r.discipline === activeDiscipline).map(r => (
+                    <div key={r.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+                        padding: '5px 10px', marginBottom: 3, fontSize: 11, borderRadius: 4,
+                        border: '1px solid #3a4060', color: '#8a9ac8',
+                      }}>
+                      <span>{r.label}</span>
+                      <button onClick={() => { if (window.confirm(`Удалить «${r.label}»?`)) removeMepRoute(r.id) }}
+                        style={{ background: 'transparent', border: 'none', color: '#e57373', cursor: 'pointer', fontSize: 12 }}>
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Шаблоны колонн — библиотека общая на все объекты (useTemplateStore),
               штамповка: прямоугольная — 2 клика (центр, потом угол), круглая — 1 клик.
               Библиотека наполняется либо "Сохранить как шаблон" с уже нарисованной
@@ -2404,12 +2593,57 @@ export default function FloorPlan() {
 
           <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
 
-          {/* Подложка PDF */}
-          <div style={sectionHeaderStyle}>Подложка (PDF)</div>
+          {/* Дисциплина плана (08.07.2026) — какая "калька" сейчас активна.
+              Архитектура — обычный план (как раньше). Вентиляция/электрика —
+              своя подложка + свои трассы (mepRoutes), архитектурная геометрия
+              при этом остаётся на месте и не показывается как подложка, но
+              видна как раньше (стены/колонны и т.д. рисуются всегда). */}
+          <div style={sectionHeaderStyle}>Дисциплина плана</div>
+          <div style={{ display: 'flex', gap: 4, padding: '0 14px 8px' }}>
+            {([
+              ['architecture', '🏗', 'Архитектура'],
+              ['ventilation', '🌀', 'Вентиляция'],
+              ['electrical', '⚡', 'Электрика'],
+            ] as [typeof activeDiscipline, string, string][]).map(([d, icon, label]) => (
+              <button key={d}
+                onClick={() => { setActiveDiscipline(d); if (mode === 'mep_route' || mode === 'scale') switchMode('select') }}
+                title={label}
+                style={{
+                  flex: 1, fontSize: 11, padding: '6px 2px', borderRadius: 4, cursor: 'pointer',
+                  border: `1px solid ${activeDiscipline === d ? '#7c8fcf' : '#3a4060'}`,
+                  background: activeDiscipline === d ? '#7c8fcf' : 'transparent',
+                  color: activeDiscipline === d ? '#fff' : '#8a9ac8',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                }}>
+                <span style={{ fontSize: 14 }}>{icon}</span>
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+          {(mepRoutes.some(r => r.discipline === 'ventilation') || mepRoutes.some(r => r.discipline === 'electrical')) && (
+            <div style={{ display: 'flex', gap: 10, padding: '0 14px 8px', fontSize: 10, color: '#8a9ac8' }}>
+              {(['ventilation', 'electrical'] as MepDiscipline[]).map(d => (
+                <label key={d} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={mepVisible[d]}
+                    onChange={e => setMepVisible(prev => ({ ...prev, [d]: e.target.checked }))} />
+                  Показывать {d === 'ventilation' ? 'вентиляцию' : 'электрику'} на плане
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div style={{ height: 1, background: '#2a3045', margin: '8px 0' }} />
+
+          {/* Подложка PDF — для активной дисциплины (архитектура/вентиляция/
+              электрика, см. переключатель дисциплин выше). Один и тот же UI,
+              просто пишет в разное место стора (см. writeActiveBackground). */}
+          <div style={sectionHeaderStyle}>
+            Подложка (PDF){activeDiscipline !== 'architecture' && ` — ${activeDiscipline === 'ventilation' ? 'вентиляция' : 'электрика'}`}
+          </div>
           <input ref={bgFileInputRef} type="file" accept="application/pdf" style={{ display: 'none' }}
             onChange={e => { const f = e.target.files?.[0]; if (f) handleBgFileSelected(f); e.target.value = '' }} />
 
-          {!floorPlan?.backgroundImage && !bgPendingFile && (
+          {!currentBackground && !bgPendingFile && (
             <button onClick={() => bgFileInputRef.current?.click()} disabled={bgUploading}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10,
@@ -2441,20 +2675,22 @@ export default function FloorPlan() {
             </div>
           )}
 
-          {floorPlan?.backgroundImage && (
+          {currentBackground && (
             <div style={{ padding: '6px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 11, color: '#8a9ac8', minWidth: 56 }}>Прозр.</span>
                 <input type="range" min={0.1} max={1} step={0.05}
-                  value={floorPlan.backgroundImage.opacity}
-                  onChange={e => updateBackgroundImage({ opacity: parseFloat(e.target.value) })}
+                  value={currentBackground.opacity}
+                  onChange={e => patchActiveBackground({ opacity: parseFloat(e.target.value) })}
                   style={{ flex: 1 }} />
               </div>
-              <button onClick={() => switchMode('scale')}
-                style={{ fontSize: 11, padding: '6px 10px', borderRadius: 4, border: '1px solid #3a4060', background: mode === 'scale' ? '#7c8fcf' : 'transparent', color: '#fff', cursor: 'pointer' }}>
-                📐 Откалибровать масштаб
-              </button>
-              <button onClick={() => { if (window.confirm('Удалить подложку?')) { bgSourceRef.current = null; setBackgroundImage(null) } }}
+              {activeDiscipline === 'architecture' && (
+                <button onClick={() => switchMode('scale')}
+                  style={{ fontSize: 11, padding: '6px 10px', borderRadius: 4, border: '1px solid #3a4060', background: mode === 'scale' ? '#7c8fcf' : 'transparent', color: '#fff', cursor: 'pointer' }}>
+                  📐 Откалибровать масштаб
+                </button>
+              )}
+              <button onClick={() => { if (window.confirm('Удалить подложку?')) deleteActiveBackground() }}
                 style={{ fontSize: 11, padding: '6px 10px', borderRadius: 4, border: '1px solid #3a4060', background: 'transparent', color: '#e57373', cursor: 'pointer' }}>
                 Удалить подложку
               </button>
@@ -2736,8 +2972,12 @@ export default function FloorPlan() {
                     ]
                   })()}
 
-                  {/* Подложка PDF — под линиями, над сеткой */}
-                  {floorPlan?.backgroundImage && bgImageEl && (() => {
+                  {/* Подложка PDF — под линиями, над сеткой. Показываем ТОЛЬКО
+                      подложку активной дисциплины (см. переключатель дисциплин) —
+                      как в реальном процессе: сняли кальку одной дисциплины,
+                      поставили следующую, обведённая геометрия при этом никуда
+                      не девается независимо от того, что сейчас на экране. */}
+                  {activeDiscipline === 'architecture' && floorPlan?.backgroundImage && bgImageEl && (() => {
                     const bg = floorPlan.backgroundImage!
                     return (
                       <KonvaImage
@@ -2749,6 +2989,46 @@ export default function FloorPlan() {
                       />
                     )
                   })()}
+                  {activeDiscipline !== 'architecture' && mepBackgrounds[activeDiscipline] && mepBgImageEl && (() => {
+                    const bg = mepBackgrounds[activeDiscipline]!
+                    return (
+                      <KonvaImage
+                        image={mepBgImageEl}
+                        x={bg.x} y={bg.y}
+                        width={bg.width} height={bg.height}
+                        opacity={bg.opacity}
+                        listening={false}
+                      />
+                    )
+                  })()}
+
+                  {/* Трассы инженерных систем — показываются независимо от того,
+                      какая дисциплина сейчас активна для рисования (см. чекбоксы
+                      видимости в панели), чтобы можно было свериться с вентиляцией,
+                      работая над электрикой, и наоборот. */}
+                  {mepRoutes.filter(r => mepVisible[r.discipline]).map(r => (
+                    <Line key={r.id}
+                      points={r.points.flatMap(p => [p.x, p.y])}
+                      stroke={r.discipline === 'ventilation' ? '#26a69a' : '#fbc02d'}
+                      strokeWidth={r.discipline === 'ventilation' ? 5 : 3}
+                      dash={r.discipline === 'electrical' ? [8, 4] : undefined}
+                      lineCap="round" lineJoin="round"
+                      listening={false}
+                    />
+                  ))}
+                  {mode === 'mep_route' && mepRoutePts.length > 0 && cursor && (
+                    <Line
+                      points={[...mepRoutePts.flatMap(p => [p.x, p.y]), cursor.x, cursor.y]}
+                      stroke={activeDiscipline === 'ventilation' ? '#26a69a' : '#fbc02d'}
+                      strokeWidth={3} dash={[6, 4]} lineCap="round" lineJoin="round"
+                      listening={false}
+                    />
+                  )}
+                  {mode === 'mep_route' && mepRoutePts.map((p, i) => (
+                    <Circle key={i} x={p.x} y={p.y} radius={4}
+                      fill={i === 0 ? '#fff' : (activeDiscipline === 'ventilation' ? '#26a69a' : '#fbc02d')}
+                      stroke="#1a1f33" strokeWidth={1} listening={false} />
+                  ))}
 
                   {/* Помещения (замкнутые периметры wall_existing) */}
                   {rooms.map(room => {
