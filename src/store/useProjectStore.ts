@@ -96,6 +96,15 @@ export interface ProjectStore {
 
   // план объекта (всегда пишет в план АКТИВНОГО этажа)
   setFloorPlanScale: (scaleMmPerPx: number) => void
+  // 08.07.2026: высота потолка этажа — постоянно видимый контрол (см.
+  // FloorPlan.tsx), вместо потерянного внизу поля "высота" на панели
+  // рисования. setFloorPlanDefaultHeight — просто меняет значение "по
+  // умолчанию для новых стен". applyHeightToAllConstructions — реальный
+  // пересчёт: перезаписывает heightMm у ВСЕХ уже нарисованных стен и
+  // произвольных обводок этажа (используется, когда фактическая высота на
+  // объекте оказалась другой, чем чертили).
+  setFloorPlanDefaultHeight: (heightMm: number) => void
+  applyHeightToAllConstructions: (heightMm: number) => void
   setBackgroundImage: (img: import('../types').BackgroundImage | null) => void
   updateBackgroundImage: (patch: Partial<import('../types').BackgroundImage>) => void
   addPlanLine: (line: Omit<PlanLine, 'id'>) => string
@@ -653,6 +662,19 @@ export const useProjectStore = create<ProjectStore>()(
         set(s => updateActiveFloorPlan(s, fp => ({ ...fp, scaleMmPerPx })))
       },
 
+      setFloorPlanDefaultHeight: (heightMm) => {
+        set(s => updateActiveFloorPlan(s, fp => ({ ...fp, defaultHeightMm: heightMm })))
+      },
+
+      applyHeightToAllConstructions: (heightMm) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          defaultHeightMm: heightMm,
+          lines: fp.lines.map(l => ({ ...l, heightMm })),
+          freeformStructures: fp.freeformStructures.map(fs => ({ ...fs, heightMm })),
+        })))
+      },
+
       setBackgroundImage: (img) => {
         const { activeProjectId, activeLevelId } = get()
         set(s => updateActiveFloorPlan(s, fp => ({ ...fp, backgroundImage: img })))
@@ -999,13 +1021,13 @@ export const useProjectStore = create<ProjectStore>()(
           state.projects = state.projects.map(p => {
             const legacy = p as unknown as { floorPlan?: FloorPlan; levels?: Level[]; activeLevelId?: string }
             const levels: Level[] = legacy.levels && legacy.levels.length > 0
-              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], roundColumns: lv.floorPlan.roundColumns ?? [], rectColumns: lv.floorPlan.rectColumns ?? [], freeformStructures: lv.floorPlan.freeformStructures ?? [], mepRoutes: lv.floorPlan.mepRoutes ?? [], mepBackgrounds: lv.floorPlan.mepBackgrounds ?? {} } }))
+              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], roundColumns: lv.floorPlan.roundColumns ?? [], rectColumns: lv.floorPlan.rectColumns ?? [], freeformStructures: lv.floorPlan.freeformStructures ?? [], mepRoutes: lv.floorPlan.mepRoutes ?? [], mepBackgrounds: lv.floorPlan.mepBackgrounds ?? {}, defaultHeightMm: lv.floorPlan.defaultHeightMm ?? 3000 } }))
               : [{
                   id: `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`,
                   name: 'Этаж 1',
                   elevationMm: 0,
                   floorPlan: legacy.floorPlan
-                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [], rectColumns: legacy.floorPlan.rectColumns ?? [], freeformStructures: legacy.floorPlan.freeformStructures ?? [], mepRoutes: legacy.floorPlan.mepRoutes ?? [], mepBackgrounds: legacy.floorPlan.mepBackgrounds ?? {} }
+                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [], rectColumns: legacy.floorPlan.rectColumns ?? [], freeformStructures: legacy.floorPlan.freeformStructures ?? [], mepRoutes: legacy.floorPlan.mepRoutes ?? [], mepBackgrounds: legacy.floorPlan.mepBackgrounds ?? {}, defaultHeightMm: legacy.floorPlan.defaultHeightMm ?? 3000 }
                     : { ...DEFAULT_FLOOR_PLAN, lines: [], contours: [] },
                 }]
             const activeLevelId = legacy.activeLevelId && levels.some(lv => lv.id === legacy.activeLevelId)
