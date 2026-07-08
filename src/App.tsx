@@ -465,6 +465,7 @@ export default function App() {
         <ProjectMembersPanel
           projectId={activeProjectId}
           currentUserId={user.id}
+          currentUserEmail={user.email}
           onClose={() => setShowMembers(false)}
         />
       )}

@@ -6,6 +6,7 @@ import { can, canManageMember, findMember, type ProjectMember, type ProjectRole 
 interface Props {
   projectId: string
   currentUserId: string
+  currentUserEmail?: string | null
   onClose: () => void
 }
 
@@ -26,7 +27,7 @@ function toProjectMember(m: DbProjectMember): ProjectMember {
   }
 }
 
-export function ProjectMembersPanel({ projectId, currentUserId, onClose }: Props) {
+export function ProjectMembersPanel({ projectId, currentUserId, currentUserEmail, onClose }: Props) {
   const { members, loading, error, load, invite, setRole, remove, transferTo, clearError } = useProjectMembersStore()
 
   const [showInvite, setShowInvite] = useState(false)
@@ -145,7 +146,7 @@ export function ProjectMembersPanel({ projectId, currentUserId, onClose }: Props
               <div key={m.id} style={s.row}>
                 <div style={s.nameCol}>
                   <div style={s.email}>
-                    {m.invited_email ?? m.user_id ?? '—'}
+                    {m.invited_email ?? (isMe ? currentUserEmail : null) ?? m.user_id ?? '—'}
                     {isMe && <span style={s.badge}>вы</span>}
                     {m.status === 'invited' && <span style={s.badge} title="Ожидает первого входа">приглашён</span>}
                     {m.is_team_lead && <span style={s.badge} title="Прораб субподрядчика">team lead</span>}
