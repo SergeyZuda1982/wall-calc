@@ -1170,9 +1170,12 @@ export default function FloorPlan() {
     }
 
     if (mode === 'pencil') {
-      const pt = applySnap(pos.x, pos.y)
       const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
-      const closing = pencilPts.length >= 3 && dist(pt.x, pt.y, pencilPts[0].x, pencilPts[0].y) <= closeThresh
+      // Замыкание проверяем по СЫРОЙ (неснапленной) позиции клика, не по applySnap().
+      // Иначе рядом со стеной/колонной (обычное дело для плиты вплотную к периметру)
+      // applySnap тянет клик к ЧУЖОЙ линии — до первой точки контура могло быть
+      // рукой подать, а после снапа улетает за порог, и замыкание тихо не срабатывает.
+      const closing = pencilPts.length >= 3 && dist(pos.x, pos.y, pencilPts[0].x, pencilPts[0].y) <= closeThresh
       if (closing) {
         if (pencilHoleTargetId) {
           addSlabHole(pencilHoleTargetId, pencilPts)
@@ -1183,20 +1186,24 @@ export default function FloorPlan() {
         return
       }
       // Клик рядом с уже поставленной точкой контура (не первой — та замыкает,
-      // см. выше) — удалить именно её, не только последнюю через ПКМ.
-      const hitIdx = pencilPts.findIndex((p, i) => i > 0 && dist(pt.x, pt.y, p.x, p.y) <= closeThresh)
+      // см. выше) — удалить именно её, не только последнюю через ПКМ. Тоже по
+      // сырой позиции — та же причина, что и у замыкания.
+      const hitIdx = pencilPts.findIndex((p, i) => i > 0 && dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
       if (hitIdx !== -1) {
         setPencilPts(prev => prev.filter((_, i) => i !== hitIdx))
         return
       }
+      const pt = applySnap(pos.x, pos.y)
       setPencilPts(prev => [...prev, { x: pt.x, y: pt.y }])
       return
     }
 
     if (mode === 'freeform') {
-      const pt = applySnap(pos.x, pos.y)
       const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
-      const closing = freeformPts.length >= 3 && dist(pt.x, pt.y, freeformPts[0].x, freeformPts[0].y) <= closeThresh
+      // См. комментарий в 'pencil' выше — та же причина и тот же фикс. Для обводки
+      // это ещё заметнее: контур почти всегда идёт ВПЛОТНУЮ к реальной стене/
+      // колонне — ровно там, где applySnap чаще всего перехватывает клик в сторону.
+      const closing = freeformPts.length >= 3 && dist(pos.x, pos.y, freeformPts[0].x, freeformPts[0].y) <= closeThresh
       if (closing) {
         const count = freeformStructures.length + 1
         const newId = addFreeformStructure({
@@ -1213,19 +1220,22 @@ export default function FloorPlan() {
         return
       }
       // Клик рядом с уже поставленной точкой контура (не первой) — удалить именно её
-      const hitIdx = freeformPts.findIndex((p, i) => i > 0 && dist(pt.x, pt.y, p.x, p.y) <= closeThresh)
+      const hitIdx = freeformPts.findIndex((p, i) => i > 0 && dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
       if (hitIdx !== -1) {
         setFreeformPts(prev => prev.filter((_, i) => i !== hitIdx))
         return
       }
+      const pt = applySnap(pos.x, pos.y)
       setFreeformPts(prev => [...prev, { x: pt.x, y: pt.y }])
       return
     }
 
     if (mode === 'freeformOpening' && openingTargetFreeformId) {
-      const pt = applySnap(pos.x, pos.y)
       const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
-      const closing = freeformPts.length >= 3 && dist(pt.x, pt.y, freeformPts[0].x, freeformPts[0].y) <= closeThresh
+      // См. фикс в 'freeform'/'pencil' выше — та же причина: контур проёма тоже
+      // часто идёт вплотную к реальным граням стены, applySnap может утянуть
+      // клик в сторону и тихо сорвать замыкание. Проверяем по сырой позиции.
+      const closing = freeformPts.length >= 3 && dist(pos.x, pos.y, freeformPts[0].x, freeformPts[0].y) <= closeThresh
       if (closing) {
         const target = freeformStructures.find(f => f.id === openingTargetFreeformId)
         const count = (target?.openings ?? []).length + 1
@@ -1240,11 +1250,12 @@ export default function FloorPlan() {
         setInspectorFreeformId(openingTargetFreeformId)
         return
       }
-      const hitIdx = freeformPts.findIndex((p, i) => i > 0 && dist(pt.x, pt.y, p.x, p.y) <= closeThresh)
+      const hitIdx = freeformPts.findIndex((p, i) => i > 0 && dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
       if (hitIdx !== -1) {
         setFreeformPts(prev => prev.filter((_, i) => i !== hitIdx))
         return
       }
+      const pt = applySnap(pos.x, pos.y)
       setFreeformPts(prev => [...prev, { x: pt.x, y: pt.y }])
       return
     }
@@ -2918,6 +2929,13 @@ export default function FloorPlan() {
                           stroke="#8d99ae" strokeWidth={1.5} dash={[6, 3]} listening={false}
                         />
                       )}
+                      {/* Пунктирное кольцо зоны замыкания — см. тот же приём у 'freeform' */}
+                      {pencilPts.length >= 3 && (
+                        <Circle x={pencilPts[0].x} y={pencilPts[0].y}
+                          radius={SNAP_SCREEN_PX / stageScaleRef.current}
+                          stroke="#8d99ae" strokeWidth={1 / stageScale} dash={[4 / stageScale, 3 / stageScale]}
+                          listening={false} />
+                      )}
                       {pencilPts.map((p, i) => (
                         i === 0 ? (
                           <Shape
@@ -2959,11 +2977,46 @@ export default function FloorPlan() {
                           stroke={mode === 'freeformOpening' ? '#c62828' : '#6a4fb5'} strokeWidth={1.5} dash={[6, 3]} listening={false}
                         />
                       )}
+                      {/* Пунктирное кольцо — ровно та зона вокруг первой точки, тапом по
+                          которой контур замыкается (тот же радиус, что и в проверке клика,
+                          closeThresh). Видно, только когда точек уже хватает для замыкания. */}
+                      {freeformPts.length >= 3 && (
+                        <Circle x={freeformPts[0].x} y={freeformPts[0].y}
+                          radius={SNAP_SCREEN_PX / stageScaleRef.current}
+                          stroke={mode === 'freeformOpening' ? '#c62828' : '#6a4fb5'} strokeWidth={1 / stageScale} dash={[4 / stageScale, 3 / stageScale]}
+                          listening={false} />
+                      )}
                       {freeformPts.map((p, i) => (
-                        <Circle key={i} x={p.x} y={p.y} radius={i === 0 ? 5 : 3}
-                          fill={i === 0
-                            ? (mode === 'freeformOpening' ? '#c62828' : '#6a4fb5')
-                            : (mode === 'freeformOpening' ? '#e57373' : '#9575cd')} listening={false} />
+                        i === 0 ? (
+                          <Shape
+                            key={i} x={p.x} y={p.y} rotation={-45} listening={false}
+                            sceneFunc={(ctx) => {
+                              // Тот же значок-карандаш, что у инструмента "плита" — носик
+                              // (остриё) ровно в точке (0,0), тело уходит назад по диагонали.
+                              // Цвет тела — по режиму (проём — красный, обводка стены/колонны — фиолетовый).
+                              const bodyColor = mode === 'freeformOpening' ? '#c62828' : '#6a4fb5'
+                              const tailColor = mode === 'freeformOpening' ? '#8e2020' : '#4a3a7a'
+                              ctx.beginPath()
+                              ctx.moveTo(0, 0)
+                              ctx.lineTo(7, -2.5)
+                              ctx.lineTo(7, 2.5)
+                              ctx.closePath()
+                              ctx.fillStyle = '#e53935'
+                              ctx.fill()
+                              ctx.beginPath()
+                              ctx.rect(7, -2, 13, 4)
+                              ctx.fillStyle = bodyColor
+                              ctx.fill()
+                              ctx.beginPath()
+                              ctx.rect(20, -2, 4, 4)
+                              ctx.fillStyle = tailColor
+                              ctx.fill()
+                            }}
+                          />
+                        ) : (
+                          <Circle key={i} x={p.x} y={p.y} radius={3}
+                            fill={mode === 'freeformOpening' ? '#e57373' : '#9575cd'} listening={false} />
+                        )
                       ))}
                     </>
                   )}
