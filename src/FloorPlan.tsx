@@ -935,12 +935,26 @@ export default function FloorPlan() {
         return
       }
 
-      // Панорама одним пальцем
+      // Панорама одним пальцем — но только когда палец РЕАЛЬНО сдвинулся
+      // (порог DRAG_THRESHOLD, тот же, что и у мышиного драга в 'select').
+      // Без порога любое микро-дрожание пальца при точном тапе (например,
+      // попадание в маленькую зону замыкания контура обводки/плиты) тут же
+      // помечалось как панорама → touchGestureRef.current=true → сам тап
+      // дальше по коду (handleStageClick) молча игнорировался целиком, хотя
+      // визуально ничего не панорамировалось — тап просто "проглатывался".
       if (te.touches.length === 1 && touchPanRef.current) {
-        te.preventDefault()
-        touchGestureRef.current = true
         const sx = te.touches[0].clientX - rect.left
         const sy = te.touches[0].clientY - rect.top
+        const dx = sx - touchPanRef.current.x
+        const dy = sy - touchPanRef.current.y
+        if (!touchGestureRef.current && Math.hypot(dx, dy) < DRAG_THRESHOLD) {
+          // Ещё в пределах допустимого дрожания — не паникуем, ждём либо
+          // настоящего движения, либо touchend (тогда это будет обычный тап).
+          if (te.cancelable) te.preventDefault()
+          return
+        }
+        te.preventDefault()
+        touchGestureRef.current = true
         setStagePos({
           x: touchPanRef.current!.sx + sx - touchPanRef.current!.x,
           y: touchPanRef.current!.sy + sy - touchPanRef.current!.y,
