@@ -11,9 +11,17 @@
  *   разрезы вдоль оси стены (см. wallToBoxesWithOpenings3D) — без скосов
  *   и без арок; откос/четверть проёма не моделируются, просто чистый
  *   прямоугольный вырез на всю толщину стены
- * - митры/стыки стен (wallJoin) не учитываются — стены просто накладываются
- *   друг на друга по углам, как коробки; визуально это уже "стена", а не
- *   голая линия, довести до идеального стыка можно отдельным шагом
+ * - митры/стыки стен (wallJoin) С 08.07.2026 УЧИТЫВАЮТСЯ: тело стены
+ *   (footprint) строится по расширенной оси (JoinedWall.ax1/ay1/ax2/ay2,
+ *   та же самая, что и 2D-план использует для заливки без дыр в углах —
+ *   см. FloorPlan.tsx, buildWallsForJoin в wallJoin.ts), а не по сырым
+ *   line.x1/y1/x2/y2. Проёмы по-прежнему отмеряются от ОРИГИНАЛЬНОЙ линии
+ *   (offsetMm не должен "уезжать" вместе с расширением на T-стыке) — см.
+ *   wallToBoxesWithOpenings3D, тот же приём, что и в 2D computeOpeningSegments.
+ *   Настоящего митра (скошенной грани) по-прежнему нет — стены остаются
+ *   прямоугольными коробками, просто нужной длины и без торчащих торцов
+ *   в местах стыков; довести до идеального скошенного стыка можно отдельным
+ *   шагом (полноценная геометрия многоугольного сечения вместо коробки).
  * - высота потолка не хранится как отдельная величина — estimateCeilingMm
  *   берёт максимум heightMm среди wall_existing (или дефолт), только чтобы
  *   было от чего повесить ригель
@@ -23,6 +31,7 @@ import type { PlanLine, PlanLineType, Room, Slab, RoundColumn, RectColumn, Freef
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 import { isLineBuiltForRender } from './lineProgress'
+import { computeWallJoins, buildWallsForJoin, type JoinedWall } from './wallJoin'
 
 export const DEFAULT_HEIGHT_MM = 3000
 export const DEFAULT_RIB_SECTION_MM = 300
@@ -78,13 +87,24 @@ export interface WallBox3D {
  * Одна линия плана (стена любого типа или ригель) → коробка в 3D.
  * Возвращает null для линий без толщины (та же логика "не рисуем трапецию
  * без spec", что и в 2D) — они и на плане не видны как объём.
+ *
+ * axisOverride — расширенная ось стыка (JoinedWall.ax1/ay1/ax2/ay2, px),
+ * если задана, используется ВМЕСТО сырых line.x1/y1/x2/y2 для футпринта
+ * коробки (см. wallsToBoxes3D) — та же ось, что 2D-план использует для
+ * заливки без дыр в углах. Проёмы (wallToBoxesWithOpenings3D) по ней НЕ
+ * мерятся — только сам футпринт целиком (длина/центр/поворот).
  */
-export function wallToBox3D(line: PlanLine, scaleMmPx: number, ceilingMm: number): WallBox3D | null {
+export function wallToBox3D(
+  line: PlanLine, scaleMmPx: number, ceilingMm: number,
+  axisOverride?: { x1: number; y1: number; x2: number; y2: number },
+): WallBox3D | null {
   const tMm = wallThicknessMm(line)
   if (tMm <= 0) return null
 
-  const x1 = pxToM(line.x1, scaleMmPx), z1 = pxToM(line.y1, scaleMmPx)
-  const x2 = pxToM(line.x2, scaleMmPx), z2 = pxToM(line.y2, scaleMmPx)
+  const rawX1 = axisOverride?.x1 ?? line.x1, rawY1 = axisOverride?.y1 ?? line.y1
+  const rawX2 = axisOverride?.x2 ?? line.x2, rawY2 = axisOverride?.y2 ?? line.y2
+  const x1 = pxToM(rawX1, scaleMmPx), z1 = pxToM(rawY1, scaleMmPx)
+  const x2 = pxToM(rawX2, scaleMmPx), z2 = pxToM(rawY2, scaleMmPx)
   const dx = x2 - x1, dz = z2 - z1
   const length = Math.sqrt(dx * dx + dz * dz)
   if (length < 0.001) return null
@@ -113,10 +133,20 @@ export function wallToBox3D(line: PlanLine, scaleMmPx: number, ceilingMm: number
  * как раньше (всегда видны) — обратная совместимость, см. lineProgress.ts.
  * estimateCeilingMm намеренно считается по ПОЛНОМУ списку линий (высота
  * потолка — не то, что должно "пропадать" вместе с ещё не начатой стеной).
+ *
+ * rectColumns — прямоугольные колонны этого этажа (необязательно, дефолт
+ * []): участвуют в расчёте стыков (buildWallsForJoin/computeWallJoins), их
+ * грани обрезают/удлиняют примыкающие стены под ЛЮБЫМ углом, не только 90°
+ * (см. wallJoin.ts). Сама колонна рисуется отдельно, см. rectColumnsToBoxes3D.
  */
-export function wallsToBoxes3D(lines: PlanLine[], scaleMmPx: number): WallBox3D[] {
+export function wallsToBoxes3D(lines: PlanLine[], scaleMmPx: number, rectColumns: RectColumn[] = []): WallBox3D[] {
   const ceilingMm = estimateCeilingMm(lines)
-  return lines.filter(isLineBuiltForRender).flatMap(l => wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm))
+  const joins = computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns))
+  return lines.filter(isLineBuiltForRender).flatMap(l => {
+    const jw: JoinedWall | undefined = joins.get(l.id)
+    const axisOverride = jw ? { x1: jw.ax1, y1: jw.ay1, x2: jw.ax2, y2: jw.ay2 } : undefined
+    return wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm, axisOverride)
+  })
 }
 
 /**
@@ -133,21 +163,43 @@ export function wallsToBoxes3D(lines: PlanLine[], scaleMmPx: number): WallBox3D[
  *
  * sillHeightMm трактуется одинаково для всех трёх типов проёма (окно/дверь/
  * просто проём) — просто "от пола" (для двери и сквозного проёма обычно 0).
+ *
+ * axisOverride — см. wallToBox3D. Проёмы (offsetMm) ВСЕГДА мерятся от
+ * ОРИГИНАЛЬНОЙ линии (line.x1/y1), а не от расширенной оси — иначе при
+ * T-стыке с колонной/соседней стеной проёмы "уехали" бы вместе с
+ * расширением. Ровно тот же приём, что computeOpeningSegments в 2D
+ * (fax1/fay1 для тела стены, origX1/origY1 для позиций проёмов).
  */
-export function wallToBoxesWithOpenings3D(line: PlanLine, scaleMmPx: number, ceilingMm: number): WallBox3D[] {
-  const baseOrNull = wallToBox3D(line, scaleMmPx, ceilingMm)
+export function wallToBoxesWithOpenings3D(
+  line: PlanLine, scaleMmPx: number, ceilingMm: number,
+  axisOverride?: { x1: number; y1: number; x2: number; y2: number },
+): WallBox3D[] {
+  const baseOrNull = wallToBox3D(line, scaleMmPx, ceilingMm, axisOverride)
   if (!baseOrNull) return []
   const base: WallBox3D = baseOrNull
 
   const lengthM = base.size.sx
+  const ux = Math.cos(base.rotationY), uz = -Math.sin(base.rotationY) // см. rotationY = atan2(-dz, dx) в wallToBox3D
+  const startX = base.center.x - ux * lengthM / 2
+  const startZ = base.center.z - uz * lengthM / 2
+
+  // Сдвиг: где вдоль РАСШИРЕННОЙ оси (0..lengthM) лежит начало ОРИГИНАЛЬНОЙ
+  // линии — проекция (origStart − extStart) на направление оси. Обычно ≥0
+  // (T-стык расширяет начало "назад", наружу), но защищаемся и от обратного
+  // случая на всякий (например, будущий митр, который вместо расширения
+  // подрежет — clamp ниже всё равно не даст уйти за пределы футпринта).
+  const origX1M = pxToM(line.x1, scaleMmPx), origZ1M = pxToM(line.y1, scaleMmPx)
+  const shiftM = (origX1M - startX) * ux + (origZ1M - startZ) * uz
+
   const openings = (line.openings ?? [])
     .filter(o => o.widthMm > 0 && o.heightMm > 0)
     .map(o => ({
       id: o.id,
-      // клэмпим к длине стены — защита от рассинхрона, если линию укоротили после того,
-      // как проём был добавлен (проём на плане в этом случае тоже "обрежется" по факту)
-      startM: Math.min(Math.max(mmToM(o.offsetMm), 0), lengthM),
-      endM: Math.min(Math.max(mmToM(o.offsetMm + o.widthMm), 0), lengthM),
+      // клэмпим к длине РАСШИРЕННОГО футпринта — защита от рассинхрона (линию
+      // укоротили после того, как проём был добавлен, ИЛИ проём у самого края
+      // и попадает в зону расширения T-стыка — в 2D в этом случае тоже "режется")
+      startM: Math.min(Math.max(shiftM + mmToM(o.offsetMm), 0), lengthM),
+      endM: Math.min(Math.max(shiftM + mmToM(o.offsetMm + o.widthMm), 0), lengthM),
       sillM: Math.max(mmToM(o.sillHeightMm ?? 0), 0),
       heightM: mmToM(o.heightMm),
     }))
@@ -158,9 +210,6 @@ export function wallToBoxesWithOpenings3D(line: PlanLine, scaleMmPx: number, cei
 
   const wallHeightM = base.size.sy
   const bottomY = base.center.y - wallHeightM / 2   // низ стены (обычно 0, стена стоит на полу)
-  const ux = Math.cos(base.rotationY), uz = -Math.sin(base.rotationY) // см. rotationY = atan2(-dz, dx) в wallToBox3D
-  const startX = base.center.x - ux * lengthM / 2
-  const startZ = base.center.z - uz * lengthM / 2
 
   const boxes: WallBox3D[] = []
 

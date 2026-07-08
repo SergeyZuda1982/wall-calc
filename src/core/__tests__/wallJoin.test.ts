@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { computeWallJoins, type WallForJoin } from '../wallJoin'
+import { computeWallJoins, buildWallsForJoin, defaultCategory, type WallForJoin } from '../wallJoin'
+import type { PlanLine, RectColumn } from '../../types'
 
 // scaleMmPx = 10 (как дефолт в FloorPlan), т.е. 1px = 10мм
 // B — капитальная стена 200мм толщиной (halfPx=10), горизонтальная, ось y=50, x: 0..200
@@ -162,5 +163,164 @@ describe('computeWallJoins — L-стык не перекручивается н
     // Ось должна быть продлена (митр применился), а не остаться "голой" 300мм
     const axLen = Math.hypot(jw.ax2 - jw.ax1, jw.ay2 - jw.ay1)
     expect(axLen).toBeGreaterThan(300)
+  })
+})
+
+describe('computeWallJoins — грань колонны (halfPx≈0) как main в T-стыке', () => {
+  // Грань прямоугольной колонны участвует в join как капитальная "стена"
+  // почти нулевой толщины (см. FloorPlan.tsx, COLUMN_EDGE_HALF_PX) — сама
+  // грань физическая плоскость, а не толстая стена. Проверяем, что T-стык
+  // работает под ЛЮБЫМ углом (не только 90°), включая острые углы из
+  // реального кейса пользователя (07.07.2026: диагональная перегородка
+  // подходит к грани колонны почти по касательной).
+  const COLUMN_EDGE_HALF_PX = 0.01
+
+  function buildColumnAttach(faceLen: number, angleDeg: number, wallLen = 1200) {
+    const angle = angleDeg * Math.PI / 180
+    // Грань колонны — горизонтальный отрезок капитальной "толщины" ~0
+    const face: WallForJoin = {
+      id: 'FACE', x1: 0, y1: 0, x2: faceLen, y2: 0,
+      halfPx: COLUMN_EDGE_HALF_PX, createdIndex: -1000, category: 'capital',
+    }
+    // Стена подходит к середине грани под заданным углом (мутабельная)
+    const midX = faceLen / 2
+    const wall: WallForJoin = {
+      id: 'WALL', x1: midX, y1: 0,
+      x2: midX + wallLen * Math.cos(angle), y2: wallLen * Math.sin(angle),
+      halfPx: 75, createdIndex: 0, category: 'mutable',
+    }
+    return computeWallJoins([face, wall]).get('WALL')!
+  }
+
+  it('распознаёт T-стык под прямым углом (90°) — обычный случай', () => {
+    const jw = buildColumnAttach(300, 90)
+    expect(jw.cap1).toBe(false)
+  })
+
+  it('распознаёт T-стык под очень острым углом (5°, почти по касательной к грани)', () => {
+    const jw = buildColumnAttach(300, 5)
+    expect(jw.cap1).toBe(false)
+    expect(isSimpleQuad(jw)).toBe(true)
+  })
+
+  it('широкий перебор углов (включая почти касательные 2° и 178°) — без самопересечения', () => {
+    const angles = [2, 5, 10, 20, 45, 60, 90, 120, 150, 170, 178]
+    for (const ang of angles) {
+      const jw = buildColumnAttach(300, ang)
+      expect(isSimpleQuad(jw)).toBe(true)
+    }
+  })
+
+  it('короткая грань колонны (100мм) + острый угол — тоже без самопересечения', () => {
+    const jw = buildColumnAttach(100, 8)
+    expect(isSimpleQuad(jw)).toBe(true)
+  })
+
+  it('капитал (грань колонны) не обрезается изменяемой стеной, даже если стена "main" по порядку аргументов', () => {
+    // Грань колонны идёт ВТОРЫМ аргументом — проверяем симметрично: колонна
+    // не должна оказаться "attached" стороной ни при каком порядке.
+    const face: WallForJoin = { id: 'FACE', x1: 0, y1: 0, x2: 300, y2: 0, halfPx: COLUMN_EDGE_HALF_PX, createdIndex: -1000, category: 'capital' }
+    const wall: WallForJoin = { id: 'WALL', x1: 150, y1: 0, x2: 150, y2: 1200, halfPx: 75, createdIndex: 0, category: 'mutable' }
+    const res = computeWallJoins([wall, face]) // порядок изменён
+    const jFace = res.get('FACE')!
+    // Грань колонны — прямая линия шириной 300мм, стена примыкает к её середине под 90°.
+    // У грани не должно быть T-стыка по своей оси (она не "обрезается" стеной):
+    expect(jFace.cap1).toBe(true)
+    expect(jFace.cap2).toBe(true)
+  })
+})
+
+describe('defaultCategory', () => {
+  it('wall_existing и rib_beam — capital', () => {
+    expect(defaultCategory('wall_existing')).toBe('capital')
+    expect(defaultCategory('rib_beam')).toBe('capital')
+  })
+  it('всё остальное — mutable', () => {
+    expect(defaultCategory('wall_new')).toBe('mutable')
+    expect(defaultCategory('wall_lining')).toBe('mutable')
+    expect(defaultCategory('ceiling')).toBe('mutable')
+    expect(defaultCategory('floor')).toBe('mutable')
+  })
+})
+
+describe('buildWallsForJoin — сборка входа для computeWallJoins из линий + колонн', () => {
+  function line(overrides: Partial<PlanLine> = {}): PlanLine {
+    return {
+      id: 'L1', x1: 0, y1: 0, x2: 300, y2: 0,
+      type: 'wall_new', lengthMm: 3000, label: 'П-1',
+      spec: { material: 'gkl', subtype: 'ps75' }, // thicknessMm ~125 -> ~12.5px при scale=10, >3px
+      ...overrides,
+    } as PlanLine
+  }
+
+  it('линия без spec (толщина 0) — пропускается', () => {
+    const walls = buildWallsForJoin([line({ spec: undefined })], 10)
+    expect(walls).toHaveLength(0)
+  })
+
+  it('линия с дугой (sagittaMm) — пропускается (join для дуг пока не считаем)', () => {
+    const walls = buildWallsForJoin([line({ sagittaMm: 50 })], 10)
+    expect(walls).toHaveLength(0)
+  })
+
+  it('нулевая длина линии — пропускается', () => {
+    const walls = buildWallsForJoin([line({ x1: 0, y1: 0, x2: 0, y2: 0 })], 10)
+    expect(walls).toHaveLength(0)
+  })
+
+  it('обычная линия попадает в список с category по умолчанию (defaultCategory)', () => {
+    const walls = buildWallsForJoin([line()], 10)
+    expect(walls).toHaveLength(1)
+    expect(walls[0].id).toBe('L1')
+    expect(walls[0].category).toBe('mutable') // wall_new
+  })
+
+  it('явная category на линии переопределяет дефолт', () => {
+    const walls = buildWallsForJoin([line({ category: 'capital' })], 10)
+    expect(walls[0].category).toBe('capital')
+  })
+
+  it('без колонн (дефолт []) — тот же результат, что и раньше (обратная совместимость)', () => {
+    const walls = buildWallsForJoin([line()], 10)
+    expect(walls).toHaveLength(1)
+  })
+
+  it('прямоугольная колонна добавляет ровно 4 грани, капитальные, почти нулевой толщины', () => {
+    const col: RectColumn = { id: 'col1', cx: 500, cy: 500, widthMm: 300, depthMm: 300, angleRad: 0, label: 'Колонна 1' }
+    const walls = buildWallsForJoin([], 10, [col])
+    expect(walls).toHaveLength(4)
+    walls.forEach(w => {
+      expect(w.id).toContain('col1')
+      expect(w.category).toBe('capital')
+      expect(w.halfPx).toBeCloseTo(0.01)
+    })
+  })
+
+  it('колонна с явной category (например mutable, гипотетически) — пробрасывается как есть', () => {
+    const col: RectColumn = { id: 'col1', cx: 0, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'К1', category: 'mutable' }
+    const walls = buildWallsForJoin([], 10, [col])
+    expect(walls.every(w => w.category === 'mutable')).toBe(true)
+  })
+
+  it('несколько колонн — id граней не пересекаются между колоннами', () => {
+    const cols: RectColumn[] = [
+      { id: 'colA', cx: 0, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'A' },
+      { id: 'colB', cx: 1000, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'B' },
+    ]
+    const walls = buildWallsForJoin([], 10, cols)
+    expect(walls).toHaveLength(8)
+    const ids = new Set(walls.map(w => w.id))
+    expect(ids.size).toBe(8)
+  })
+
+  it('линии и колонны вместе — стена реально стыкуется с гранью колонны через computeWallJoins', () => {
+    const col: RectColumn = { id: 'col1', cx: 0, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'Колонна 1' }
+    // Правая грань колонны — вертикальный отрезок x=15 (halfWidth=15px), от y=-15 до y=15.
+    // Стена должна идти ПЕРПЕНДИКУЛЯРНО этой грани — горизонтально, наружу (+X) от (15,0).
+    const wall = line({ id: 'W1', x1: 15, y1: 0, x2: 215, y2: 0 })
+    const walls = buildWallsForJoin([wall], 10, [col])
+    const res = computeWallJoins(walls)
+    const jw = res.get('W1')!
+    expect(jw.cap1).toBe(false) // T-стык распознан, торец не рисуется
   })
 })

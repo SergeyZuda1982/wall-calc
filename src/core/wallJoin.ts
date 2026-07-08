@@ -9,6 +9,10 @@
  *   Продолжение — коллинеарные (обрабатываются автоматически через L с нулевым cross).
  */
 
+import type { PlanLine, PlanLineType, LineCategory, RectColumn } from '../types'
+import { getLineVisual } from '../data/constructionTaxonomy'
+import { rectColumnCornersPx } from './columnStamp'
+
 const JOIN_EPS = 3 // допуск совпадения точек, px
 
 interface Pt { x: number; y: number }
@@ -263,7 +267,7 @@ function applyL(
 // ─── T-стык: attached обрезается до ближней грани main ───────────────────
 
 function applyT(
-  _attached: WallForJoin, main: WallForJoin,
+  attached: WallForJoin, main: WallForJoin,
   ai: WInfo, bi: WInfo,
   ja: JoinedWall,
   aEnd: 'end1' | 'end2',
@@ -291,17 +295,34 @@ function applyT(
   const Im = rayX(aPm.x, aPm.y, ai.ux, ai.uy, extPx, extPy, bi.ux, bi.uy)
   if (!Ip || !Im) return
 
-  setEnd(ja, aEnd, Ip, Im)
+  // Защита от перекручивания — тот же самый самопересекающийся клин, что
+  // и в applyL (см. safeCorner), возможен и на T-стыке: при почти
+  // касательном угле между attached и гранью main (близко к 0° или 180°,
+  // напр. диагональная стена почти вдоль грани колонны) пересечение Side±
+  // может "утянуть" точку конца НАЗАД за уже зафиксированную точку на
+  // другом конце той же стены. Откатываемся на исходную (не обрезанную)
+  // точку конца — оставит небольшой зазор/нахлёст вместо развёрнутого клина.
+  const otherPp = aEnd === 'end1' ? ja.p2p : ja.p1p
+  const otherPm = aEnd === 'end1' ? ja.p2m : ja.p1m
+  const safeIp = safeCorner(attached, ai, aEnd, Ip, aPp, otherPp)
+  const safeIm = safeCorner(attached, ai, aEnd, Im, aPm, otherPm)
 
-  // Расширяем ось attached до ближней грани main (dir_out = −dir_into)
-  const dir_out_x = -dir_into_x
-  const dir_out_y = -dir_into_y
-  if (aEnd === 'end1') {
-    ja.ax1 += dir_out_x * main.halfPx
-    ja.ay1 += dir_out_y * main.halfPx
-  } else {
-    ja.ax2 += dir_out_x * main.halfPx
-    ja.ay2 += dir_out_y * main.halfPx
+  setEnd(ja, aEnd, safeIp, safeIm)
+
+  // Расширяем ось attached до ближней грани main — только если реально
+  // применился обрез (не откат на fallback), иначе ось "уедет" дальше,
+  // чем реально прорисованные грани (та же логика, что и в applyL).
+  const usedMiter = safeIp === Ip && safeIm === Im
+  if (usedMiter) {
+    const dir_out_x = -dir_into_x
+    const dir_out_y = -dir_into_y
+    if (aEnd === 'end1') {
+      ja.ax1 += dir_out_x * main.halfPx
+      ja.ay1 += dir_out_y * main.halfPx
+    } else {
+      ja.ax2 += dir_out_x * main.halfPx
+      ja.ay2 += dir_out_y * main.halfPx
+    }
   }
 }
 
@@ -317,4 +338,72 @@ function setEnd(
     if (!jw.cap2) return // уже обработан
     jw.p2p = pp; jw.p2m = pm; jw.cap2 = false
   }
+}
+
+// ─── общий сборщик входа для computeWallJoins (переиспользуется 2D-планом
+// в FloorPlan.tsx и 3D-переводчиком в planTo3D.ts, чтобы не дублировать
+// логику "какие линии/колонны считаются стенами для стыковки") ────────────
+
+/** Капитал по умолчанию — периметр (wall_existing) и ригели, всё остальное изменяемое */
+export function defaultCategory(type: PlanLineType): LineCategory {
+  return (type === 'wall_existing' || type === 'rib_beam') ? 'capital' : 'mutable'
+}
+
+/**
+ * Половина толщины (px) для граней прямоугольных колонн в computeWallJoins.
+ * Не может быть строго 0 (деление в applyT на main.halfPx) — грань колонны
+ * физически плоскость без своей толщины, берём мизерное значение: числовая
+ * погрешность на уровне долей мм, которой можно пренебречь.
+ */
+export const COLUMN_EDGE_HALF_PX = 0.01
+
+/**
+ * Строит список WallForJoin из линий плана (wall_new/wall_existing/... с
+ * заданным материалом и толщиной ≥3px) + граней прямоугольных колонн (как
+ * капитальные "стены" почти нулевой толщины — см. COLUMN_EDGE_HALF_PX).
+ *
+ * Грани колонны участвуют в T-стыке под ЛЮБЫМ углом (не только 90°) — та
+ * же математика пересечения линий, что и для стена-к-стене (applyT). До
+ * этого колонны вообще не участвовали в computeWallJoins — линия, упирающаяся
+ * в колонну под углом, не обрезалась НИКАК (см. КОНСПЕКТ, 08.07.2026).
+ *
+ * rectColumns — необязательный параметр (дефолт []) для мест, где колонны
+ * ещё не подключены к вызову (обратная совместимость).
+ */
+export function buildWallsForJoin(
+  lines: PlanLine[],
+  scaleMmPx: number,
+  rectColumns: RectColumn[] = [],
+): WallForJoin[] {
+  const walls: WallForJoin[] = []
+  lines.forEach((l, idx) => {
+    const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
+    const hasSpec = !!(l.spec?.material)
+    const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
+    if (thicknessPx <= 3) return
+    if (l.sagittaMm) return // дуга — join со стенами пока не считаем (см. KONSPEKT.md)
+    const dx = l.x2 - l.x1, dy = l.y2 - l.y1
+    if (Math.sqrt(dx * dx + dy * dy) < 1) return
+    walls.push({
+      id: l.id,
+      x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2,
+      halfPx: thicknessPx / 2,
+      createdIndex: idx,
+      category: l.category ?? defaultCategory(l.type),
+    })
+  })
+  rectColumns.forEach((rc, rcIdx) => {
+    const corners = rectColumnCornersPx(rc.cx, rc.cy, rc.widthMm, rc.depthMm, rc.angleRad, scaleMmPx)
+    for (let e = 0; e < 4; e++) {
+      const p0 = corners[e], p1 = corners[(e + 1) % 4]
+      walls.push({
+        id: `__rectcol_${rc.id}_edge${e}`,
+        x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y,
+        halfPx: COLUMN_EDGE_HALF_PX,
+        createdIndex: -1000 - rcIdx * 4 - e,
+        category: rc.category ?? 'capital',
+      })
+    }
+  })
+  return walls
 }

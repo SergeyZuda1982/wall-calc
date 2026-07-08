@@ -26,8 +26,7 @@ import { useTemplateStore } from './store/useTemplateStore'
 import {
   rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
 } from './core/columnStamp'
-import { computeWallJoins } from './core/wallJoin'
-import type { WallForJoin } from './core/wallJoin'
+import { computeWallJoins, buildWallsForJoin, defaultCategory } from './core/wallJoin'
 import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
@@ -68,10 +67,7 @@ const LINE_WIDTH: Record<PlanLineType, number> = {
 }
 const HAS_SIDE_VIEW: PlanLineType[] = ['wall_new', 'wall_lining', 'floor']
 
-/** Капитал по умолчанию — периметр (wall_existing) и ригели, всё остальное изменяемое */
-function defaultCategory(type: PlanLineType): LineCategory {
-  return (type === 'wall_existing' || type === 'rib_beam') ? 'capital' : 'mutable'
-}
+// defaultCategory — теперь в wallJoin.ts (переиспользуется 2D и 3D), см. импорт выше
 function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
 }
@@ -1864,27 +1860,12 @@ export default function FloorPlan() {
   const previewY2    = previewPt?.y ?? 0
   // allPoints убраны — snap-точки на холсте не рисуются
 
-  // ── Wall join: скорректированные точки для стыков ────────────────────────
-  const wallJoins = useMemo(() => {
-    const walls: WallForJoin[] = []
-    lines.forEach((l, idx) => {
-      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
-      const hasSpec = !!(l.spec?.material)
-      const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
-      if (thicknessPx <= 3) return
-      if (l.sagittaMm) return  // дуга — join со стенами пока не считаем (см. KONSPEKT.md)
-      const dx = l.x2 - l.x1, dy = l.y2 - l.y1
-      if (Math.sqrt(dx * dx + dy * dy) < 1) return
-      walls.push({
-        id: l.id,
-        x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2,
-        halfPx: thicknessPx / 2,
-        createdIndex: idx,
-        category: l.category ?? defaultCategory(l.type),
-      })
-    })
-    return computeWallJoins(walls)
-  }, [lines, scaleMmPx])
+  // ── Wall join: скорректированные точки для стыков (стены + грани колонн,
+  // см. buildWallsForJoin в wallJoin.ts — общая логика для 2D и 3D) ────────
+  const wallJoins = useMemo(
+    () => computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns)),
+    [lines, rectColumns, scaleMmPx],
+  )
 
   // ── Боковое примыкание: к чему упирается каждый конец линии ──────────────
   const lineAttachments = useMemo(() => {
