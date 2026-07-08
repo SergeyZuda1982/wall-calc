@@ -61,7 +61,35 @@
 
 ## В работе (не смержено в main)
 
-(пусто на момент этой записи)
+- fix/background-persist-indexeddb (08.07.2026): реальный фикс на баг
+  "подложка PDF пропадает после перезагрузки страницы" (пользователь
+  пожаловался, что после reload приходится грузить PDF заново). Причина —
+  временный компромисс от 05.07.2026 (см. запись про P0-фикс quota ниже):
+  dataUrl подложки нарочно вырезался перед записью в localStorage, чтобы не
+  переполнять его (~5-10МБ лимит на сайт). Настоящий фикс, запланированный
+  ещё тогда: перенос dataUrl в IndexedDB (лимит на порядки больше, работает
+  офлайн). Новый модуль src/store/bgIndexedDb.ts — тонкая обёртка
+  (idbSetBackground/idbGetBackground/idbDeleteBackground,
+  backgroundStorageKey(projectId, levelId, discipline)), безопасна при
+  отсутствии IndexedDB (SSR/тесты — молча no-op). setBackgroundImage/
+  setMepBackground пишут dataUrl туда при каждом изменении подложки (кроме
+  localStorage, где по-прежнему только лёгкие поля — stripHeavyDataForPersist
+  расширен на mepBackgrounds тоже, раньше не обрезались вовсе, хотя и не
+  должны были писаться полновесными). Новый экшен ensureBackgroundsLoaded()
+  подтягивает dataUrl обратно для активного этажа, если он пуст — вызывается
+  один раз после гидратации стора (onRehydrateStorage) и повторно при
+  selectProject/selectLevel/hydrateProject (переключение объекта/этажа в
+  рамках сессии — на момент гидратации ВСЕ этажи ВСЕХ проектов лишились
+  dataUrl разом, не только активный).
+  Тесты: bgIndexedDb.test.ts (roundtrip запись/чтение/удаление через
+  fake-indexeddb — новая dev-зависимость, реальная IndexedDB в тестовом
+  окружении, не заглушка), useProjectStore.backgroundPersistence.test.ts
+  (прямой тест на репортнутый баг — set → эмуляция перезагрузки →
+  ensureBackgroundsLoaded → dataUrl вернулся), stripHeavyDataForPersist.test.ts
+  расширен на mepBackgrounds. 650/650 тестов зелёные, build чист.
+  ⚠️ Не проверено на живом объекте (реальном iPhone Safari) — стоит
+  попросить пользователя перезагрузить страницу после загрузки подложки и
+  подтвердить, что она осталась.
 
 ---
 
