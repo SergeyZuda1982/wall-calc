@@ -116,6 +116,10 @@ function computeSagittaForNewLine(
 function snapPoint(
   x: number, y: number, lines: PlanLine[], scaleMmPx: number,
   excludeId?: string, threshPx = SNAP_SCREEN_PX,
+  /** Направление новой стены (если уже известно — второй клик при рисовании
+   *  прямой линии, drawing.x1/y1 уже зафиксированы) и её собственная
+   *  полутолщина в px — см. комментарий у extraOffset ниже. */
+  refDir?: { dx: number; dy: number }, newHalfThicknessPx = 0,
 ) {
   let best = { x, y, snapped: false, d: Infinity }
   for (const l of lines) {
@@ -144,11 +148,31 @@ function snapPoint(
       const nx = -uy, ny = ux
       const side = (x - axisX) * nx + (y - axisY) * ny
       const faceSign = side >= 0 ? 1 : -1
-      const faceX = axisX + faceSign * nx * halfThicknessPx
-      const faceY = axisY + faceSign * ny * halfThicknessPx
+
+      // Новая стена идёт ПОЧТИ ПАРАЛЛЕЛЬНО этой линии (±25°) — значит,
+      // скорее всего, её ведут ВПЛОТНУЮ рядом (флэш, две стены бок о бок),
+      // а не упирают её конец в грань T-образно. Без этой поправки снап
+      // тянул точку РОВНО на грань l — а после отрисовки СВОЕЙ толщины
+      // новая стена наполовину "утапливалась" в уже существующую (баг:
+      // невозможно начертить вплотную две параллельные стены одного
+      // материала — притяжение всегда возвращало на грань соседней).
+      // Поправка: сдвигаем целевую точку ещё дальше от l, на половину
+      // толщины именно НОВОЙ (рисуемой) стены — тогда её грань, а не ось,
+      // и коснётся грани l.
+      let extraOffsetPx = 0
+      if (refDir) {
+        const rlen = Math.sqrt(refDir.dx * refDir.dx + refDir.dy * refDir.dy)
+        if (rlen > 1) {
+          const cosAngle = Math.abs((refDir.dx * ux + refDir.dy * uy) / rlen)
+          if (cosAngle >= Math.cos(25 * Math.PI / 180)) extraOffsetPx = newHalfThicknessPx
+        }
+      }
+
+      const faceX = axisX + faceSign * nx * (halfThicknessPx + extraOffsetPx)
+      const faceY = axisY + faceSign * ny * (halfThicknessPx + extraOffsetPx)
 
       const d = dist(x, y, faceX, faceY)
-      const bodyThresh = threshPx + halfThicknessPx
+      const bodyThresh = threshPx + halfThicknessPx + extraOffsetPx
       // Кандидат валиден относительно СВОЕГО порога (учитывает толщину ИМЕННО этой стены),
       // а не относительно best.d, который мог уже сжаться из-за другой, не относящейся линии
       if (d <= bodyThresh && d < best.d) best = { x: faceX, y: faceY, snapped: true, d }
@@ -792,7 +816,17 @@ export default function FloorPlan() {
 
   function applySnap(x: number, y: number, excludeId?: string): { x: number; y: number } {
     const thresh = SNAP_SCREEN_PX / stageScaleRef.current
-    const snapped = snapPoint(x, y, lines, scaleMmPx, excludeId, thresh)
+    // refDir/newHalfThicknessPx — только когда реально рисуем прямую стену
+    // (mode 'draw' и уже поставлена 1-я точка): см. комментарий в snapPoint
+    // про флэш-снап двух параллельных стен.
+    let refDir: { dx: number; dy: number } | undefined
+    let newHalfThicknessPx = 0
+    if (mode === 'draw' && drawing) {
+      refDir = { dx: x - drawing.x1, dy: y - drawing.y1 }
+      const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
+      newHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
+    }
+    const snapped = snapPoint(x, y, lines, scaleMmPx, excludeId, thresh, refDir, newHalfThicknessPx)
     if (orthoMode && drawing && !snapped.snapped) {
       return snapOrtho(drawing.x1, drawing.y1, snapped.x, snapped.y)
     }
@@ -844,7 +878,14 @@ export default function FloorPlan() {
       return
     }
     const snapThresh = SNAP_SCREEN_PX / stageScaleRef.current
-    const snappedInfo = snapPoint(rawX, rawY, lines, scaleMmPx, undefined, snapThresh)
+    let moveRefDir: { dx: number; dy: number } | undefined
+    let moveNewHalfThicknessPx = 0
+    if (mode === 'draw' && drawing) {
+      moveRefDir = { dx: rawX - drawing.x1, dy: rawY - drawing.y1 }
+      const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
+      moveNewHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
+    }
+    const snappedInfo = snapPoint(rawX, rawY, lines, scaleMmPx, undefined, snapThresh, moveRefDir, moveNewHalfThicknessPx)
     // В draw-режиме: дополнительно проверяем снап к началу цепочки (замыкание)
     const snapToChainStart =
       mode === 'draw' && drawing && chainStartPt &&
