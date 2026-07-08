@@ -177,18 +177,28 @@ function RectColumnMesh({ box, opacity = 1 }: { box: RectColumnBox3D; opacity?: 
  * Обведённая карандашом стена/перегородка или колонна произвольной формы
  * (FreeformStructure, см. types/index.ts) → призма three.js. Та же техника
  * extrude, что и у колонны-Room (SlabOrColumn/columnGeo) — контур просто
- * тянется вверх на heightM. kind влияет только на цвет (стена — тот же
- * TYPE_COLOR_3D, что у обычных wall_existing коробов; колонна — COLUMN_COLOR,
- * как у остальных колонн) — геометрически оба вида не различаются.
+ * тянется вверх на heightM, начиная от bottomM (0, если сегмент стоит на
+ * полу). kind влияет только на цвет (стена — тот же TYPE_COLOR_3D, что у
+ * обычных wall_existing коробов; колонна — COLUMN_COLOR, как у остальных
+ * колонн) — геометрически оба вида не различаются.
+ *
+ * Проёмы (07.07.2026) — holes прорезаны в THREE.Shape тем же приёмом, что
+ * и у плиты (HandDrawnSlabMesh выше): один FreeformStructure может дать
+ * НЕСКОЛЬКО таких мешей (по band на разную высоту — planTo3D режет по
+ * границам проёмов), каждый со своим набором активных дырок.
  */
 function FreeformStructureMesh({ prism, opacity = 1 }: { prism: FreeformPrism3D; opacity?: number }) {
   const geo = useMemo(() => {
     if (prism.points.length < 3) return null
     const shape = new THREE.Shape(prism.points.map(p => new THREE.Vector2(p.x, -p.z)))
+    for (const hole of prism.holes) {
+      shape.holes.push(new THREE.Path(hole.map(p => new THREE.Vector2(p.x, -p.z))))
+    }
     const geo = new THREE.ExtrudeGeometry(shape, { depth: prism.heightM, bevelEnabled: false, steps: 1 })
     geo.rotateX(-Math.PI / 2)
+    if (prism.bottomM) geo.translate(0, prism.bottomM, 0)
     return geo
-  }, [prism.points, prism.heightM])
+  }, [prism.points, prism.heightM, prism.bottomM, prism.holes])
   if (!geo) return null
   const color = prism.kind === 'column' ? COLUMN_COLOR : TYPE_COLOR_3D.wall_existing
   return (

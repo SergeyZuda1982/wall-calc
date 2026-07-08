@@ -326,8 +326,12 @@ export interface FreeformPrism3D {
   kind: 'wall' | 'column'
   /** точки контура в метрах, план сверху (x,z) */
   points: { x: number; z: number }[]
-  /** высота призмы, метры — своя (heightMm) либо высота потолка этажа */
+  /** высота ЭТОГО сегмента (band) по вертикали, метры */
   heightM: number
+  /** смещение сегмента по вертикали от пола, метры (0 — сегмент начинается от пола) */
+  bottomM: number
+  /** вырезы (проёмы), активные на всём протяжении этого сегмента — контуры в метрах, план сверху (x,z) */
+  holes: { x: number; z: number }[][]
 }
 
 /**
@@ -338,16 +342,66 @@ export interface FreeformPrism3D {
  * extrude контура на всю высоту; kind нужен Scene3D только для выбора
  * цвета (стена — TYPE_COLOR_3D.wall_existing, колонна — COLUMN_COLOR),
  * геометрически они неразличимы.
+ *
+ * Проёмы (07.07.2026, FreeformOpening) — без булевой геометрии (CSG),
+ * которой в проекте нет: используется тот же приём, что и у Slab (полигон
+ * с дырками, THREE.Shape.holes), но т.к. проёмы могут иметь разную высоту
+ * (sillHeightMm/heightMm), контур режется на вертикальные "band"-сегменты
+ * по границам проёмов (та же идея, что wallToBoxesWithOpenings3D делает
+ * вдоль оси прямой стены, только тут — по высоте, а не по длине): один
+ * FreeformStructure может дать НЕСКОЛЬКО FreeformPrism3D, каждый — свой
+ * диапазон высоты (bottomM..bottomM+heightM), с дырками, которые в этот
+ * диапазон целиком попадают. Проём без heightMm — на всю высоту стены
+ * (сразу один сплошной вырез, без верхнего/нижнего band).
  */
 export function freeformStructuresToPrisms3D(
   structures: FreeformStructure[], scaleMmPx: number, ceilingMm: number,
 ): FreeformPrism3D[] {
-  return structures
-    .filter(fs => fs.outer.length >= 3)
-    .map(fs => ({
-      id: fs.id,
-      kind: fs.kind,
-      points: fs.outer.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
-      heightM: mmToM(fs.heightMm ?? ceilingMm),
-    }))
+  const toM = (pts: { x: number; y: number }[]) => pts.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) }))
+  const EPS = 1e-6
+  const result: FreeformPrism3D[] = []
+
+  for (const fs of structures) {
+    if (fs.outer.length < 3) continue
+    const points = toM(fs.outer)
+    const totalHeightM = mmToM(fs.heightMm ?? ceilingMm)
+
+    const openings = (fs.openings ?? [])
+      .filter(o => o.contour.length >= 3)
+      .map(o => {
+        const sillM = Math.min(Math.max(mmToM(o.sillHeightMm ?? 0), 0), totalHeightM)
+        const heightMm = o.heightMm ?? (fs.heightMm ?? ceilingMm) // не задано — на всю высоту стены
+        const topM = Math.min(totalHeightM, sillM + mmToM(heightMm))
+        return { contourM: toM(o.contour), sillM, topM }
+      })
+      .filter(o => o.topM - o.sillM > EPS)
+
+    if (openings.length === 0) {
+      result.push({ id: fs.id, kind: fs.kind, points, heightM: totalHeightM, bottomM: 0, holes: [] })
+      continue
+    }
+
+    const boundariesSet = new Set<number>([0, totalHeightM])
+    for (const o of openings) { boundariesSet.add(o.sillM); boundariesSet.add(o.topM) }
+    const boundaries = [...boundariesSet].sort((a, b) => a - b)
+
+    for (let i = 0; i < boundaries.length - 1; i++) {
+      const bFrom = boundaries[i], bTo = boundaries[i + 1]
+      const bandH = bTo - bFrom
+      if (bandH <= EPS) continue
+      const activeHoles = openings
+        .filter(o => o.sillM <= bFrom + EPS && o.topM >= bTo - EPS)
+        .map(o => o.contourM)
+      result.push({
+        id: `${fs.id}__band_${i}`,
+        kind: fs.kind,
+        points,
+        heightM: bandH,
+        bottomM: bFrom,
+        holes: activeHoles,
+      })
+    }
+  }
+
+  return result
 }
