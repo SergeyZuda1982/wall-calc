@@ -383,7 +383,7 @@ function pointInPolygon(px: number, py: number, pts: { x: number; y: number }[])
 export default function FloorPlan() {
   const {
     floorPlan, addPlanLine, updatePlanLine, removePlanLine,
-    setFloorPlanScale, clearFloorPlan,
+    setFloorPlanScale, clearFloorPlan, setFloorPlanDefaultHeight, applyHeightToAllConstructions,
     addContour, addRoom, updateRoom, removeRoom, updateContour,
     setBackgroundImage, updateBackgroundImage,
     levels, activeLevelId, addLevel, duplicateLevel, removeLevel, renameLevel, setLevelElevation, selectLevel,
@@ -427,6 +427,14 @@ export default function FloorPlan() {
   const [drawType, setDrawType]         = useState<PlanLineType>('wall_new')
   const [drawSpec, setDrawSpec]         = useState<PlanLineSpec | null>(null)
   const [drawHeightMm, setDrawHeightMm] = useState('3000')
+  // Держим поле высоты для НОВОЙ стены синхронным с высотой потолка этажа
+  // (см. постоянно видимый контрол 🏠 в шапке) — иначе после смены этажа
+  // или правки высоты через тот контрол здесь осталось бы старое значение.
+  // Пользователь по-прежнему может вручную поменять именно для следующей
+  // стены (например, ригель под балкой ниже) — это не трогает.
+  useEffect(() => {
+    if (floorPlan?.defaultHeightMm) setDrawHeightMm(String(floorPlan.defaultHeightMm))
+  }, [floorPlan?.defaultHeightMm, activeLevelId])
   const [drawSagittaMm, setDrawSagittaMm] = useState('0')  // стрела дуги для новых линий, 0 = прямая
   const [drawArcMode, setDrawArcMode] = useState<'sagitta' | 'radius'>('sagitta')  // способ задания дуги при рисовании
   const [drawRadiusMm, setDrawRadiusMm] = useState('')      // радиус R — альтернатива стреле H (нужен известный R на разных пролётах)
@@ -2026,6 +2034,35 @@ export default function FloorPlan() {
         </div>
 
         <div style={{ flex: 1 }} />
+
+        {/* Высота потолка этажа (08.07.2026) — постоянно видимый контрол,
+            вместо поля на панели рисования, которое раньше терялось внизу
+            экрана (см. бэклог идей пользователя). Клик — новое значение;
+            "ОК" на следующем подтверждении пересчитывает ВСЕ уже нарисованные
+            стены/обводки этого этажа на новую высоту (реальный сценарий:
+            начертили при одной высоте, на объекте выяснилось — другая),
+            "Отмена" — новое значение действует только для будущих стен. */}
+        <button
+          onClick={() => {
+            const input = window.prompt('Высота потолка этажа, мм', String(floorPlan?.defaultHeightMm ?? 3000))
+            if (input === null) return
+            const v = parseFloat(input)
+            if (!v || v <= 0) return
+            const linesCount = lines.length + freeformStructures.length
+            if (linesCount > 0 && window.confirm(
+              `Пересчитать высоту у ВСЕХ уже нарисованных конструкций этого этажа (${linesCount} шт.) на ${v} мм?\n\n` +
+              `ОК — пересчитать все сразу.\nОтмена — новая высота будет применяться только к новым стенам, старые останутся как есть.`
+            )) {
+              applyHeightToAllConstructions(v)
+            } else {
+              setFloorPlanDefaultHeight(v)
+            }
+          }}
+          title="Высота потолка этажа — клик, чтобы изменить (можно сразу пересчитать все существующие стены)"
+          style={{ ...toolBtnStyle(false), padding: isMobile ? '6px 10px' : '5px 10px', fontSize: isMobile ? 12 : 12 }}>
+          🏠 {floorPlan?.defaultHeightMm ?? 3000} мм
+        </button>
+
         {!isMobile && (
           <span style={{ fontSize: 12, color: '#888' }}>
             Масштаб: {scaleMmPx >= 10 ? `${Math.round(scaleMmPx)}мм/рх` : `${scaleMmPx.toFixed(1)}мм/рх`}

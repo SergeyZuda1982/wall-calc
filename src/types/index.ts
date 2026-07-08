@@ -817,6 +817,20 @@ export interface FloorPlan {
   backgroundImage?: BackgroundImage | null
   mepRoutes: MepRoute[]
   mepBackgrounds: MepBackgrounds
+  /**
+   * Высота потолка этажа, мм (08.07.2026). Раньше нигде явно не хранилась —
+   * каждая новая стена получала heightMm = значению поля ввода на панели
+   * рисования в момент клика (по умолчанию 3000), а сама панель после
+   * перезагрузки/прокрутки экрана легко теряется из виду ("отметка
+   * изменить высоту потолка ... сейчас теряется внизу, про неё не
+   * вспоминаешь" — из бэклога идей пользователя). Это поле — единый,
+   * постоянно видимый источник правды для "какой высоты этот этаж", плюс
+   * основа для массового пересчёта уже нарисованного (см.
+   * applyHeightToAllConstructions в useProjectStore.ts) — реальный сценарий:
+   * начертили при одной высоте, на объекте выяснилось, что фактическая
+   * другая, нужно поправить разом, а не по одной стене.
+   */
+  defaultHeightMm: number
 }
 
 export const DEFAULT_FLOOR_PLAN: FloorPlan = {
@@ -831,6 +845,7 @@ export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   backgroundImage: null,
   mepRoutes: [],
   mepBackgrounds: {},
+  defaultHeightMm: 3000,
 }
 
 /**
