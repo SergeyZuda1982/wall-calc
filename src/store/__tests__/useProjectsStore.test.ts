@@ -43,7 +43,7 @@ describe('useProjectsStore — облачный объект всегда пол
     insertMock.mockReturnValue({ select: () => ({ single: singleMock }) })
   })
 
-  it('createProject вставляет levels_data с одним стартовым этажом', async () => {
+  it('createProject вставляет levels_data с одним стартовым этажом и создаёт owner-запись в project_members', async () => {
     getUserMock.mockResolvedValue({ data: { user: { id: 'u1' } } })
     singleMock.mockResolvedValue({
       data: { id: 'p1', user_id: 'u1', name: 'Объект', created_at: 't', updated_at: 't', levels_data: null, profile_templates: null },
@@ -53,10 +53,13 @@ describe('useProjectsStore — облачный объект всегда пол
     const { useProjectsStore } = await import('../useProjectsStore')
     await useProjectsStore.getState().createProject('Объект')
 
-    expect(insertMock).toHaveBeenCalledTimes(1)
+    expect(insertMock).toHaveBeenCalledTimes(2)
     const insertArg = insertMock.mock.calls[0][0] as { levels_data: { id: string; name: string }[] }
     expect(insertArg.levels_data).toHaveLength(1)
     expect(insertArg.levels_data[0].name).toBe('Этаж 1')
+
+    const memberInsertArg = insertMock.mock.calls[1][0] as { project_id: string; user_id: string; role: string; status: string }
+    expect(memberInsertArg).toEqual({ project_id: 'p1', user_id: 'u1', role: 'owner', status: 'active' })
   })
 
   it('loadActiveProjectEntry синтезирует этаж для уже сломанного (созданного до фикса) объекта с 0 этажей', async () => {

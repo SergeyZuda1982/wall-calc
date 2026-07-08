@@ -74,6 +74,14 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
       console.error('createProject error:', error)
       return null
     }
+    // Новый объект сразу получает создателя как владельца в project_members
+    // (см. KONSPEKT «роли...» 07.07.2026, раздел 4а) — без этой записи у
+    // объекта вообще нет ни одного участника, панель «Участники» будет
+    // пустой и никто не сможет пригласить остальных.
+    const { error: memberError } = await supabase
+      .from('project_members')
+      .insert({ project_id: (data as DbProject).id, user_id: user.id, role: 'owner', status: 'active' })
+    if (memberError) console.error('createProject: не удалось создать owner-запись в project_members:', memberError)
     set(s => ({ projects: [data as DbProject, ...s.projects] }))
     return data as DbProject
   },
