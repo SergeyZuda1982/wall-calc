@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, RoundColumn, RectColumn, FreeformStructure, FreeformOpening } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 import { duplicateFloorPlanGeometry } from '../core/duplicateFloorPlan'
+import { idbSetBackground, idbGetBackground, idbDeleteBackground, backgroundStorageKey } from './bgIndexedDb'
 
 const PROFILE_LETTER: Record<string, string> = {
   ps50: 'А', ps75: 'В', ps100: 'С',
@@ -138,6 +139,12 @@ export interface ProjectStore {
   removeMepRoute: (id: string) => void
   setMepBackground: (discipline: import('../types').MepDiscipline, img: import('../types').BackgroundImage | null) => void
   updateMepBackground: (discipline: import('../types').MepDiscipline, patch: Partial<import('../types').BackgroundImage>) => void
+  // 08.07.2026: подтягивает dataUrl подложек (архитектура + вентиляция +
+  // электрика) активного этажа из IndexedDB, если они пустые (например,
+  // сразу после перезагрузки страницы — см. bgIndexedDb.ts). Вызывается
+  // один раз при гидратации стора и повторно из FloorPlan.tsx при смене
+  // активного этажа/объекта в рамках одной сессии.
+  ensureBackgroundsLoaded: () => Promise<void>
 
   // пользовательские шаблоны этапов работ (объектные — свои на каждый проект)
   customWorkStageTemplates: import('../types').WorkStageTemplate[]
@@ -250,12 +257,26 @@ export function stripHeavyDataForPersist(projects: ProjectEntry[]): ProjectEntry
   return projects.map(p => ({
     ...p,
     levels: p.levels.map(lv => {
-      if (!lv.floorPlan.backgroundImage) return lv
+      const hasArchBg = !!lv.floorPlan.backgroundImage
+      const mepBg = lv.floorPlan.mepBackgrounds
+      const hasMepBg = mepBg && (mepBg.ventilation || mepBg.electrical)
+      if (!hasArchBg && !hasMepBg) return lv
       // dataUrl вырезаем, остальные поля (x/y/width/height/opacity/locked)
-      // оставляем — они лёгкие, пригодятся, чтобы не терять калибровку
-      // геометрии, если подложку потом перезагрузят по новой.
-      const { dataUrl: _dataUrl, ...rest } = lv.floorPlan.backgroundImage
-      return { ...lv, floorPlan: { ...lv.floorPlan, backgroundImage: { ...rest, dataUrl: '' } } }
+      // оставляем — они лёгкие, пригодятся для повторного позиционирования,
+      // пока подложка подгружается обратно из IndexedDB (см. bgIndexedDb.ts,
+      // ensureBackgroundsLoaded) — сама картинка теперь живёт именно там,
+      // а не в localStorage, ни у архитектурной подложки, ни у инженерных
+      // слоёв (вентиляция/электрика, добавлены 08.07.2026).
+      const backgroundImage = lv.floorPlan.backgroundImage
+        ? { ...lv.floorPlan.backgroundImage, dataUrl: '' }
+        : lv.floorPlan.backgroundImage
+      const mepBackgrounds = hasMepBg
+        ? {
+            ventilation: mepBg!.ventilation ? { ...mepBg!.ventilation, dataUrl: '' } : mepBg!.ventilation,
+            electrical: mepBg!.electrical ? { ...mepBg!.electrical, dataUrl: '' } : mepBg!.electrical,
+          }
+        : mepBg
+      return { ...lv, floorPlan: { ...lv.floorPlan, backgroundImage, mepBackgrounds } }
     }),
   }))
 }
@@ -326,7 +347,7 @@ export const safeLocalStorage = {
 
 export const useProjectStore = create<ProjectStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       projects: [],
       activeProjectId: null,
       projectName: '',
@@ -377,6 +398,7 @@ export const useProjectStore = create<ProjectStore>()(
           activeWallId: null,
           activeLiningId: null,
         }))
+        get().ensureBackgroundsLoaded()
       },
 
       // Подставляет объект, загруженный из облака (см. useProjectsStore →
@@ -400,6 +422,7 @@ export const useProjectStore = create<ProjectStore>()(
             activeLiningId: null,
           }
         })
+        get().ensureBackgroundsLoaded()
       },
 
       // ─── Название объекта ────────────────────────────────────────────────
@@ -621,6 +644,7 @@ export const useProjectStore = create<ProjectStore>()(
           )
           return { projects, ...syncActive(projects, s.activeProjectId) }
         })
+        get().ensureBackgroundsLoaded()
       },
 
       // ─── План объекта (пишет в план активного этажа) ──────────────────────
@@ -630,7 +654,17 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       setBackgroundImage: (img) => {
+        const { activeProjectId, activeLevelId } = get()
         set(s => updateActiveFloorPlan(s, fp => ({ ...fp, backgroundImage: img })))
+        // 08.07.2026: сама картинка (dataUrl) уходит в IndexedDB — переживает
+        // перезагрузку страницы (в отличие от localStorage, куда dataUrl
+        // нарочно не пишется, см. stripHeavyDataForPersist). Restore — см.
+        // ensureBackgroundsLoaded.
+        if (activeProjectId && activeLevelId) {
+          const key = backgroundStorageKey(activeProjectId, activeLevelId, 'architecture')
+          if (img?.dataUrl) idbSetBackground(key, img.dataUrl)
+          else idbDeleteBackground(key)
+        }
       },
 
       updateBackgroundImage: (patch) => {
@@ -870,10 +904,19 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       setMepBackground: (discipline, img) => {
+        const { activeProjectId, activeLevelId } = get()
         set(s => updateActiveFloorPlan(s, fp => ({
           ...fp,
           mepBackgrounds: { ...(fp.mepBackgrounds ?? {}), [discipline]: img ?? undefined },
         })))
+        // 08.07.2026: как и у архитектурной подложки — dataUrl в IndexedDB,
+        // не в localStorage (см. setBackgroundImage выше и
+        // ensureBackgroundsLoaded для восстановления после перезагрузки).
+        if (activeProjectId && activeLevelId) {
+          const key = backgroundStorageKey(activeProjectId, activeLevelId, discipline)
+          if (img?.dataUrl) idbSetBackground(key, img.dataUrl)
+          else idbDeleteBackground(key)
+        }
       },
 
       updateMepBackground: (discipline, patch) => {
@@ -884,6 +927,58 @@ export const useProjectStore = create<ProjectStore>()(
             ...fp,
             mepBackgrounds: { ...(fp.mepBackgrounds ?? {}), [discipline]: { ...cur, ...patch } },
           }))
+        })
+      },
+
+      ensureBackgroundsLoaded: async () => {
+        const s = get()
+        const pid = s.activeProjectId
+        const lid = s.activeLevelId
+        if (!pid || !lid) return
+        const fp = s.floorPlan
+        // Собираем только то, чего реально не хватает (dataUrl пустой, но
+        // сама запись подложки есть) — не дёргаем IndexedDB без нужды.
+        const need: Array<'architecture' | import('../types').MepDiscipline> = []
+        if (fp?.backgroundImage && !fp.backgroundImage.dataUrl) need.push('architecture')
+        if (fp?.mepBackgrounds?.ventilation && !fp.mepBackgrounds.ventilation.dataUrl) need.push('ventilation')
+        if (fp?.mepBackgrounds?.electrical && !fp.mepBackgrounds.electrical.dataUrl) need.push('electrical')
+        if (need.length === 0) return
+
+        const results = await Promise.all(
+          need.map(async d => [d, await idbGetBackground(backgroundStorageKey(pid, lid, d))] as const)
+        )
+        if (results.every(([, dataUrl]) => !dataUrl)) return
+
+        // Активный этаж/проект мог смениться, пока ждали IndexedDB —
+        // применяем именно к (pid, lid), а не "к активному сейчас".
+        set(s2 => {
+          const projects = s2.projects.map(p => {
+            if (p.id !== pid) return p
+            return {
+              ...p,
+              levels: p.levels.map(lv => {
+                if (lv.id !== lid) return lv
+                let floorPlan = lv.floorPlan
+                for (const [d, dataUrl] of results) {
+                  if (!dataUrl) continue
+                  if (d === 'architecture' && floorPlan.backgroundImage) {
+                    floorPlan = { ...floorPlan, backgroundImage: { ...floorPlan.backgroundImage, dataUrl } }
+                  } else if (d !== 'architecture' && floorPlan.mepBackgrounds?.[d]) {
+                    floorPlan = { ...floorPlan, mepBackgrounds: { ...floorPlan.mepBackgrounds, [d]: { ...floorPlan.mepBackgrounds[d]!, dataUrl } } }
+                  }
+                }
+                return { ...lv, floorPlan }
+              }),
+            }
+          })
+          // Если это всё ещё активный этаж — обновляем и плоское зеркало
+          // floorPlan (то, что реально читает FloorPlan.tsx).
+          if (s2.activeProjectId === pid && s2.activeLevelId === lid) {
+            const activeProject = projects.find(p => p.id === pid)
+            const activeLevel = activeProject?.levels.find(lv => lv.id === lid)
+            if (activeLevel) return { projects, floorPlan: activeLevel.floorPlan }
+          }
+          return { projects }
         })
       },
     }),
@@ -960,6 +1055,15 @@ export const useProjectStore = create<ProjectStore>()(
 
           const synced = syncActive(state.projects, state.activeProjectId)
           Object.assign(state, synced)
+
+          // 08.07.2026: после гидратации dataUrl подложек пуст (см.
+          // stripHeavyDataForPersist) — подтягиваем его обратно из
+          // IndexedDB для активного этажа. Асинхронно, не блокирует
+          // отрисовку — план сначала откроется без подложки на долю
+          // секунды, потом она появится сама. useProjectStore на этот
+          // момент уже присвоен (та же гарантия порядка, на которой уже
+          // держится storeSetStateRef/storeGetStateRef чуть выше).
+          setTimeout(() => { useProjectStore.getState().ensureBackgroundsLoaded() }, 0)
         }
       },
     }
