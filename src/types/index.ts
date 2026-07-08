@@ -401,6 +401,20 @@ export interface PlanLineSpec {
    * constructionTaxonomy.ts, getDoubleFrameThicknessMm).
    */
   gapMm?: number
+  /**
+   * Слои обшивки двойного каркаса (С115.1/.2/.3, С116) — только когда subtype
+   * распознаётся parseDoubleFrameSubtype (constructionTaxonomy.ts) как
+   * 'c115_1_ps50' и т.п. Обычные layer1/layer2 в этом случае НЕ используются
+   * (там хранится общая обшивка одинарного каркаса, для двойного её нет —
+   * у каждого из двух независимых рядов стоек своя обшивка).
+   * A — первый ряд (всегда 2 слоя у всех подтипов). Б — второй ряд
+   * (2 слоя у С115.1/.2/С116, 3 слоя — layerB3 — только у С115.3).
+   */
+  layerA1?: BoardSpec
+  layerA2?: BoardSpec
+  layerB1?: BoardSpec
+  layerB2?: BoardSpec
+  layerB3?: BoardSpec  // только С115.3
 }
 
 /** Одна линия на плане */
@@ -532,6 +546,7 @@ export interface StepProgress {
   rejectReason?: StepRejectReason
   rejectNote?: string       // текст своей причины, если rejectReason === 'other'
   confirmedAt?: string      // ISO-дата, для истории/отчёта
+  userId?: string           // кто подтвердил/отклонил шаг — заполняется автоматически из текущего пользователя
 }
 
 /**

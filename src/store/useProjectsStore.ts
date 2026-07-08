@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase'
 import type { DbProject } from '../lib/supabase'
 import type { ProjectEntry } from './useProjectStore'
 import { fetchProjectContent, migrateLocalProjectsToCloud } from '../lib/projectCloud'
+import { emptyLevel } from '../types'
 
 interface ProjectsStore {
   projects: DbProject[]
@@ -51,15 +52,36 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return null
 
+    // ⚠️ БАГФИКС 07.07.2026: раньше insert не задавал levels_data вообще —
+    // новый облачный объект рождался с нулём этажей (levels_data=null →
+    // fetchProjectContent даёт levels:[] → activeLevelId нигде не находится
+    // → state.activeLevelId=null, state.levels=[]). Симптомы на практике:
+    // на 2D-плане рисовать МОЖНО (state.floorPlan — отдельное зеркало,
+    // не привязанное к конкретному Level, обновляется всегда), но 3D
+    // (Scene3D читает именно state.levels) оставался пустым, а кнопки
+    // «дублировать/удалить/переименовать/отметка» у панели этажей (все
+    // они завязаны на activeLevelId) переставали отображаться — оставалась
+    // только «+ этаж». Локальные объекты (emptyProject() в useProjectStore)
+    // такой проблемы не имели — у них всегда есть один стартовый Level.
+    // Теперь облачный объект создаётся по той же схеме.
+    const level = emptyLevel('Этаж 1', 0)
     const { data, error } = await supabase
       .from('projects')
-      .insert({ name, user_id: user.id })
+      .insert({ name, user_id: user.id, levels_data: [level] })
       .select()
       .single()
     if (error || !data) {
       console.error('createProject error:', error)
       return null
     }
+    // Новый объект сразу получает создателя как владельца в project_members
+    // (см. KONSPEKT «роли...» 07.07.2026, раздел 4а) — без этой записи у
+    // объекта вообще нет ни одного участника, панель «Участники» будет
+    // пустой и никто не сможет пригласить остальных.
+    const { error: memberError } = await supabase
+      .from('project_members')
+      .insert({ project_id: (data as DbProject).id, user_id: user.id, role: 'owner', status: 'active' })
+    if (memberError) console.error('createProject: не удалось создать owner-запись в project_members:', memberError)
     set(s => ({ projects: [data as DbProject, ...s.projects] }))
     return data as DbProject
   },
@@ -83,14 +105,21 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
     const row = get().projects.find(p => p.id === id)
     if (!row) return null
     const content = await fetchProjectContent(id)
+    // ⚠️ Защита для объектов, СОЗДАННЫХ ДО фикса createProject выше (07.07.2026)
+    // — у них в БД levels_data мог остаться null/[] (ноль этажей). Не
+    // роняем объект молча пустым 3D/панелью — синтезируем один стартовый
+    // этаж прямо здесь, как и для локальных проектов. Дальше он сам уедет
+    // в облако на первой же дебаунс-синхронизации (useSupabaseSync следит
+    // за state.levels), заново создавать объект не нужно.
+    const levels = content.levels.length > 0 ? content.levels : [emptyLevel('Этаж 1', 0)]
     return {
       id: row.id,
       name: row.name,
       walls: content.walls,
       linings: content.linings,
       profileTemplates: content.profileTemplates,
-      levels: content.levels,
-      activeLevelId: content.levels[0]?.id ?? '',
+      levels,
+      activeLevelId: levels[0].id,
       createdAt: row.created_at,
     }
   },

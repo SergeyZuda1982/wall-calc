@@ -91,6 +91,11 @@ export async function migrateLocalProjectsToCloud(
 
     const newProjectId = (projectRow as DbProject).id
 
+    const { error: memberError } = await supabase
+      .from('project_members')
+      .insert({ project_id: newProjectId, user_id: userId, role: 'owner', status: 'active' })
+    if (memberError) errors.push(`Объект "${p.name}": не удалось создать владельца в project_members (${memberError.message})`)
+
     if (p.walls.length > 0) {
       const { error } = await supabase.from('walls').insert(p.walls.map(w => ({
         id: w.id, project_id: newProjectId, label: w.label, input: w.input, result: w.result, positions: w.positions,

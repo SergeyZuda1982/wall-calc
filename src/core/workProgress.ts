@@ -96,21 +96,21 @@ export function isBlocked(progress: WorkProgress): boolean {
  * Подтверждает шаг по индексу (ставит зелёную галочку). confirmedAt — ISO-дата
  * (по умолчанию "сейчас"), передаётся явно ради тестируемости.
  */
-export function confirmStep(progress: WorkProgress, stepIndex: number, confirmedAt: string = new Date().toISOString()): WorkProgress {
+export function confirmStep(progress: WorkProgress, stepIndex: number, confirmedAt: string = new Date().toISOString(), userId?: string): WorkProgress {
   return {
     ...progress,
     steps: progress.steps.map((s, i) =>
-      i === stepIndex ? { ...s, outcome: 'confirmed', rejectReason: undefined, rejectNote: undefined, confirmedAt } : s
+      i === stepIndex ? { ...s, outcome: 'confirmed', rejectReason: undefined, rejectNote: undefined, confirmedAt, userId } : s
     ),
   }
 }
 
 /** Отклоняет шаг по индексу (крестик) — обязательна причина */
-export function rejectStep(progress: WorkProgress, stepIndex: number, reason: StepRejectReason, note?: string): WorkProgress {
+export function rejectStep(progress: WorkProgress, stepIndex: number, reason: StepRejectReason, note?: string, userId?: string): WorkProgress {
   return {
     ...progress,
     steps: progress.steps.map((s, i) =>
-      i === stepIndex ? { ...s, outcome: 'rejected', rejectReason: reason, rejectNote: reason === 'other' ? note : undefined, confirmedAt: undefined } : s
+      i === stepIndex ? { ...s, outcome: 'rejected', rejectReason: reason, rejectNote: reason === 'other' ? note : undefined, confirmedAt: undefined, userId } : s
     ),
   }
 }
