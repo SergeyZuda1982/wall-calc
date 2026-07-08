@@ -78,6 +78,7 @@ export const TAXONOMY: Record<PlanLineType, TaxNode[]> = {
       value: 'gasblock', label: 'Газоблок / Газобетон', abbr: 'ГАЗ',
       children: [
         { value: '100', label: '100мм', abbr: '100' },
+        { value: '125', label: '125мм', abbr: '125' },
         { value: '150', label: '150мм', abbr: '150' },
         { value: '200', label: '200мм', abbr: '200' },
         { value: '250', label: '250мм', abbr: '250' },
@@ -88,6 +89,7 @@ export const TAXONOMY: Record<PlanLineType, TaxNode[]> = {
       value: 'foamblock', label: 'Пеноблок', abbr: 'ПЕН',
       children: [
         { value: '100', label: '100мм', abbr: '100' },
+        { value: '125', label: '125мм', abbr: '125' },
         { value: '150', label: '150мм', abbr: '150' },
         { value: '200', label: '200мм', abbr: '200' },
       ],
@@ -142,6 +144,7 @@ export const TAXONOMY: Record<PlanLineType, TaxNode[]> = {
       value: 'block', label: 'Блок / Газобетон', abbr: 'БЛК',
       children: [
         { value: '100', label: '100мм', abbr: '100' },
+        { value: '125', label: '125мм', abbr: '125' },
         { value: '150', label: '150мм', abbr: '150' },
         { value: '200', label: '200мм', abbr: '200' },
         { value: '250', label: '250мм', abbr: '250' },
