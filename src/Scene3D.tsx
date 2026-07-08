@@ -226,7 +226,7 @@ function LevelGroup({ floorPlan, offsetY, dimmed }: { floorPlan: FloorPlan; offs
   const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
   const opacity = dimmed ? 0.35 : 1
 
-  const boxes = useMemo(() => wallsToBoxes3D(lines, scaleMmPx), [lines, scaleMmPx])
+  const boxes = useMemo(() => wallsToBoxes3D(lines, scaleMmPx, rectColumns), [lines, scaleMmPx, rectColumns])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
   const slabPolygons = useMemo(() => slabsToPolygons3D(slabs, scaleMmPx), [slabs, scaleMmPx])
   const ceilingMm = useMemo(() => estimateCeilingMm(lines), [lines])
@@ -262,7 +262,7 @@ function levelHasGeometry(floorPlan: FloorPlan): boolean {
   const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
   const ceilingMm = estimateCeilingMm(lines)
   return (
-    wallsToBoxes3D(lines, scaleMmPx).length > 0 ||
+    wallsToBoxes3D(lines, scaleMmPx, floorPlan.rectColumns ?? []).length > 0 ||
     roomsToPolygons3D(floorPlan.rooms ?? [], lines, scaleMmPx).length > 0 ||
     slabsToPolygons3D(floorPlan.slabs ?? [], scaleMmPx).length > 0 ||
     roundColumnsToCylinders3D(floorPlan.roundColumns ?? [], scaleMmPx, ceilingMm).length > 0 ||

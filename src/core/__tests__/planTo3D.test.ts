@@ -525,3 +525,129 @@ describe('freeformStructuresToPrisms3D', () => {
     expect(prisms[0].holes).toEqual([])
   })
 })
+
+describe('wallToBox3D — axisOverride (расширенная ось стыка, см. wallJoin.ts)', () => {
+  it('без axisOverride — как раньше, футпринт по сырым x1/y1/x2/y2', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 100, y2: 0, spec: { material: 'brick', subtype: '200' } })
+    const box = wallToBox3D(line, 10, 3000)
+    expect(box!.size.sx).toBeCloseTo(1) // 100px*10мм = 1м
+    expect(box!.center.x).toBeCloseTo(0.5)
+  })
+
+  it('с axisOverride — футпринт по расширенной оси, а не по сырой линии', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 100, y2: 0, spec: { material: 'brick', subtype: '200' } })
+    // Расширенная ось длиннее исходной на 20px с обеих сторон (имитация T-стыка)
+    const box = wallToBox3D(line, 10, 3000, { x1: -20, y1: 0, x2: 120, y2: 0 })
+    expect(box!.size.sx).toBeCloseTo(1.4) // 140px*10мм = 1.4м
+    expect(box!.center.x).toBeCloseTo(0.5) // центр той же прямой, симметрично
+  })
+
+  it('axisOverride с другим направлением всё равно даёт корректный rotationY', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 100, y2: 0, spec: { material: 'brick', subtype: '200' } })
+    const box = wallToBox3D(line, 10, 3000, { x1: 0, y1: 0, x2: 0, y2: 100 })
+    expect(box!.rotationY).toBeCloseTo(-Math.PI / 2)
+  })
+})
+
+describe('wallToBoxesWithOpenings3D — axisOverride не сдвигает проёмы (см. КОНСПЕКТ 08.07.2026)', () => {
+  it('без axisOverride — проём на своём месте (регрессия)', () => {
+    const line = baseLine({
+      x1: 0, y1: 0, x2: 200, y2: 0, // 200px*10мм = 2000мм = 2м
+      spec: { material: 'brick', subtype: '200' },
+      openings: [{ id: 'o1', type: 'door', offsetMm: 500, widthMm: 900, heightMm: 2000, label: 'Д-1' }],
+    })
+    const boxes = wallToBoxesWithOpenings3D(line, 10, 3000)
+    const seg = boxes.find(b => b.id === 'l1__seg_o1')!
+    expect(seg.size.sx).toBeCloseTo(0.5) // от начала стены (0) до начала проёма (500мм=0.5м)
+  })
+
+  it('с axisOverride (расширение "назад" на T-стыке) — проём НЕ уезжает, остаётся на том же месте в мире', () => {
+    const line = baseLine({
+      x1: 0, y1: 0, x2: 200, y2: 0,
+      spec: { material: 'brick', subtype: '200' },
+      openings: [{ id: 'o1', type: 'door', offsetMm: 500, widthMm: 900, heightMm: 2000, label: 'Д-1' }],
+    })
+    // Ось расширена на 30px "назад" (T-стык с колонной/соседней стеной у начала)
+    const boxesExt = wallToBoxesWithOpenings3D(line, 10, 3000, { x1: -30, y1: 0, x2: 200, y2: 0 })
+    const boxesNoExt = wallToBoxesWithOpenings3D(line, 10, 3000)
+
+    const segExt = boxesExt.find(b => b.id === 'l1__seg_o1')!
+    const segNoExt = boxesNoExt.find(b => b.id === 'l1__seg_o1')!
+    // Начало проёма в МИРОВЫХ координатах должно совпадать в обоих случаях —
+    // расширение оси не должно "утащить" проём вместе с собой.
+    // seg — от старта футпринта до начала проёма; при расширении "назад" seg
+    // длиннее ровно на величину расширения (30px=0.3м), но правый край (где
+    // начинается проём) — тот же самый мировой X.
+    const segExtRightEdgeX = segExt.center.x + segExt.size.sx / 2
+    const segNoExtRightEdgeX = segNoExt.center.x + segNoExt.size.sx / 2
+    expect(segExtRightEdgeX).toBeCloseTo(segNoExtRightEdgeX, 5)
+    expect(segExt.size.sx).toBeCloseTo(segNoExt.size.sx + 0.3)
+  })
+
+  it('расширение вперёд (у конца стены) аналогично не сдвигает проём', () => {
+    const line = baseLine({
+      x1: 0, y1: 0, x2: 200, y2: 0,
+      spec: { material: 'brick', subtype: '200' },
+      openings: [{ id: 'o1', type: 'door', offsetMm: 500, widthMm: 900, heightMm: 2000, label: 'Д-1' }],
+    })
+    const boxesExt = wallToBoxesWithOpenings3D(line, 10, 3000, { x1: 0, y1: 0, x2: 230, y2: 0 })
+    const boxesNoExt = wallToBoxesWithOpenings3D(line, 10, 3000)
+    const tailExt = boxesExt.find(b => b.id === 'l1__tail')!
+    const tailNoExt = boxesNoExt.find(b => b.id === 'l1__tail')!
+    // 'tail' (хвост после проёма) должен начинаться в той же мировой точке,
+    // просто быть длиннее на величину расширения конца стены
+    const tailExtLeftEdgeX = tailExt.center.x - tailExt.size.sx / 2
+    const tailNoExtLeftEdgeX = tailNoExt.center.x - tailNoExt.size.sx / 2
+    expect(tailExtLeftEdgeX).toBeCloseTo(tailNoExtLeftEdgeX, 5)
+    expect(tailExt.size.sx).toBeCloseTo(tailNoExt.size.sx + 0.3)
+  })
+})
+
+describe('wallsToBoxes3D — интеграция с колоннами (T-стык под любым углом, см. КОНСПЕКТ 08.07.2026)', () => {
+  it('стена, упирающаяся в грань колонны под прямым углом — футпринт доходит ровно до грани (cap подавлен, ось расширена)', () => {
+    // Колонна 300×300мм с центром в (0,0) px-координат при scaleMmPx=10 —
+    // т.е. полуразмер 15px, грани на x=±15 и y=±15.
+    const col: RectColumn = { id: 'col1', cx: 0, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'Колонна 1' }
+    // Правая грань колонны — вертикальный отрезок x=15 (halfWidth=15px). Стена
+    // должна идти ПЕРПЕНДИКУЛЯРНО этой грани — горизонтально, наружу (+X) от (15,0).
+    const line = baseLine({
+      id: 'w1', x1: 15, y1: 0, x2: 215, y2: 0,
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10, [col])
+    expect(boxes).toHaveLength(1)
+    // Длина должна остаться близкой к исходной (2000мм=2м) — T-стык лишь
+    // слегка "дотягивает" до грани, не создаёт значительного нахлёста
+    expect(boxes[0].size.sx).toBeGreaterThanOrEqual(2)
+    expect(boxes[0].size.sx).toBeLessThan(2.05)
+  })
+
+  it('без колонны в списке — то же самое место всё равно строится (просто без обрезки/удлинения)', () => {
+    const line = baseLine({
+      id: 'w1', x1: 15, y1: 0, x2: 215, y2: 0,
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10) // rectColumns не передан вообще (дефолт [])
+    expect(boxes).toHaveLength(1)
+    expect(boxes[0].size.sx).toBeCloseTo(2)
+  })
+
+  it('стена подходит к грани колонны под ОСТРЫМ углом (5°, кейс со скриншота пользователя) — не падает, не даёт NaN/бесконечность', () => {
+    const col: RectColumn = { id: 'col1', cx: 0, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'Колонна 1' }
+    const angle = 5 * Math.PI / 180
+    const len = 1200 // px
+    const line = baseLine({
+      id: 'w1', x1: 15, y1: 0,
+      x2: 15 + len * Math.cos(angle), y2: len * Math.sin(angle),
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10, [col])
+    expect(boxes).toHaveLength(1)
+    expect(Number.isFinite(boxes[0].size.sx)).toBe(true)
+    expect(Number.isFinite(boxes[0].center.x)).toBe(true)
+    expect(Number.isFinite(boxes[0].rotationY)).toBe(true)
+    // Длина не должна улетать в аномально большие значения (защита от
+    // самопересекающегося отката на почти касательном угле — см. wallJoin.ts)
+    expect(boxes[0].size.sx).toBeLessThan(20) // заведомо намного больше 1.2м исходной длины стены
+  })
+})
