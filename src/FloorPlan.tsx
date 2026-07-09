@@ -130,7 +130,13 @@ function polygonAreaM2(points: { x: number; y: number }[], scaleMmPx: number): n
 }
 
 interface WallAxisSegment { ax1: number; ay1: number; ax2: number; ay2: number; capStart: boolean; capEnd: boolean }
-interface OpeningRenderInfo { x: number; y: number; opening: PlanOpening }
+interface OpeningRenderInfo {
+  x: number; y: number; opening: PlanOpening
+  // Точные границы выреза вдоль оси стены (px, канвас) — нужны, чтобы
+  // нарисовать рамку точно по вырезу и hit-зону для перетаскивания
+  // (08.07.2026, фикс на "не понимаю, где границы вырезаемого участка").
+  sx: number; sy: number; ex: number; ey: number
+}
 
 /**
  * Разбивает ось стены на сплошные сегменты, исключая проёмы (двери/окна).
@@ -162,7 +168,7 @@ function computeOpeningSegments(
     const gapEndX   = origX1 + ux * endPx,   gapEndY   = origY1 + uy * endPx
 
     segments.push({ ax1: curX, ay1: curY, ax2: gapStartX, ay2: gapStartY, capStart: curCap, capEnd: true })
-    gaps.push({ x: (gapStartX + gapEndX) / 2, y: (gapStartY + gapEndY) / 2, opening: op })
+    gaps.push({ x: (gapStartX + gapEndX) / 2, y: (gapStartY + gapEndY) / 2, opening: op, sx: gapStartX, sy: gapStartY, ex: gapEndX, ey: gapEndY })
 
     curX = gapEndX; curY = gapEndY; curCap = true
   }
@@ -292,6 +298,7 @@ type DragState =
   | { kind: 'line'; id: string; startPx: number; startPy: number; origX1: number; origY1: number; origX2: number; origY2: number }
   | { kind: 'end1'; id: string; startPx: number; startPy: number }
   | { kind: 'end2'; id: string; startPx: number; startPy: number }
+  | { kind: 'opening'; lineId: string; openingId: string; startPx: number; startPy: number; origOffsetMm: number }
   | null
 
 /** Ray casting — точка внутри полигона */
@@ -448,6 +455,13 @@ export default function FloorPlan() {
   const [parallelDist, setParallelDist]             = useState('100')
   const [rightTab, setRightTab]         = useState<'construction' | 'finish' | 'materials' | 'calc'>('construction')
   const [hoveredId, setHoveredId]       = useState<string | null>(null)
+  // Проём (дверь/окно/просто проём) — 08.07.2026, фикс на жалобу "не понимаю,
+  // где границы вырезаемого участка". selectedOpening — какой проём сейчас
+  // выделен (клик по вырезу в режиме select) — для него рисуется точная
+  // рамка выреза + отступ/ширина в мм и его можно тащить вдоль оси стены.
+  // hoveredOpeningId — лёгкая подсветка при наведении, без выбора.
+  const [selectedOpening, setSelectedOpening] = useState<{ lineId: string; openingId: string } | null>(null)
+  const [hoveredOpeningId, setHoveredOpeningId] = useState<string | null>(null)
   const [snapActive, setSnapActive]     = useState(false)
   const [inspectorId, setInspectorId]   = useState<string | null>(null)
   const [inspectorRoomId, setInspectorRoomId] = useState<string | null>(null)
@@ -723,7 +737,7 @@ export default function FloorPlan() {
     setChainLineIds([])
     dragRef.current = null
     dragMovedRef.current = false
-    if (m !== 'select') setSelected(null)
+    if (m !== 'select') { setSelected(null); setSelectedOpening(null) }
     if (m !== 'erase') setEraseIds([])
     if (m !== 'stamp') { setStampTemplateId(null); setStampCenter(null); lastStampedRef.current = null }
     if (m !== 'trim') setTrimSourceId(null)
@@ -887,13 +901,33 @@ export default function FloorPlan() {
         const chordMm = lineLengthMm(s.x, s.y, l.x2, l.y2, scaleMmPx)
         const lm = l.sagittaMm ? arcLengthFromSagitta(chordMm, l.sagittaMm) : chordMm
         updatePlanLine(dr.id, { x1: s.x, y1: s.y, lengthMm: lm })
-      } else {
+      } else if (dr.kind === 'end2') {
         const thresh = SNAP_SCREEN_PX / stageScaleRef.current
         const s = snapPoint(rawX, rawY, lines, scaleMmPx, dr.id, thresh)
         const l = lines.find(l => l.id === dr.id)!
         const chordMm = lineLengthMm(l.x1, l.y1, s.x, s.y, scaleMmPx)
         const lm = l.sagittaMm ? arcLengthFromSagitta(chordMm, l.sagittaMm) : chordMm
         updatePlanLine(dr.id, { x2: s.x, y2: s.y, lengthMm: lm })
+      } else {
+        // dr.kind === 'opening' — тащим проём вдоль оси стены (08.07.2026,
+        // фикс на "не понимаю, где границы вырезаемого участка"). Двигаем
+        // только вдоль ux/uy (проекция курсора на ось стены), не как
+        // угодно — проём не может "оторваться" от стены. Клэмп в
+        // [0, lengthMm - widthMm], чтобы не вылезти за пределы стены и не
+        // упасть в невалидный offsetMm (та же граница, что и у addOpening).
+        const line = lines.find(l => l.id === dr.lineId)
+        const opening = line?.openings?.find(o => o.id === dr.openingId)
+        if (line && opening) {
+          const ldx = line.x2 - line.x1, ldy = line.y2 - line.y1
+          const llen = Math.sqrt(ldx*ldx + ldy*ldy) || 1
+          const ux = ldx / llen, uy = ldy / llen
+          const dragDx = rawX - dr.startPx, dragDy = rawY - dr.startPy
+          const deltaPx = dragDx * ux + dragDy * uy   // проекция движения на ось стены
+          const deltaMm = deltaPx * scaleMmPx
+          const maxOffset = Math.max(0, line.lengthMm - opening.widthMm)
+          const newOffset = Math.min(maxOffset, Math.max(0, dr.origOffsetMm + deltaMm))
+          updateOpening(dr.lineId, dr.openingId, { offsetMm: Math.round(newOffset) })
+        }
       }
       return
     }
@@ -1077,10 +1111,23 @@ export default function FloorPlan() {
     }
   }
 
+  /** Перетаскивание проёма вдоль оси стены (см. DragState 'opening' и handleMove). */
+  function startDragOpening(lineId: string, openingId: string, px: number, py: number) {
+    if (mode !== 'select') return
+    const line = lines.find(l => l.id === lineId)
+    const opening = line?.openings?.find(o => o.id === openingId)
+    if (!line || !opening) return
+    dragMovedRef.current = false
+    dragRef.current = { kind: 'opening', lineId, openingId, startPx: px, startPy: py, origOffsetMm: opening.offsetMm }
+    setSelectedOpening({ lineId, openingId })
+  }
+
   const handlePointerUp = useCallback(() => {
     panStartRef.current = null
     if (dragRef.current && !dragMovedRef.current && mode === 'select') {
-      setSelected(dragRef.current.id)
+      // 'opening' — своё выделение (selectedOpening), уже выставлено в
+      // startDragOpening при клике; у этого варианта DragState нет .id.
+      if (dragRef.current.kind !== 'opening') setSelected(dragRef.current.id)
     }
     dragRef.current = null
     dragMovedRef.current = false
@@ -1482,7 +1529,7 @@ export default function FloorPlan() {
       }
       return
     }
-    if (mode === 'select') setSelected(null)
+    if (mode === 'select') { setSelected(null); setSelectedOpening(null) }
   }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
@@ -1523,6 +1570,7 @@ export default function FloorPlan() {
     }
     if (mode === 'select') {
       startDragLine(id, 'line', pos.x, pos.y)
+      setSelectedOpening(null)
     }
     setSelected(id)
   }, [mode, lines, trimSourceId, openingType, openingWidth, openingHeight, openingSill])
@@ -1576,6 +1624,7 @@ export default function FloorPlan() {
         setPencilPts([])
         setFreeformPts([])
         setMepRoutePts([])
+        setSelectedOpening(null)
         if (mode === 'freeformOpening') { setOpeningTargetFreeformId(null); switchMode('select') }
       }
     }
@@ -1585,6 +1634,9 @@ export default function FloorPlan() {
     if (e.key === 'Delete') {
       if (mode === 'erase' && eraseIds.length > 0) {
         confirmErase(eraseIds)
+      } else if (selectedOpening) {
+        removeOpening(selectedOpening.lineId, selectedOpening.openingId)
+        setSelectedOpening(null)
       } else if (selectedId) {
         removePlanLine(selectedId)
         setSelected(null)
@@ -1599,7 +1651,7 @@ export default function FloorPlan() {
       }
     }
     if (e.key === 'Shift') setOrthoMode(true)
-  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter, mepRoutePts, activeDiscipline, mepDrawElevationMm, mepDrawDiameterMm, mepDrawWidthMm, mepDrawHeightSectionMm, addMepRoute, mepRoutes])
+  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter, mepRoutePts, activeDiscipline, mepDrawElevationMm, mepDrawDiameterMm, mepDrawWidthMm, mepDrawHeightSectionMm, addMepRoute, mepRoutes, selectedOpening])
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Shift') setOrthoMode(false)
@@ -1747,6 +1799,22 @@ export default function FloorPlan() {
     const line = lines.find(l => l.id === lineId)
     if (!line) return
     updatePlanLine(lineId, { openings: (line.openings ?? []).filter(o => o.id !== openingId) })
+  }
+
+  /**
+   * Правка отдельного проёма без похода в инспектор — нужна для
+   * перетаскивания проёма вдоль оси стены мышью/пальцем (см.
+   * startDragOpening/handleMove, kind: 'opening') и для визуального фикса
+   * "не понимаю, где границы вырезаемого участка" (08.07.2026, жалоба
+   * пользователя): теперь можно увидеть точную границу выреза на холсте
+   * и подвинуть её, а не только вбить offsetMm числом в инспекторе.
+   */
+  function updateOpening(lineId: string, openingId: string, patch: Partial<PlanOpening>) {
+    const line = lines.find(l => l.id === lineId)
+    if (!line) return
+    updatePlanLine(lineId, {
+      openings: (line.openings ?? []).map(o => o.id === openingId ? { ...o, ...patch } : o),
+    })
   }
 
   function contourCentroid(c: PlanContour) {
@@ -3551,12 +3619,64 @@ export default function FloorPlan() {
                             )
                           })}
 
-                          {/* Подписи проёмов (Д-1 / О-1) в разрыве */}
-                          {gaps.map(g => (
-                            <Text key={g.opening.id} x={g.x-40} y={g.y-7} width={80}
-                              text={g.opening.label} fontSize={10} fill={stroke}
-                              align="center" fontStyle="bold" listening={false} />
-                          ))}
+                          {/* Проёмы (08.07.2026, фикс на "не понимаю, где границы
+                              вырезаемого участка"): точная рамка выреза
+                              (подсвечена при наведении/выборе), hit-зона для
+                              перетаскивания вдоль оси стены, и подпись с
+                              отступом/шириной в мм — не только "Д-1" на глаз. */}
+                          {gaps.map(g => {
+                            const gdx = g.ex - g.sx, gdy = g.ey - g.sy
+                            const glen = Math.sqrt(gdx*gdx + gdy*gdy)
+                            const gnx = glen > 0 ? -gdy/glen*half : 0
+                            const gny = glen > 0 ?  gdx/glen*half : 0
+                            const gAx = g.sx+gnx, gAy = g.sy+gny
+                            const gBx = g.ex+gnx, gBy = g.ey+gny
+                            const gCx = g.ex-gnx, gCy = g.ey-gny
+                            const gDx = g.sx-gnx, gDy = g.sy-gny
+                            const isOpSelected = selectedOpening?.openingId === g.opening.id
+                            const isOpHovered  = hoveredOpeningId === g.opening.id
+                            const opHitW = Math.max(24, thicknessPx + 8)
+                            return (
+                              <Group key={g.opening.id}>
+                                {/* Рамка точно по границе выреза — подсвечена
+                                    жёлтым, когда выделен/наведён, иначе тонкая
+                                    серая, но всегда видна (это и есть ответ на
+                                    "не понимаю, где границы"). */}
+                                <Line
+                                  points={[gAx,gAy, gBx,gBy, gCx,gCy, gDx,gDy]} closed
+                                  stroke={isOpSelected || isOpHovered ? '#ffb300' : '#9098b0'}
+                                  strokeWidth={isOpSelected ? 2.5 : isOpHovered ? 2 : 1}
+                                  dash={isOpSelected ? undefined : [4, 3]}
+                                  fill={isOpSelected ? '#ffb30022' : undefined}
+                                  listening={false}
+                                />
+                                {/* Hit-зона: клик — выделить, драг — подвинуть
+                                    вдоль оси стены. cancelBubble — чтобы клик
+                                    не улетал дальше на Group стены (иначе
+                                    выделялась бы вся стена вместо проёма). */}
+                                <Line
+                                  points={[g.sx,g.sy, g.ex,g.ey]}
+                                  stroke="transparent" strokeWidth={opHitW} hitStrokeWidth={opHitW}
+                                  onMouseDown={e => { e.cancelBubble = true; const p = getPos(e); if (p) startDragOpening(l.id, g.opening.id, p.x, p.y) }}
+                                  onTouchStart={e => { e.cancelBubble = true; const p = getPos(e); if (p) startDragOpening(l.id, g.opening.id, p.x, p.y) }}
+                                  onMouseEnter={() => { setHoveredOpeningId(g.opening.id); setHoveredId(null) }}
+                                  onMouseLeave={() => setHoveredOpeningId(null)}
+                                />
+                                {/* Подпись: код + при выделении/наведении — отступ
+                                    от начала стены и ширина, живьём обновляется
+                                    во время перетаскивания. */}
+                                <Text x={g.x-45} y={g.y-7} width={90}
+                                  text={g.opening.label} fontSize={10}
+                                  fill={isOpSelected ? '#ffb300' : stroke}
+                                  align="center" fontStyle="bold" listening={false} />
+                                {(isOpSelected || isOpHovered) && (
+                                  <Text x={g.x-60} y={g.y+7} width={120}
+                                    text={`⟵${Math.round(g.opening.offsetMm)} | ${Math.round(g.opening.widthMm)}мм`}
+                                    fontSize={9} fill="#8a9ac8" align="center" listening={false} />
+                                )}
+                              </Group>
+                            )
+                          })}
 
                           {/* Метка */}
                           {(() => {
