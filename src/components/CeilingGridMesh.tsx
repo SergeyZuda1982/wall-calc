@@ -21,12 +21,85 @@
  * больших планах (много помещений разом) станет тяжело — перевести на
  * drei <Instances>, раскладка (core/ceilingGridGeometry.ts) для этого уже
  * готова (все точки строго по сетке).
+ *
+ * 10.07.2026 — минимальная видимая толщина тонких элементов (несущий/
+ * основной профиль ПП, стержень подвеса): при взгляде на помещение целиком
+ * издалека эти элементы визуально сжимаются до долей пикселя и "теряются"
+ * (см. KONSPEKT-снапшот сессии 09.07.2026, идея №1 из списка "3D-вид на
+ * объекте"). См. ThinProfileMesh/HangerRod/useMinThicknessScale ниже —
+ * каждый кадр домножают ТОЛЬКО поперечное сечение элемента (не длину) на
+ * коэффициент из core/minScreenThickness.ts, чтобы сечение не опускалось
+ * ниже MIN_THICKNESS_PX пикселей на экране. Чисто визуальный приём (как и
+ * кнопки 1x/5x/10x в Scene3D.tsx) — реальные размеры/расчёты материалов не
+ * трогает. Крабы и пластина/зажим подвеса пока не охвачены (их "тонкое"
+ * измерение уже не критично для узнаваемости на экране) — при желании
+ * несложно добавить по той же схеме.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useRef, type RefObject } from 'react'
 import * as THREE from 'three'
+import { useFrame, useThree } from '@react-three/fiber'
 import { calcCeilingGrid, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH } from '../core/ceilingGridGeometry'
+import { calcMinThicknessScale } from '../core/minScreenThickness'
 import { mmToM } from '../core/planTo3D'
+
+// ─── Минимальная видимая толщина тонких элементов (см. KONSPEKT, идея №1 из
+// списка "3D-вид на объекте", 09.07.2026) ───────────────────────────────────
+// Профиль ПП (60×27мм) и стержень подвеса (Ø4мм) при взгляде на помещение
+// целиком издалека могут визуально сжаться до долей пикселя и "потеряться".
+// calcMinThicknessScale (чистая математика, core/minScreenThickness.ts)
+// считает, во сколько раз нужно раздуть поперечное сечение элемента на
+// текущем расстоянии от камеры, чтобы оно не опускалось ниже MIN_PX
+// пикселей на экране. Раздувается только поперечное сечение (see axes в
+// useMinThicknessScale ниже) — длина элемента не меняется, чтобы соседние
+// профили не наезжали друг на друга.
+const MIN_THICKNESS_PX = 2.5
+
+/**
+ * Держит минимальный видимый размер объекта на экране: каждый кадр меряет
+ * расстояние от камеры до мирового положения объекта и выставляет
+ * mesh.scale по осям, заданным в `axes` (1 — масштабировать эту локальную
+ * ось, 0 — не трогать, обычно так сохраняется ось вдоль длины элемента).
+ *
+ * `actualLocalSizeM` — реальный размер тонкого измерения в ЛОКАЛЬНЫХ
+ * координатах геометрии (до масштаба самого mesh и до любых родительских
+ * масштабов сцены, например кнопок визуального масштаба 1x/5x/10x —
+ * см. Scene3D.tsx). Родительский масштаб учитывается отдельно через
+ * getWorldScale, чтобы функция корректно работала на любом уровне
+ * визуального масштаба.
+ */
+function useMinThicknessScale(
+  ref: RefObject<THREE.Object3D>,
+  actualLocalSizeM: number,
+  axes: [number, number, number],
+) {
+  const { camera, size } = useThree()
+  const worldPos = useRef(new THREE.Vector3())
+  const parentScale = useRef(new THREE.Vector3(1, 1, 1))
+
+  useFrame(() => {
+    const obj = ref.current
+    if (!obj || actualLocalSizeM <= 0) return
+    const parent = obj.parent
+    if (!parent) return
+
+    parent.getWorldScale(parentScale.current)
+    obj.getWorldPosition(worldPos.current)
+    const distanceM = camera.position.distanceTo(worldPos.current)
+    const fovYRad = THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov ?? 50)
+    const actualWorldSizeM = actualLocalSizeM * parentScale.current.x
+
+    const k = calcMinThicknessScale({
+      distanceM,
+      fovYRad,
+      viewportPxHeight: size.height,
+      minPx: MIN_THICKNESS_PX,
+      actualWorldSizeM,
+    })
+
+    obj.scale.set(axes[0] ? k : 1, axes[1] ? k : 1, axes[2] ? k : 1)
+  })
+}
 
 // ─── Сечения профилей (мм) ──────────────────────────────────────────────────
 // ПН 28×27 — направляющий, П-образный швеллер (используется по периметру,
@@ -57,6 +130,30 @@ function extrudeProfileM(shape: THREE.Shape, lengthMm: number): THREE.ExtrudeGeo
   const geo = new THREE.ExtrudeGeometry(shape, { depth: lengthMm, bevelEnabled: false, curveSegments: 1 })
   geo.scale(0.001, 0.001, 0.001) // мм -> м
   return geo
+}
+
+/**
+ * Обёртка над <mesh> для несущего/основного профиля — держит минимальную
+ * видимую толщину сечения (см. useMinThicknessScale выше), не трогая длину
+ * профиля (extrude идёт вдоль локального Z, поэтому масштабируются только
+ * X/Y — сечение). `actualLocalHeightM` — реальная высота сечения профиля в
+ * метрах (27мм для ПП, см. ppProfileShape) — консервативная оценка "самого
+ * тонкого" измерения, которое рискует пропасть первым.
+ */
+function ThinProfileMesh({
+  geometry, material, position, rotation, actualLocalHeightM,
+}: {
+  geometry: THREE.BufferGeometry
+  material: THREE.Material
+  position: [number, number, number]
+  rotation: [number, number, number]
+  actualLocalHeightM: number
+}) {
+  const ref = useRef<THREE.Mesh>(null!)
+  useMinThicknessScale(ref, actualLocalHeightM, [1, 1, 0])
+  return (
+    <mesh ref={ref} geometry={geometry} material={material} position={position} rotation={rotation} castShadow />
+  )
 }
 
 const metalMat = new THREE.MeshStandardMaterial({ color: '#b7bcc2', metalness: 0.75, roughness: 0.42 })
@@ -120,6 +217,17 @@ function crabGeometry(sizeMm = 22, thickMm = 1.4): THREE.BufferGeometry {
   return geo
 }
 
+/** Стержень подвеса — тонкий (Ø4мм), держит минимальную видимую толщину сечения. */
+function HangerRod({ dropM }: { dropM: number }) {
+  const ref = useRef<THREE.Mesh>(null!)
+  useMinThicknessScale(ref, 0.004, [1, 0, 1]) // диаметр 4мм, ось Y (длина стержня) не трогаем
+  return (
+    <mesh ref={ref} material={crabMat} position={[0, -dropM / 2, 0]} castShadow>
+      <cylinderGeometry args={[0.002, 0.002, dropM, 6]} />
+    </mesh>
+  )
+}
+
 /** Подвес прямой: пластина у плиты + стержень + гнутый зажим (упрощённая форма). */
 function Hanger({ x, y, z, dropM }: { x: number; y: number; z: number; dropM: number }) {
   const clampGeo = useMemo(() => {
@@ -137,9 +245,7 @@ function Hanger({ x, y, z, dropM }: { x: number; y: number; z: number; dropM: nu
       <mesh material={crabMat} castShadow>
         <boxGeometry args={[0.024, 0.0015, 0.024]} />
       </mesh>
-      <mesh material={crabMat} position={[0, -dropM / 2, 0]} castShadow>
-        <cylinderGeometry args={[0.002, 0.002, dropM, 6]} />
-      </mesh>
+      <HangerRod dropM={dropM} />
       <mesh geometry={clampGeo} material={crabMat} castShadow />
     </group>
   )
@@ -200,13 +306,13 @@ export default function CeilingGridMesh({
         const geo = extrudeProfileM(ppShape, lengthMm)
         const alongX = Math.abs(seg.z1 - seg.z2) < 1e-6
         return (
-          <mesh
+          <ThinProfileMesh
             key={`bearing-${i}`}
             geometry={geo}
             material={metalMat}
-            castShadow
             position={[bbox.minX + seg.x1 / 1000, bearingY, bbox.minZ + seg.z1 / 1000]}
             rotation={alongX ? [0, Math.PI / 2, 0] : [0, 0, 0]}
+            actualLocalHeightM={0.027}
           />
         )
       })}
@@ -217,13 +323,13 @@ export default function CeilingGridMesh({
         const geo = extrudeProfileM(ppShape, lengthMm)
         const alongX = Math.abs(seg.z1 - seg.z2) < 1e-6
         return (
-          <mesh
+          <ThinProfileMesh
             key={`main-${i}`}
             geometry={geo}
             material={metalMat}
-            castShadow
             position={[bbox.minX + seg.x1 / 1000, mainY, bbox.minZ + seg.z1 / 1000]}
             rotation={alongX ? [0, Math.PI / 2, 0] : [0, 0, 0]}
+            actualLocalHeightM={0.027}
           />
         )
       })}
