@@ -17,8 +17,8 @@
  */
 
 import { useMemo, useState, useRef, useEffect } from 'react'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Grid, FlyControls, Html } from '@react-three/drei'
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
+import { OrbitControls, Grid, FlyControls, Html, Line, Sphere } from '@react-three/drei'
 import * as THREE from 'three'
 import { useProjectStore } from './store/useProjectStore'
 import {
@@ -29,6 +29,7 @@ import {
 } from './core/planTo3D'
 import type { PlanLineType, FloorPlan } from './types'
 import CeilingGridMesh from './components/CeilingGridMesh'
+import { formatDistanceM } from './core/formatDistance'
 
 const TYPE_COLOR_3D: Record<PlanLineType, string> = {
   wall_new:      '#e57373',
@@ -284,6 +285,62 @@ function CameraRig({ focusTarget, controlsRef }: {
 }
 
 /**
+ * Инструмент измерения в 3D (10.07.2026) — идея №3 из списка "3D-вид на
+ * объекте" (KONSPEKT-снапшот сессии 09.07.2026). Клик по двум точкам модели
+ * → расстояние между ними прямо в 3D-виде, не только по данным сметы.
+ *
+ * `points` — МИРОВЫЕ координаты (то, что даёт event.point из R3F при клике,
+ * см. handleMeasureClick в Scene3D) — этот компонент рендерится СНАРУЖИ
+ * <group scale={visualScale}> (см. Canvas ниже), поэтому координаты не
+ * нужно домножать/делить при рисовании маркеров и линии — они уже мировые,
+ * как и всё остальное на этом уровне вложенности.
+ *
+ * Реальное расстояние (то, что показывается в подписи) — отдельная история:
+ * `visualScale` растягивает МИРОВЫЕ координаты объекта (см. кнопки 1x/5x/10x
+ * и комментарий у CameraScaleSync выше), поэтому расстояние между мировыми
+ * точками нужно ДЕЛИТЬ на visualScale, чтобы получить настоящую величину —
+ * иначе на масштабе 5x/10x показывалось бы значение в 5-10 раз больше
+ * реального, что нарушало бы главный принцип фичи масштаба ("три метра
+ * остаются тремя метрами").
+ */
+function MeasureOverlay({ points, visualScale }: { points: THREE.Vector3[]; visualScale: VisualScale }) {
+  if (points.length === 0) return null
+
+  const midpoint = points.length === 2
+    ? points[0].clone().add(points[1]).multiplyScalar(0.5)
+    : null
+  const realDistanceM = points.length === 2
+    ? points[0].distanceTo(points[1]) / visualScale
+    : null
+
+  return (
+    <>
+      {points.map((p, i) => (
+        <Sphere key={i} args={[0.03, 12, 12]} position={[p.x, p.y, p.z]}>
+          <meshBasicMaterial color="#ff7043" depthTest={false} />
+        </Sphere>
+      ))}
+      {points.length === 2 && (
+        <Line points={[points[0], points[1]]} color="#ff7043" lineWidth={2} dashed={false} depthTest={false} />
+      )}
+      {midpoint && realDistanceM !== null && (
+        <Html position={[midpoint.x, midpoint.y, midpoint.z]} center distanceFactor={10} zIndexRange={[20, 0]} occlude={false}>
+          <div
+            style={{
+              padding: '4px 10px', borderRadius: 8, whiteSpace: 'nowrap',
+              background: '#ff7043', color: '#fff', fontSize: 13, fontWeight: 700,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.35)', userSelect: 'none', pointerEvents: 'none',
+            }}
+          >
+            {formatDistanceM(realDistanceM)}
+          </div>
+        </Html>
+      )}
+    </>
+  )
+}
+
+/**
  * Геометрия ОДНОГО этажа — то, что раньше было прямо в теле Scene3D.
  * Обёрнута в <group position={[0, offsetY, 0]}> — offsetY = отметка этажа
  * (Level.elevationMm) в метрах, так все этажи проекта встают друг над
@@ -428,9 +485,34 @@ export default function Scene3D() {
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
   const focusNonce = useRef(0)
   const [visualScale, setVisualScale] = useState<VisualScale>(1)
+  const [measuring, setMeasuring] = useState(false)
+  const [measurePoints, setMeasurePoints] = useState<THREE.Vector3[]>([])
   const controlsRef = useRef<any>(null)
   const levels = useProjectStore(s => s.levels)
   const activeLevelId = useProjectStore(s => s.activeLevelId)
+
+  function toggleMeasuring() {
+    setMeasuring(v => !v)
+    setMeasurePoints([]) // выключение или включение — начинаем с чистого листа
+  }
+
+  // Клик по любому объекту сцены, когда включён инструмент измерения (см.
+  // кнопку "📏 Измерение" ниже). Обработчик висит на <group scale=...>,
+  // оборачивающей всю геометрию (Grid + все этажи) — клик по стене, плите,
+  // колонне или элементу каркаса потолка "всплывает" сюда как обычное
+  // DOM-событие (R3F бросает событие вверх по дереву сцены), поэтому не
+  // нужно вешать обработчик на каждый меш отдельно.
+  //
+  // event.point из R3F — ВСЕГДА мировые координаты (так работает
+  // THREE.Raycaster независимо от того, где висит обработчик в дереве),
+  // поэтому здесь координаты не нужно домножать на visualScale — только при
+  // расчёте итогового расстояния для показа человеку (см. MeasureOverlay).
+  function handleMeasureClick(e: ThreeEvent<MouseEvent>) {
+    if (!measuring) return
+    e.stopPropagation()
+    const point = e.point.clone()
+    setMeasurePoints(prev => (prev.length >= 2 ? [point] : [...prev, point]))
+  }
 
   // Клик по табличке помещения (см. RoomLabelTag) должен работать и в режиме
   // полёта (FlyControls не имеет "target" — сперва переключаемся на orbit,
@@ -493,6 +575,16 @@ export default function Scene3D() {
           }}>
           {showCeilingGrid ? '▦ Каркас потолка (вкл)' : '▦ Показать каркас потолка'}
         </button>
+        <button
+          onClick={toggleMeasuring}
+          style={{
+            padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            border: '1px solid #ff7043', borderRadius: 6,
+            background: measuring ? '#ff7043' : '#fff',
+            color: measuring ? '#fff' : '#ff7043',
+          }}>
+          {measuring ? '📏 Измерение (вкл)' : '📏 Измерить расстояние'}
+        </button>
         <div style={{ display: 'flex', gap: 4 }}>
           {VISUAL_SCALE_OPTIONS.map(opt => (
             <button
@@ -518,6 +610,29 @@ export default function Scene3D() {
             параметрами конкретного помещения из «Потолок» (CeilingCalc.tsx).
           </div>
         )}
+        {measuring && (
+          <div style={{
+            padding: '6px 10px', fontSize: 12, color: '#7a3419', background: '#fff3ed',
+            border: '1px solid #ffab91', borderRadius: 6, maxWidth: 220, lineHeight: 1.4,
+          }}>
+            {measurePoints.length === 0 && 'Кликните по первой точке на модели.'}
+            {measurePoints.length === 1 && 'Кликните по второй точке — покажем расстояние.'}
+            {measurePoints.length === 2 && (
+              <>
+                Готово. Следующий клик начнёт новое измерение.{' '}
+                <button
+                  onClick={() => setMeasurePoints([])}
+                  style={{
+                    marginTop: 4, display: 'block', padding: '3px 8px', fontSize: 12,
+                    fontWeight: 600, cursor: 'pointer', border: '1px solid #ff7043',
+                    borderRadius: 5, background: '#fff', color: '#ff7043',
+                  }}>
+                  Очистить
+                </button>
+              </>
+            )}
+          </div>
+        )}
         {cameraMode === 'fly' && (
           <div style={{
             padding: '6px 10px', fontSize: 12, color: '#444', background: '#fffbe6',
@@ -540,7 +655,7 @@ export default function Scene3D() {
       <Canvas shadows camera={{ position: [10, 10, 10], fov: 50 }}>
         <ambientLight intensity={0.6} />
         <directionalLight position={[8, 12, 6]} intensity={1} castShadow />
-        <group scale={[visualScale, visualScale, visualScale]}>
+        <group scale={[visualScale, visualScale, visualScale]} onClick={handleMeasureClick}>
           <Grid args={[100, 100]} cellColor="#c9ccd6" sectionColor="#9aa0b0" fadeDistance={40} position={[0, -0.001, 0]} />
           {levels.map(lv => (
             <LevelGroup
@@ -553,6 +668,7 @@ export default function Scene3D() {
             />
           ))}
         </group>
+        <MeasureOverlay points={measurePoints} visualScale={visualScale} />
         <CameraScaleSync scale={visualScale} controlsRef={controlsRef} />
         {cameraMode === 'orbit'
           ? <OrbitControls ref={controlsRef} makeDefault />
