@@ -38,6 +38,8 @@ import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
 import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
 import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
+import { slabToCeilingSeed } from './core/slabToCeilingSeed'
+import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -381,13 +383,14 @@ function pointInPolygon(px: number, py: number, pts: { x: number; y: number }[])
 // ─── Компонент ───────────────────────────────────────────────────────────────
 
 export default function FloorPlan() {
+  const setCeilingSeed = useCeilingSeedStore(s => s.setSeed)
   const {
     floorPlan, addPlanLine, updatePlanLine, removePlanLine,
     setFloorPlanScale, clearFloorPlan, setFloorPlanDefaultHeight, applyHeightToAllConstructions,
     addContour, addRoom, updateRoom, removeRoom, updateContour,
     setBackgroundImage, updateBackgroundImage,
     levels, activeLevelId, addLevel, duplicateLevel, removeLevel, renameLevel, setLevelElevation, selectLevel,
-    addSlab, addSlabHole,
+    addSlab, addSlabHole, removeSlab,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
     addFreeformStructure, updateFreeformStructure, removeFreeformStructure,
@@ -2345,21 +2348,60 @@ export default function FloorPlan() {
             {slabs.length > 0 && (
               <div style={{ padding: '4px 14px 8px' }}>
                 <div style={{ fontSize: 10, color: '#8a9ac8', marginBottom: 4, textTransform: 'uppercase' }}>
-                  Вырезать проём в плите
+                  Плиты
                 </div>
-                {slabs.map(sl => (
-                  <button key={sl.id}
-                    onClick={() => { setPencilHoleTargetId(sl.id); setPencilPts([]); setMode('pencil') }}
-                    style={{
-                      display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', marginBottom: 3,
-                      fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                {slabs.map(sl => {
+                  const seed = slabToCeilingSeed(sl, scaleMmPx)
+                  return (
+                    <div key={sl.id} style={{
+                      marginBottom: 5, borderRadius: 4,
                       border: pencilHoleTargetId === sl.id ? '1px solid #8d99ae' : '1px solid #3a4060',
-                      background: pencilHoleTargetId === sl.id ? '#8d99ae' : 'transparent',
-                      color: pencilHoleTargetId === sl.id ? '#1a1f33' : '#8a9ac8',
+                      background: pencilHoleTargetId === sl.id ? 'rgba(141,153,174,0.15)' : 'transparent',
                     }}>
-                    {sl.label} {sl.holes.length > 0 && `(${sl.holes.length} проём${sl.holes.length > 1 ? 'а' : ''})`}
-                  </button>
-                ))}
+                      <button
+                        onClick={() => { setPencilHoleTargetId(sl.id); setPencilPts([]); setMode('pencil') }}
+                        title="Клик — начать обводку выреза (проёма) в этой плите"
+                        style={{
+                          display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px',
+                          fontSize: 11, borderRadius: 4, cursor: 'pointer', border: 'none', background: 'transparent',
+                          color: pencilHoleTargetId === sl.id ? '#fff' : '#8a9ac8',
+                        }}>
+                        {sl.label} {sl.holes.length > 0 && `(${sl.holes.length} проём${sl.holes.length > 1 ? 'а' : ''})`}
+                        {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
+                      </button>
+                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px' }}>
+                        <button
+                          disabled={!seed}
+                          onClick={() => {
+                            if (!seed) return
+                            setCeilingSeed({ ...seed, label: sl.label })
+                          }}
+                          title="Отправить площадь и периметр этой плиты в расчёт потолка"
+                          style={{
+                            flex: 1, fontSize: 10, padding: '4px 6px', borderRadius: 3,
+                            border: '1px solid #3a6ea5', background: 'transparent', color: '#6fa8dc',
+                            cursor: seed ? 'pointer' : 'not-allowed', opacity: seed ? 1 : 0.4,
+                          }}>
+                          → Потолок
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Удалить плиту «${sl.label}»?`)) {
+                              if (pencilHoleTargetId === sl.id) { setPencilHoleTargetId(null); setPencilPts([]) }
+                              removeSlab(sl.id)
+                            }
+                          }}
+                          title="Удалить плиту"
+                          style={{
+                            fontSize: 10, padding: '4px 8px', borderRadius: 3,
+                            border: '1px solid #7a3a3a', background: 'transparent', color: '#d98a8a', cursor: 'pointer',
+                          }}>
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>

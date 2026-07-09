@@ -34,6 +34,19 @@ export function polygonArea(points: Point2D[]): number {
   return Math.abs(sum) / 2
 }
 
+/** Периметр замкнутого многоугольника — сумма длин сторон по контуру
+ *  (последняя точка соединяется с первой). Порядок обхода не важен. */
+export function polygonPerimeter(points: Point2D[]): number {
+  if (points.length < 2) return 0
+  let sum = 0
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]
+    const b = points[(i + 1) % points.length]
+    sum += Math.hypot(b.x - a.x, b.y - a.y)
+  }
+  return sum
+}
+
 /**
  * Дуга, построенная по хорде (x1,y1)→(x2,y2) и стреле (H в классической
  * формуле R=(L²+H²)/2H, L — половина хорды).
