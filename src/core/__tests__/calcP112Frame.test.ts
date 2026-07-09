@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest'
 import {
   calcFrameRowPositions,
   resolveHangerKind,
+  resolveKnaufHangerStep,
+  resolveFrameParams,
   calcP112FrameGeometry,
   CLOSE_GAP_MM,
-  KNAUF_BEARING_WALL_OFFSET_MM,
+  KNAUF_WALL_OFFSET_MM,
 } from '../calcP112Frame'
 
 describe('calcFrameRowPositions', () => {
@@ -42,6 +44,14 @@ describe('calcFrameRowPositions', () => {
     expect(positions.length).toBeLessThanOrEqual(1)
   })
 
+  it('явный wallOffsetMm работает и в mode=user (не только в knauf) — регресс-тест', () => {
+    const withOffset = calcFrameRowPositions(4000, 600, { mode: 'user', wallOffsetMm: 100 })
+    const withoutOffset = calcFrameRowPositions(4000, 600, { mode: 'user' })
+    expect(withOffset[0]).toBe(100)
+    expect(withoutOffset[0]).toBe(600)
+    expect(withOffset).not.toEqual(withoutOffset)
+  })
+
   describe('mode=knauf', () => {
     it('по умолчанию (без wallOffsetMm) первый ряд тоже на расстоянии одного шага — совпадает с user на старте', () => {
       const positions = calcFrameRowPositions(2800, 900, { mode: 'knauf' })
@@ -50,7 +60,7 @@ describe('calcFrameRowPositions', () => {
 
     it('с явным wallOffsetMm (несущий профиль, 100мм) — старт НЕ равен шагу', () => {
       // span=2800, step=500, offset=100: 100,600,1100,1600,2100,2600
-      const positions = calcFrameRowPositions(2800, 500, { mode: 'knauf', wallOffsetMm: KNAUF_BEARING_WALL_OFFSET_MM })
+      const positions = calcFrameRowPositions(2800, 500, { mode: 'knauf', wallOffsetMm: KNAUF_WALL_OFFSET_MM })
       expect(positions).toEqual([100, 600, 1100, 1600, 2100, 2600])
     })
 
@@ -154,5 +164,106 @@ describe('calcP112FrameGeometry', () => {
       const geo = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'knauf')
       expect(geo.connectorsTotal).toBe(geo.bearingCount * geo.mainCount)
     })
+
+    it('knauf применяет отступ ≤100мм и к ОСНОВНОМУ профилю тоже (не только к несущему)', () => {
+      // A=4000, stepC=600 -> knauf: 100,700,1300,1900,2500,3100,3700 (7 рядов)
+      // user (отступ=шагу): 600,1200,1800,2400,3000,3600(зазор400<=250? нет,>250->сдвиг)=3750 (6 рядов)
+      const geoKnauf = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'knauf')
+      const geoUser = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'user')
+      expect(geoKnauf.mainCount).toBe(7)
+      expect(geoKnauf.mainCount).not.toBe(geoUser.mainCount)
+    })
+
+    it('extra.stepA переопределяет шаг подвесов НЕЗАВИСИМО от stepB', () => {
+      const withoutStepA = calcP112FrameGeometry(4000, 3000, 600, 900, 50, true, 'user')
+      const withStepA = calcP112FrameGeometry(4000, 3000, 600, 900, 50, true, 'user', { stepA: 1200 })
+      expect(withStepA.hangersPerBearing).not.toBe(withoutStepA.hangersPerBearing)
+    })
+
+    it('extra.wallOffsetMainMm/wallOffsetBearingMm можно переопределить явно поверх layoutMode', () => {
+      const geo = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'user', {
+        wallOffsetMainMm: KNAUF_WALL_OFFSET_MM, wallOffsetBearingMm: KNAUF_WALL_OFFSET_MM,
+      })
+      // 'user' обычно не сжимает отступ до 100мм — с явным extra это происходит и в user-режиме
+      const plainUser = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'user')
+      expect(geo.mainCount).not.toBe(plainUser.mainCount)
+    })
+  })
+})
+
+describe('resolveKnaufHangerStep', () => {
+  it('точная комбинация из таблицы — возвращает табличное значение без предупреждения', () => {
+    const r = resolveKnaufHangerStep(800, 'crosswise', 0.15)
+    expect(r.stepAMm).toBe(1050)
+    expect(r.warning).toBeUndefined()
+  })
+
+  it('другая нагрузка/шаг — другое табличное значение', () => {
+    expect(resolveKnaufHangerStep(1000, 'crosswise', 0.30).stepAMm).toBe(750)
+    expect(resolveKnaufHangerStep(1200, 'crosswise', 0.15).stepAMm).toBe(900)
+  })
+
+  it('продольный монтаж — фиксированный шаг 650мм только при нагрузке 0.50', () => {
+    expect(resolveKnaufHangerStep(1000, 'lengthwise', 0.50).stepAMm).toBe(650)
+  })
+
+  it('запрещённая комбинация (прочерк в таблице) — берёт наименьший доступный шаг и предупреждает', () => {
+    // c=1200, поперечный, нагрузка 0.40 -> прочерк в таблице
+    const r = resolveKnaufHangerStep(1200, 'crosswise', 0.40)
+    expect(r.stepAMm).toBe(700) // наименьший доступный в этой строке (900,700)
+    expect(r.warning).toBeDefined()
+  })
+
+  it('продольный монтаж при лёгкой нагрузке (0.15) — тоже запрещённая комбинация, есть предупреждение', () => {
+    const r = resolveKnaufHangerStep(800, 'lengthwise', 0.15)
+    expect(r.stepAMm).toBe(650) // единственное доступное значение в строке
+    expect(r.warning).toBeDefined()
+  })
+
+  it('шаг c вне таблицы (500/600/700) — грубый запасной вариант с предупреждением', () => {
+    const r = resolveKnaufHangerStep(600, 'crosswise', 0.15)
+    expect(r.stepAMm).toBe(600)
+    expect(r.warning).toBeDefined()
+  })
+})
+
+describe('resolveFrameParams', () => {
+  it("mode='user' без userStepB — берёт дефолт из старой таблицы P112_HANGER_STEP, stepA = stepB", () => {
+    const r = resolveFrameParams({ stepC: 600, layoutMode: 'user' })
+    expect(r.stepA).toBe(r.stepB)
+    expect(r.wallOffsetMainMm).toBeUndefined()
+    expect(r.wallOffsetBearingMm).toBeUndefined()
+  })
+
+  it("mode='user' с userStepB — переопределяет дефолт, stepA всё равно = stepB", () => {
+    const r = resolveFrameParams({ stepC: 600, layoutMode: 'user', userStepB: 1234 })
+    expect(r.stepB).toBe(1234)
+    expect(r.stepA).toBe(1234)
+  })
+
+  it("mode='knauf' поперечный монтаж — stepB=500, stepA из таблицы, отступ ≤100мм для обоих", () => {
+    const r = resolveFrameParams({ stepC: 800, layoutMode: 'knauf', mountDirection: 'crosswise', loadClass: 0.15 })
+    expect(r.stepB).toBe(500)
+    expect(r.stepA).toBe(1050)
+    expect(r.wallOffsetMainMm).toBe(KNAUF_WALL_OFFSET_MM)
+    expect(r.wallOffsetBearingMm).toBe(KNAUF_WALL_OFFSET_MM)
+    expect(r.warning).toBeUndefined()
+  })
+
+  it("mode='knauf' продольный монтаж — stepB=400", () => {
+    const r = resolveFrameParams({ stepC: 800, layoutMode: 'knauf', mountDirection: 'lengthwise', loadClass: 0.50 })
+    expect(r.stepB).toBe(400)
+    expect(r.stepA).toBe(650)
+  })
+
+  it("mode='knauf' без mountDirection/loadClass — дефолт поперечный + 0.15", () => {
+    const r = resolveFrameParams({ stepC: 1000, layoutMode: 'knauf' })
+    expect(r.stepB).toBe(500)
+    expect(r.stepA).toBe(950)
+  })
+
+  it("mode='knauf' с запрещённой комбинацией — предупреждение прокидывается наружу", () => {
+    const r = resolveFrameParams({ stepC: 1200, layoutMode: 'knauf', mountDirection: 'crosswise', loadClass: 0.40 })
+    expect(r.warning).toBeDefined()
   })
 })

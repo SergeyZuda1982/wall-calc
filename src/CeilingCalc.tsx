@@ -7,11 +7,11 @@
 import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Line, Text, Group } from 'react-konva'
 import type { CeilingSpecFull } from './data/ceilingData'
-import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP } from './data/ceilingData'
-import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep } from './data/ceilingData'
+import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, CEILING_MOUNT_DIRECTION_LABELS, CEILING_LOAD_CLASS_OPTIONS } from './data/ceilingData'
+import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep, CeilingLoadClass } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult } from './core/calcCeiling'
-import { calcFrameRowPositions, KNAUF_BEARING_WALL_OFFSET_MM } from './core/calcP112Frame'
+import { calcFrameRowPositions, resolveFrameParams } from './core/calcP112Frame'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
@@ -151,6 +151,12 @@ export default function CeilingCalc() {
   )
 
   const hasRoom = form.roomLengthMm > 0 && form.roomWidthMm > 0
+
+  const layoutModeUi = form.layoutMode ?? 'user'
+  const frameParamsUi = resolveFrameParams({
+    stepC: form.stepC, layoutMode: layoutModeUi, userStepB: form.stepB,
+    mountDirection: form.mountDirection, loadClass: form.loadClass,
+  })
 
   return (
     <div style={{ display: 'flex', gap: 14, minHeight: 600, background: C.bg, padding: 14 }}>
@@ -303,21 +309,58 @@ export default function CeilingCalc() {
               <div style={{ marginTop: 4, fontSize: 10, color: C.muted }}>
                 {(form.layoutMode ?? 'user') === 'user'
                   ? 'Реальная практика: последний ряд подвигается ближе к стене, лишний ряд не ставится.'
-                  : 'Строго по таблице КНАУФ: несущий профиль — 100мм от стены, далее шагом 500мм; последний ряд не сжимается.'}
+                  : 'Строго по официальной таблице КНАУФ (лист 40/76, серия 1.045.9-2.08.1-4): оба профиля — отступ ≤100мм от стены, последний ряд не сжимается.'}
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-              <div>
-                <label style={lbl}>Зазор плита→каркас, мм</label>
-                <input style={inp} type="number" min={0} step={10}
-                  value={form.slabGapMm ?? ''} onChange={e => setField('slabGapMm', +e.target.value || undefined)} />
-              </div>
-              <div>
+
+            {layoutModeUi === 'knauf' ? (
+              <>
+                <div style={{ marginBottom: 8 }}>
+                  <label style={lbl}>Монтаж КНАУФ-листов</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {(['crosswise', 'lengthwise'] as const).map(md => (
+                      <button key={md}
+                        onClick={() => setField('mountDirection', md)}
+                        style={{
+                          flex: 1, padding: '6px 8px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                          border: `1px solid ${(form.mountDirection ?? 'crosswise') === md ? C.accent : '#3a4060'}`,
+                          background: (form.mountDirection ?? 'crosswise') === md ? C.accent : 'transparent',
+                          color: (form.mountDirection ?? 'crosswise') === md ? '#fff' : C.muted,
+                        }}>
+                        {CEILING_MOUNT_DIRECTION_LABELS[md]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  <label style={lbl}>Класс нагрузки на подвесы, кН/м²</label>
+                  <select style={inp} value={form.loadClass ?? 0.15}
+                    onChange={e => setField('loadClass', +e.target.value as CeilingLoadClass)}>
+                    {CEILING_LOAD_CLASS_OPTIONS.map(lc => (
+                      <option key={lc} value={lc}>≤ {lc}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>
+                  Расчётные шаги по таблице: несущий b = <b>{frameParamsUi.stepB}мм</b>, подвесы a = <b>{frameParamsUi.stepA}мм</b>
+                </div>
+                {frameParamsUi.warning && (
+                  <div style={{ marginBottom: 8, fontSize: 11, color: C.warning }}>⚠ {frameParamsUi.warning}</div>
+                )}
+              </>
+            ) : (
+              <div style={{ marginBottom: 8 }}>
                 <label style={lbl}>Шаг несущего (b), мм</label>
                 <input style={inp} type="number" min={0} step={50}
                   placeholder={String(P112_HANGER_STEP[form.stepC] ?? 1000)}
                   value={form.stepB ?? ''} onChange={e => setField('stepB', +e.target.value || undefined)} />
               </div>
+            )}
+
+            <div style={{ marginBottom: 8 }}>
+              <label style={lbl}>Зазор плита→каркас, мм</label>
+              <input style={inp} type="number" min={0} step={10}
+                value={form.slabGapMm ?? ''} onChange={e => setField('slabGapMm', +e.target.value || undefined)} />
             </div>
             <label style={{ ...lbl, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={form.bearingAlongLength ?? true}
@@ -585,30 +628,33 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // ── Основные профили (X, шаг c) ──
   const stepC = form.stepC
   const layoutMode = form.layoutMode ?? 'user'
+  // Единая точка правды для stepB/stepA/отступов — та же функция, что
+  // использует смета (calcCeiling.ts), чтобы превью не могло разойтись
+  // с реальным расчётом материала (см. calcP112Frame.ts).
+  const frameParams = resolveFrameParams({
+    stepC, layoutMode, userStepB: form.stepB,
+    mountDirection: form.mountDirection, loadClass: form.loadClass,
+  })
+  const stepB = frameParams.stepB
+  const stepA = frameParams.stepA
+
   // Реальная позиция рядов (см. calcP112Frame.ts): в режиме 'user' первый
   // ряд на расстоянии шага от стены, последний просто ближе к дальней стене
   // — не наивная сетка от 0; в режиме 'knauf' — строго по официальной сетке,
   // без сжатия последнего ряда. shiftMainMm — ручной сдвиг гребёнки поверх.
-  const mainPosX = calcFrameRowPositions(L, stepC, { mode: layoutMode })
+  const mainPosX = calcFrameRowPositions(L, stepC, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetMainMm })
     .map(p => (p + shiftMainMm) * scale)
     .filter(x => x >= 0 && x <= L * scale)
 
   // ── Несущие профили (Y, шаг b) ──
-  // Раньше был захардкожен неверный шаг 500мм — реальный шаг несущего
-  // профиля берём из формы (или дефолт из той же таблицы, что и подвесы,
-  // см. КОНСПЕКТ.md — на объекте это одно и то же расстояние).
-  const stepB = form.stepB ?? (P112_HANGER_STEP[stepC] ?? 1000)
-  const bearingOpts = layoutMode === 'knauf'
-    ? { mode: layoutMode, wallOffsetMm: KNAUF_BEARING_WALL_OFFSET_MM }
-    : { mode: layoutMode }
-  const bearingPosY = calcFrameRowPositions(W_room, stepB, bearingOpts)
+  const bearingPosY = calcFrameRowPositions(W_room, stepB, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm })
     .map(p => (p + shiftBearingMm) * scale)
     .filter(y => y >= 0 && y <= W_room * scale)
 
   // ── Подвесы ──
-  // Вдоль каждого несущего профиля, с тем же шагом b (НЕ пол-шага — это
-  // правило для стоек в перегородках, здесь по-другому, см. КОНСПЕКТ.md).
-  const hangerPosXMm = calcFrameRowPositions(L, stepB, { mode: layoutMode })
+  // Шаг подвесов a — ОТДЕЛЬНАЯ величина от шага несущего профиля b (раньше
+  // здесь ошибочно использовался stepB, см. calcP112Frame.ts шапку файла).
+  const hangerPosXMm = calcFrameRowPositions(L, stepA, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm })
   const hangers: { x: number; y: number }[] = []
   // Рисуем подвесы только если их не слишком много (иначе каша)
   const hangerCount = bearingPosY.length * hangerPosXMm.length
