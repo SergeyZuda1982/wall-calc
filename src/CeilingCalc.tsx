@@ -444,6 +444,20 @@ export default function CeilingCalc() {
               </div>
             )}
 
+            {/* Предупреждения расчёта (result.warnings) — раньше считались,
+                но нигде не выводились; теперь показываем прямо над спецификацией,
+                чтобы не пропустить "по среднему расходу" или "шаг не предусмотрен". */}
+            {!!result?.warnings.length && (
+              <div style={{
+                padding: '8px 10px', background: '#fffbeb', border: `1px solid ${C.warning}`,
+                borderRadius: 6, fontSize: 11, color: '#92400e',
+              }}>
+                {result.warnings.map((w, i) => (
+                  <div key={i} style={{ marginTop: i > 0 ? 4 : 0 }}>⚠ {w}</div>
+                ))}
+              </div>
+            )}
+
             {/* Спецификация — накопительная */}
             {visibleMats.length > 0 && (
               <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
