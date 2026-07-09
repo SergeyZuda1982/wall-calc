@@ -20,6 +20,7 @@ import LiningCalc from './LiningCalc'
 import FloorPlan from './FloorPlan'
 import Scene3D from './Scene3D'
 import CeilingCalc from './CeilingCalc'
+import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
 import { calcProjectSheetLayout, buildSurfaceInputs } from './core/calcProjectSheetLayout'
@@ -153,6 +154,14 @@ export default function App() {
   const [form, setForm] = useState<WallInput>(DEFAULT_INPUT)
   const [shiftInput, setShiftInput] = useState('100')
   const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling' | '3d'>('wall')
+
+  // Плита ("карандаш") на плане отправлена в расчёт потолка — переключаемся
+  // на вкладку сразу, не заставляя искать её руками (сам расчёт CeilingCalc
+  // подхватывает seed самостоятельно из того же стора).
+  const ceilingSeedPending = useCeilingSeedStore(s => s.seed)
+  useEffect(() => {
+    if (ceilingSeedPending) setActiveTab('ceiling')
+  }, [ceilingSeedPending])
   const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
   const [sheetSideTab, setSheetSideTab] = useState<'A' | 'B'>('A')
   const [showOffcuts, setShowOffcuts] = useState(false)

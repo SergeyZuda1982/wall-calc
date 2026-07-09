@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clipRectBySlopedTop, polygonArea, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from '../geometry2d'
+import { clipRectBySlopedTop, polygonArea, polygonPerimeter, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from '../geometry2d'
 
 describe('polygonArea', () => {
   it('площадь прямоугольника', () => {
@@ -12,6 +12,26 @@ describe('polygonArea', () => {
 
   it('меньше 3 точек — площадь 0', () => {
     expect(polygonArea([{ x: 0, y: 0 }, { x: 1, y: 1 }])).toBe(0)
+  })
+})
+
+describe('polygonPerimeter', () => {
+  it('периметр прямоугольника', () => {
+    expect(polygonPerimeter([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 }, { x: 0, y: 5 }])).toBe(30)
+  })
+
+  it('периметр треугольника 3-4-5', () => {
+    expect(polygonPerimeter([{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 3 }])).toBeCloseTo(12, 6)
+  })
+
+  it('меньше 2 точек — периметр 0', () => {
+    expect(polygonPerimeter([{ x: 0, y: 0 }])).toBe(0)
+  })
+
+  it('порядок обхода (по часовой/против) не влияет на результат', () => {
+    const cw = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 }, { x: 0, y: 5 }]
+    const ccw = [...cw].reverse()
+    expect(polygonPerimeter(ccw)).toBe(polygonPerimeter(cw))
   })
 })
 

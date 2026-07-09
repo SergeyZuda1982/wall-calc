@@ -12,6 +12,7 @@ import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult } from './core/calcCeiling'
 import { calcFrameRowPositions } from './core/calcP112Frame'
+import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
 
@@ -86,6 +87,30 @@ export default function CeilingCalc() {
   const [result, setResult] = useState<CeilingCalcResult | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const [canvasW, setCanvasW] = useState(600)
+  const [seedBanner, setSeedBanner] = useState<{ label: string; holesCount: number } | null>(null)
+
+  // Плита ("карандаш"), отправленная с плана — площадь/периметр вычислены
+  // по факту обведённого контура (не прямоугольник), поэтому обнуляем
+  // roomLengthMm/roomWidthMm: точная раскладка листов по L×W для такой
+  // формы всё равно была бы неверной, работаем в режиме "площадь+периметр".
+  const consumeSeed = useCeilingSeedStore(s => s.seed)
+  const clearSeed = useCeilingSeedStore(s => s.clearSeed)
+  useEffect(() => {
+    if (!consumeSeed) return
+    setForm(prev => {
+      const next: CeilingSpecFull = {
+        ...prev,
+        roomLengthMm: 0,
+        roomWidthMm: 0,
+        areaSqm: consumeSeed.areaSqm,
+        perimeterM: consumeSeed.perimeterM,
+      }
+      setResult(calcCeiling(next))
+      return next
+    })
+    setSeedBanner({ label: consumeSeed.label, holesCount: consumeSeed.holesCount })
+    clearSeed()
+  }, [consumeSeed, clearSeed])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -151,6 +176,26 @@ export default function CeilingCalc() {
             </button>
           ))}
         </Card>
+
+        {seedBanner && (
+          <div style={{
+            padding: '8px 10px', background: '#eff6ff', border: `1px solid ${C.accent}`,
+            borderRadius: 6, fontSize: 11, color: C.text, display: 'flex',
+            justifyContent: 'space-between', alignItems: 'flex-start', gap: 6,
+          }}>
+            <div>
+              Площадь/периметр взяты из плиты «<b>{seedBanner.label}</b>» на плане.
+              {seedBanner.holesCount > 0 && (
+                <div style={{ marginTop: 3, color: C.warning }}>
+                  ⚠ {seedBanner.holesCount} вырез{seedBanner.holesCount > 1 ? 'а' : ''} в плите учтён{seedBanner.holesCount > 1 ? 'ы' : ''}
+                  {' '}в площади, но НЕ в периметре — обрамление ПН вокруг выреза добавьте отдельно, если нужно.
+                </div>
+              )}
+            </div>
+            <button onClick={() => setSeedBanner(null)}
+              style={{ border: 'none', background: 'none', color: C.muted, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
+          </div>
+        )}
 
         {/* Размеры */}
         <Card title="РАЗМЕРЫ ПОМЕЩЕНИЯ">
