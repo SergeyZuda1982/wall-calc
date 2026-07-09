@@ -4,6 +4,7 @@ import {
   resolveHangerKind,
   calcP112FrameGeometry,
   CLOSE_GAP_MM,
+  KNAUF_BEARING_WALL_OFFSET_MM,
 } from '../calcP112Frame'
 
 describe('calcFrameRowPositions', () => {
@@ -39,6 +40,36 @@ describe('calcFrameRowPositions', () => {
   it('маленькое помещение (меньше шага) — либо один закрывающий ряд, либо пусто', () => {
     const positions = calcFrameRowPositions(500, 900)
     expect(positions.length).toBeLessThanOrEqual(1)
+  })
+
+  describe('mode=knauf', () => {
+    it('по умолчанию (без wallOffsetMm) первый ряд тоже на расстоянии одного шага — совпадает с user на старте', () => {
+      const positions = calcFrameRowPositions(2800, 900, { mode: 'knauf' })
+      expect(positions[0]).toBe(900)
+    })
+
+    it('с явным wallOffsetMm (несущий профиль, 100мм) — старт НЕ равен шагу', () => {
+      // span=2800, step=500, offset=100: 100,600,1100,1600,2100,2600
+      const positions = calcFrameRowPositions(2800, 500, { mode: 'knauf', wallOffsetMm: KNAUF_BEARING_WALL_OFFSET_MM })
+      expect(positions).toEqual([100, 600, 1100, 1600, 2100, 2600])
+    })
+
+    it('НЕ сжимает последний ряд — просто оставляет естественный остаток у стены как есть', () => {
+      // span=4000, step=900: user подвигает последний ряд на 4000-250=3750 (сжатие),
+      // knauf оставляет обычную сетку 900/1800/2700/3600 (остаток 400мм у стены — это ОК)
+      const userPositions = calcFrameRowPositions(4000, 900, { mode: 'user' })
+      const knaufPositions = calcFrameRowPositions(4000, 900, { mode: 'knauf' })
+      expect(userPositions).toEqual([900, 1800, 2700, 3750])
+      expect(knaufPositions).toEqual([900, 1800, 2700, 3600])
+      expect(4000 - knaufPositions[knaufPositions.length - 1]).toBe(400)
+    })
+
+    it('расстояние между соседними рядами никогда не превышает номинальный шаг', () => {
+      const positions = calcFrameRowPositions(5137, 600, { mode: 'knauf' })
+      for (let i = 1; i < positions.length; i++) {
+        expect(positions[i] - positions[i - 1]).toBe(600)
+      }
+    })
   })
 })
 
@@ -101,5 +132,27 @@ describe('calcP112FrameGeometry', () => {
   it('тип подвеса прокидывается из slabGapMm', () => {
     const geo = calcP112FrameGeometry(4000, 3000, 600, 900, 700, true)
     expect(geo.hangerKind).toBe('rod_1000')
+  })
+
+  describe('layoutMode', () => {
+    it('по умолчанию (не передан) — совпадает со старым поведением (user)', () => {
+      const withDefault = calcP112FrameGeometry(4000, 3000, 600, 900, 50, true)
+      const withUser = calcP112FrameGeometry(4000, 3000, 600, 900, 50, true, 'user')
+      expect(withDefault).toEqual(withUser)
+    })
+
+    it('knauf даёт несущему профилю фиксированный отступ 100мм от стены, а не отступ=шагу', () => {
+      // B=3000 (шаг несущего поперёк), stepB=500 -> knauf: 100,600,1100,1600,2100,2600 (6 рядов)
+      // user: 500,1000,1500,2000,2500(зазор500>250->сдвиг)=2750 (5 рядов, обычная формула)
+      const geoKnauf = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'knauf')
+      const geoUser = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'user')
+      expect(geoKnauf.bearingCount).toBe(6)
+      expect(geoKnauf.bearingCount).not.toBe(geoUser.bearingCount)
+    })
+
+    it('соединители по-прежнему считаются как bearingCount × mainCount в обоих режимах', () => {
+      const geo = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'knauf')
+      expect(geo.connectorsTotal).toBe(geo.bearingCount * geo.mainCount)
+    })
   })
 })

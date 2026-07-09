@@ -28,6 +28,7 @@ import {
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D,
 } from './core/planTo3D'
 import type { PlanLineType, FloorPlan } from './types'
+import CeilingGridMesh from './components/CeilingGridMesh'
 
 const TYPE_COLOR_3D: Record<PlanLineType, string> = {
   wall_new:      '#e57373',
@@ -216,7 +217,7 @@ function FreeformStructureMesh({ prism, opacity = 1 }: { prism: FreeformPrism3D;
  * что выбран в шапке плана) рисуется полупрозрачным — чтобы было видно
  * объект целиком, но сразу понятно, какой этаж сейчас редактируется.
  */
-function LevelGroup({ floorPlan, offsetY, dimmed }: { floorPlan: FloorPlan; offsetY: number; dimmed: boolean }) {
+function LevelGroup({ floorPlan, offsetY, dimmed, showCeilingGrid }: { floorPlan: FloorPlan; offsetY: number; dimmed: boolean; showCeilingGrid: boolean }) {
   const lines = floorPlan.lines ?? []
   const rooms = floorPlan.rooms ?? []
   const slabs = floorPlan.slabs ?? []
@@ -248,6 +249,9 @@ function LevelGroup({ floorPlan, offsetY, dimmed }: { floorPlan: FloorPlan; offs
     <group position={[0, offsetY, 0]}>
       {boxes.map(box => <WallMesh key={box.id} box={box} opacity={opacity} />)}
       {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} opacity={opacity} />)}
+      {showCeilingGrid && !dimmed && polygons.filter(r => !r.isColumn).map(room => (
+        <CeilingGridMesh key={`grid-${room.id}`} roomPoints={room.points} ceilingM={mmToM(ceilingMm)} />
+      ))}
       {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} opacity={opacity} />)}
       {columnCylinders.map(cyl => <RoundColumnMesh key={cyl.id} cyl={cyl} opacity={opacity} />)}
       {rectColumnBoxes.map(box => <RectColumnMesh key={box.id} box={box} opacity={opacity} />)}
@@ -273,6 +277,7 @@ function levelHasGeometry(floorPlan: FloorPlan): boolean {
 
 export default function Scene3D() {
   const [cameraMode, setCameraMode] = useState<'orbit' | 'fly'>('orbit')
+  const [showCeilingGrid, setShowCeilingGrid] = useState(false)
   const levels = useProjectStore(s => s.levels)
   const activeLevelId = useProjectStore(s => s.activeLevelId)
 
@@ -307,6 +312,25 @@ export default function Scene3D() {
           }}>
           {cameraMode === 'fly' ? '✈ Режим полёта (вкл)' : '🖱 Мышь (вкл) — включить полёт'}
         </button>
+        <button
+          onClick={() => setShowCeilingGrid(v => !v)}
+          style={{
+            padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            border: '1px solid #7e57c2', borderRadius: 6,
+            background: showCeilingGrid ? '#7e57c2' : '#fff',
+            color: showCeilingGrid ? '#fff' : '#7e57c2',
+          }}>
+          {showCeilingGrid ? '▦ Каркас потолка (вкл)' : '▦ Показать каркас потолка'}
+        </button>
+        {showCeilingGrid && (
+          <div style={{
+            padding: '6px 10px', fontSize: 12, color: '#444', background: '#f3edff',
+            border: '1px solid #d4c4f5', borderRadius: 6, maxWidth: 220, lineHeight: 1.4,
+          }}>
+            Показан по умолчанию (шаг 600×600, П113) — пока не связан с
+            параметрами конкретного помещения из «Потолок» (CeilingCalc.tsx).
+          </div>
+        )}
         {cameraMode === 'fly' && (
           <div style={{
             padding: '6px 10px', fontSize: 12, color: '#444', background: '#fffbe6',
@@ -336,6 +360,7 @@ export default function Scene3D() {
             floorPlan={lv.floorPlan}
             offsetY={mmToM(lv.elevationMm)}
             dimmed={lv.id !== activeLevelId}
+            showCeilingGrid={showCeilingGrid}
           />
         ))}
         {cameraMode === 'orbit'
