@@ -40,6 +40,7 @@ import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
 import { slabToCeilingSeed } from './core/slabToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
+import { snapPoint, snapOrtho } from './core/planSnap'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -111,84 +112,10 @@ function computeSagittaForNewLine(
   return h
 }
 
-function snapPoint(
-  x: number, y: number, lines: PlanLine[], scaleMmPx: number,
-  excludeId?: string, threshPx = SNAP_SCREEN_PX,
-  /** Направление новой стены (если уже известно — второй клик при рисовании
-   *  прямой линии, drawing.x1/y1 уже зафиксированы) и её собственная
-   *  полутолщина в px — см. комментарий у extraOffset ниже. */
-  refDir?: { dx: number; dy: number }, newHalfThicknessPx = 0,
-) {
-  let best = { x, y, snapped: false, d: Infinity }
-  for (const l of lines) {
-    if (l.id === excludeId) continue
-    // Концы линии
-    for (const [px, py] of [[l.x1, l.y1], [l.x2, l.y2]] as [number, number][]) {
-      const d = dist(x, y, px, py)
-      if (d <= threshPx && d < best.d) best = { x: px, y: py, snapped: true, d }
-    }
-    // T-примыкание: снап к БЛИЖНЕМУ РЕБРУ стены (не к оси!) — именно туда
-    // физически упирается примыкающая перегородка. Длина при этом сразу
-    // получается "в свету" (до грани, не до центра), без отдельной коррекции.
-    const dx = l.x2 - l.x1, dy = l.y2 - l.y1
-    const len = Math.sqrt(dx * dx + dy * dy)
-    if (len > 1) {
-      const ux = dx / len, uy = dy / len
-      let t = ((x - l.x1) * dx + (y - l.y1) * dy) / (len * len)
-      t = Math.max(0, Math.min(1, t))
-      const axisX = l.x1 + t * dx, axisY = l.y1 + t * dy
-
-      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
-      const halfThicknessPx = vis.thicknessMm > 0 ? (vis.thicknessMm / 2) / scaleMmPx : 0
-
-      // Нормаль к оси линии; определяем с какой стороны от оси кликнули,
-      // чтобы выбрать БЛИЖНЮЮ грань (ту, с которой приближается курсор)
-      const nx = -uy, ny = ux
-      const side = (x - axisX) * nx + (y - axisY) * ny
-      const faceSign = side >= 0 ? 1 : -1
-
-      // Новая стена идёт ПОЧТИ ПАРАЛЛЕЛЬНО этой линии (±25°) — значит,
-      // скорее всего, её ведут ВПЛОТНУЮ рядом (флэш, две стены бок о бок),
-      // а не упирают её конец в грань T-образно. Без этой поправки снап
-      // тянул точку РОВНО на грань l — а после отрисовки СВОЕЙ толщины
-      // новая стена наполовину "утапливалась" в уже существующую (баг:
-      // невозможно начертить вплотную две параллельные стены одного
-      // материала — притяжение всегда возвращало на грань соседней).
-      // Поправка: сдвигаем целевую точку ещё дальше от l, на половину
-      // толщины именно НОВОЙ (рисуемой) стены — тогда её грань, а не ось,
-      // и коснётся грани l.
-      let extraOffsetPx = 0
-      if (refDir) {
-        const rlen = Math.sqrt(refDir.dx * refDir.dx + refDir.dy * refDir.dy)
-        if (rlen > 1) {
-          const cosAngle = Math.abs((refDir.dx * ux + refDir.dy * uy) / rlen)
-          if (cosAngle >= Math.cos(25 * Math.PI / 180)) extraOffsetPx = newHalfThicknessPx
-        }
-      }
-
-      const faceX = axisX + faceSign * nx * (halfThicknessPx + extraOffsetPx)
-      const faceY = axisY + faceSign * ny * (halfThicknessPx + extraOffsetPx)
-
-      const d = dist(x, y, faceX, faceY)
-      const bodyThresh = threshPx + halfThicknessPx + extraOffsetPx
-      // Кандидат валиден относительно СВОЕГО порога (учитывает толщину ИМЕННО этой стены),
-      // а не относительно best.d, который мог уже сжаться из-за другой, не относящейся линии
-      if (d <= bodyThresh && d < best.d) best = { x: faceX, y: faceY, snapped: true, d }
-    }
-  }
-  if (!best.snapped) return { x, y, snapped: false, d: threshPx }
-  return best
-}
-
-function snapOrtho(x1: number, y1: number, x: number, y: number): { x: number; y: number } {
-  const dx = x - x1
-  const dy = y - y1
-  const angle = Math.atan2(dy, dx) * 180 / Math.PI
-  const len   = Math.sqrt(dx * dx + dy * dy)
-  const snapped = Math.round(angle / 45) * 45
-  const rad = snapped * Math.PI / 180
-  return { x: x1 + Math.cos(rad) * len, y: y1 + Math.sin(rad) * len }
-}
+// snapPoint/snapOrtho — вынесены в core/planSnap.ts (09.07.2026), см. импорт выше.
+// Добавлена привязка к угловым точкам граней (не только к оси) — фикс
+// "снап всегда тянет к центру толщины стены, нельзя пристыковать заподлицо
+// при разной толщине конструкций".
 
 function polygonAreaM2(points: { x: number; y: number }[], scaleMmPx: number): number {
   const n = points.length
