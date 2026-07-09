@@ -121,8 +121,9 @@ export function calcCeiling(spec: CeilingSpec): CeilingCalcResult {
     if (hasPreciseGeometry) {
       const stepB = full.stepB ?? (P112_HANGER_STEP[stepC] ?? 1000)
       const bearingAlongLength = full.bearingAlongLength ?? true
+      const layoutMode = full.layoutMode ?? 'user'
       const geo = calcP112FrameGeometry(
-        full.roomLengthMm, full.roomWidthMm, stepC, stepB, full.slabGapMm!, bearingAlongLength,
+        full.roomLengthMm, full.roomWidthMm, stepC, stepB, full.slabGapMm!, bearingAlongLength, layoutMode,
       )
 
       materials.push({ name: 'Профиль ПП 60×27 (несущий, верхний уровень)', unit: 'пог.м', qty: ceil(geo.bearingTotalLm) })

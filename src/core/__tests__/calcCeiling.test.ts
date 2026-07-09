@@ -124,6 +124,20 @@ describe('calcCeiling — П112, точная геометрия (с slabGapMm)'
     const direct = far.materials.find(m => m.name === 'Подвес прямой ПП 60×27')
     expect(direct).toBeUndefined()
   })
+
+  it('layoutMode не задан → как раньше (user), совпадает с явным layoutMode:"user"', () => {
+    const withDefault = calcCeiling(PRECISE)
+    const withUser = calcCeiling({ ...PRECISE, layoutMode: 'user' })
+    expect(withDefault.materials).toEqual(withUser.materials)
+  })
+
+  it('layoutMode:"knauf" даёт другое (обычно большее) число несущих профилей — своя формула отступа от стены', () => {
+    const withKnauf = calcCeiling({ ...PRECISE, layoutMode: 'knauf' })
+    const expectedKnaufGeo = calcP112FrameGeometry(5000, 4000, 600, 900, 50, true, 'knauf')
+    const item = withKnauf.materials.find(m => m.name.includes('несущий, верхний'))
+    expect(item!.qty).toBe(Math.ceil(expectedKnaufGeo.bearingTotalLm))
+    expect(withKnauf.materials).not.toEqual(res.materials)
+  })
 })
 
 describe('calcCeiling — П112.2 двухслойный', () => {

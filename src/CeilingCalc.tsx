@@ -11,7 +11,7 @@ import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP } from './d
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult } from './core/calcCeiling'
-import { calcFrameRowPositions } from './core/calcP112Frame'
+import { calcFrameRowPositions, KNAUF_BEARING_WALL_OFFSET_MM } from './core/calcP112Frame'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
@@ -284,6 +284,28 @@ export default function CeilingCalc() {
         {/* Точный расчёт каркаса П112 — см. calcP112Frame.ts, КОНСПЕКТ.md 05.07.2026 */}
         {form.type === 'p112' && (
           <Card title="ТОЧНЫЙ РАСЧЁТ КАРКАСА">
+            <div style={{ marginBottom: 8 }}>
+              <label style={lbl}>Вариант раскладки рядов</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {(['user', 'knauf'] as const).map(m => (
+                  <button key={m}
+                    onClick={() => setField('layoutMode', m)}
+                    style={{
+                      flex: 1, padding: '6px 8px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                      border: `1px solid ${(form.layoutMode ?? 'user') === m ? C.accent : '#3a4060'}`,
+                      background: (form.layoutMode ?? 'user') === m ? C.accent : 'transparent',
+                      color: (form.layoutMode ?? 'user') === m ? '#fff' : C.muted,
+                    }}>
+                    {m === 'user' ? 'Пользовательский' : 'По Кнауф'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 10, color: C.muted }}>
+                {(form.layoutMode ?? 'user') === 'user'
+                  ? 'Реальная практика: последний ряд подвигается ближе к стене, лишний ряд не ставится.'
+                  : 'Строго по таблице КНАУФ: несущий профиль — 100мм от стены, далее шагом 500мм; последний ряд не сжимается.'}
+              </div>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
               <div>
                 <label style={lbl}>Зазор плита→каркас, мм</label>
@@ -548,10 +570,12 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
 
   // ── Основные профили (X, шаг c) ──
   const stepC = form.stepC
-  // Реальная позиция рядов (см. calcP112Frame.ts): первый ряд на расстоянии
-  // шага от стены, последний просто ближе к дальней стене — не наивная
-  // сетка от 0. shiftMainMm — ручной сдвиг всей гребёнки поверх этого.
-  const mainPosX = calcFrameRowPositions(L, stepC)
+  const layoutMode = form.layoutMode ?? 'user'
+  // Реальная позиция рядов (см. calcP112Frame.ts): в режиме 'user' первый
+  // ряд на расстоянии шага от стены, последний просто ближе к дальней стене
+  // — не наивная сетка от 0; в режиме 'knauf' — строго по официальной сетке,
+  // без сжатия последнего ряда. shiftMainMm — ручной сдвиг гребёнки поверх.
+  const mainPosX = calcFrameRowPositions(L, stepC, { mode: layoutMode })
     .map(p => (p + shiftMainMm) * scale)
     .filter(x => x >= 0 && x <= L * scale)
 
@@ -560,14 +584,17 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // профиля берём из формы (или дефолт из той же таблицы, что и подвесы,
   // см. КОНСПЕКТ.md — на объекте это одно и то же расстояние).
   const stepB = form.stepB ?? (P112_HANGER_STEP[stepC] ?? 1000)
-  const bearingPosY = calcFrameRowPositions(W_room, stepB)
+  const bearingOpts = layoutMode === 'knauf'
+    ? { mode: layoutMode, wallOffsetMm: KNAUF_BEARING_WALL_OFFSET_MM }
+    : { mode: layoutMode }
+  const bearingPosY = calcFrameRowPositions(W_room, stepB, bearingOpts)
     .map(p => (p + shiftBearingMm) * scale)
     .filter(y => y >= 0 && y <= W_room * scale)
 
   // ── Подвесы ──
   // Вдоль каждого несущего профиля, с тем же шагом b (НЕ пол-шага — это
   // правило для стоек в перегородках, здесь по-другому, см. КОНСПЕКТ.md).
-  const hangerPosXMm = calcFrameRowPositions(L, stepB)
+  const hangerPosXMm = calcFrameRowPositions(L, stepB, { mode: layoutMode })
   const hangers: { x: number; y: number }[] = []
   // Рисуем подвесы только если их не слишком много (иначе каша)
   const hangerCount = bearingPosY.length * hangerPosXMm.length
