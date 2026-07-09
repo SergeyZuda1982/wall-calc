@@ -383,11 +383,51 @@ function levelHasGeometry(floorPlan: FloorPlan): boolean {
   )
 }
 
+const VISUAL_SCALE_OPTIONS = [1, 5, 10] as const
+type VisualScale = typeof VISUAL_SCALE_OPTIONS[number]
+
+/**
+ * Синхронизирует камеру и OrbitControls.target с visualScale (см. кнопки
+ * 1x/5x/10x в Scene3D), чтобы при смене визуального масштаба объект
+ * оставался в кадре примерно тем же по размеру на экране — а не "улетал"
+ * за пределы вида или не оказывался внутри камеры.
+ *
+ * Работает через множитель ОТ ПРЕДЫДУЩЕГО масштаба К НОВОМУ (а не от 1x),
+ * так что переключение работает в обе стороны (1x→10x→5x→1x) и не зависит
+ * от того, где пользователь успел покрутить/подвинуть камеру между
+ * переключениями.
+ *
+ * Реальная геометрия (planTo3D.ts, расчёты материалов) этот компонент не
+ * трогает — только камеру. Сам объект масштабируется отдельно, через
+ * <group scale={...}> в Scene3D ниже.
+ */
+function CameraScaleSync({ scale, controlsRef }: { scale: VisualScale; controlsRef: React.MutableRefObject<{ target: THREE.Vector3; update: () => void } | null> }) {
+  const { camera } = useThree()
+  const prevScaleRef = useRef<VisualScale>(scale)
+
+  useEffect(() => {
+    const factor = scale / prevScaleRef.current
+    if (factor !== 1) {
+      camera.position.multiplyScalar(factor)
+      const controls = controlsRef.current
+      if (controls) {
+        controls.target.multiplyScalar(factor)
+        controls.update()
+      }
+      camera.updateProjectionMatrix()
+    }
+    prevScaleRef.current = scale
+  }, [scale, camera, controlsRef])
+
+  return null
+}
+
 export default function Scene3D() {
   const [cameraMode, setCameraMode] = useState<'orbit' | 'fly'>('orbit')
   const [showCeilingGrid, setShowCeilingGrid] = useState(false)
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
   const focusNonce = useRef(0)
+  const [visualScale, setVisualScale] = useState<VisualScale>(1)
   const controlsRef = useRef<any>(null)
   const levels = useProjectStore(s => s.levels)
   const activeLevelId = useProjectStore(s => s.activeLevelId)
@@ -395,10 +435,21 @@ export default function Scene3D() {
   // Клик по табличке помещения (см. RoomLabelTag) должен работать и в режиме
   // полёта (FlyControls не имеет "target" — сперва переключаемся на orbit,
   // затем едем к помещению; см. CameraRig).
-  function focusOnRoom(target: THREE.Vector3, distance: number) {
+  //
+  // localTarget/localDistance приходят в ЛОКАЛЬНЫХ координатах этажа — внутри
+  // <group scale={visualScale}> (см. Canvas ниже), а камера/OrbitControls
+  // работают в МИРОВЫХ координатах вне этой группы. Поэтому при активном
+  // визуальном масштабе (5x/10x) и цель, и дистанцию домножаем на
+  // visualScale — иначе камера при клике на табличку подъедет не туда и не
+  // на то расстояние, что видно на экране.
+  function focusOnRoom(localTarget: THREE.Vector3, localDistance: number) {
     setCameraMode('orbit')
     focusNonce.current += 1
-    setFocusTarget({ nonce: focusNonce.current, target, distance })
+    setFocusTarget({
+      nonce: focusNonce.current,
+      target: localTarget.clone().multiplyScalar(visualScale),
+      distance: localDistance * visualScale,
+    })
   }
 
   const isEmpty = useMemo(() => levels.every(lv => !levelHasGeometry(lv.floorPlan)), [levels])
@@ -442,6 +493,22 @@ export default function Scene3D() {
           }}>
           {showCeilingGrid ? '▦ Каркас потолка (вкл)' : '▦ Показать каркас потолка'}
         </button>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {VISUAL_SCALE_OPTIONS.map(opt => (
+            <button
+              key={opt}
+              onClick={() => setVisualScale(opt)}
+              title="Визуальное увеличение 3D-вида — реальные размеры и расчёты материалов не меняются, только картинка"
+              style={{
+                padding: '8px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                border: '1px solid #43a047', borderRadius: 6,
+                background: visualScale === opt ? '#43a047' : '#fff',
+                color: visualScale === opt ? '#fff' : '#43a047',
+              }}>
+              {opt}×
+            </button>
+          ))}
+        </div>
         {showCeilingGrid && (
           <div style={{
             padding: '6px 10px', fontSize: 12, color: '#444', background: '#f3edff',
@@ -473,17 +540,20 @@ export default function Scene3D() {
       <Canvas shadows camera={{ position: [10, 10, 10], fov: 50 }}>
         <ambientLight intensity={0.6} />
         <directionalLight position={[8, 12, 6]} intensity={1} castShadow />
-        <Grid args={[100, 100]} cellColor="#c9ccd6" sectionColor="#9aa0b0" fadeDistance={40} position={[0, -0.001, 0]} />
-        {levels.map(lv => (
-          <LevelGroup
-            key={lv.id}
-            floorPlan={lv.floorPlan}
-            offsetY={mmToM(lv.elevationMm)}
-            dimmed={lv.id !== activeLevelId}
-            showCeilingGrid={showCeilingGrid}
-            onFocusRoom={focusOnRoom}
-          />
-        ))}
+        <group scale={[visualScale, visualScale, visualScale]}>
+          <Grid args={[100, 100]} cellColor="#c9ccd6" sectionColor="#9aa0b0" fadeDistance={40} position={[0, -0.001, 0]} />
+          {levels.map(lv => (
+            <LevelGroup
+              key={lv.id}
+              floorPlan={lv.floorPlan}
+              offsetY={mmToM(lv.elevationMm)}
+              dimmed={lv.id !== activeLevelId}
+              showCeilingGrid={showCeilingGrid}
+              onFocusRoom={focusOnRoom}
+            />
+          ))}
+        </group>
+        <CameraScaleSync scale={visualScale} controlsRef={controlsRef} />
         {cameraMode === 'orbit'
           ? <OrbitControls ref={controlsRef} makeDefault />
           : <FlyControls makeDefault dragToLook movementSpeed={4} rollSpeed={0.6} />}
