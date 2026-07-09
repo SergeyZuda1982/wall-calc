@@ -1432,8 +1432,15 @@ export default function FloorPlan() {
           allLineIds = [...allLineIds, closingId]
         }
 
-        // Создаём помещение из wall_existing-цепочки
-        if (drawType === 'wall_existing' && allLineIds.length >= 3) {
+        // Создаём помещение из замкнутой цепочки стен — существующих и/или
+        // новых перегородок (обе реально формируют периметр помещения,
+        // потолок монтируется после всех стен независимо от их типа).
+        // Проверяем тип КАЖДОЙ линии контура, а не только замыкающей — раньше
+        // проверялся только drawType последнего отрезка, из-за чего цепочка
+        // могла на 3/4 состоять из wall_new и всё равно создать Room, если
+        // пользователь переключил инструмент только на последний клик.
+        const isRoomPerimeterType = (t: PlanLineType) => t === 'wall_existing' || t === 'wall_new'
+        if (isRoomPerimeterType(drawType) && allLineIds.length >= 3) {
           const finalIds = allLineIds
           setTimeout(() => {
             const storeLines = useProjectStore.getState().floorPlan?.lines ?? []
@@ -1441,6 +1448,7 @@ export default function FloorPlan() {
               .map(id => storeLines.find(l => l.id === id))
               .filter(Boolean) as PlanLine[]
             if (roomLines.length < 3) return
+            if (!roomLines.every(l => isRoomPerimeterType(l.type))) return
             const pts = extractContourPoints(finalIds, storeLines)
             const area = polygonAreaM2(pts.length >= 3 ? pts : roomLines.map(l => ({ x: l.x1, y: l.y1 })), scaleMmPx)
             const perimeter = roomLines.reduce((s, l) => s + l.lengthMm, 0)
@@ -1448,6 +1456,7 @@ export default function FloorPlan() {
             addRoom({ lineIds: finalIds, areaM2: area, perimeterMm: perimeter, label: `Помещение ${count}` })
           }, 0)
         }
+
 
         setDrawing(null)
         setChainStartPt(null)
@@ -3753,11 +3762,47 @@ export default function FloorPlan() {
                   {mode === 'draw' && drawing && previewPt && (() => {
                     const previewVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
                     const previewColor = previewVis.colorOverride ?? LINE_COLORS[drawType]
+
+                    // Засечки толщины на концах превью-линии (по просьбе пользователя,
+                    // 09.07.2026): пока рисуешь ось будущей конструкции, не видно, какую
+                    // реальную ширину она займёт и как ляжет на подложку/соседние стены —
+                    // особенно важно при трассировке по PDF-чертежу, где нужно сразу видеть,
+                    // не вылезет ли толщина за пределы того, что на плане. Засечка — короткий
+                    // перпендикулярный отрезок на каждом конце, отцентрованный на оси,
+                    // длиной ровно в толщину конструкции (в мировых координатах, поэтому
+                    // масштабируется вместе с зумом холста, как и сама стена).
+                    const dx = previewX2 - drawing.x1, dy = previewY2 - drawing.y1
+                    const plen = Math.sqrt(dx * dx + dy * dy)
+                    const halfThicknessPx = previewVis.thicknessMm > 0 ? (previewVis.thicknessMm / 2) / scaleMmPx : 0
+                    let capPoints: { start: number[]; end: number[] } | null = null
+                    if (halfThicknessPx > 0.5 && plen > 1) {
+                      const ux = dx / plen, uy = dy / plen
+                      const nx = -uy, ny = ux
+                      capPoints = {
+                        start: [
+                          drawing.x1 + nx * halfThicknessPx, drawing.y1 + ny * halfThicknessPx,
+                          drawing.x1 - nx * halfThicknessPx, drawing.y1 - ny * halfThicknessPx,
+                        ],
+                        end: [
+                          previewX2 + nx * halfThicknessPx, previewY2 + ny * halfThicknessPx,
+                          previewX2 - nx * halfThicknessPx, previewY2 - ny * halfThicknessPx,
+                        ],
+                      }
+                    }
+
                     return (
                       <>
                         <Line points={[drawing.x1,drawing.y1,previewX2,previewY2]}
                           stroke={previewColor} strokeWidth={previewVis.strokeWidth || LINE_WIDTH[drawType]}
                           dash={previewVis.dash ?? undefined} opacity={0.6} lineCap="round" listening={false} />
+                        {capPoints && (
+                          <>
+                            <Line points={capPoints.start} stroke={previewColor}
+                              strokeWidth={Math.max(1, previewVis.strokeWidth || 1)} opacity={0.8} listening={false} />
+                            <Line points={capPoints.end} stroke={previewColor}
+                              strokeWidth={Math.max(1, previewVis.strokeWidth || 1)} opacity={0.8} listening={false} />
+                          </>
+                        )}
                         {previewLabel(previewX2, previewY2) && (
                           <Text x={(drawing.x1+previewX2)/2-30} y={(drawing.y1+previewY2)/2-16}
                             width={60} text={previewLabel(previewX2,previewY2)}

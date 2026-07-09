@@ -9,7 +9,7 @@ import {
   P113_FRAME_RATES, P113_SHEET_RATES, P113_HANGER_STEP,
   P131_FRAME_RATES, P131_SPECIAL_RATES, P131_SHEET_RATES,
 } from '../data/ceilingData'
-import { calcP112FrameGeometry, HANGER_LABEL } from './calcP112Frame'
+import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL } from './calcP112Frame'
 
 // ─── Результат расчёта ────────────────────────────────────────────────────────
 
@@ -119,11 +119,19 @@ export function calcCeiling(spec: CeilingSpec): CeilingCalcResult {
       && !!full.roomLengthMm && !!full.roomWidthMm && !!full.slabGapMm
 
     if (hasPreciseGeometry) {
-      const stepB = full.stepB ?? (P112_HANGER_STEP[stepC] ?? 1000)
-      const bearingAlongLength = full.bearingAlongLength ?? true
       const layoutMode = full.layoutMode ?? 'user'
+      const bearingAlongLength = full.bearingAlongLength ?? true
+      const frameParams = resolveFrameParams({
+        stepC, layoutMode, userStepB: full.stepB, mountDirection: full.mountDirection, loadClass: full.loadClass,
+      })
+      if (frameParams.warning) warnings.push(frameParams.warning)
       const geo = calcP112FrameGeometry(
-        full.roomLengthMm, full.roomWidthMm, stepC, stepB, full.slabGapMm!, bearingAlongLength, layoutMode,
+        full.roomLengthMm, full.roomWidthMm, stepC, frameParams.stepB, full.slabGapMm!, bearingAlongLength, layoutMode,
+        {
+          stepA: frameParams.stepA,
+          wallOffsetMainMm: frameParams.wallOffsetMainMm,
+          wallOffsetBearingMm: frameParams.wallOffsetBearingMm,
+        },
       )
 
       materials.push({ name: 'Профиль ПП 60×27 (несущий, верхний уровень)', unit: 'пог.м', qty: ceil(geo.bearingTotalLm) })

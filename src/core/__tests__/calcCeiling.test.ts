@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { calcCeiling } from '../calcCeiling'
 import type { CeilingSpecFull } from '../../data/ceilingData'
-import { calcP112FrameGeometry } from '../calcP112Frame'
+import { calcP112FrameGeometry, resolveFrameParams } from '../calcP112Frame'
 
 // Помещение 4000×5000мм = 20м², периметр 18м
 const BASE: CeilingSpecFull = {
@@ -131,12 +131,24 @@ describe('calcCeiling — П112, точная геометрия (с slabGapMm)'
     expect(withDefault.materials).toEqual(withUser.materials)
   })
 
-  it('layoutMode:"knauf" даёт другое (обычно большее) число несущих профилей — своя формула отступа от стены', () => {
+  it('layoutMode:"knauf" использует stepB/stepA по официальной таблице, а не PRECISE.stepB', () => {
     const withKnauf = calcCeiling({ ...PRECISE, layoutMode: 'knauf' })
-    const expectedKnaufGeo = calcP112FrameGeometry(5000, 4000, 600, 900, 50, true, 'knauf')
+    const frameParams = resolveFrameParams({ stepC: PRECISE.stepC, layoutMode: 'knauf' })
+    const expectedKnaufGeo = calcP112FrameGeometry(
+      5000, 4000, PRECISE.stepC, frameParams.stepB, 50, true, 'knauf',
+      { stepA: frameParams.stepA, wallOffsetMainMm: frameParams.wallOffsetMainMm, wallOffsetBearingMm: frameParams.wallOffsetBearingMm },
+    )
     const item = withKnauf.materials.find(m => m.name.includes('несущий, верхний'))
     expect(item!.qty).toBe(Math.ceil(expectedKnaufGeo.bearingTotalLm))
     expect(withKnauf.materials).not.toEqual(res.materials)
+    // c=600 вне официальной таблицы (только 800/1000/1200) -> должно быть предупреждение
+    expect(withKnauf.warnings.some(w => w.includes('таблиц'))).toBe(true)
+  })
+
+  it('layoutMode:"knauf" с mountDirection:"lengthwise" даёт stepB=400 (не 500)', () => {
+    const withLengthwise = calcCeiling({ ...PRECISE, layoutMode: 'knauf', mountDirection: 'lengthwise', loadClass: 0.5 })
+    const withCrosswise = calcCeiling({ ...PRECISE, layoutMode: 'knauf', mountDirection: 'crosswise', loadClass: 0.5 })
+    expect(withLengthwise.materials).not.toEqual(withCrosswise.materials)
   })
 })
 

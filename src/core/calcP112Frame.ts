@@ -5,23 +5,38 @@
  * правила получены от пользователя (монтажник, реальная практика объекта).
  *
  * 09.07.2026: добавлен второй режим раскладки ('knauf') — строго по
- * официальной сетке КНАУФ (расстояния между осями профилей и отступы от
- * стены, серия 1.045.9-2.08.1), НЕ по практике монтажника. См. FrameLayoutMode.
+ * официальной таблице КНАУФ, серия 1.045.9-2.08.1-4, лист 40/76 (пользователь
+ * прислал фото документа). ⚠️ Первая версия этого файла (тем же днём) путала
+ * местами несущий/основной профиль и брала отступ от стены с постороннего
+ * веб-источника — эта версия исправлена по официальному документу.
  *
- * Термины (см. также ceilingData.ts):
- *   несущий профиль  (b) — верхний уровень, ближе к плите, крепится подвесами
- *   основной профиль (c) — нижний уровень, к нему крепится ГКЛ, шаг c выбирает
- *                          пользователь (500-1200мм, см. CeilingStep)
+ * Термины, ТРИ РАЗНЫЕ величины (см. также ceilingData.ts):
+ *   b — шаг НЕСУЩЕГО профиля (верхний уровень, ближе к плите, крепится
+ *       подвесами). По КНАУФ — НЕ свободный выбор: 500мм при поперечном
+ *       монтаже ГСП/ГВЛ, 400мм при продольном (см. KNAUF_BEARING_STEP_BY_MOUNT).
+ *   c — шаг ОСНОВНОГО профиля (нижний уровень, к нему крепится ГКЛ) —
+ *       свободно выбирает пользователь (500-1200мм, см. CeilingStep).
+ *   a — шаг ПОДВЕСОВ/дюбелей вдоль несущего профиля — по КНАУФ зависит от
+ *       c И направления монтажа (через b) И класса нагрузки, см.
+ *       KNAUF_HANGER_SPACING_TABLE. Раньше по ошибке считался равным b —
+ *       это верно только как приближение для 'user'-режима (реальная
+ *       практика объекта), не для 'knauf'.
  *
- * Правило расстановки рядов (со слов пользователя, НЕ как у стоек в
- * перегородках — там половина шага от стены, здесь иначе):
+ * Правило расстановки рядов для mode='user' (со слов пользователя, НЕ как у
+ * стоек в перегородках — там половина шага от стены, здесь иначе):
  *   первый ряд — на расстоянии ОДНОГО ШАГА от стены (не 0, не пол-шага)
  *   далее — через шаг
  *   последний ряд — просто закрывает остаток у противоположной стены
  *                   (~20-30см), а не встаёт строго по сетке
  * Тот же принцип применяется к подвесам вдоль несущего профиля (тот же шаг,
- * см. calcP112FrameGeometry).
+ * см. calcP112FrameGeometry). Для mode='knauf' — см. FrameLayoutMode ниже.
  */
+
+import type { CeilingLoadClass, CeilingMountDirection, CeilingStep } from '../data/ceilingData'
+import {
+  KNAUF_HANGER_SPACING_TABLE, KNAUF_BEARING_STEP_BY_MOUNT, KNAUF_WALL_OFFSET_MM,
+  P112_HANGER_STEP,
+} from '../data/ceilingData'
 
 export type HangerKind = 'direct' | 'direct_extended' | 'rod_500' | 'rod_1000'
 
@@ -45,40 +60,45 @@ export const STANDARD_BAR_LENGTH_MM = 3000
  *            ШАГА от стены, последний ряд СЖИМАЕТСЯ ближе к дальней стене
  *            (не встаёт строго по сетке, экономит ряд/материал). Уже было
  *            реализовано раньше как единственный режим, теперь default.
- *  'knauf' — строго по официальной таблице КНАУФ (проверено поиском,
- *            источник gipsokart.ru/stroi-obzor.ru, серия 1.045.9-2.08.1):
- *            несущий профиль крепится на расстоянии 100мм от стены, ДАЛЕЕ
- *            шагом 500мм; основной профиль — на расстоянии ОДНОГО ШАГА c от
- *            стены (совпадает с 'user' в стартовой точке, отличие — только
- *            в последнем ряду). Последний ряд НЕ сжимается — расстояние до
- *            соседнего ряда никогда не должно превышать номинальный шаг
- *            (это норма нагрузки/прогиба, не эстетика), поэтому если
- *            естественный остаток у стены есть — он просто маленький,
- *            лишний ряд специально под него не добавляется.
+ *  'knauf' — строго по официальной таблице КНАУФ (серия 1.045.9-2.08.1-4,
+ *            лист 40/76, документ прислан пользователем): и несущий, и
+ *            основной профиль — отступ ≤100мм от стены (деталь «Б-Б,
+ *            примыкание к стене» — оба сходятся в одной точке у стены),
+ *            далее строго через шаг. Последний ряд НЕ сжимается —
+ *            расстояние между соседними рядами никогда не должно превышать
+ *            номинальный шаг (норма нагрузки/прогиба, не эстетика),
+ *            поэтому если естественный остаток у стены есть — он просто
+ *            маленький, лишний ряд специально под него не добавляется.
  */
 export type FrameLayoutMode = 'user' | 'knauf'
 
-/** Несущий профиль по Кнауф — фиксированный отступ от стены 100мм, НЕ
- *  равен шагу (в отличие от основного профиля, где отступ = шагу). */
-export const KNAUF_BEARING_WALL_OFFSET_MM = 100
+/**
+ * Отступ первого ряда (несущего ИЛИ основного профиля) от стены по КНАУФ —
+ * ≤100мм, см. FrameLayoutMode выше. Официально это максимум, берём как
+ * есть (частая практика — ставить максимально близко, насколько разрешено).
+ */
+export { KNAUF_WALL_OFFSET_MM }
+/** @deprecated используйте KNAUF_WALL_OFFSET_MM — переименовано 09.07.2026,
+ *  когда выяснилось, что отступ ≤100мм применяется к ОБОИМ профилям, а не
+ *  только к несущему (см. TASKS.md). Оставлено для обратной совместимости. */
+export const KNAUF_BEARING_WALL_OFFSET_MM = KNAUF_WALL_OFFSET_MM
 
 /**
  * Позиции рядов профиля вдоль пролёта, мм от начальной стены.
  *
  * mode='user' (по умолчанию, обратная совместимость): первый ряд — на
- * расстоянии одного шага от стены, далее — через шаг. Если это оставляет
- * у противоположной стены зазор больше CLOSE_GAP_MM — последний ряд НЕ
- * добавляется отдельно, а просто сдвигается ближе к стене (реальная
- * практика: монтажник просто подвигает последний профиль, а не ставит
- * лишний ради нескольких см). Если естественный зазор уже небольшой
- * (≤ CLOSE_GAP_MM) — ряд остаётся на своей обычной, кратной шагу, позиции.
+ * wallOffsetMm от стены (не задан → один шаг, как раньше), далее — через
+ * шаг. Если это оставляет у противоположной стены зазор больше CLOSE_GAP_MM
+ * — последний ряд НЕ добавляется отдельно, а просто сдвигается ближе к
+ * стене (реальная практика: монтажник просто подвигает последний профиль,
+ * а не ставит лишний ради нескольких см). Если естественный зазор уже
+ * небольшой (≤ CLOSE_GAP_MM) — ряд остаётся на своей обычной позиции.
  *
- * mode='knauf': первый ряд — на wallOffsetMm от стены (по умолчанию тоже
- * один шаг, но для несущего профиля передавайте KNAUF_BEARING_WALL_OFFSET_MM
- * явно — там отступ фиксирован, не равен шагу), далее строго через шаг,
- * БЕЗ сжатия последнего ряда — остаток у дальней стены может быть меньше
- * шага, это нормально и ожидаемо, просто не даём расстоянию между рядами
- * превысить номинальный шаг ни в одном пролёте.
+ * mode='knauf': первый ряд — на wallOffsetMm от стены (не задан → тоже
+ * один шаг; для отступа по КНАУФ передавайте KNAUF_WALL_OFFSET_MM явно),
+ * далее строго через шаг, БЕЗ сжатия последнего ряда — остаток у дальней
+ * стены может быть меньше шага, это нормально и ожидаемо, просто не даём
+ * расстоянию между рядами превысить номинальный шаг ни в одном пролёте.
  */
 export function calcFrameRowPositions(
   spanMm: number,
@@ -99,7 +119,7 @@ export function calcFrameRowPositions(
   }
 
   const positions: number[] = []
-  let pos = stepMm
+  let pos = wallOffsetMm ?? stepMm
   while (pos < spanMm) {
     positions.push(pos)
     pos += stepMm
@@ -137,6 +157,102 @@ export function resolveHangerKind(slabGapMm: number): { kind: HangerKind; warnin
     kind: 'rod_1000',
     warning: `Зазор до плиты ${slabGapMm}мм больше 1000мм — тяга 1000мм может не подойти, проверить на месте`,
   }
+}
+
+export interface KnaufHangerStepResult {
+  stepAMm: number
+  warning?: string
+}
+
+/**
+ * Шаг подвесов a, мм, строго по официальной таблице КНАУФ
+ * (KNAUF_HANGER_SPACING_TABLE, лист 40/76). Если точной комбинации
+ * c+направление+нагрузка нет в таблице (в оригинале — прочерк, недопустимо)
+ * — берём наименьший (самый частый, самый безопасный запас) шаг из этой же
+ * строки таблицы и явно предупреждаем, вместо того чтобы тихо посчитать
+ * неверно. Если для самого c данных вообще нет (500/600/700 — за пределами
+ * этой таблицы) — грубый запасной вариант (шаг = c) с явным предупреждением.
+ */
+export function resolveKnaufHangerStep(
+  stepC: number,
+  mountDirection: CeilingMountDirection,
+  loadClass: CeilingLoadClass,
+): KnaufHangerStepResult {
+  const row = KNAUF_HANGER_SPACING_TABLE[mountDirection]?.[stepC as CeilingStep]
+  if (!row) {
+    return {
+      stepAMm: stepC,
+      warning: `Для шага основного профиля c=${stepC}мм нет данных в официальной ` +
+        `таблице КНАУФ (лист 40/76, только c=800/1000/1200) — шаг подвесов взят ` +
+        `приблизительно (=c), уточните по документации на месте.`,
+    }
+  }
+
+  const direct = row[loadClass]
+  if (direct != null) return { stepAMm: direct }
+
+  const available = Object.values(row).filter((v): v is number => v != null)
+  const mountLabel = mountDirection === 'crosswise' ? 'поперечном' : 'продольном'
+  if (available.length > 0) {
+    const fallback = Math.min(...available)
+    return {
+      stepAMm: fallback,
+      warning: `По таблице КНАУФ комбинация c=${stepC}мм + нагрузка ≤${loadClass} кН/м² ` +
+        `при ${mountLabel} монтаже не допускается (прочерк в таблице) — взят более ` +
+        `частый шаг подвесов ${fallback}мм (запас в безопасную сторону), сверьте на месте.`,
+    }
+  }
+  return {
+    stepAMm: stepC,
+    warning: `По таблице КНАУФ ни один шаг подвесов не допускается для c=${stepC}мм ` +
+      `при ${mountLabel} монтаже — шаг подвесов взят приблизительно (=c), сверьте по документации.`,
+  }
+}
+
+export interface ResolvedFrameParams {
+  /** Шаг несущего профиля, мм. */
+  stepB: number
+  /** Шаг подвесов вдоль несущего профиля, мм — ОТДЕЛЬНАЯ величина от stepB
+   *  (раньше в коде ошибочно считались равными, см. шапку файла). */
+  stepA: number
+  wallOffsetMainMm?: number
+  wallOffsetBearingMm?: number
+  warning?: string
+}
+
+/**
+ * Единая точка правды для параметров каркаса — используется и сметой
+ * (calcCeiling.ts), и превью-канвасом (CeilingCalc.tsx), чтобы они не могли
+ * разойтись (как уже почти случилось с layoutMode — превью считало своими
+ * силами параллельно со сметой).
+ *
+ * mode='user': stepB — явно заданный пользователем или из старой таблицы
+ * P112_HANGER_STEP (обратная совместимость); stepA = stepB (та же практика).
+ *
+ * mode='knauf': stepB — жёстко по направлению монтажа (400/500), stepA — по
+ * официальной таблице (resolveKnaufHangerStep), отступ от стены ≤100мм для
+ * обоих профилей.
+ */
+export function resolveFrameParams(opts: {
+  stepC: number
+  layoutMode: FrameLayoutMode
+  userStepB?: number
+  mountDirection?: CeilingMountDirection
+  loadClass?: CeilingLoadClass
+}): ResolvedFrameParams {
+  if (opts.layoutMode === 'knauf') {
+    const mountDirection = opts.mountDirection ?? 'crosswise'
+    const loadClass = opts.loadClass ?? 0.15
+    const stepB = KNAUF_BEARING_STEP_BY_MOUNT[mountDirection]
+    const { stepAMm, warning } = resolveKnaufHangerStep(opts.stepC, mountDirection, loadClass)
+    return {
+      stepB, stepA: stepAMm,
+      wallOffsetMainMm: KNAUF_WALL_OFFSET_MM, wallOffsetBearingMm: KNAUF_WALL_OFFSET_MM,
+      warning,
+    }
+  }
+  const stepB = opts.userStepB ?? (P112_HANGER_STEP[opts.stepC as CeilingStep] ?? 1000)
+  return { stepB, stepA: stepB }
 }
 
 export interface P112FrameGeometry {
@@ -177,31 +293,37 @@ export function calcP112FrameGeometry(
   slabGapMm: number,
   bearingAlongLength: boolean,
   layoutMode: FrameLayoutMode = 'user',
+  extra: { stepA?: number; wallOffsetMainMm?: number; wallOffsetBearingMm?: number } = {},
 ): P112FrameGeometry {
   // A — пролёт вдоль которого идёт (своей длиной) несущий профиль
   // B — пролёт поперёк которого несущий профиль расставлен с шагом stepB
   const A = bearingAlongLength ? roomLengthMm : roomWidthMm
   const B = bearingAlongLength ? roomWidthMm : roomLengthMm
 
-  // Несущий профиль (ряды поперёк B) — единственное место, где 'knauf'
-  // использует ДРУГОЙ (не равный шагу) отступ от стены, см. KONSPEKT/поиск.
-  const bearingOpts = layoutMode === 'knauf'
-    ? { mode: layoutMode, wallOffsetMm: KNAUF_BEARING_WALL_OFFSET_MM }
-    : { mode: layoutMode }
-  const bearingCount = calcFrameRowPositions(B, stepB, bearingOpts).length
+  const defaultWallOffset = layoutMode === 'knauf' ? KNAUF_WALL_OFFSET_MM : undefined
+  const wallOffsetBearingMm = extra.wallOffsetBearingMm ?? defaultWallOffset
+  const wallOffsetMainMm = extra.wallOffsetMainMm ?? defaultWallOffset
+
+  // Несущий профиль (ряды поперёк B).
+  const bearingCount = calcFrameRowPositions(
+    B, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm },
+  ).length
   const bearingLengthEachMm = A
   const bearingTotalLm = (bearingCount * bearingLengthEachMm) / 1000
 
-  // Подвесы вдоль несущего профиля — тот же шаг, что и между несущими рядами
-  // (см. пояснение пользователя: "такое же расстояние выдерживают и между подвесами").
-  // Официальный отступ от торцевой стены для подвесов Кнауф отдельно не
-  // оговаривает — используем тот же принцип, что и для основного профиля
-  // (отступ = шагу в обоих режимах, разница только в сжатии последнего).
-  const hangersPerBearing = calcFrameRowPositions(A, stepB, { mode: layoutMode }).length
+  // Подвесы вдоль несущего профиля — ОТДЕЛЬНЫЙ шаг stepA (не путать с stepB,
+  // см. шапку файла). Не задан явно -> = stepB (старое поведение 'user':
+  // на объекте это часто одно и то же расстояние по факту).
+  const stepA = extra.stepA ?? stepB
+  const hangersPerBearing = calcFrameRowPositions(
+    A, stepA, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm },
+  ).length
   const hangersTotal = bearingCount * hangersPerBearing
 
   // Основной профиль — перпендикулярно несущему, расставлен вдоль A с шагом c
-  const mainCount = calcFrameRowPositions(A, stepC, { mode: layoutMode }).length
+  const mainCount = calcFrameRowPositions(
+    A, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm },
+  ).length
   const mainLengthEachMm = B
   const mainTotalLm = (mainCount * mainLengthEachMm) / 1000
 
