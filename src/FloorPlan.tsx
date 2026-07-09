@@ -1432,8 +1432,15 @@ export default function FloorPlan() {
           allLineIds = [...allLineIds, closingId]
         }
 
-        // Создаём помещение из wall_existing-цепочки
-        if (drawType === 'wall_existing' && allLineIds.length >= 3) {
+        // Создаём помещение из замкнутой цепочки стен — существующих и/или
+        // новых перегородок (обе реально формируют периметр помещения,
+        // потолок монтируется после всех стен независимо от их типа).
+        // Проверяем тип КАЖДОЙ линии контура, а не только замыкающей — раньше
+        // проверялся только drawType последнего отрезка, из-за чего цепочка
+        // могла на 3/4 состоять из wall_new и всё равно создать Room, если
+        // пользователь переключил инструмент только на последний клик.
+        const isRoomPerimeterType = (t: PlanLineType) => t === 'wall_existing' || t === 'wall_new'
+        if (isRoomPerimeterType(drawType) && allLineIds.length >= 3) {
           const finalIds = allLineIds
           setTimeout(() => {
             const storeLines = useProjectStore.getState().floorPlan?.lines ?? []
@@ -1441,6 +1448,7 @@ export default function FloorPlan() {
               .map(id => storeLines.find(l => l.id === id))
               .filter(Boolean) as PlanLine[]
             if (roomLines.length < 3) return
+            if (!roomLines.every(l => isRoomPerimeterType(l.type))) return
             const pts = extractContourPoints(finalIds, storeLines)
             const area = polygonAreaM2(pts.length >= 3 ? pts : roomLines.map(l => ({ x: l.x1, y: l.y1 })), scaleMmPx)
             const perimeter = roomLines.reduce((s, l) => s + l.lengthMm, 0)
@@ -1448,6 +1456,7 @@ export default function FloorPlan() {
             addRoom({ lineIds: finalIds, areaM2: area, perimeterMm: perimeter, label: `Помещение ${count}` })
           }, 0)
         }
+
 
         setDrawing(null)
         setChainStartPt(null)
