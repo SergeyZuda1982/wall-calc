@@ -67,6 +67,25 @@
 
 ## Готово недавно (для памяти, можно чистить время от времени)
 
+- 07-08.07.2026 — feat/project-members, feat/project-members-ui,
+  fix/project-members-rls-recursion, fix/members-panel-show-email: ВСЕ
+  СМЕРЖЕНЫ в main. Роли и участники объекта (project_members) —
+  реализация конспекта планирования от 07.07.2026 (v2). SQL: таблица
+  project_members с триггером валидации + estimates/estimate_access/
+  personal_rate_calc. Код: src/core/permissions.ts (единый проверятель
+  прав), src/lib/projectMembers.ts + useProjectMembersStore.ts +
+  ProjectMembersPanel.tsx (список, приглашение по email — Вариант А без
+  уведомлений, смена роли, удаление, передача владения). Кнопка "👥
+  Участники" в App.tsx рядом с "📁 Объекты". По пути починены 2 реальных
+  бага, найденных пользователем вживую в проде: (1) createProject/
+  migrateLocalProjectsToCloud не создавали owner-запись — добавлено;
+  (2) RLS-политики на project_members/estimates ссылались сами на себя
+  → Postgres "infinite recursion detected in policy" → падение запроса
+  → "Не удалось загрузить участников" в панели — фикс через
+  security-definer функции is_project_member()/has_project_role().
+  Подробный разбор сессии — см. KONSPEKT.md, самая свежая запись.
+  Следующий шаг: доступ к сметам через estimate_access (не начат).
+
 - 08.07.2026 — feat/ceiling-height-persistent-control: СМЕРЖЕНО в main
   (чисто, без конфликтов). Пункт из бэклога идей пользователя — "отметка
   изменить высоту потолка... сейчас теряется внизу, про неё не
