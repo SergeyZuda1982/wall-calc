@@ -286,6 +286,9 @@ export function slabsToPolygons3D(slabs: Slab[], scaleMmPx: number): SlabPolygon
 export interface RoomPolygon3D {
   id: string
   isColumn: boolean
+  /** "Помещение 1" и т.п. — для подписи-таблички в 3D (Scene3D), не используется
+   *  для колонн (isColumn: true) */
+  label: string
   /** точки контура в метрах, план сверху (x,z) — по часовой/против часовой,
    *  как пришли из extractContourPoints, без изменений */
   points: { x: number; z: number }[]
@@ -364,6 +367,7 @@ export function roomsToPolygons3D(rooms: Room[], lines: PlanLine[], scaleMmPx: n
       return {
         id: room.id,
         isColumn: !!room.isColumn,
+        label: room.label,
         points: pts.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
       }
     })

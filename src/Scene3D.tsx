@@ -16,9 +16,9 @@
  * и цвета.
  */
 
-import { useMemo, useState } from 'react'
-import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Grid, FlyControls } from '@react-three/drei'
+import { useMemo, useState, useRef, useEffect } from 'react'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { OrbitControls, Grid, FlyControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { useProjectStore } from './store/useProjectStore'
 import {
@@ -209,6 +209,80 @@ function FreeformStructureMesh({ prism, opacity = 1 }: { prism: FreeformPrism3D;
   )
 }
 
+/** Цель фокусировки камеры по клику на табличку помещения (см. RoomLabelTag/CameraRig) */
+interface FocusTarget {
+  nonce: number
+  target: THREE.Vector3
+  distance: number
+}
+
+/**
+ * Табличка-номер помещения в 3D (09.07.2026) — висит примерно на уровне
+ * чуть выше стен, в центре (среднем точек контура, тот же принцип, что и
+ * подпись в 2D — см. FloorPlan.tsx, рендер rooms). Html из drei — обычный
+ * DOM-элемент, привязанный к 3D-точке (billboard, всегда развёрнут на
+ * камеру), поэтому клик обрабатывается как обычный onClick, без ray-casting
+ * вручную. distanceFactor уменьшает табличку при отдалении камеры, чтобы
+ * она не забивала вид на дальних планах.
+ */
+function RoomLabelTag({
+  x, y, z, label, onFocus,
+}: { x: number; y: number; z: number; label: string; onFocus: () => void }) {
+  return (
+    <Html position={[x, y, z]} center distanceFactor={10} zIndexRange={[10, 0]} occlude={false}>
+      <div
+        onClick={(e) => { e.stopPropagation(); onFocus() }}
+        style={{
+          padding: '3px 10px', borderRadius: 12, whiteSpace: 'nowrap',
+          background: 'rgba(255,255,255,0.92)', border: '1px solid #3a7bd5',
+          color: '#1a1f33', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.25)', userSelect: 'none',
+        }}
+        title="Нажмите, чтобы навести камеру на помещение"
+      >
+        {label}
+      </div>
+    </Html>
+  )
+}
+
+/**
+ * Плавно ведёт камеру/цель OrbitControls к focusTarget при клике на
+ * табличку помещения (см. RoomLabelTag). Направление обзора сохраняется —
+ * камера едет к помещению с той же стороны, откуда смотрела до клика, а не
+ * дёргается в фиксированный ракурс. lerp с коэффициентом 0.12 за кадр даёт
+ * плавный, но быстрый (~15-20 кадров) переход, без отдельной библиотеки
+ * анимации.
+ */
+function CameraRig({ focusTarget, controlsRef }: {
+  focusTarget: FocusTarget | null
+  controlsRef: React.RefObject<any>
+}) {
+  const { camera } = useThree()
+  const desiredTarget = useRef(new THREE.Vector3())
+  const desiredPos = useRef(new THREE.Vector3())
+  const lastNonce = useRef(0)
+
+  useEffect(() => {
+    if (!focusTarget || focusTarget.nonce === lastNonce.current) return
+    lastNonce.current = focusTarget.nonce
+    const currentTarget = controlsRef.current?.target ?? new THREE.Vector3()
+    const dir = camera.position.clone().sub(currentTarget)
+    if (dir.lengthSq() < 0.0001) dir.set(1, 1, 1)
+    dir.normalize()
+    desiredTarget.current.copy(focusTarget.target)
+    desiredPos.current.copy(focusTarget.target).addScaledVector(dir, focusTarget.distance)
+  }, [focusTarget, camera])
+
+  useFrame(() => {
+    if (!focusTarget || !controlsRef.current) return
+    controlsRef.current.target.lerp(desiredTarget.current, 0.12)
+    camera.position.lerp(desiredPos.current, 0.12)
+    controlsRef.current.update()
+  })
+  return null
+}
+
 /**
  * Геометрия ОДНОГО этажа — то, что раньше было прямо в теле Scene3D.
  * Обёрнута в <group position={[0, offsetY, 0]}> — offsetY = отметка этажа
@@ -217,7 +291,10 @@ function FreeformStructureMesh({ prism, opacity = 1 }: { prism: FreeformPrism3D;
  * что выбран в шапке плана) рисуется полупрозрачным — чтобы было видно
  * объект целиком, но сразу понятно, какой этаж сейчас редактируется.
  */
-function LevelGroup({ floorPlan, offsetY, dimmed, showCeilingGrid }: { floorPlan: FloorPlan; offsetY: number; dimmed: boolean; showCeilingGrid: boolean }) {
+function LevelGroup({ floorPlan, offsetY, dimmed, showCeilingGrid, onFocusRoom }: {
+  floorPlan: FloorPlan; offsetY: number; dimmed: boolean; showCeilingGrid: boolean
+  onFocusRoom: (worldTarget: THREE.Vector3, distance: number) => void
+}) {
   const lines = floorPlan.lines ?? []
   const rooms = floorPlan.rooms ?? []
   const slabs = floorPlan.slabs ?? []
@@ -245,6 +322,26 @@ function LevelGroup({ floorPlan, offsetY, dimmed, showCeilingGrid }: { floorPlan
   )
   const hasHandDrawnSlabs = slabPolygons.length > 0
 
+  // Таблички-номера помещений (09.07.2026) — центр как среднее точек контура
+  // (тот же приём, что и подпись в 2D, см. FloorPlan.tsx, рендер rooms; не
+  // геометрический центроид многоугольника, но для этой цели — визуальной
+  // метки — разница несущественна и поведение остаётся предсказуемо
+  // одинаковым между 2D и 3D). sizeM — грубый диаметр помещения, определяет,
+  // на какое расстояние отъезжает камера при фокусировке (просторная комната
+  // требует более дальнего кадра, чем кладовка).
+  const roomLabels = useMemo(() => {
+    return polygons
+      .filter(p => !p.isColumn && p.points.length >= 3)
+      .map(p => {
+        const cx = p.points.reduce((s, pt) => s + pt.x, 0) / p.points.length
+        const cz = p.points.reduce((s, pt) => s + pt.z, 0) / p.points.length
+        const minX = Math.min(...p.points.map(pt => pt.x)), maxX = Math.max(...p.points.map(pt => pt.x))
+        const minZ = Math.min(...p.points.map(pt => pt.z)), maxZ = Math.max(...p.points.map(pt => pt.z))
+        const sizeM = Math.max(maxX - minX, maxZ - minZ, 2)
+        return { id: p.id, label: p.label, cx, cz, sizeM }
+      })
+  }, [polygons])
+
   return (
     <group position={[0, offsetY, 0]}>
       {boxes.map(box => <WallMesh key={box.id} box={box} opacity={opacity} />)}
@@ -256,6 +353,17 @@ function LevelGroup({ floorPlan, offsetY, dimmed, showCeilingGrid }: { floorPlan
       {columnCylinders.map(cyl => <RoundColumnMesh key={cyl.id} cyl={cyl} opacity={opacity} />)}
       {rectColumnBoxes.map(box => <RectColumnMesh key={box.id} box={box} opacity={opacity} />)}
       {freeformPrisms.map(prism => <FreeformStructureMesh key={prism.id} prism={prism} opacity={opacity} />)}
+      {!dimmed && roomLabels.map(rl => (
+        <RoomLabelTag
+          key={rl.id}
+          x={rl.cx} y={mmToM(ceilingMm) + 0.4} z={rl.cz}
+          label={rl.label}
+          onFocus={() => onFocusRoom(
+            new THREE.Vector3(rl.cx, offsetY + mmToM(ceilingMm) / 2, rl.cz),
+            Math.max(rl.sizeM * 1.4, 4),
+          )}
+        />
+      ))}
     </group>
   )
 }
@@ -278,8 +386,20 @@ function levelHasGeometry(floorPlan: FloorPlan): boolean {
 export default function Scene3D() {
   const [cameraMode, setCameraMode] = useState<'orbit' | 'fly'>('orbit')
   const [showCeilingGrid, setShowCeilingGrid] = useState(false)
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
+  const focusNonce = useRef(0)
+  const controlsRef = useRef<any>(null)
   const levels = useProjectStore(s => s.levels)
   const activeLevelId = useProjectStore(s => s.activeLevelId)
+
+  // Клик по табличке помещения (см. RoomLabelTag) должен работать и в режиме
+  // полёта (FlyControls не имеет "target" — сперва переключаемся на orbit,
+  // затем едем к помещению; см. CameraRig).
+  function focusOnRoom(target: THREE.Vector3, distance: number) {
+    setCameraMode('orbit')
+    focusNonce.current += 1
+    setFocusTarget({ nonce: focusNonce.current, target, distance })
+  }
 
   const isEmpty = useMemo(() => levels.every(lv => !levelHasGeometry(lv.floorPlan)), [levels])
 
@@ -361,11 +481,13 @@ export default function Scene3D() {
             offsetY={mmToM(lv.elevationMm)}
             dimmed={lv.id !== activeLevelId}
             showCeilingGrid={showCeilingGrid}
+            onFocusRoom={focusOnRoom}
           />
         ))}
         {cameraMode === 'orbit'
-          ? <OrbitControls makeDefault />
+          ? <OrbitControls ref={controlsRef} makeDefault />
           : <FlyControls makeDefault dragToLook movementSpeed={4} rollSpeed={0.6} />}
+        {cameraMode === 'orbit' && <CameraRig focusTarget={focusTarget} controlsRef={controlsRef} />}
       </Canvas>
     </div>
   )

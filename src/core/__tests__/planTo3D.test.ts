@@ -215,6 +215,7 @@ describe('roomsToPolygons3D', () => {
     const polys = roomsToPolygons3D(rooms, lines, 10)
     expect(polys).toHaveLength(1)
     expect(polys[0].isColumn).toBe(true)
+    expect(polys[0].label).toBe('Колонна')
     expect(polys[0].points.length).toBeGreaterThanOrEqual(3)
     expect(polys[0].points[0]).toEqual({ x: 0, z: 0 })
   })
