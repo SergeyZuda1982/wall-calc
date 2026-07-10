@@ -459,6 +459,19 @@ export default function FloorPlan() {
   const [drawLayer2, setDrawLayer2] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
   const [expandedMaterial, setExpandedMaterial] = useState<string | null>(null)
   const [orthoMode, setOrthoMode]       = useState(false)
+  // Свободное позиционирование (10.07.2026) — по многократной обратной связи
+  // пользователя ("мне нужно это делать произвольно"): снап к существующим
+  // конструкциям (ось/грань/флюш-точка/T-примыкание вдоль тела — см.
+  // core/planSnap.ts) неизбежно охватывает лишь ОГРАНИЧЕННЫЙ, заранее
+  // прописанный набор точек, а не любую точку, которую пользователь реально
+  // хочет — и в целом ряде реальных случаев (наклонное примыкание в проекте
+  // "внахлёст", а не по стыку осей; параллельная стена на произвольном
+  // отступе, а не впритык) любая из этих готовых точек — попросту не то,
+  // что нужно. Toggle ниже отключает ВЕСЬ снап к линиям (ось/грань/T) в
+  // applySnap/handleMove целиком — курсор ставится ровно там, где кликнули.
+  // orthoMode (прямой угол/15°) — ОТДЕЛЬНАЯ, независимая настройка; можно
+  // сочетать оба сразу (свободно по позиции, но с зажатым углом).
+  const [freeSnapMode, setFreeSnapMode] = useState(false)
   const [drawing, setDrawing]           = useState<{ x1: number; y1: number } | null>(null)
   const [cursor, setCursor]             = useState<{ x: number; y: number } | null>(null)
   const [selectedId, setSelected]       = useState<string | null>(null)
@@ -789,6 +802,21 @@ export default function FloorPlan() {
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
   }, [])
 
+  // Alt — временное включение свободного позиционирования (см. freeSnapMode
+  // выше) с клавиатуры на десктопе, без переключения кнопки в тулбаре —
+  // держишь Alt, пока целишься в конкретную точку мимо всех снап-кандидатов,
+  // отпустил — обычный снап снова активен. На мобильном (где Alt недоступен)
+  // это же переключается кнопкой "🔓 Свободно" в тулбаре (стойкий toggle).
+  const [altDown, setAltDown] = useState(false)
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat) setAltDown(true) }
+    const up   = (e: KeyboardEvent) => { if (e.code === 'AltLeft' || e.code === 'AltRight') setAltDown(false) }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup',   up)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
+  }, [])
+  const freeSnapActive = freeSnapMode || altDown
+
   // ── Переключение режима ────────────────────────────────────────────────────
   function switchMode(m: Mode) {
     setMode(m)
@@ -925,7 +953,9 @@ export default function FloorPlan() {
       newHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
       if (drawing) refDir = { dx: x - drawing.x1, dy: y - drawing.y1 }
     }
-    const snapped = snapPoint(x, y, lines, scaleMmPx, excludeId, thresh, refDir, newHalfThicknessPx)
+    const snapped = freeSnapActive
+      ? { x, y, snapped: false, d: Infinity }
+      : snapPoint(x, y, lines, scaleMmPx, excludeId, thresh, refDir, newHalfThicknessPx)
     if (orthoMode && drawing && !snapped.snapped) {
       return snapOrtho(drawing.x1, drawing.y1, snapped.x, snapped.y)
     }
@@ -1004,7 +1034,9 @@ export default function FloorPlan() {
       moveNewHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
       if (drawing) moveRefDir = { dx: rawX - drawing.x1, dy: rawY - drawing.y1 }
     }
-    const snappedInfo = snapPoint(rawX, rawY, lines, scaleMmPx, undefined, snapThresh, moveRefDir, moveNewHalfThicknessPx)
+    const snappedInfo = freeSnapActive
+      ? { x: rawX, y: rawY, snapped: false, d: Infinity }
+      : snapPoint(rawX, rawY, lines, scaleMmPx, undefined, snapThresh, moveRefDir, moveNewHalfThicknessPx)
     // В draw-режиме: дополнительно проверяем снап к началу цепочки (замыкание)
     const snapToChainStart =
       mode === 'draw' && drawing && chainStartPt &&
@@ -1032,7 +1064,7 @@ export default function FloorPlan() {
     }
     const pos = stagePosRef.current; const sc = stageScaleRef.current
     handleMove((sp.x - pos.x) / sc, (sp.y - pos.y) / sc)
-  }, [lines, mode, drawing, orthoMode, dragRef.current])
+  }, [lines, mode, drawing, orthoMode, freeSnapActive, dragRef.current])
 
   function touchDist(t1: Touch, t2: Touch) {
     return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
@@ -1971,14 +2003,14 @@ export default function FloorPlan() {
   // что физически близко к курсору — иначе на насыщенном плане маркеры
   // возле каждой стены другой толщины превратились бы в шум.
   const flushCandidatesNearCursor = useMemo(() => {
-    if (mode !== 'draw' || !cursor) return []
+    if (mode !== 'draw' || !cursor || freeSnapActive) return []
     const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
     const newHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
     if (newHalfThicknessPx <= 0) return []
     const all = getFlushCandidates(lines, scaleMmPx, newHalfThicknessPx)
     const nearThresh = (SNAP_SCREEN_PX * 3) / stageScaleRef.current
     return all.filter(p => dist(p.x, p.y, cursor.x, cursor.y) <= nearThresh)
-  }, [mode, cursor, drawType, drawSpec, scaleMmPx, lines])
+  }, [mode, cursor, drawType, drawSpec, scaleMmPx, lines, freeSnapActive])
 
   // ── Wall join: скорректированные точки для стыков (стены + грани колонн,
   // см. buildWallsForJoin в wallJoin.ts — общая логика для 2D и 3D) ────────
@@ -3234,6 +3266,17 @@ export default function FloorPlan() {
             <button onClick={() => { setOrthoMode(o => !o); if (mode !== 'draw') switchMode('draw') }}
               title="Прямой угол (Shift)" style={toolBtnStyle(orthoMode)}>
               ⊾ 90°
+            </button>
+
+            {/* Свободное позиционирование (10.07.2026) — полностью отключает
+                снап к существующим линиям (ось/грань/флюш-точка/T-примыкание),
+                курсор ставится ровно там, где кликнули. См. комментарий у
+                freeSnapMode выше. На десктопе то же самое временно включает
+                удержание Alt, без переключения кнопки. */}
+            <button onClick={() => setFreeSnapMode(v => !v)}
+              title="Свободное позиционирование — без снапа к стенам (или удерживать Alt)"
+              style={toolBtnStyle(freeSnapMode)}>
+              🔓 Свободно
             </button>
 
             {/* Параллельная */}
