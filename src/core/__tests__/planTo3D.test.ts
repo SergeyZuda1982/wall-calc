@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   wallThicknessMm, wallToBox3D, wallsToBoxes3D, estimateCeilingMm,
   roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM,
-  freeformStructuresToPrisms3D,
+  freeformStructuresToPrisms3D, wallMaterialKindOf,
 } from '../planTo3D'
 import type { PlanLine, Room, Slab, RoundColumn, RectColumn, PlanOpening, FreeformStructure } from '../../types'
 
@@ -13,6 +13,88 @@ function baseLine(overrides: Partial<PlanLine>): PlanLine {
     ...overrides,
   }
 }
+
+describe('wallMaterialKindOf (10.07.2026, реалистичные материалы в 3D)', () => {
+  it('brick → brick', () => {
+    expect(wallMaterialKindOf('brick')).toBe('brick')
+  })
+  it('gasblock/foamblock/block → block (визуально одна и та же кладка)', () => {
+    expect(wallMaterialKindOf('gasblock')).toBe('block')
+    expect(wallMaterialKindOf('foamblock')).toBe('block')
+    expect(wallMaterialKindOf('block')).toBe('block')
+  })
+  it('concrete → concrete', () => {
+    expect(wallMaterialKindOf('concrete')).toBe('concrete')
+  })
+  it('gkl/tile/plaster/paint/unknown/не задано → unknown (не кладка)', () => {
+    expect(wallMaterialKindOf('gkl')).toBe('unknown')
+    expect(wallMaterialKindOf('tile')).toBe('unknown')
+    expect(wallMaterialKindOf('plaster')).toBe('unknown')
+    expect(wallMaterialKindOf('paint')).toBe('unknown')
+    expect(wallMaterialKindOf('unknown')).toBe('unknown')
+    expect(wallMaterialKindOf(undefined)).toBe('unknown')
+  })
+})
+
+describe('wallToBox3D — materialKind (10.07.2026)', () => {
+  it('кирпичная существующая стена → materialKind: brick', () => {
+    const line = baseLine({ spec: { material: 'brick' } })
+    const box = wallToBox3D(line, 10, 3000)
+    expect(box?.materialKind).toBe('brick')
+  })
+  it('газоблок в wall_new → materialKind: block', () => {
+    const line = baseLine({ type: 'wall_new', spec: { material: 'gasblock' } })
+    const box = wallToBox3D(line, 10, 3000)
+    expect(box?.materialKind).toBe('block')
+  })
+  it('бетон в wall_existing → materialKind: concrete', () => {
+    const line = baseLine({ spec: { material: 'concrete' } })
+    const box = wallToBox3D(line, 10, 3000)
+    expect(box?.materialKind).toBe('concrete')
+  })
+  it('ГКЛ (wall_new) → materialKind: unknown (не кладка, текстуру не показываем)', () => {
+    const line = baseLine({ type: 'wall_new', spec: { material: 'gkl' } })
+    const box = wallToBox3D(line, 10, 3000)
+    expect(box?.materialKind).toBe('unknown')
+  })
+})
+
+describe('wallToBoxesWithOpenings3D — materialKind прокидывается в сегменты вокруг проёма', () => {
+  it('все сегменты (хвосты, подоконник, перемычка) наследуют materialKind от базовой стены', () => {
+    const opening: PlanOpening = {
+      id: 'o1', type: 'window', offsetMm: 500, widthMm: 600, heightMm: 1200, sillHeightMm: 900, label: 'О-1',
+    }
+    const line = baseLine({
+      x1: 0, y1: 0, x2: 200, y2: 0, heightMm: 3000,
+      spec: { material: 'brick' }, openings: [opening],
+    })
+    const boxes = wallToBoxesWithOpenings3D(line, 10, 3000)
+    expect(boxes.length).toBeGreaterThan(1)
+    for (const b of boxes) expect(b.materialKind).toBe('brick')
+  })
+})
+
+describe('freeformStructuresToPrisms3D — materialKind (10.07.2026)', () => {
+  it('стена (kind: wall) — materialKind из spec.material', () => {
+    const fs: FreeformStructure = {
+      id: 'fs1', kind: 'wall', label: 'П-1',
+      outer: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+      spec: { material: 'gasblock' },
+    }
+    const prisms = freeformStructuresToPrisms3D([fs], 10, 3000)
+    expect(prisms.length).toBeGreaterThan(0)
+    for (const p of prisms) expect(p.materialKind).toBe('block')
+  })
+  it('колонна (kind: column) — всегда concrete, даже без spec', () => {
+    const fs: FreeformStructure = {
+      id: 'fs2', kind: 'column', label: 'К-1',
+      outer: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 40 }, { x: 0, y: 40 }],
+    }
+    const prisms = freeformStructuresToPrisms3D([fs], 10, 3000)
+    expect(prisms.length).toBeGreaterThan(0)
+    for (const p of prisms) expect(p.materialKind).toBe('concrete')
+  })
+})
 
 describe('wallThicknessMm', () => {
   it('без spec.material у обычной стены толщина 0 (как и в 2D — не рисуем)', () => {
