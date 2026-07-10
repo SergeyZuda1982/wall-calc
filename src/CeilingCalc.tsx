@@ -11,7 +11,7 @@ import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, CEILING_MO
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep, CeilingLoadClass } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult } from './core/calcCeiling'
-import { calcFrameRowPositions, resolveFrameParams } from './core/calcP112Frame'
+import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } from './core/calcP112Frame'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
@@ -634,6 +634,9 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   const frameParams = resolveFrameParams({
     stepC, layoutMode, userStepB: form.stepB,
     mountDirection: form.mountDirection, loadClass: form.loadClass,
+    // 10.07.2026: П112/П113 — своя таблица дефолтного шага b в 'user'-режиме
+    // (раньше здесь всегда молча брался П112-вариант, даже для П113).
+    ceilingType: form.type === 'p113' ? 'p113' : 'p112',
   })
   const stepB = frameParams.stepB
   const stepA = frameParams.stepA
@@ -642,7 +645,8 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // ряд на расстоянии шага от стены, последний просто ближе к дальней стене
   // — не наивная сетка от 0; в режиме 'knauf' — строго по официальной сетке,
   // без сжатия последнего ряда. shiftMainMm — ручной сдвиг гребёнки поверх.
-  const mainPosX = calcFrameRowPositions(L, stepC, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetMainMm })
+  const mainPosXMm = calcFrameRowPositions(L, stepC, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetMainMm })
+  const mainPosX = mainPosXMm
     .map(p => (p + shiftMainMm) * scale)
     .filter(x => x >= 0 && x <= L * scale)
 
@@ -652,9 +656,15 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     .filter(y => y >= 0 && y <= W_room * scale)
 
   // ── Подвесы ──
-  // Шаг подвесов a — ОТДЕЛЬНАЯ величина от шага несущего профиля b (раньше
-  // здесь ошибочно использовался stepB, см. calcP112Frame.ts шапку файла).
-  const hangerPosXMm = calcFrameRowPositions(L, stepA, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm })
+  // 10.07.2026: подвес обязан висеть строго по оси ОСНОВНОГО профиля — крепится
+  // в точке пересечения основной/несущий (там же одноуровневый соединитель).
+  // Раньше подвесы считались НЕЗАВИСИМОЙ сеткой через stepA от стены и физически
+  // не попадали ни на один основной профиль ("подвесы слетели с оси"). Теперь
+  // hangerPosXMm — подмножество ТЕХ ЖЕ mainPosXMm (см. snapHangerPositionsToAxis
+  // в calcP112Frame.ts — та же функция, что уже использует смета calcCeiling.ts
+  // для П112). Сдвиг гребёнки shiftMainMm применяется к подвесам ТАК ЖЕ, как и
+  // к основному профилю — они должны двигаться вместе, раз сидят на его оси.
+  const hangerPosXMm = snapHangerPositionsToAxis(mainPosXMm, stepA)
   const hangers: { x: number; y: number }[] = []
   // Рисуем подвесы только если их не слишком много (иначе каша)
   const hangerCount = bearingPosY.length * hangerPosXMm.length
@@ -662,7 +672,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   if (showHangers) {
     for (const py of bearingPosY) {
       for (const hxMm of hangerPosXMm) {
-        hangers.push({ x: hxMm * scale, y: py })
+        hangers.push({ x: (hxMm + shiftMainMm) * scale, y: py })
       }
     }
   }
