@@ -40,9 +40,10 @@ import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
 import { slabToCeilingSeed } from './core/slabToCeilingSeed'
 import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
+import { roomToCeilingSeed } from './core/roomToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { combineCeilingSeeds } from './core/combineCeilingSeeds'
-import { snapPoint, snapOrtho } from './core/planSnap'
+import { snapPoint, snapOrtho, getFlushCandidates } from './core/planSnap'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -998,10 +999,10 @@ export default function FloorPlan() {
     const snapThresh = SNAP_SCREEN_PX / stageScaleRef.current
     let moveRefDir: { dx: number; dy: number } | undefined
     let moveNewHalfThicknessPx = 0
-    if (mode === 'draw' && drawing) {
-      moveRefDir = { dx: rawX - drawing.x1, dy: rawY - drawing.y1 }
+    if (mode === 'draw') {
       const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
       moveNewHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
+      if (drawing) moveRefDir = { dx: rawX - drawing.x1, dy: rawY - drawing.y1 }
     }
     const snappedInfo = snapPoint(rawX, rawY, lines, scaleMmPx, undefined, snapThresh, moveRefDir, moveNewHalfThicknessPx)
     // В draw-режиме: дополнительно проверяем снап к началу цепочки (замыкание)
@@ -1962,6 +1963,23 @@ export default function FloorPlan() {
   const previewY2    = previewPt?.y ?? 0
   // allPoints убраны — snap-точки на холсте не рисуются
 
+  // Маркеры флюш-точек (10.07.2026, по просьбе пользователя) — сама точка
+  // "грань новой стены встык со старой" физически лежит ВНУТРИ тела старой
+  // стены (см. Фикс 3 в core/planSnap.ts), ничем визуально не обозначена —
+  // неудобно прицеливаться на глаз. Показываем маленький маркер у каждой
+  // такой точки, но только пока реально рисуем (mode 'draw') и только те,
+  // что физически близко к курсору — иначе на насыщенном плане маркеры
+  // возле каждой стены другой толщины превратились бы в шум.
+  const flushCandidatesNearCursor = useMemo(() => {
+    if (mode !== 'draw' || !cursor) return []
+    const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
+    const newHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
+    if (newHalfThicknessPx <= 0) return []
+    const all = getFlushCandidates(lines, scaleMmPx, newHalfThicknessPx)
+    const nearThresh = (SNAP_SCREEN_PX * 3) / stageScaleRef.current
+    return all.filter(p => dist(p.x, p.y, cursor.x, cursor.y) <= nearThresh)
+  }, [mode, cursor, drawType, drawSpec, scaleMmPx, lines])
+
   // ── Wall join: скорректированные точки для стыков (стены + грани колонн,
   // см. buildWallsForJoin в wallJoin.ts — общая логика для 2D и 3D) ────────
   const wallJoins = useMemo(
@@ -2592,6 +2610,47 @@ export default function FloorPlan() {
               </div>
             )}
           </div>
+
+          {/* Помещения (замкнутые контуры по стенам) — второй, автоматический
+              способ передать периметр в расчёт потолка: в отличие от Плиты/
+              Потолка (обводка карандашом), тут ничего обводить не нужно —
+              контур уже есть, как только стены сомкнулись в петлю. Без
+              объединения (только у Плиты/Потолка) и без удаления из этого
+              списка — Room живёт своей жизнью через правку стен, этот блок
+              только читает и отправляет уже готовые rooms. См. roomToCeilingSeed.ts,
+              KONSPEKT.md "3D-сетка потолка по реальным настройкам" (10.07.2026). */}
+          {rooms.filter(r => !r.isColumn).length > 0 && (
+            <div style={{ padding: '4px 14px 8px' }}>
+              <div style={{ fontSize: 10, color: '#8a9ac8', marginBottom: 4, textTransform: 'uppercase' }}>
+                Помещения
+              </div>
+              {rooms.filter(r => !r.isColumn).map(room => {
+                const seed = roomToCeilingSeed(room, lines, scaleMmPx)
+                return (
+                  <div key={room.id} style={{ marginBottom: 5, borderRadius: 4, border: '1px solid #3a4060' }}>
+                    <div style={{ padding: '5px 10px', fontSize: 11, color: '#8a9ac8' }}>
+                      {room.label}
+                      {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
+                      {room.ceilingSpec && <span style={{ color: '#7fb37f' }}> · каркас настроен</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px' }}>
+                      <button
+                        disabled={!seed}
+                        onClick={() => { if (seed) setCeilingSeed(seed) }}
+                        title="Отправить площадь и периметр этого помещения в расчёт потолка"
+                        style={{
+                          flex: 1, fontSize: 10, padding: '4px 6px', borderRadius: 3,
+                          border: '1px solid #3a6ea5', background: 'transparent', color: '#6fa8dc',
+                          cursor: seed ? 'pointer' : 'not-allowed', opacity: seed ? 1 : 0.4,
+                        }}>
+                        → Потолок
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {/* Объединение нескольких зон (Плита и/или Потолок) в один расчёт
               потолка — "несколько именованных зон одновременно"
@@ -4229,6 +4288,27 @@ export default function FloorPlan() {
                       </>
                     )
                   })()}
+
+                  {/* Маркеры флюш-точек (10.07.2026) — точка, куда нужно
+                      подвести ось новой стены другой толщины, чтобы её
+                      ГРАНЬ совпала с гранью существующей (см. Фикс 3 в
+                      core/planSnap.ts) — сама по себе ничем не обозначена
+                      на плане (лежит внутри тела старой стены), поэтому
+                      рисуем маленькое кольцо-подсказку у каждой такой
+                      точки в пределах видимости курсора. Цвет — янтарный,
+                      отличается и от зелёного (обычный активный снап), и
+                      от цвета самой линии, чтобы не путать с чем-то ещё. */}
+                  {flushCandidatesNearCursor.map((p, i) => (
+                    <Circle
+                      key={`flush-${i}`}
+                      x={p.x} y={p.y}
+                      radius={5 / stageScale}
+                      stroke="#ff9800" strokeWidth={1.5 / stageScale}
+                      fill="rgba(255,152,0,0.18)"
+                      dash={[3 / stageScale, 2 / stageScale]}
+                      listening={false}
+                    />
+                  ))}
 
                   {/* Точки масштаба — крестики, масштабируются с зумом для точности клика */}
                   {scalePt1 && (() => {

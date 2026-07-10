@@ -100,6 +100,53 @@ export interface SnapResult {
  *   общая ось — см. Фикс 3 выше);
  * - ближайшая грань T-образного примыкания вдоль тела линии.
  */
+/**
+ * 4 угловые точки грани линии `l`, сдвинутые на `offsetPx` от оси вдоль
+ * нормали (nx,ny) — общий помощник для "сырых" угловых кандидатов
+ * (offsetPx=halfThicknessPx) и для флюш-кандидатов Фикса 3
+ * (offsetPx=halfThicknessPx-newHalfThicknessPx). Вынесено в общую функцию,
+ * чтобы не дублировать формулу между snapPoint и getFlushCandidates ниже
+ * (последняя нужна для визуальной подсказки — маленького маркера у флюш-
+ * точки, см. FloorPlan.tsx, по просьбе пользователя 10.07.2026: невидимая
+ * иначе точка "на 50мм внутрь стены" неудобно искать на глаз).
+ */
+function cornerPoints(l: PlanLine, nx: number, ny: number, offsetPx: number): [number, number][] {
+  return [
+    [l.x1 + nx * offsetPx, l.y1 + ny * offsetPx],
+    [l.x1 - nx * offsetPx, l.y1 - ny * offsetPx],
+    [l.x2 + nx * offsetPx, l.y2 + ny * offsetPx],
+    [l.x2 - nx * offsetPx, l.y2 - ny * offsetPx],
+  ]
+}
+
+/**
+ * Флюш-кандидаты (Фикс 3, 10.07.2026) для ВСЕХ линий плана сразу — то же,
+ * что считает snapPoint внутри себя для ближайшей линии, но здесь отдаётся
+ * полный список точек (без привязки к курсору) для визуальной подсказки:
+ * маленький маркер у каждой такой точки, пока пользователь рисует стену
+ * другой толщины рядом с существующей — иначе точка ничем не обозначена
+ * на глаз (лежит внутри тела старой стены, не на её видимой грани).
+ */
+export function getFlushCandidates(
+  lines: PlanLine[], scaleMmPx: number, newHalfThicknessPx: number, excludeId?: string,
+): { x: number; y: number }[] {
+  if (newHalfThicknessPx <= 0) return []
+  const out: { x: number; y: number }[] = []
+  for (const l of lines) {
+    if (l.id === excludeId) continue
+    const dx = l.x2 - l.x1, dy = l.y2 - l.y1
+    const len = Math.sqrt(dx * dx + dy * dy)
+    const ux = len > 1 ? dx / len : 0, uy = len > 1 ? dy / len : 0
+    const nx = -uy, ny = ux
+    const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
+    const halfThicknessPx = vis.thicknessMm > 0 ? (vis.thicknessMm / 2) / scaleMmPx : 0
+    if (halfThicknessPx <= 0 || Math.abs(newHalfThicknessPx - halfThicknessPx) <= 0.01) continue
+    const flushOffsetPx = halfThicknessPx - newHalfThicknessPx
+    for (const [px, py] of cornerPoints(l, nx, ny, flushOffsetPx)) out.push({ x: px, y: py })
+  }
+  return out
+}
+
 export function snapPoint(
   x: number, y: number, lines: PlanLine[], scaleMmPx: number,
   excludeId?: string, threshPx = 24,
@@ -125,17 +172,40 @@ export function snapPoint(
       if (d <= threshPx && d < best.d) best = { x: px, y: py, snapped: true, d }
     }
 
+    // Фикс 4 (11.07.2026): угловые точки граней (сырые и флюш) корректны
+    // только когда новая стена идёт КОЛЛИНЕАРНО этой линии (продолжение по
+    // той же оси, разрыв между кусками одной стены — исходный кейс Фикс 1/3,
+    // где митр в принципе не нужен: оси параллельны, wallJoin.applyL для
+    // параллельных линий ничего не пересекает). Если же новая стена образует
+    // РЕАЛЬНЫЙ угол с этой линией (примыкание под углом, не встык по оси),
+    // грань-кандидат — это точка со смещением от ОСИ этой линии на её
+    // полтолщины. Если конец новой стены зафиксировать в этой точке, её
+    // сохранённая ось разойдётся с осью этой линии ровно на halfThicknessPx —
+    // а computeWallJoins() ищет L-стык строго по СОВПАДЕНИЮ ОСЕЙ (допуск
+    // JOIN_EPS=3px в wallJoin.ts). Совпадение осей нарушается, и настоящий
+    // митровый стык (который для угла КАК РАЗ и нужен, чтобы грани сошлись
+    // без нахлёста/зазора) не срабатывает вообще — визуально угол не
+    // "стыкуется" (баг с реального объекта: обе стены рисуются каждая со
+    // своим независимым торцом вместо общего митра).
+    // Решение: при реальном угле (не коллинеарно) грань-кандидаты для ЭТОЙ
+    // линии не предлагаются — курсор притягивается к её оси (кандидат уже
+    // есть выше, безусловно), и wallJoin сам досчитает правильный митр под
+    // фактический угол. Для коллинеарного случая (refDir отсутствует ИЛИ
+    // угол между refDir и осью этой линии близок к 0/180°) поведение не
+    // меняется — Фикс 1/3 работают как раньше.
+    const isAngledCorner = (() => {
+      if (!refDir) return false // первый клик — направление ещё не известно
+      const rlen = Math.sqrt(refDir.dx * refDir.dx + refDir.dy * refDir.dy)
+      if (rlen < 1 || len < 1) return false
+      const cosAngle = Math.abs((refDir.dx * ux + refDir.dy * uy) / rlen)
+      return cosAngle < Math.cos(20 * Math.PI / 180) // не близко к 0°/180°
+    })()
+
     // Угловые точки граней на обоих концах — для примыкания заподлицо по
     // грани независимо от толщины (см. докстринг файла, Фикс 1). Только для
     // линий с реальной толщиной — у нулевой толщины грань совпадает с осью.
-    if (halfThicknessPx > 0) {
-      const corners: [number, number][] = [
-        [l.x1 + nx * halfThicknessPx, l.y1 + ny * halfThicknessPx],
-        [l.x1 - nx * halfThicknessPx, l.y1 - ny * halfThicknessPx],
-        [l.x2 + nx * halfThicknessPx, l.y2 + ny * halfThicknessPx],
-        [l.x2 - nx * halfThicknessPx, l.y2 - ny * halfThicknessPx],
-      ]
-      for (const [px, py] of corners) {
+    if (halfThicknessPx > 0 && !isAngledCorner) {
+      for (const [px, py] of cornerPoints(l, nx, ny, halfThicknessPx)) {
         const d = dist(x, y, px, py)
         if (d <= threshPx && d < best.d) best = { x: px, y: py, snapped: true, d }
       }
@@ -157,16 +227,11 @@ export function snapPoint(
       // Кандидат осмысленно отличается от "сырого" только когда толщина
       // новой стены уже известна и заметно отличается от старой — иначе
       // (newHalfThicknessPx=0 или совпадает) он просто совпадёт с "сырым"
-      // и не будет лишним/мешающим.
+      // и не будет лишним/мешающим. Видимая подсказка для этой точки —
+      // getFlushCandidates выше, рендерится в FloorPlan.tsx как маркер.
       if (newHalfThicknessPx > 0 && Math.abs(newHalfThicknessPx - halfThicknessPx) > 0.01) {
         const flushOffsetPx = halfThicknessPx - newHalfThicknessPx
-        const flushCorners: [number, number][] = [
-          [l.x1 + nx * flushOffsetPx, l.y1 + ny * flushOffsetPx],
-          [l.x1 - nx * flushOffsetPx, l.y1 - ny * flushOffsetPx],
-          [l.x2 + nx * flushOffsetPx, l.y2 + ny * flushOffsetPx],
-          [l.x2 - nx * flushOffsetPx, l.y2 - ny * flushOffsetPx],
-        ]
-        for (const [px, py] of flushCorners) {
+        for (const [px, py] of cornerPoints(l, nx, ny, flushOffsetPx)) {
           const d = dist(x, y, px, py)
           if (d <= threshPx && d < best.d) best = { x: px, y: py, snapped: true, d }
         }
@@ -225,8 +290,16 @@ export function snapPoint(
       const d = dist(x, y, faceX, faceY)
       const bodyThresh = threshPx + halfThicknessPx + extraOffsetPx
       // Кандидат валиден относительно СВОЕГО порога (учитывает толщину ИМЕННО этой стены),
-      // а не относительно best.d, который мог уже сжаться из-за другой, не относящейся линии
-      if (d <= bodyThresh && d < best.d) best = { x: faceX, y: faceY, snapped: true, d }
+      // а не относительно best.d, который мог уже сжаться из-за другой, не относящейся линии.
+      // Фикс 4 (11.07.2026): когда t ЗАЖАТ (clamped) — курсор проецируется
+      // ЗА пределы тела линии l, — faceX/faceY вырождаются РОВНО в тот же
+      // угол грани на конце l, что и явные corner-кандидаты выше (это один
+      // и тот же геометрический случай, только посчитанный другим путём).
+      // При реальном угле (isAngledCorner) он подвержен той же проблеме
+      // рассинхронизации осей с wallJoin.ts — гасим его точно так же.
+      if (d <= bodyThresh && d < best.d && !(clamped && isAngledCorner)) {
+        best = { x: faceX, y: faceY, snapped: true, d }
+      }
     }
   }
   if (!best.snapped) return { x, y, snapped: false, d: threshPx }

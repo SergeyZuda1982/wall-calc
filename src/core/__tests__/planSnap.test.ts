@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { snapPoint, snapOrtho } from '../planSnap'
+import { snapPoint, snapOrtho, getFlushCandidates } from '../planSnap'
 import type { PlanLine } from '../../types'
 
 // scaleMmPx = 10 (как дефолт в FloorPlan), т.е. 1px = 10мм
@@ -142,6 +142,83 @@ describe('snapPoint — флюш-грань при коллинеарном пр
     expect(res.snapped).toBe(true)
     expect(res.x).toBeCloseTo(87.5, 5)
     expect(res.x).not.toBeCloseTo(95, 1)
+  })
+})
+
+describe('getFlushCandidates (10.07.2026, точки для визуального маркера флюш-снапа)', () => {
+  it('возвращает 4 точки для одной стены другой толщины', () => {
+    const wall = blockWall('bottom', 100, 300, 100, 100, '250')
+    const points = getFlushCandidates([wall], 10, 7.5)
+    expect(points).toHaveLength(4)
+    // Одна из них — та самая (95,100), что и в snapPoint-тесте выше
+    expect(points.some(p => Math.abs(p.x - 95) < 1e-6 && Math.abs(p.y - 100) < 1e-6)).toBe(true)
+  })
+
+  it('толщина совпадает — пустой список (маркер не нужен, нечего подсказывать)', () => {
+    const wall = blockWall('bottom', 100, 300, 100, 100, '250')
+    expect(getFlushCandidates([wall], 10, 12.5)).toEqual([])
+  })
+
+  it('newHalfThicknessPx=0 (толщина ещё не выбрана) — пустой список', () => {
+    const wall = blockWall('bottom', 100, 300, 100, 100, '250')
+    expect(getFlushCandidates([wall], 10, 0)).toEqual([])
+  })
+
+  it('линия нулевой толщины (например, окраска стены — wall_lining/paint) — пропускается', () => {
+    const zeroLine: PlanLine = {
+      id: 'z', x1: 0, y1: 0, x2: 100, y2: 0, type: 'wall_lining', lengthMm: 0, label: 'z',
+      spec: { material: 'paint' },
+    }
+    expect(getFlushCandidates([zeroLine], 10, 7.5)).toEqual([])
+  })
+
+  it('excludeId исключает конкретную линию из результата', () => {
+    const wall = blockWall('bottom', 100, 300, 100, 100, '250')
+    expect(getFlushCandidates([wall], 10, 7.5, 'bottom')).toEqual([])
+  })
+
+  it('несколько линий — точки собираются со всех подходящих', () => {
+    const a = blockWall('a', 100, 300, 100, 100, '250')
+    const b = blockWall('b', 300, 300, 300, 100, '250')
+    expect(getFlushCandidates([a, b], 10, 7.5)).toHaveLength(8)
+  })
+})
+
+describe('snapPoint — Фикс 4 (11.07.2026): при реальном угле снап идёт к ОСИ, а не к грани — иначе wallJoin не находит L-стык', () => {
+  it('новая стена подходит к концу существующей ПОД УГЛОМ (90°, не коллинеарно) — курсор рядом с видимым углом грани всё равно тянется к ОСИ старой стены', () => {
+    // Горизонтальная стена 200мм (halfPx=10), от (0,0) до (100,0). Перпендикуляр
+    // к горизонтальной оси — по Y, значит видимый угол грани на конце x2 —
+    // (100, 10), а не (110, y). Новая стена идёт вниз (refDir 0,1) — угол 90°
+    // к оси старой, реальный угол/поворот, а не продолжение. Курсор (103, 9) —
+    // ЗА пределом тела линии l (t>1), т.е. и явный corner-кандидат, и T-кандидат
+    // (который при зажатии t тоже вырождается в тот же угол) оба указывают на
+    // (100,10), заметно ближе (dist≈3.16), чем ось (dist≈9.49) — БЕЗ фикса это
+    // выигрывало бы как "сырой" угол, из-за чего ось новой стены разошлась бы
+    // со старой на halfThicknessPx, и wallJoin не нашёл бы L-стык (баг с
+    // реального объекта).
+    const wall = blockWall('H', 0, 0, 100, 0, '200')
+    const res = snapPoint(103, 9, [wall], 10, undefined, 24, { dx: 0, dy: 1 })
+    expect(res.snapped).toBe(true)
+    expect(res.x).toBeCloseTo(100, 5) // ось конца стены, не грань (100,10)
+    expect(res.y).toBeCloseTo(0, 5)
+  })
+
+  it('коллинеарное продолжение (тот же живой кейс Фикс 1/3) не пострадало — грань-кандидат по-прежнему доступен, когда refDir почти совпадает с осью линии', () => {
+    const wall = blockWall('H', 0, 0, 100, 0, '200')
+    // refDir почти вдоль оси стены (продолжение по прямой) — угол ~0°.
+    // Курсор тот же (103,9) — грань (100,10) по-прежнему ближе и должна выиграть.
+    const res = snapPoint(103, 9, [wall], 10, undefined, 24, { dx: 1, dy: 0.05 })
+    expect(res.snapped).toBe(true)
+    expect(res.x).toBeCloseTo(100, 5)
+    expect(res.y).toBeCloseTo(10, 5) // грань, как и раньше
+  })
+
+  it('без refDir (первый клик) поведение не меняется — грань-кандидат по-прежнему доступен', () => {
+    const wall = blockWall('H', 0, 0, 100, 0, '200')
+    const res = snapPoint(103, 9, [wall], 10)
+    expect(res.snapped).toBe(true)
+    expect(res.x).toBeCloseTo(100, 5)
+    expect(res.y).toBeCloseTo(10, 5)
   })
 })
 

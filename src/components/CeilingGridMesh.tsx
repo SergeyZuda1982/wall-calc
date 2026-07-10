@@ -262,6 +262,9 @@ export interface CeilingGridMeshProps {
   ceilingM: number
   stepB?: number
   stepC?: number
+  /** макс. допустимый шаг подвесов (см. ceilingGridGeometry.ts) — не задан
+   *  -> = stepB, та же практика, что и в calcP112Frame/CeilingCalc.tsx. */
+  stepA?: number
   bearingAlongLength?: boolean
   showWool?: boolean
   showGkl?: boolean
@@ -293,7 +296,7 @@ const ELEMENT_FOCUS_DISTANCE_M = 1.0
  * сетка чуть шире фактического контура.
  */
 export default function CeilingGridMesh({
-  roomPoints, ceilingM, stepB = DEFAULT_GRID_STEP_B, stepC = DEFAULT_GRID_STEP_C,
+  roomPoints, ceilingM, stepB = DEFAULT_GRID_STEP_B, stepC = DEFAULT_GRID_STEP_C, stepA,
   bearingAlongLength = DEFAULT_BEARING_ALONG_LENGTH, showWool = true, showGkl = true,
   onFocusElement, measuring = false,
 }: CeilingGridMeshProps) {
@@ -318,8 +321,8 @@ export default function CeilingGridMesh({
     if (!bbox) return null
     const lengthMm = (bbox.maxX - bbox.minX) * 1000
     const widthMm = (bbox.maxZ - bbox.minZ) * 1000
-    return calcCeilingGrid({ lengthMm, widthMm, stepB, stepC, bearingAlongLength })
-  }, [bbox, stepB, stepC, bearingAlongLength])
+    return calcCeilingGrid({ lengthMm, widthMm, stepB, stepC, bearingAlongLength, stepA })
+  }, [bbox, stepB, stepC, bearingAlongLength, stepA])
 
   // Вертикальная раскладка уровней относительно низа плиты (ceilingM), вниз:
   const dropToBearingM = 0.12   // типичный вылет прямого подвеса, для показа
