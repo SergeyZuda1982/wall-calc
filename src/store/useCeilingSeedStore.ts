@@ -10,12 +10,20 @@
  */
 
 import { create } from 'zustand'
+import type { Point2D } from '../core/geometry2d'
 
 export interface CeilingSeed {
   areaSqm: number
   perimeterM: number
   label: string
   holesCount: number
+  /** Внешний контур (мм) обведённой фигуры (Плита/Потолок) — для
+   *  визуального превью в CeilingCalc.tsx, дополняет числа площади/
+   *  периметра "нарисованной" формой, как её видит пользователь на плане. */
+  outerMm: Point2D[]
+  /** Вырезы (мм) внутри контура — пусто, если их нет (у Ceiling их пока
+   *  вообще нет, см. ceilingToCeilingSeed.ts). */
+  holesMm: Point2D[][]
 }
 
 interface CeilingSeedState {

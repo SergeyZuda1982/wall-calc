@@ -58,4 +58,18 @@ describe('ceilingToCeilingSeed', () => {
     const seed = ceilingToCeilingSeed(ceiling, 10)!
     expect(seed.holesCount).toBe(0)
   })
+
+  it('outerMm — контур в мм (после масштабирования), для превью в CeilingCalc', () => {
+    const ceiling = rectCeiling(400, 300) // 400×300 px, scale 10 мм/px
+    const seed = ceilingToCeilingSeed(ceiling, 10)!
+    expect(seed.outerMm).toEqual([
+      { x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 3000 }, { x: 0, y: 3000 },
+    ])
+  })
+
+  it('holesMm — всегда пустой массив (Ceiling пока без вырезов)', () => {
+    const ceiling = rectCeiling(100, 100)
+    const seed = ceilingToCeilingSeed(ceiling, 10)!
+    expect(seed.holesMm).toEqual([])
+  })
 })
