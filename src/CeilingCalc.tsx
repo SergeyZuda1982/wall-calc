@@ -13,6 +13,7 @@ import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult } from './core/calcCeiling'
 import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } from './core/calcP112Frame'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
+import type { Point2D } from './core/geometry2d'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
 
@@ -88,6 +89,10 @@ export default function CeilingCalc() {
   const canvasRef = useRef<HTMLDivElement>(null)
   const [canvasW, setCanvasW] = useState(600)
   const [seedBanner, setSeedBanner] = useState<{ label: string; holesCount: number } | null>(null)
+  // Контур обведённой фигуры (Плита/Потолок), пришедший вместе с seed —
+  // чтобы в холсте показывать реально обведённую форму, а не только
+  // цифры площади/периметра (см. KONSPEKT.md 10.07.2026, пункт 3).
+  const [seedContour, setSeedContour] = useState<{ outerMm: Point2D[]; holesMm: Point2D[][] } | null>(null)
 
   // Плита ("карандаш"), отправленная с плана — площадь/периметр вычислены
   // по факту обведённого контура (не прямоугольник), поэтому обнуляем
@@ -109,6 +114,7 @@ export default function CeilingCalc() {
       return next
     })
     setSeedBanner({ label: consumeSeed.label, holesCount: consumeSeed.holesCount })
+    setSeedContour({ outerMm: consumeSeed.outerMm, holesMm: consumeSeed.holesMm })
     clearSeed()
   }, [consumeSeed, clearSeed])
 
@@ -198,7 +204,7 @@ export default function CeilingCalc() {
                 </div>
               )}
             </div>
-            <button onClick={() => setSeedBanner(null)}
+            <button onClick={() => { setSeedBanner(null); setSeedContour(null) }}
               style={{ border: 'none', background: 'none', color: C.muted, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
           </div>
         )}
@@ -438,14 +444,24 @@ export default function CeilingCalc() {
 
             {/* Холст */}
             <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, padding: 12 }}>
-              {!hasRoom ? (
-                <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: C.muted, flexDirection: 'column', gap: 8 }}>
-                  <div style={{ fontSize: 32 }}>📐</div>
-                  <div style={{ fontSize: 15, fontWeight: 500 }}>Введите размеры помещения</div>
-                </div>
-              ) : (
-                <div ref={canvasRef}>
+              <div ref={canvasRef}>
+                {!hasRoom ? (
+                  seedContour ? (
+                    <CeilingContourPreview
+                      outerMm={seedContour.outerMm}
+                      holesMm={seedContour.holesMm}
+                      canvasW={canvasW}
+                      areaSqm={form.areaSqm}
+                      perimeterM={form.perimeterM}
+                    />
+                  ) : (
+                    <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: C.muted, flexDirection: 'column', gap: 8 }}>
+                      <div style={{ fontSize: 32 }}>📐</div>
+                      <div style={{ fontSize: 15, fontWeight: 500 }}>Введите размеры помещения</div>
+                    </div>
+                  )
+                ) : (
                   <CeilingCanvas
                     form={form}
                     step={step}
@@ -454,8 +470,8 @@ export default function CeilingCalc() {
                     shiftBearingMm={shiftBearingMm}
                     layout={result?.sheetLayout ?? null}
                   />
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             {/* Легенда */}
@@ -538,6 +554,69 @@ export default function CeilingCalc() {
             )}
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Превью обведённого контура (нестандартная форма — без точной раскладки) ──
+
+/**
+ * Показывает реально обведённую фигуру (Плита/Потолок с плана) внутри
+ * калькулятора потолка, когда L×W не заданы (нестандартная форма — режим
+ * "площадь+периметр"). Раньше здесь была просто заглушка "Введите размеры
+ * помещения" даже при переданном контуре — пользователь видел только числа,
+ * хотя контур уже был обведён на плане и хотел видеть его глазами здесь же
+ * (см. KONSPEKT.md 10.07.2026, пункт 3). Точная раскладка профилей для
+ * произвольного полигона — отдельная нерешённая задача (пункт 6), это
+ * превью её не делает, только показывает форму.
+ */
+function CeilingContourPreview({ outerMm, holesMm, canvasW, areaSqm, perimeterM }: {
+  outerMm: Point2D[]
+  holesMm: Point2D[][]
+  canvasW: number
+  areaSqm: number
+  perimeterM: number
+}) {
+  const PAD = 32
+  const STAGE_H = 300
+  const availW = Math.max(canvasW - PAD * 2, 10)
+  const availH = STAGE_H - PAD * 2
+
+  if (outerMm.length < 3) return null
+
+  const xs = outerMm.map(p => p.x)
+  const ys = outerMm.map(p => p.y)
+  const minX = Math.min(...xs), maxX = Math.max(...xs)
+  const minY = Math.min(...ys), maxY = Math.max(...ys)
+  const w = Math.max(maxX - minX, 1)
+  const h = Math.max(maxY - minY, 1)
+  const scale = Math.min(availW / w, availH / h)
+  const offX = PAD + (availW - w * scale) / 2
+  const offY = PAD + (availH - h * scale) / 2
+
+  const toStage = (p: Point2D) => ({ x: offX + (p.x - minX) * scale, y: offY + (p.y - minY) * scale })
+  const flat = (pts: Point2D[]) => pts.flatMap(p => { const s = toStage(p); return [s.x, s.y] })
+
+  return (
+    <div>
+      <Stage width={canvasW} height={STAGE_H}>
+        <Layer>
+          <Line points={flat(outerMm)} closed fill="rgba(37,99,235,0.10)"
+            stroke={C.accent} strokeWidth={2} />
+          {holesMm.map((hole, i) => (
+            <Line key={i} points={flat(hole)} closed fill={C.panel}
+              stroke={C.warning} strokeWidth={1.5} dash={[6, 4]} />
+          ))}
+          {outerMm.map((p, i) => {
+            const s = toStage(p)
+            return <Rect key={i} x={s.x - 3} y={s.y - 3} width={6} height={6} fill={C.accent} />
+          })}
+        </Layer>
+      </Stage>
+      <div style={{ textAlign: 'center', fontSize: 11, color: C.muted, marginTop: 6, lineHeight: 1.4 }}>
+        Контур обведён на плане · {areaSqm.toFixed(2)} м² · {perimeterM.toFixed(2)} пог.м
+        <br />Нестандартная форма — точный чертёж раскладки каркаса пока доступен только для прямоугольных потолков.
       </div>
     </div>
   )

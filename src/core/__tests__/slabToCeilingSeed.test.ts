@@ -71,4 +71,22 @@ describe('slabToCeilingSeed', () => {
     const seed = slabToCeilingSeed(slab, 10)!
     expect(seed.areaSqm).toBe(0)
   })
+
+  it('outerMm — контур в мм (после масштабирования), для превью в CeilingCalc', () => {
+    const slab = rectSlab(400, 300) // 400×300 px, scale 10 мм/px
+    const seed = slabToCeilingSeed(slab, 10)!
+    expect(seed.outerMm).toEqual([
+      { x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 3000 }, { x: 0, y: 3000 },
+    ])
+  })
+
+  it('holesMm — вырезы в мм, вырожденные (<3 точек) дырки не попадают', () => {
+    const hole = [{ x: 100, y: 100 }, { x: 150, y: 100 }, { x: 150, y: 150 }, { x: 100, y: 150 }]
+    const degenerate = [{ x: 0, y: 0 }, { x: 10, y: 10 }]
+    const slab = rectSlab(400, 300, [hole, degenerate])
+    const seed = slabToCeilingSeed(slab, 10)!
+    expect(seed.holesMm).toEqual([
+      [{ x: 1000, y: 1000 }, { x: 1500, y: 1000 }, { x: 1500, y: 1500 }, { x: 1000, y: 1500 }],
+    ])
+  })
 })

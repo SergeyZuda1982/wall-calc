@@ -20,6 +20,14 @@ export interface CeilingSeedFromSlab {
    *  добавлены в periметр (обрамление вокруг вырезов профилем ПН —
    *  отдельный расчёт, не автоматизирован). */
   holesCount: number
+  /** Внешний контур в мм (после масштабирования) — для визуального
+   *  превью обведённой формы в калькуляторе потолка (CeilingCalc.tsx,
+   *  см. KONSPEKT.md, пункт 3 "визуальный холст"), не только цифры
+   *  площади/периметра. */
+  outerMm: Point2D[]
+  /** Вырезы в мм, для того же превью (рисуются как отверстия внутри
+   *  контура). Площадь уже вычтена в areaSqm выше. */
+  holesMm: Point2D[][]
 }
 
 function toMm(points: Point2D[], scaleMmPerPx: number): Point2D[] {
@@ -44,5 +52,7 @@ export function slabToCeilingSeed(slab: Slab, scaleMmPerPx: number): CeilingSeed
     areaSqm: Math.round(Math.max(areaMm2, 0) / 1e6 * 100) / 100,
     perimeterM: Math.round(perimeterMm / 1000 * 100) / 100,
     holesCount: validHoles.length,
+    outerMm,
+    holesMm: validHoles.map(h => toMm(h, scaleMmPerPx)),
   }
 }
