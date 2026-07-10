@@ -318,6 +318,19 @@ interface FocusTarget {
 }
 
 /**
+ * Закладка вида (10.07.2026, идея №5) — не персистится (сбрасывается при
+ * перезагрузке/повторном открытии проекта, см. обсуждение с пользователем).
+ * posLocal/targetLocal — ЛОКАЛЬНЫЕ координаты (до visualScale), см.
+ * ViewJumpRig выше.
+ */
+interface ViewBookmark {
+  id: string
+  name: string
+  posLocal: THREE.Vector3
+  targetLocal: THREE.Vector3
+}
+
+/**
  * Табличка-номер помещения в 3D (09.07.2026) — висит примерно на уровне
  * чуть выше стен, в центре (среднем точек контура, тот же принцип, что и
  * подпись в 2D — см. FloorPlan.tsx, рендер rooms). Html из drei — обычный
@@ -425,6 +438,46 @@ function CameraRig({ focusTarget, controlsRef }: {
     controlsRef.current.target.lerp(desiredTarget.current, 0.12)
     camera.position.lerp(desiredPos.current, 0.12)
     controlsRef.current.update()
+  })
+  return null
+}
+
+/**
+ * Закладки видов (10.07.2026) — идея №5 (последняя) из списка "3D-вид на
+ * объекте" (KONSPEKT.md). В отличие от CameraRig (который сохраняет ТЕКУЩИЙ
+ * угол обзора и лишь подъезжает к новой точке — нужно для "фокуса"), здесь
+ * нужно восстановить ТОЧНЫЙ сохранённый ракурс (позицию камеры и цель) —
+ * иначе "закладка" не имела бы смысла (каждый раз смотрели бы по-своему).
+ *
+ * pos/target — уже МИРОВЫЕ координаты на момент прыжка (домножены на
+ * текущий visualScale в goToBookmark, см. Scene3D) — сама закладка хранит
+ * ЛОКАЛЬНЫЕ координаты (viewBookmarks), чтобы оставаться корректной при
+ * любом активном визуальном масштабе.
+ *
+ * settledNonce — как только позиция/цель практически совпали с целевыми,
+ * дальше НЕ трогаем камеру каждый кадр (в отличие от CameraRig) — иначе
+ * если пользователь начнёт вручную крутить камеру после прыжка, лёрп к
+ * замороженной цели продолжал бы "утягивать" её обратно, мешая ручному
+ * управлению.
+ */
+function ViewJumpRig({ viewJump, controlsRef }: {
+  viewJump: { nonce: number; pos: THREE.Vector3; target: THREE.Vector3 } | null
+  controlsRef: React.RefObject<any>
+}) {
+  const { camera } = useThree()
+  const settledNonce = useRef(0)
+
+  useFrame(() => {
+    if (!viewJump || !controlsRef.current || settledNonce.current === viewJump.nonce) return
+    controlsRef.current.target.lerp(viewJump.target, 0.15)
+    camera.position.lerp(viewJump.pos, 0.15)
+    controlsRef.current.update()
+    if (
+      camera.position.distanceTo(viewJump.pos) < 0.01 &&
+      controlsRef.current.target.distanceTo(viewJump.target) < 0.01
+    ) {
+      settledNonce.current = viewJump.nonce
+    }
   })
   return null
 }
@@ -836,6 +889,53 @@ export default function Scene3D() {
   const effectiveHorizontalM = horizontalSectionM ?? (modelBoundsM.minY + modelBoundsM.maxY) / 2
   const effectiveVerticalM = verticalSectionM ?? (modelBoundsM.minX + modelBoundsM.maxX) / 2
 
+  // Закладки видов (10.07.2026, идея №5) — не персистятся, сбрасываются при
+  // повторном открытии проекта (см. обсуждение с пользователем). Имя —
+  // авто "Вид N" (bookmarkCounterRef монотонно растёт даже после удаления,
+  // чтобы номера не переиспользовались и не путали), переименовать можно
+  // потом инлайн в панели.
+  const [viewBookmarks, setViewBookmarks] = useState<ViewBookmark[]>([])
+  const bookmarkCounterRef = useRef(0)
+  const [bookmarksPanelOpen, setBookmarksPanelOpen] = useState(false)
+  const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null)
+  const [viewJump, setViewJump] = useState<{ nonce: number; pos: THREE.Vector3; target: THREE.Vector3 } | null>(null)
+  const viewJumpNonceRef = useRef(0)
+
+  // Читаем текущую камеру/цель через controlsRef.current.object — OrbitControls
+  // (three-stdlib) хранит камеру, к которой привязан, в .object. Работает
+  // только в режиме orbit (во fly controlsRef не заполняется — см. Canvas
+  // ниже), поэтому кнопка "Сохранить вид" недоступна в режиме полёта.
+  function saveCurrentView() {
+    const controls = controlsRef.current
+    if (!controls) return
+    const cam = controls.object as THREE.Object3D
+    bookmarkCounterRef.current += 1
+    setViewBookmarks(prev => [...prev, {
+      id: `bm_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      name: `Вид ${bookmarkCounterRef.current}`,
+      posLocal: cam.position.clone().divideScalar(visualScale),
+      targetLocal: controls.target.clone().divideScalar(visualScale),
+    }])
+  }
+
+  function goToBookmark(bm: ViewBookmark) {
+    setCameraMode('orbit')
+    viewJumpNonceRef.current += 1
+    setViewJump({
+      nonce: viewJumpNonceRef.current,
+      pos: bm.posLocal.clone().multiplyScalar(visualScale),
+      target: bm.targetLocal.clone().multiplyScalar(visualScale),
+    })
+  }
+
+  function renameBookmark(id: string, name: string) {
+    setViewBookmarks(prev => prev.map(b => (b.id === id ? { ...b, name: name.trim() || b.name } : b)))
+  }
+
+  function deleteBookmark(id: string) {
+    setViewBookmarks(prev => prev.filter(b => b.id !== id))
+  }
+
   function toggleMeasuring() {
     setMeasuring(v => !v)
     setMeasurePoints([]) // выключение или включение — начинаем с чистого листа
@@ -988,6 +1088,79 @@ export default function Scene3D() {
             </span>
           </div>
         )}
+        <button
+          onClick={() => setBookmarksPanelOpen(v => !v)}
+          style={{
+            padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            border: '1px solid #6a5acd', borderRadius: 6,
+            background: bookmarksPanelOpen ? '#6a5acd' : '#fff',
+            color: bookmarksPanelOpen ? '#fff' : '#6a5acd',
+          }}>
+          🔖 Виды{viewBookmarks.length > 0 ? ` (${viewBookmarks.length})` : ''}
+        </button>
+        {bookmarksPanelOpen && (
+          <div style={{
+            padding: '10px 12px', fontSize: 12, color: '#444', background: '#ede9fb',
+            border: '1px solid #b7a9e8', borderRadius: 6, maxWidth: 260, lineHeight: 1.4,
+            display: 'flex', flexDirection: 'column', gap: 8,
+          }}>
+            <button
+              onClick={saveCurrentView}
+              disabled={cameraMode !== 'orbit'}
+              title={cameraMode !== 'orbit' ? 'Сохранение видов доступно в режиме орбиты (не полёта)' : 'Сохранить текущий ракурс камеры'}
+              style={{
+                padding: '6px 10px', fontSize: 12, fontWeight: 600, cursor: cameraMode === 'orbit' ? 'pointer' : 'not-allowed',
+                border: '1px solid #6a5acd', borderRadius: 6, background: '#6a5acd', color: '#fff',
+                opacity: cameraMode === 'orbit' ? 1 : 0.5,
+              }}>
+              + Сохранить текущий вид
+            </button>
+            {viewBookmarks.length === 0 && (
+              <span style={{ color: '#6a5acd' }}>Пока нет сохранённых видов.</span>
+            )}
+            {viewBookmarks.map(bm => (
+              <div key={bm.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {editingBookmarkId === bm.id ? (
+                  <input
+                    autoFocus
+                    defaultValue={bm.name}
+                    onBlur={e => { renameBookmark(bm.id, e.target.value); setEditingBookmarkId(null) }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                      if (e.key === 'Escape') setEditingBookmarkId(null)
+                    }}
+                    style={{ flex: 1, fontSize: 12, padding: '2px 4px' }}
+                  />
+                ) : (
+                  <button
+                    onClick={() => goToBookmark(bm)}
+                    title="Перейти к этому виду"
+                    style={{
+                      flex: 1, textAlign: 'left', padding: '4px 6px', fontSize: 12, cursor: 'pointer',
+                      border: '1px solid #b7a9e8', borderRadius: 4, background: '#fff', color: '#4b3f8f',
+                    }}>
+                    {bm.name}
+                  </button>
+                )}
+                <button
+                  onClick={() => setEditingBookmarkId(bm.id)}
+                  title="Переименовать"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, padding: 2 }}>
+                  ✎
+                </button>
+                <button
+                  onClick={() => deleteBookmark(bm.id)}
+                  title="Удалить закладку"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, padding: 2, color: '#a33' }}>
+                  ✕
+                </button>
+              </div>
+            ))}
+            <span style={{ color: '#6a5acd' }}>
+              Виды не сохраняются между открытиями проекта.
+            </span>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 4 }}>
           {VISUAL_SCALE_OPTIONS.map(opt => (
             <button
@@ -1093,6 +1266,7 @@ export default function Scene3D() {
           ? <OrbitControls ref={controlsRef} makeDefault />
           : <FlyControls makeDefault dragToLook movementSpeed={4} rollSpeed={0.6} />}
         {cameraMode === 'orbit' && <CameraRig focusTarget={focusTarget} controlsRef={controlsRef} />}
+        {cameraMode === 'orbit' && <ViewJumpRig viewJump={viewJump} controlsRef={controlsRef} />}
       </Canvas>
     </div>
   )
