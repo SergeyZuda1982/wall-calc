@@ -431,11 +431,12 @@ function MeasureOverlay({ points, visualScale }: { points: THREE.Vector3[]; visu
  * объект целиком, но сразу понятно, какой этаж сейчас редактируется.
  */
 function LevelGroup({
-  floorPlan, offsetY, dimmed, showCeilingGrid, onFocusRoom,
+  floorPlan, offsetY, dimmed, showCeilingGrid, onFocusRoom, onFocusElement,
   selectedLineId, measuring, onSelectWall, onDeselectWall,
 }: {
   floorPlan: FloorPlan; offsetY: number; dimmed: boolean; showCeilingGrid: boolean
   onFocusRoom: (worldTarget: THREE.Vector3, distance: number) => void
+  onFocusElement: (localTarget: THREE.Vector3, localDistance: number) => void
   selectedLineId: string | null
   measuring: boolean
   onSelectWall: (lineId: string) => void
@@ -511,7 +512,13 @@ function LevelGroup({
       ))}
       {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} opacity={opacity} />)}
       {showCeilingGrid && !dimmed && polygons.filter(r => !r.isColumn).map(room => (
-        <CeilingGridMesh key={`grid-${room.id}`} roomPoints={room.points} ceilingM={mmToM(ceilingMm)} />
+        <CeilingGridMesh
+          key={`grid-${room.id}`}
+          roomPoints={room.points}
+          ceilingM={mmToM(ceilingMm)}
+          onFocusElement={onFocusElement}
+          measuring={measuring}
+        />
       ))}
       {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} opacity={opacity} />)}
       {columnCylinders.map(cyl => <RoundColumnMesh key={cyl.id} cyl={cyl} opacity={opacity} />)}
@@ -577,7 +584,7 @@ type VisualScale = typeof VISUAL_SCALE_OPTIONS[number]
  * ниже) — ровно как и modelBoundsM, от которого их диапазон считается.
  * Плоскости же — МИРОВЫЕ (renderer.clippingPlanes работает в мировом
  * пространстве, вне scale-группы), поэтому domножаем constant на
- * visualScale — тот же приём, что и в CameraScaleSync/focusOnRoom/
+ * visualScale — тот же приём, что и в CameraScaleSync/focusOnPoint/
  * MeasureOverlay выше по файлу для той же самой проблемы (локальные
  * координаты модели vs мировые координаты рендерера при активном
  * визуальном масштабе).
@@ -724,17 +731,19 @@ export default function Scene3D() {
     setMeasurePoints(prev => (prev.length >= 2 ? [point] : [...prev, point]))
   }
 
-  // Клик по табличке помещения (см. RoomLabelTag) должен работать и в режиме
-  // полёта (FlyControls не имеет "target" — сперва переключаемся на orbit,
-  // затем едем к помещению; см. CameraRig).
+  // Общий "фокус камеры на точке" — клик по табличке помещения (RoomLabelTag)
+  // ИЛИ по узлу каркаса потолка (CeilingGridMesh, см. onFocusElement у
+  // LevelGroup, "фокус на элемент", 10.07.2026) ведут сюда одинаково. Должен
+  // работать и в режиме полёта (FlyControls не имеет "target" — сперва
+  // переключаемся на orbit, затем едем к точке; см. CameraRig).
   //
   // localTarget/localDistance приходят в ЛОКАЛЬНЫХ координатах этажа — внутри
   // <group scale={visualScale}> (см. Canvas ниже), а камера/OrbitControls
   // работают в МИРОВЫХ координатах вне этой группы. Поэтому при активном
   // визуальном масштабе (5x/10x) и цель, и дистанцию домножаем на
-  // visualScale — иначе камера при клике на табличку подъедет не туда и не
-  // на то расстояние, что видно на экране.
-  function focusOnRoom(localTarget: THREE.Vector3, localDistance: number) {
+  // visualScale — иначе камера при клике подъедет не туда и не на то
+  // расстояние, что видно на экране.
+  function focusOnPoint(localTarget: THREE.Vector3, localDistance: number) {
     setCameraMode('orbit')
     focusNonce.current += 1
     setFocusTarget({
@@ -934,7 +943,8 @@ export default function Scene3D() {
               offsetY={mmToM(lv.elevationMm)}
               dimmed={lv.id !== activeLevelId}
               showCeilingGrid={showCeilingGrid}
-              onFocusRoom={focusOnRoom}
+              onFocusRoom={focusOnPoint}
+              onFocusElement={focusOnPoint}
               selectedLineId={selectedLineId}
               measuring={measuring}
               onSelectWall={setSelectedLineId}
