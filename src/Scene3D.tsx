@@ -20,14 +20,14 @@ import { useMemo, useState, useRef, useEffect } from 'react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Grid, FlyControls, Html, Line, Sphere } from '@react-three/drei'
 import * as THREE from 'three'
-import { useProjectStore } from './store/useProjectStore'
+import { useProjectStore, type SelectedEntity } from './store/useProjectStore'
 import {
   wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM,
   freeformStructuresToPrisms3D,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D,
 } from './core/planTo3D'
-import type { PlanLineType, FloorPlan, PlanLine } from './types'
+import type { PlanLineType, FloorPlan } from './types'
 import CeilingGridMesh from './components/CeilingGridMesh'
 import { formatDistanceM } from './core/formatDistance'
 import { lineProgressColor, lineProgressSummary } from './core/lineProgress'
@@ -190,12 +190,35 @@ function HandDrawnSlabMesh({ slab, opacity = 1 }: { slab: SlabPolygon3D; opacity
  * Круглая колонна → цилиндр three.js. CylinderGeometry по умолчанию стоит
  * вдоль оси Y (высота) — ровно то, что нужно (вертикальная колонна от пола
  * до потолка), поворот не требуется в отличие от коробки-стены.
+ *
+ * Клик/подсветка/выделение (10.07.2026) — тот же принцип, что и у WallMesh
+ * выше: клик поднимает cyl.id (у круглой колонны один цельный меш, без
+ * деления на сегменты вокруг проёмов, как у стены — поэтому отдельного
+ * lineId не нужно, id колонны и так уникален и один на весь объект).
  */
-function RoundColumnMesh({ cyl, opacity = 1 }: { cyl: ColumnCylinder3D; opacity?: number }) {
+function RoundColumnMesh({ cyl, opacity = 1, selected = false, measuring = false, onSelect }: {
+  cyl: ColumnCylinder3D
+  opacity?: number
+  selected?: boolean
+  measuring?: boolean
+  onSelect?: (id: string) => void
+}) {
+  function handleClick(e: ThreeEvent<MouseEvent>) {
+    if (measuring || !onSelect) return
+    e.stopPropagation()
+    onSelect(cyl.id)
+  }
   return (
-    <mesh position={[cyl.cx, cyl.heightM / 2, cyl.cz]} castShadow receiveShadow>
+    <mesh position={[cyl.cx, cyl.heightM / 2, cyl.cz]} castShadow receiveShadow onClick={handleClick}>
       <cylinderGeometry args={[cyl.radius, cyl.radius, cyl.heightM, 24]} />
-      <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
+      <meshStandardMaterial
+        color={COLUMN_COLOR}
+        roughness={0.9}
+        transparent={opacity < 1}
+        opacity={opacity}
+        emissive={selected ? '#ffca28' : '#000000'}
+        emissiveIntensity={selected ? 0.55 : 0}
+      />
     </mesh>
   )
 }
@@ -205,12 +228,31 @@ function RoundColumnMesh({ cyl, opacity = 1 }: { cyl: ColumnCylinder3D; opacity?
  * Тот же принцип, что и WallMesh (боковая коробка стены) — но свой
  * фиксированный цвет COLUMN_COLOR, как и у круглой колонны, а не цвет
  * из TYPE_COLOR_3D (колонна не привязана к PlanLineType).
+ * Клик/подсветка (10.07.2026) — см. RoundColumnMesh выше, тот же принцип.
  */
-function RectColumnMesh({ box, opacity = 1 }: { box: RectColumnBox3D; opacity?: number }) {
+function RectColumnMesh({ box, opacity = 1, selected = false, measuring = false, onSelect }: {
+  box: RectColumnBox3D
+  opacity?: number
+  selected?: boolean
+  measuring?: boolean
+  onSelect?: (id: string) => void
+}) {
+  function handleClick(e: ThreeEvent<MouseEvent>) {
+    if (measuring || !onSelect) return
+    e.stopPropagation()
+    onSelect(box.id)
+  }
   return (
-    <mesh position={[box.center.x, box.center.y, box.center.z]} rotation={[0, box.rotationY, 0]} castShadow receiveShadow>
+    <mesh position={[box.center.x, box.center.y, box.center.z]} rotation={[0, box.rotationY, 0]} castShadow receiveShadow onClick={handleClick}>
       <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
-      <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
+      <meshStandardMaterial
+        color={COLUMN_COLOR}
+        roughness={0.9}
+        transparent={opacity < 1}
+        opacity={opacity}
+        emissive={selected ? '#ffca28' : '#000000'}
+        emissiveIntensity={selected ? 0.55 : 0}
+      />
     </mesh>
   )
 }
@@ -229,7 +271,13 @@ function RectColumnMesh({ box, opacity = 1 }: { box: RectColumnBox3D; opacity?: 
  * НЕСКОЛЬКО таких мешей (по band на разную высоту — planTo3D режет по
  * границам проёмов), каждый со своим набором активных дырок.
  */
-function FreeformStructureMesh({ prism, opacity = 1 }: { prism: FreeformPrism3D; opacity?: number }) {
+function FreeformStructureMesh({ prism, opacity = 1, selected = false, measuring = false, onSelect }: {
+  prism: FreeformPrism3D
+  opacity?: number
+  selected?: boolean
+  measuring?: boolean
+  onSelect?: (structureId: string) => void
+}) {
   const geo = useMemo(() => {
     if (prism.points.length < 3) return null
     const shape = new THREE.Shape(prism.points.map(p => new THREE.Vector2(p.x, -p.z)))
@@ -243,9 +291,21 @@ function FreeformStructureMesh({ prism, opacity = 1 }: { prism: FreeformPrism3D;
   }, [prism.points, prism.heightM, prism.bottomM, prism.holes])
   if (!geo) return null
   const color = prism.kind === 'column' ? COLUMN_COLOR : TYPE_COLOR_3D.wall_existing
+  function handleClick(e: ThreeEvent<MouseEvent>) {
+    if (measuring || !onSelect) return
+    e.stopPropagation()
+    onSelect(prism.structureId)
+  }
   return (
-    <mesh geometry={geo} castShadow receiveShadow>
-      <meshStandardMaterial color={color} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
+    <mesh geometry={geo} castShadow receiveShadow onClick={handleClick}>
+      <meshStandardMaterial
+        color={color}
+        roughness={0.9}
+        transparent={opacity < 1}
+        opacity={opacity}
+        emissive={selected ? '#ffca28' : '#000000'}
+        emissiveIntensity={selected ? 0.55 : 0}
+      />
     </mesh>
   )
 }
@@ -288,31 +348,34 @@ function RoomLabelTag({
 }
 
 /**
- * Всплывающая табличка над выбранной стеной (10.07.2026, выбор стены кликом
- * в 3D) — показывает подпись линии и статус/стадию работ (тот же резолвер,
- * что и 2D-дот в FloorPlan.tsx, см. core/lineProgress.ts) прямо в 3D, без
- * необходимости переключаться на вкладку «План» ради этой информации.
- * Кнопка «✕» снимает выделение — тот же эффект, что клик по пустому месту
- * сцены (см. onPointerMissed в Canvas ниже).
+ * Всплывающая табличка над выбранным объектом (10.07.2026, выбор кликом в
+ * 3D — стена, круглая/прямоугольная колонна, обведённая карандашом
+ * конструкция) — показывает label и, если есть, строку статуса/стадии
+ * работ. Для стены статус — из buildProgress (тот же резолвер, что и
+ * 2D-дот в FloorPlan.tsx, см. core/lineProgress.ts); у колонн и
+ * произвольных конструкций такого прогресса в модели данных пока нет
+ * (только устаревшее WorkStatus без текстового отображения нигде в
+ * приложении) — для них панель показывает только label, без выдуманной
+ * строки статуса. Кнопка «✕» снимает выделение — тот же эффект, что клик
+ * по пустому месту сцены (см. onPointerMissed в Canvas ниже).
  */
-function WallStatusPanel({
-  x, y, z, line, onClose,
-}: { x: number; y: number; z: number; line: PlanLine; onClose: () => void }) {
-  const statusColor = lineProgressColor(line.buildProgress)
-  const summary = lineProgressSummary(line.buildProgress)
+function EntitySelectionPanel({
+  x, y, z, label, statusText, statusColor, onClose,
+}: { x: number; y: number; z: number; label: string; statusText?: string; statusColor?: string; onClose: () => void }) {
+  const borderColor = statusColor ?? '#3a7bd5'
   return (
     <Html position={[x, y, z]} center distanceFactor={10} zIndexRange={[30, 0]} occlude={false}>
       <div
         style={{
           padding: '6px 10px', borderRadius: 8, whiteSpace: 'nowrap',
-          background: 'rgba(255,255,255,0.96)', border: `1px solid ${statusColor}`,
+          background: 'rgba(255,255,255,0.96)', border: `1px solid ${borderColor}`,
           boxShadow: '0 2px 6px rgba(0,0,0,0.3)', userSelect: 'none',
           display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
         }}
       >
         <div>
-          <div style={{ fontWeight: 700, color: '#1a1f33' }}>{line.label}</div>
-          <div style={{ color: statusColor, fontWeight: 600 }}>{summary}</div>
+          <div style={{ fontWeight: 700, color: '#1a1f33' }}>{label}</div>
+          {statusText && <div style={{ color: borderColor, fontWeight: 600 }}>{statusText}</div>}
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); onClose() }}
@@ -431,15 +494,16 @@ function MeasureOverlay({ points, visualScale }: { points: THREE.Vector3[]; visu
  * объект целиком, но сразу понятно, какой этаж сейчас редактируется.
  */
 function LevelGroup({
-  floorPlan, offsetY, dimmed, showCeilingGrid, onFocusRoom,
-  selectedLineId, measuring, onSelectWall, onDeselectWall,
+  floorPlan, offsetY, dimmed, showCeilingGrid, onFocusRoom, onFocusElement,
+  selectedEntity, measuring, onSelectEntity, onDeselect,
 }: {
   floorPlan: FloorPlan; offsetY: number; dimmed: boolean; showCeilingGrid: boolean
   onFocusRoom: (worldTarget: THREE.Vector3, distance: number) => void
-  selectedLineId: string | null
+  onFocusElement: (localTarget: THREE.Vector3, localDistance: number) => void
+  selectedEntity: SelectedEntity | null
   measuring: boolean
-  onSelectWall: (lineId: string) => void
-  onDeselectWall: () => void
+  onSelectEntity: (entity: SelectedEntity) => void
+  onDeselect: () => void
 }) {
   const lines = floorPlan.lines ?? []
   const rooms = floorPlan.rooms ?? []
@@ -488,14 +552,49 @@ function LevelGroup({
       })
   }, [polygons])
 
-  // Выбранная стена (10.07.2026) — панель статуса/стадии показывается только
-  // для АКТИВНОГО (недимленного) этажа, чтобы не путать пользователя панелью
-  // от полупрозрачной "справочной" геометрии другого этажа. lines — линии
-  // ЭТОГО этажа (замыкание выше), поэтому если выбранная линия относится к
-  // другому этажу, здесь просто ничего не найдётся — и панель не покажется
-  // (сработает у того LevelGroup, которому она действительно принадлежит).
-  const selectedLine = !dimmed ? lines.find(l => l.id === selectedLineId) : undefined
-  const selectedBox = selectedLine ? boxes.find(b => b.lineId === selectedLine.id) : undefined
+  // Выбранный объект (10.07.2026) — панель статуса и подсветка показываются
+  // только для АКТИВНОГО (недимленного) этажа, чтобы не путать пользователя
+  // геометрией другого, полупрозрачного этажа. Если выбранный объект
+  // относится к другому этажу, здесь просто ничего не найдётся — сработает
+  // у того LevelGroup, которому он действительно принадлежит.
+  const selectedWallId        = !dimmed && selectedEntity?.kind === 'wall'        ? selectedEntity.id : null
+  const selectedRoundColId    = !dimmed && selectedEntity?.kind === 'roundColumn' ? selectedEntity.id : null
+  const selectedRectColId     = !dimmed && selectedEntity?.kind === 'rectColumn'  ? selectedEntity.id : null
+  const selectedFreeformId    = !dimmed && selectedEntity?.kind === 'freeform'    ? selectedEntity.id : null
+
+  const selectedLine = selectedWallId ? lines.find(l => l.id === selectedWallId) : undefined
+  const selectedWallBox = selectedLine ? boxes.find(b => b.lineId === selectedLine.id) : undefined
+  const selectedRoundCol = selectedRoundColId ? roundColumns.find(c => c.id === selectedRoundColId) : undefined
+  const selectedRoundCyl = selectedRoundCol ? columnCylinders.find(c => c.id === selectedRoundCol.id) : undefined
+  const selectedRectCol = selectedRectColId ? rectColumns.find(c => c.id === selectedRectColId) : undefined
+  const selectedRectBox = selectedRectCol ? rectColumnBoxes.find(b => b.id === selectedRectCol.id) : undefined
+  const selectedFreeform = selectedFreeformId ? freeformStructures.find(f => f.id === selectedFreeformId) : undefined
+  const selectedFreeformFirstPrism = selectedFreeform ? freeformPrisms.find(p => p.structureId === selectedFreeform.id) : undefined
+
+  // Панель статуса (10.07.2026) — единая для всех 4 видов объектов, но
+  // содержимое собирается по-разному: у стены есть buildProgress (см.
+  // core/lineProgress.ts, тот же резолвер, что и 2D-дот); у колонн и
+  // произвольных конструкций такого прогресса в модели данных пока нет —
+  // для них показывается только label, без выдуманной строки статуса.
+  const panel = selectedLine && selectedWallBox
+    ? {
+        x: selectedWallBox.center.x, y: selectedWallBox.center.y + selectedWallBox.size.sy / 2 + 0.3, z: selectedWallBox.center.z,
+        label: selectedLine.label,
+        statusText: lineProgressSummary(selectedLine.buildProgress),
+        statusColor: lineProgressColor(selectedLine.buildProgress),
+      }
+    : selectedRoundCol && selectedRoundCyl
+    ? { x: selectedRoundCyl.cx, y: selectedRoundCyl.heightM + 0.3, z: selectedRoundCyl.cz, label: selectedRoundCol.label }
+    : selectedRectCol && selectedRectBox
+    ? { x: selectedRectBox.center.x, y: selectedRectBox.center.y + selectedRectBox.size.sy / 2 + 0.3, z: selectedRectBox.center.z, label: selectedRectCol.label }
+    : selectedFreeform && selectedFreeformFirstPrism
+    ? {
+        x: selectedFreeformFirstPrism.points.reduce((s, p) => s + p.x, 0) / selectedFreeformFirstPrism.points.length,
+        y: mmToM(selectedFreeform.heightMm ?? ceilingMm) + 0.3,
+        z: selectedFreeformFirstPrism.points.reduce((s, p) => s + p.z, 0) / selectedFreeformFirstPrism.points.length,
+        label: selectedFreeform.label,
+      }
+    : null
 
   return (
     <group position={[0, offsetY, 0]}>
@@ -504,26 +603,61 @@ function LevelGroup({
           key={box.id}
           box={box}
           opacity={opacity}
-          selected={box.lineId === selectedLineId}
+          selected={box.lineId === selectedWallId}
           measuring={measuring}
-          onSelect={onSelectWall}
+          onSelect={(lineId) => onSelectEntity({ kind: 'wall', id: lineId })}
         />
       ))}
       {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} opacity={opacity} />)}
       {showCeilingGrid && !dimmed && polygons.filter(r => !r.isColumn).map(room => (
-        <CeilingGridMesh key={`grid-${room.id}`} roomPoints={room.points} ceilingM={mmToM(ceilingMm)} />
+        <CeilingGridMesh
+          key={`grid-${room.id}`}
+          roomPoints={room.points}
+          ceilingM={mmToM(ceilingMm)}
+          onFocusElement={onFocusElement}
+          measuring={measuring}
+        />
       ))}
       {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} opacity={opacity} />)}
-      {columnCylinders.map(cyl => <RoundColumnMesh key={cyl.id} cyl={cyl} opacity={opacity} />)}
-      {rectColumnBoxes.map(box => <RectColumnMesh key={box.id} box={box} opacity={opacity} />)}
-      {freeformPrisms.map(prism => <FreeformStructureMesh key={prism.id} prism={prism} opacity={opacity} />)}
-      {selectedLine && selectedBox && (
-        <WallStatusPanel
-          x={selectedBox.center.x}
-          y={selectedBox.center.y + selectedBox.size.sy / 2 + 0.3}
-          z={selectedBox.center.z}
-          line={selectedLine}
-          onClose={onDeselectWall}
+      {columnCylinders.map(cyl => (
+        <RoundColumnMesh
+          key={cyl.id}
+          cyl={cyl}
+          opacity={opacity}
+          selected={cyl.id === selectedRoundColId}
+          measuring={measuring}
+          onSelect={(id) => onSelectEntity({ kind: 'roundColumn', id })}
+        />
+      ))}
+      {rectColumnBoxes.map(box => (
+        <RectColumnMesh
+          key={box.id}
+          box={box}
+          opacity={opacity}
+          selected={box.id === selectedRectColId}
+          measuring={measuring}
+          onSelect={(id) => onSelectEntity({ kind: 'rectColumn', id })}
+        />
+      ))}
+      {freeformPrisms.map(prism => (
+        <FreeformStructureMesh
+          key={prism.id}
+          prism={prism}
+          opacity={opacity}
+          selected={prism.structureId === selectedFreeformId}
+          measuring={measuring}
+          onSelect={(structureId) => onSelectEntity({ kind: 'freeform', id: structureId })}
+        />
+      ))}
+      {panel && (
+        <EntitySelectionPanel
+          x={panel.x}
+          y={panel.y}
+          z={panel.z}
+          label={panel.label}
+          statusText={'statusText' in panel ? panel.statusText : undefined}
+          statusColor={'statusColor' in panel ? panel.statusColor : undefined}
+          onClose={onDeselect}
         />
       )}
       {!dimmed && roomLabels.map(rl => (
@@ -577,7 +711,7 @@ type VisualScale = typeof VISUAL_SCALE_OPTIONS[number]
  * ниже) — ровно как и modelBoundsM, от которого их диапазон считается.
  * Плоскости же — МИРОВЫЕ (renderer.clippingPlanes работает в мировом
  * пространстве, вне scale-группы), поэтому domножаем constant на
- * visualScale — тот же приём, что и в CameraScaleSync/focusOnRoom/
+ * visualScale — тот же приём, что и в CameraScaleSync/focusOnPoint/
  * MeasureOverlay выше по файлу для той же самой проблемы (локальные
  * координаты модели vs мировые координаты рендерера при активном
  * визуальном масштабе).
@@ -659,11 +793,12 @@ export default function Scene3D() {
   const controlsRef = useRef<any>(null)
   const levels = useProjectStore(s => s.levels)
   const activeLevelId = useProjectStore(s => s.activeLevelId)
-  // Выбор стены кликом (10.07.2026) — общее с 2D-планом состояние (см.
-  // useProjectStore.selectedLineId): клик по стене здесь подсвечивает её и
-  // на вкладке «План», если туда переключиться, и наоборот.
-  const selectedLineId = useProjectStore(s => s.selectedLineId)
-  const setSelectedLineId = useProjectStore(s => s.setSelectedLineId)
+  // Выбор объекта кликом (10.07.2026, стена/колонны/произвольные
+  // конструкции) — общее с 2D-планом состояние (см.
+  // useProjectStore.selectedEntity): клик по объекту здесь подсвечивает его
+  // и на вкладке «План», если туда переключиться, и наоборот.
+  const selectedEntity = useProjectStore(s => s.selectedEntity)
+  const setSelectedEntity = useProjectStore(s => s.setSelectedEntity)
 
   // Границы модели (метры, ЛОКАЛЬНЫЕ координаты — до применения visualScale)
   // — нужны только чтобы задать разумный диапазон слайдеров секущей
@@ -724,17 +859,19 @@ export default function Scene3D() {
     setMeasurePoints(prev => (prev.length >= 2 ? [point] : [...prev, point]))
   }
 
-  // Клик по табличке помещения (см. RoomLabelTag) должен работать и в режиме
-  // полёта (FlyControls не имеет "target" — сперва переключаемся на orbit,
-  // затем едем к помещению; см. CameraRig).
+  // Общий "фокус камеры на точке" — клик по табличке помещения (RoomLabelTag)
+  // ИЛИ по узлу каркаса потолка (CeilingGridMesh, см. onFocusElement у
+  // LevelGroup, "фокус на элемент", 10.07.2026) ведут сюда одинаково. Должен
+  // работать и в режиме полёта (FlyControls не имеет "target" — сперва
+  // переключаемся на orbit, затем едем к точке; см. CameraRig).
   //
   // localTarget/localDistance приходят в ЛОКАЛЬНЫХ координатах этажа — внутри
   // <group scale={visualScale}> (см. Canvas ниже), а камера/OrbitControls
   // работают в МИРОВЫХ координатах вне этой группы. Поэтому при активном
   // визуальном масштабе (5x/10x) и цель, и дистанцию домножаем на
-  // visualScale — иначе камера при клике на табличку подъедет не туда и не
-  // на то расстояние, что видно на экране.
-  function focusOnRoom(localTarget: THREE.Vector3, localDistance: number) {
+  // visualScale — иначе камера при клике подъедет не туда и не на то
+  // расстояние, что видно на экране.
+  function focusOnPoint(localTarget: THREE.Vector3, localDistance: number) {
     setCameraMode('orbit')
     focusNonce.current += 1
     setFocusTarget({
@@ -921,7 +1058,7 @@ export default function Scene3D() {
       <Canvas
         shadows
         camera={{ position: [10, 10, 10], fov: 50 }}
-        onPointerMissed={() => { if (!measuring) setSelectedLineId(null) }}
+        onPointerMissed={() => { if (!measuring) setSelectedEntity(null) }}
       >
         <ambientLight intensity={0.6} />
         <directionalLight position={[8, 12, 6]} intensity={1} castShadow />
@@ -934,11 +1071,12 @@ export default function Scene3D() {
               offsetY={mmToM(lv.elevationMm)}
               dimmed={lv.id !== activeLevelId}
               showCeilingGrid={showCeilingGrid}
-              onFocusRoom={focusOnRoom}
-              selectedLineId={selectedLineId}
+              onFocusRoom={focusOnPoint}
+              onFocusElement={focusOnPoint}
+              selectedEntity={selectedEntity}
               measuring={measuring}
-              onSelectWall={setSelectedLineId}
-              onDeselectWall={() => setSelectedLineId(null)}
+              onSelectEntity={setSelectedEntity}
+              onDeselect={() => setSelectedEntity(null)}
             />
           ))}
         </group>

@@ -333,7 +333,7 @@ export default function FloorPlan() {
     addFreeformOpening, updateFreeformOpening, removeFreeformOpening,
     addMepRoute, removeMepRoute, setMepBackground, updateMepBackground,
     customWorkStageTemplates, addCustomWorkStageTemplate,
-    selectedLineId, setSelectedLineId,
+    selectedEntity, setSelectedEntity,
   } = useProjectStore()
 
   const allWorkStageTemplates: WorkStageTemplate[] = useMemo(
@@ -449,32 +449,6 @@ export default function FloorPlan() {
   const [drawing, setDrawing]           = useState<{ x1: number; y1: number } | null>(null)
   const [cursor, setCursor]             = useState<{ x: number; y: number } | null>(null)
   const [selectedId, setSelected]       = useState<string | null>(null)
-  // Синхронизация выделения со стеной, выбранной в 3D (10.07.2026) — стор
-  // (useProjectStore.selectedLineId) переживает переключение вкладок
-  // (App.tsx размонтирует FloorPlan/Scene3D при смене activeTab), локальный
-  // useState — нет. При заходе на вкладку «План» подхватываем последний
-  // выбор из стора (если такая линия ещё есть на этом этаже); при любом
-  // изменении локального выделения — отдаём его обратно в стор, чтобы 3D
-  // при следующем открытии подсветил ту же стену.
-  useEffect(() => {
-    if (selectedLineId && lines.some(l => l.id === selectedLineId)) {
-      setSelected(selectedLineId)
-      setInspectorId(selectedLineId)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  // Эффект-«эхо» ниже отдаёт локальное выделение обратно в стор при КАЖДОМ
-  // изменении selectedId — КРОМЕ самого монтирования: на монтировании
-  // selectedId ещё держит значение с прошлого рендера (null или что было
-  // до этого), а эффект гидратации выше только ПЛАНИРУЕТ setSelected(...)
-  // (сработает на следующем рендере) — если не пропустить первый проход
-  // здесь, мы затрём в сторе только что прочитанное значение нулём раньше,
-  // чем гидратация успеет его применить.
-  const skippedFirstEcho = useRef(false)
-  useEffect(() => {
-    if (!skippedFirstEcho.current) { skippedFirstEcho.current = true; return }
-    setSelectedLineId(selectedId)
-  }, [selectedId, setSelectedLineId])
   const [contourIds, setContourIds]     = useState<string[]>([])
   const [contourType, _setContourType]   = useState<PlanLineType>('ceiling')
   const [contourLabel, setContourLabel] = useState('')
@@ -499,6 +473,48 @@ export default function FloorPlan() {
   const [inspectorRoundColumnId, setInspectorRoundColumnId] = useState<string | null>(null)
   const [inspectorRectColumnId, setInspectorRectColumnId] = useState<string | null>(null)
   const [inspectorFreeformId, setInspectorFreeformId] = useState<string | null>(null)
+  // Синхронизация выделения с объектом, выбранным в 3D (10.07.2026) — стор
+  // (useProjectStore.selectedEntity) переживает переключение вкладок
+  // (App.tsx размонтирует FloorPlan/Scene3D при смене activeTab), локальный
+  // useState — нет. При заходе на вкладку «План» подхватываем последний
+  // выбор из стора (если такой объект ещё есть на этом этаже); при любом
+  // изменении локального выделения — отдаём его обратно в стор, чтобы 3D
+  // при следующем открытии подсветил тот же объект. Стена и три вида
+  // колонн/произвольных конструкций — РАЗНЫЕ локальные состояния
+  // (selectedId/inspectorId — стена, inspector*ColumnId/inspectorFreeformId —
+  // остальное), но они уже взаимоисключающие в существующих обработчиках
+  // клика (выбор одного явно сбрасывает остальные на null) — поэтому здесь
+  // просто берём первый непустой в порядке приоритета.
+  useEffect(() => {
+    const e = selectedEntity
+    if (!e) return
+    if (e.kind === 'wall' && lines.some(l => l.id === e.id)) {
+      setSelected(e.id); setInspectorId(e.id)
+    } else if (e.kind === 'roundColumn' && roundColumns.some(c => c.id === e.id)) {
+      setInspectorRoundColumnId(e.id)
+    } else if (e.kind === 'rectColumn' && rectColumns.some(c => c.id === e.id)) {
+      setInspectorRectColumnId(e.id)
+    } else if (e.kind === 'freeform' && freeformStructures.some(f => f.id === e.id)) {
+      setInspectorFreeformId(e.id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // Эффект-«эхо» ниже отдаёт локальное выделение обратно в стор при КАЖДОМ
+  // его изменении — КРОМЕ самого монтирования: на монтировании локальные
+  // id ещё держат значения с прошлого рендера (обычно null), а эффект
+  // гидратации выше только ПЛАНИРУЕТ соответствующий setXxx(...) (сработает
+  // на следующем рендере) — если не пропустить первый проход здесь, мы
+  // затрём в сторе только что прочитанное значение раньше, чем гидратация
+  // успеет его применить.
+  const skippedFirstEcho = useRef(false)
+  useEffect(() => {
+    if (!skippedFirstEcho.current) { skippedFirstEcho.current = true; return }
+    if (selectedId) setSelectedEntity({ kind: 'wall', id: selectedId })
+    else if (inspectorRoundColumnId) setSelectedEntity({ kind: 'roundColumn', id: inspectorRoundColumnId })
+    else if (inspectorRectColumnId) setSelectedEntity({ kind: 'rectColumn', id: inspectorRectColumnId })
+    else if (inspectorFreeformId) setSelectedEntity({ kind: 'freeform', id: inspectorFreeformId })
+    else setSelectedEntity(null)
+  }, [selectedId, inspectorRoundColumnId, inspectorRectColumnId, inspectorFreeformId, setSelectedEntity])
   // Цепочка рисования периметра
   const [chainStartPt, setChainStartPt] = useState<{ x: number; y: number } | null>(null)
   const [chainLineIds, setChainLineIds] = useState<string[]>([])

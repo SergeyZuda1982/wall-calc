@@ -9,6 +9,16 @@ const PROFILE_LETTER: Record<string, string> = {
   ps50: 'А', ps75: 'В', ps100: 'С',
 }
 
+/**
+ * Виды сущностей плана, выбираемых кликом в 3D (10.07.2026) — см.
+ * ProjectStore.selectedEntity ниже.
+ */
+export type SelectedEntityKind = 'wall' | 'roundColumn' | 'rectColumn' | 'freeform'
+export interface SelectedEntity {
+  kind: SelectedEntityKind
+  id: string
+}
+
 export interface LiningEntry {
   id: string
   label: string
@@ -54,18 +64,24 @@ export interface ProjectStore {
   activeLiningId: string | null
 
   /**
-   * Выбранная линия плана (10.07.2026, выбор стены кликом в 3D) — общее
+   * Выбранный объект плана (10.07.2026, выбор кликом в 3D) — общее
    * состояние для синхронизации выделения между вкладками «План» (2D,
    * FloorPlan.tsx) и «3D» (Scene3D.tsx). Эти вкладки — разные React-деревья
    * (переключение activeTab в App.tsx их полностью размонтирует), поэтому
    * обычный локальный useState внутри компонента не пережил бы переключение
    * вкладки — отсюда и вынос в общий стор. НЕ входит в partialize ниже —
    * это чисто UI-выделение текущей сессии, а не данные проекта, сохранять
-   * его на диск не нужно (и не стоит — id линии может относиться к другому
+   * его на диск не нужно (и не стоит — id может относиться к другому
    * проекту после перезагрузки).
+   *
+   * kind различает 4 вида сущностей на плане, которые можно выбрать в 3D
+   * (стена/линия, круглая колонна, прямоугольная колонна, обведённая
+   * карандашом конструкция/колонна) — id один и тот же формат у всех
+   * (уникальный внутри своего массива на floorPlan), но массивы разные,
+   * поэтому просто `id: string` без kind был бы неоднозначен.
    */
-  selectedLineId: string | null
-  setSelectedLineId: (id: string | null) => void
+  selectedEntity: SelectedEntity | null
+  setSelectedEntity: (entity: SelectedEntity | null) => void
 
   /**
    * Ошибка последнего сохранения на диск (см. safeLocalStorage выше).
@@ -385,8 +401,8 @@ export const useProjectStore = create<ProjectStore>()(
       floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
       activeWallId: null,
       activeLiningId: null,
-      selectedLineId: null,
-      setSelectedLineId: (id) => set({ selectedLineId: id }),
+      selectedEntity: null,
+      setSelectedEntity: (entity) => set({ selectedEntity: entity }),
       customWorkStageTemplates: [],
       saveError: null,
       clearSaveError: () => set({ saveError: null }),
