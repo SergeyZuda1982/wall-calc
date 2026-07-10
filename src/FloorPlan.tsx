@@ -41,6 +41,7 @@ import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaF
 import { slabToCeilingSeed } from './core/slabToCeilingSeed'
 import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
+import { combineCeilingSeeds } from './core/combineCeilingSeeds'
 import { snapPoint, snapOrtho } from './core/planSnap'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
@@ -385,6 +386,17 @@ export default function FloorPlan() {
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
   const [pencilPts, setPencilPts] = useState<{ x: number; y: number }[]>([])       // карандаш: накопленные точки контура
   const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
+  // Мульти-выбор Плит/Потолков для объединения в один расчёт потолка —
+  // "несколько именованных зон одновременно" (KONSPEKT.md 10.07.2026, п.4).
+  // Отдельно от одиночной кнопки "→ Потолок" на каждой карточке — та
+  // работает как раньше, без изменений.
+  const [combineSelection, setCombineSelection] = useState<Array<{ type: 'slab' | 'ceiling'; id: string }>>([])
+  const toggleCombineSelection = (type: 'slab' | 'ceiling', id: string) => {
+    setCombineSelection(prev => {
+      const exists = prev.some(s => s.type === type && s.id === id)
+      return exists ? prev.filter(s => !(s.type === type && s.id === id)) : [...prev, { type, id }]
+    })
+  }
   const [ceilingPts, setCeilingPts] = useState<{ x: number; y: number }[]>([])     // потолок: накопленные точки контура (та же механика, что у pencilPts, но отдельная сущность — см. types/index.ts)
   const [freeformPts, setFreeformPts] = useState<{ x: number; y: number }[]>([])   // обводка (стена/колонна произвольной формы) ИЛИ проём на ней: накопленные точки контура (переиспользуется, режимы взаимоисключающие)
   const [freeformKind, setFreeformKind] = useState<'wall' | 'column'>('column')     // что создаём при замыкании контура (режим 'freeform')
@@ -2443,12 +2455,19 @@ export default function FloorPlan() {
                         {sl.label} {sl.holes.length > 0 && `(${sl.holes.length} проём${sl.holes.length > 1 ? 'а' : ''})`}
                         {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
                       </button>
-                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px' }}>
+                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px', alignItems: 'center' }}>
+                        <label title="Отметить для объединения нескольких зон в один расчёт потолка"
+                          style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                          <input type="checkbox"
+                            checked={combineSelection.some(s => s.type === 'slab' && s.id === sl.id)}
+                            onChange={() => toggleCombineSelection('slab', sl.id)}
+                            style={{ cursor: 'pointer' }} />
+                        </label>
                         <button
                           disabled={!seed}
                           onClick={() => {
                             if (!seed) return
-                            setCeilingSeed({ ...seed, label: sl.label })
+                            setCeilingSeed({ label: sl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, holesCount: seed.holesCount, zones: [{ label: sl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, outerMm: seed.outerMm, holesMm: seed.holesMm }] })
                           }}
                           title="Отправить площадь и периметр этой плиты в расчёт потолка"
                           style={{
@@ -2463,6 +2482,7 @@ export default function FloorPlan() {
                             if (window.confirm(`Удалить плиту «${sl.label}»?`)) {
                               if (pencilHoleTargetId === sl.id) { setPencilHoleTargetId(null); setPencilPts([]) }
                               removeSlab(sl.id)
+                              setCombineSelection(prev => prev.filter(s => !(s.type === 'slab' && s.id === sl.id)))
                             }
                           }}
                           title="Удалить плиту"
@@ -2524,12 +2544,19 @@ export default function FloorPlan() {
                         {cl.label}
                         {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
                       </div>
-                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px' }}>
+                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px', alignItems: 'center' }}>
+                        <label title="Отметить для объединения нескольких зон в один расчёт потолка"
+                          style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                          <input type="checkbox"
+                            checked={combineSelection.some(s => s.type === 'ceiling' && s.id === cl.id)}
+                            onChange={() => toggleCombineSelection('ceiling', cl.id)}
+                            style={{ cursor: 'pointer' }} />
+                        </label>
                         <button
                           disabled={!seed}
                           onClick={() => {
                             if (!seed) return
-                            setCeilingSeed({ ...seed, label: cl.label })
+                            setCeilingSeed({ label: cl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, holesCount: seed.holesCount, zones: [{ label: cl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, outerMm: seed.outerMm, holesMm: seed.holesMm }] })
                           }}
                           title="Отправить площадь и периметр этого потолка в расчёт потолка"
                           style={{
@@ -2543,6 +2570,7 @@ export default function FloorPlan() {
                           onClick={() => {
                             if (window.confirm(`Удалить потолок «${cl.label}»?`)) {
                               removeCeiling(cl.id)
+                              setCombineSelection(prev => prev.filter(s => !(s.type === 'ceiling' && s.id === cl.id)))
                             }
                           }}
                           title="Удалить потолок"
@@ -2559,6 +2587,62 @@ export default function FloorPlan() {
               </div>
             )}
           </div>
+
+          {/* Объединение нескольких зон (Плита и/или Потолок) в один расчёт
+              потолка — "несколько именованных зон одновременно"
+              (KONSPEKT.md 10.07.2026, п.4). Периметр — сумма периметров
+              зон по отдельности, площадь — сумма площадей; каждая зона
+              остаётся видна по названию в самом калькуляторе. */}
+          {combineSelection.length > 0 && (
+            <div style={{ padding: '8px 14px', borderTop: '1px solid #2a3050', marginTop: 4 }}>
+              <div style={{ fontSize: 10, color: '#8a9ac8', marginBottom: 6 }}>
+                Выбрано зон: {combineSelection.length}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  disabled={combineSelection.length < 2}
+                  onClick={() => {
+                    const zones = combineSelection.map(sel => {
+                      if (sel.type === 'slab') {
+                        const sl = slabs.find(s => s.id === sel.id)
+                        const seed = sl ? slabToCeilingSeed(sl, scaleMmPx) : null
+                        return sl && seed ? { label: sl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, outerMm: seed.outerMm, holesMm: seed.holesMm } : null
+                      } else {
+                        const cl = ceilings.find(c => c.id === sel.id)
+                        const seed = cl ? ceilingToCeilingSeed(cl, scaleMmPx) : null
+                        return cl && seed ? { label: cl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, outerMm: seed.outerMm, holesMm: seed.holesMm } : null
+                      }
+                    }).filter((z): z is NonNullable<typeof z> => z !== null)
+                    if (zones.length === 0) return
+                    setCeilingSeed(combineCeilingSeeds(zones))
+                    setCombineSelection([])
+                  }}
+                  title="Объединить выбранные зоны в один расчёт потолка (нужно минимум 2)"
+                  style={{
+                    flex: 1, fontSize: 11, padding: '6px 8px', borderRadius: 4,
+                    border: '1px solid #3a6ea5', background: combineSelection.length >= 2 ? '#3a6ea5' : 'transparent',
+                    color: combineSelection.length >= 2 ? '#fff' : '#5c7a99',
+                    cursor: combineSelection.length >= 2 ? 'pointer' : 'not-allowed',
+                  }}>
+                  Объединить {combineSelection.length >= 2 ? `${combineSelection.length} → Потолок` : ''}
+                </button>
+                <button
+                  onClick={() => setCombineSelection([])}
+                  title="Снять выбор"
+                  style={{
+                    fontSize: 11, padding: '6px 10px', borderRadius: 4,
+                    border: '1px solid #3a4060', background: 'transparent', color: '#8a9ac8', cursor: 'pointer',
+                  }}>
+                  Сброс
+                </button>
+              </div>
+              {combineSelection.length === 1 && (
+                <div style={{ fontSize: 10, color: '#5c7a99', marginTop: 4 }}>
+                  Нужно минимум 2 зоны, чтобы объединить.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Обводка произвольной формы (07.07.2026) — тот же принцип, что у
               плиты-карандаша (реальный контур, не деление на отрезки), но для

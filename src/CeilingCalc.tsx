@@ -14,6 +14,7 @@ import type { CeilingCalcResult } from './core/calcCeiling'
 import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } from './core/calcP112Frame'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import type { Point2D } from './core/geometry2d'
+import type { CeilingSeedZone } from './store/useCeilingSeedStore'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
 
@@ -88,11 +89,11 @@ export default function CeilingCalc() {
   const [result, setResult] = useState<CeilingCalcResult | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const [canvasW, setCanvasW] = useState(600)
-  const [seedBanner, setSeedBanner] = useState<{ label: string; holesCount: number } | null>(null)
-  // Контур обведённой фигуры (Плита/Потолок), пришедший вместе с seed —
-  // чтобы в холсте показывать реально обведённую форму, а не только
-  // цифры площади/периметра (см. KONSPEKT.md 10.07.2026, пункт 3).
-  const [seedContour, setSeedContour] = useState<{ outerMm: Point2D[]; holesMm: Point2D[][] } | null>(null)
+  const [seedBanner, setSeedBanner] = useState<{ label: string; holesCount: number; zoneCount: number } | null>(null)
+  // Зоны (одна или несколько Плит/Потолков), пришедшие вместе с seed — для
+  // холста показываем реально обведённую форму(ы), а не только цифры
+  // площади/периметра (см. KONSPEKT.md 10.07.2026, пункты 3 и 4).
+  const [seedZones, setSeedZones] = useState<CeilingSeedZone[] | null>(null)
 
   // Плита ("карандаш"), отправленная с плана — площадь/периметр вычислены
   // по факту обведённого контура (не прямоугольник), поэтому обнуляем
@@ -113,8 +114,8 @@ export default function CeilingCalc() {
       setResult(calcCeiling(next))
       return next
     })
-    setSeedBanner({ label: consumeSeed.label, holesCount: consumeSeed.holesCount })
-    setSeedContour({ outerMm: consumeSeed.outerMm, holesMm: consumeSeed.holesMm })
+    setSeedBanner({ label: consumeSeed.label, holesCount: consumeSeed.holesCount, zoneCount: consumeSeed.zones.length })
+    setSeedZones(consumeSeed.zones)
     clearSeed()
   }, [consumeSeed, clearSeed])
 
@@ -196,15 +197,24 @@ export default function CeilingCalc() {
             justifyContent: 'space-between', alignItems: 'flex-start', gap: 6,
           }}>
             <div>
-              Площадь/периметр взяты из плиты «<b>{seedBanner.label}</b>» на плане.
+              {seedBanner.zoneCount > 1 ? (
+                <>Площадь/периметр — сумма <b>{seedBanner.zoneCount} зон</b>, объединённых с плана: «{seedBanner.label}».</>
+              ) : (
+                <>Площадь/периметр взяты из плиты «<b>{seedBanner.label}</b>» на плане.</>
+              )}
               {seedBanner.holesCount > 0 && (
                 <div style={{ marginTop: 3, color: C.warning }}>
-                  ⚠ {seedBanner.holesCount} вырез{seedBanner.holesCount > 1 ? 'а' : ''} в плите учтён{seedBanner.holesCount > 1 ? 'ы' : ''}
+                  ⚠ {seedBanner.holesCount} вырез{seedBanner.holesCount > 1 ? 'а' : ''} учтён{seedBanner.holesCount > 1 ? 'ы' : ''}
                   {' '}в площади, но НЕ в периметре — обрамление ПН вокруг выреза добавьте отдельно, если нужно.
                 </div>
               )}
+              {seedBanner.zoneCount > 1 && (
+                <div style={{ marginTop: 3, color: C.muted }}>
+                  Периметр — сумма периметров зон по отдельности (с запасом, не по внешнему контуру объединения).
+                </div>
+              )}
             </div>
-            <button onClick={() => { setSeedBanner(null); setSeedContour(null) }}
+            <button onClick={() => { setSeedBanner(null); setSeedZones(null) }}
               style={{ border: 'none', background: 'none', color: C.muted, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
           </div>
         )}
@@ -446,10 +456,9 @@ export default function CeilingCalc() {
             <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, padding: 12 }}>
               <div ref={canvasRef}>
                 {!hasRoom ? (
-                  seedContour ? (
+                  seedZones ? (
                     <CeilingContourPreview
-                      outerMm={seedContour.outerMm}
-                      holesMm={seedContour.holesMm}
+                      zones={seedZones}
                       canvasW={canvasW}
                       areaSqm={form.areaSqm}
                       perimeterM={form.perimeterM}
@@ -561,19 +570,24 @@ export default function CeilingCalc() {
 
 // ─── Превью обведённого контура (нестандартная форма — без точной раскладки) ──
 
+// Палитра для зон при объединении — циклится, если зон больше, чем цветов.
+const ZONE_COLORS = ['#2563eb', '#c9a68a', '#16a34a', '#dc2626', '#9333ea', '#0891b2']
+
 /**
- * Показывает реально обведённую фигуру (Плита/Потолок с плана) внутри
- * калькулятора потолка, когда L×W не заданы (нестандартная форма — режим
- * "площадь+периметр"). Раньше здесь была просто заглушка "Введите размеры
- * помещения" даже при переданном контуре — пользователь видел только числа,
- * хотя контур уже был обведён на плане и хотел видеть его глазами здесь же
- * (см. KONSPEKT.md 10.07.2026, пункт 3). Точная раскладка профилей для
+ * Показывает реально обведённую(ые) фигуру(ы) (Плита/Потолок с плана)
+ * внутри калькулятора потолка, когда L×W не заданы (нестандартная форма —
+ * режим "площадь+периметр"). Раньше здесь была просто заглушка "Введите
+ * размеры помещения" даже при переданном контуре — пользователь видел
+ * только числа, хотя контур уже был обведён на плане и хотел видеть его
+ * глазами здесь же (KONSPEKT.md 10.07.2026, пункт 3). Поддерживает
+ * несколько зон одновременно (объединение через "Объединить N → Потолок",
+ * там же пункт 4) — каждая зона рисуется своим цветом с подписью, общий
+ * итог площади/периметра — под холстом. Точная раскладка профилей для
  * произвольного полигона — отдельная нерешённая задача (пункт 6), это
- * превью её не делает, только показывает форму.
+ * превью её не делает, только показывает форму(ы).
  */
-function CeilingContourPreview({ outerMm, holesMm, canvasW, areaSqm, perimeterM }: {
-  outerMm: Point2D[]
-  holesMm: Point2D[][]
+function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM }: {
+  zones: CeilingSeedZone[]
   canvasW: number
   areaSqm: number
   perimeterM: number
@@ -583,10 +597,12 @@ function CeilingContourPreview({ outerMm, holesMm, canvasW, areaSqm, perimeterM 
   const availW = Math.max(canvasW - PAD * 2, 10)
   const availH = STAGE_H - PAD * 2
 
-  if (outerMm.length < 3) return null
+  const validZones = zones.filter(z => z.outerMm.length >= 3)
+  if (validZones.length === 0) return null
 
-  const xs = outerMm.map(p => p.x)
-  const ys = outerMm.map(p => p.y)
+  const allPts = validZones.flatMap(z => z.outerMm)
+  const xs = allPts.map(p => p.x)
+  const ys = allPts.map(p => p.y)
   const minX = Math.min(...xs), maxX = Math.max(...xs)
   const minY = Math.min(...ys), maxY = Math.max(...ys)
   const w = Math.max(maxX - minX, 1)
@@ -597,25 +613,49 @@ function CeilingContourPreview({ outerMm, holesMm, canvasW, areaSqm, perimeterM 
 
   const toStage = (p: Point2D) => ({ x: offX + (p.x - minX) * scale, y: offY + (p.y - minY) * scale })
   const flat = (pts: Point2D[]) => pts.flatMap(p => { const s = toStage(p); return [s.x, s.y] })
+  const centroid = (pts: Point2D[]) => {
+    const s = toStage({ x: pts.reduce((a, p) => a + p.x, 0) / pts.length, y: pts.reduce((a, p) => a + p.y, 0) / pts.length })
+    return s
+  }
 
   return (
     <div>
       <Stage width={canvasW} height={STAGE_H}>
         <Layer>
-          <Line points={flat(outerMm)} closed fill="rgba(37,99,235,0.10)"
-            stroke={C.accent} strokeWidth={2} />
-          {holesMm.map((hole, i) => (
-            <Line key={i} points={flat(hole)} closed fill={C.panel}
-              stroke={C.warning} strokeWidth={1.5} dash={[6, 4]} />
-          ))}
-          {outerMm.map((p, i) => {
-            const s = toStage(p)
-            return <Rect key={i} x={s.x - 3} y={s.y - 3} width={6} height={6} fill={C.accent} />
+          {validZones.map((zone, zi) => {
+            const color = ZONE_COLORS[zi % ZONE_COLORS.length]
+            const c = centroid(zone.outerMm)
+            return (
+              <Group key={zi}>
+                <Line points={flat(zone.outerMm)} closed fill={`${color}1a`} stroke={color} strokeWidth={2} />
+                {zone.holesMm.map((hole, hi) => (
+                  <Line key={hi} points={flat(hole)} closed fill={C.panel} stroke={C.warning} strokeWidth={1.5} dash={[6, 4]} />
+                ))}
+                {zone.outerMm.map((p, pi) => {
+                  const s = toStage(p)
+                  return <Rect key={pi} x={s.x - 3} y={s.y - 3} width={6} height={6} fill={color} />
+                })}
+                {validZones.length > 1 && (
+                  <Text x={c.x} y={c.y} text={zone.label} fontSize={11} fill={color}
+                    fontStyle="bold" offsetX={zone.label.length * 3} offsetY={5} />
+                )}
+              </Group>
+            )
           })}
         </Layer>
       </Stage>
+      {validZones.length > 1 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginTop: 6 }}>
+          {validZones.map((zone, zi) => (
+            <div key={zi} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: C.muted }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: ZONE_COLORS[zi % ZONE_COLORS.length], display: 'inline-block' }} />
+              {zone.label} · {zone.areaSqm.toFixed(2)} м²
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ textAlign: 'center', fontSize: 11, color: C.muted, marginTop: 6, lineHeight: 1.4 }}>
-        Контур обведён на плане · {areaSqm.toFixed(2)} м² · {perimeterM.toFixed(2)} пог.м
+        {validZones.length > 1 ? 'Зоны объединены' : 'Контур обведён на плане'} · {areaSqm.toFixed(2)} м² · {perimeterM.toFixed(2)} пог.м
         <br />Нестандартная форма — точный чертёж раскладки каркаса пока доступен только для прямоугольных потолков.
       </div>
     </div>
