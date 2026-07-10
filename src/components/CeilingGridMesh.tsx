@@ -38,7 +38,7 @@
 
 import { useMemo, useRef, type RefObject } from 'react'
 import * as THREE from 'three'
-import { useFrame, useThree } from '@react-three/fiber'
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { calcCeilingGrid, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH } from '../core/ceilingGridGeometry'
 import { calcMinThicknessScale } from '../core/minScreenThickness'
 import { mmToM } from '../core/planTo3D'
@@ -141,18 +141,19 @@ function extrudeProfileM(shape: THREE.Shape, lengthMm: number): THREE.ExtrudeGeo
  * тонкого" измерения, которое рискует пропасть первым.
  */
 function ThinProfileMesh({
-  geometry, material, position, rotation, actualLocalHeightM,
+  geometry, material, position, rotation, actualLocalHeightM, onClick,
 }: {
   geometry: THREE.BufferGeometry
   material: THREE.Material
   position: [number, number, number]
   rotation: [number, number, number]
   actualLocalHeightM: number
+  onClick?: (e: ThreeEvent<MouseEvent>) => void
 }) {
   const ref = useRef<THREE.Mesh>(null!)
   useMinThicknessScale(ref, actualLocalHeightM, [1, 1, 0])
   return (
-    <mesh ref={ref} geometry={geometry} material={material} position={position} rotation={rotation} castShadow />
+    <mesh ref={ref} geometry={geometry} material={material} position={position} rotation={rotation} castShadow onClick={onClick} />
   )
 }
 
@@ -229,7 +230,10 @@ function HangerRod({ dropM }: { dropM: number }) {
 }
 
 /** Подвес прямой: пластина у плиты + стержень + гнутый зажим (упрощённая форма). */
-function Hanger({ x, y, z, dropM }: { x: number; y: number; z: number; dropM: number }) {
+function Hanger({ x, y, z, dropM, onClick }: {
+  x: number; y: number; z: number; dropM: number
+  onClick?: (e: ThreeEvent<MouseEvent>) => void
+}) {
   const clampGeo = useMemo(() => {
     const curve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(0, -dropM, 0),
@@ -241,7 +245,7 @@ function Hanger({ x, y, z, dropM }: { x: number; y: number; z: number; dropM: nu
   }, [dropM])
 
   return (
-    <group position={[x, y, z]}>
+    <group position={[x, y, z]} onClick={onClick}>
       <mesh material={crabMat} castShadow>
         <boxGeometry args={[0.024, 0.0015, 0.024]} />
       </mesh>
@@ -261,7 +265,26 @@ export interface CeilingGridMeshProps {
   bearingAlongLength?: boolean
   showWool?: boolean
   showGkl?: boolean
+  /**
+   * "Фокус на элемент" (10.07.2026) — идея №4 из списка "3D-вид на объекте"
+   * (см. KONSPEKT.md). Клик по узлу каркаса (профиль/краб/подвес) → камера
+   * подлетает к нему. Переиспользует тот же механизм CameraRig/FocusTarget,
+   * что и клик по табличке помещения (RoomLabelTag, см. Scene3D.tsx).
+   *
+   * measuring — тот же паттерн, что и у WallMesh (см. Scene3D.tsx): пока
+   * активен инструмент измерения, клик НЕ перехватывается фокусом — должен
+   * всплыть на группу и стать точкой измерения (можно измерять расстояние
+   * между узлами каркаса, это разумный сценарий).
+   */
+  onFocusElement?: (localTarget: THREE.Vector3, localDistance: number) => void
+  measuring?: boolean
 }
+
+/** Фиксированная дистанция фокуса для мелких узлов каркаса (метры, локальные
+ *  координаты — до domножения на visualScale в Scene3D). Единая для всех
+ *  типов элементов (профиль/краб/подвес) — они все примерно одного порядка
+ *  величины (десятки см), не требуют разных дистанций для узнаваемости. */
+const ELEMENT_FOCUS_DISTANCE_M = 1.0
 
 /**
  * Собирает 3D-каркас подвесного потолка для ОДНОГО помещения. Раскладка —
@@ -272,7 +295,18 @@ export interface CeilingGridMeshProps {
 export default function CeilingGridMesh({
   roomPoints, ceilingM, stepB = DEFAULT_GRID_STEP_B, stepC = DEFAULT_GRID_STEP_C,
   bearingAlongLength = DEFAULT_BEARING_ALONG_LENGTH, showWool = true, showGkl = true,
+  onFocusElement, measuring = false,
 }: CeilingGridMeshProps) {
+  // См. WallMesh (Scene3D.tsx) — тот же паттерн: пока активно измерение,
+  // клик не перехватывается фокусом, просто ничего не делаем и даём событию
+  // всплыть на группу (её onClick — handleMeasureClick в Scene3D).
+  function focusableClick(localTarget: THREE.Vector3) {
+    return (e: ThreeEvent<MouseEvent>) => {
+      if (measuring || !onFocusElement) return
+      e.stopPropagation()
+      onFocusElement(localTarget, ELEMENT_FOCUS_DISTANCE_M)
+    }
+  }
   const bbox = useMemo(() => {
     if (roomPoints.length < 3) return null
     const xs = roomPoints.map(p => p.x)
@@ -305,6 +339,8 @@ export default function CeilingGridMesh({
         const lengthMm = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1)
         const geo = extrudeProfileM(ppShape, lengthMm)
         const alongX = Math.abs(seg.z1 - seg.z2) < 1e-6
+        const midX = bbox.minX + (seg.x1 + seg.x2) / 2 / 1000
+        const midZ = bbox.minZ + (seg.z1 + seg.z2) / 2 / 1000
         return (
           <ThinProfileMesh
             key={`bearing-${i}`}
@@ -313,6 +349,7 @@ export default function CeilingGridMesh({
             position={[bbox.minX + seg.x1 / 1000, bearingY, bbox.minZ + seg.z1 / 1000]}
             rotation={alongX ? [0, Math.PI / 2, 0] : [0, 0, 0]}
             actualLocalHeightM={0.027}
+            onClick={focusableClick(new THREE.Vector3(midX, bearingY, midZ))}
           />
         )
       })}
@@ -322,6 +359,8 @@ export default function CeilingGridMesh({
         const lengthMm = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1)
         const geo = extrudeProfileM(ppShape, lengthMm)
         const alongX = Math.abs(seg.z1 - seg.z2) < 1e-6
+        const midX = bbox.minX + (seg.x1 + seg.x2) / 2 / 1000
+        const midZ = bbox.minZ + (seg.z1 + seg.z2) / 2 / 1000
         return (
           <ThinProfileMesh
             key={`main-${i}`}
@@ -330,31 +369,41 @@ export default function CeilingGridMesh({
             position={[bbox.minX + seg.x1 / 1000, mainY, bbox.minZ + seg.z1 / 1000]}
             rotation={alongX ? [0, Math.PI / 2, 0] : [0, 0, 0]}
             actualLocalHeightM={0.027}
+            onClick={focusableClick(new THREE.Vector3(midX, mainY, midZ))}
           />
         )
       })}
 
       {/* крабы на пересечениях */}
-      {grid.crabPoints.map((p, i) => (
-        <mesh
-          key={`crab-${i}`}
-          geometry={crabGeometry()}
-          material={crabMat}
-          position={[bbox.minX + p.x / 1000, (bearingY + mainY) / 2, bbox.minZ + p.z / 1000]}
-          castShadow
-        />
-      ))}
+      {grid.crabPoints.map((p, i) => {
+        const cx = bbox.minX + p.x / 1000, cy = (bearingY + mainY) / 2, cz = bbox.minZ + p.z / 1000
+        return (
+          <mesh
+            key={`crab-${i}`}
+            geometry={crabGeometry()}
+            material={crabMat}
+            position={[cx, cy, cz]}
+            castShadow
+            onClick={focusableClick(new THREE.Vector3(cx, cy, cz))}
+          />
+        )
+      })}
 
       {/* подвесы вдоль несущего профиля */}
-      {grid.hangerPoints.map((p, i) => (
-        <Hanger
-          key={`hanger-${i}`}
-          x={bbox.minX + p.x / 1000}
-          y={ceilingM}
-          z={bbox.minZ + p.z / 1000}
-          dropM={dropToBearingM}
-        />
-      ))}
+      {grid.hangerPoints.map((p, i) => {
+        const hx = bbox.minX + p.x / 1000, hz = bbox.minZ + p.z / 1000
+        const hy = ceilingM - dropToBearingM / 2
+        return (
+          <Hanger
+            key={`hanger-${i}`}
+            x={hx}
+            y={ceilingM}
+            z={hz}
+            dropM={dropToBearingM}
+            onClick={focusableClick(new THREE.Vector3(hx, hy, hz))}
+          />
+        )
+      })}
 
       {/* минвата — фрагменты в части ячеек, только для наглядности */}
       {showWool && grid.mainSegments.length > 1 && grid.bearingSegments.length > 1 && (
