@@ -74,6 +74,16 @@ export function estimateCeilingMm(lines: PlanLine[]): number {
 
 export interface WallBox3D {
   id: string
+  /**
+   * id исходной PlanLine (10.07.2026, выбор стены кликом в 3D) — ОТДЕЛЬНО от
+   * `id` выше, потому что `id` для сегментов вокруг проёмов (см.
+   * wallToBoxesWithOpenings3D) уже занят под `${line.id}__suffix` (нужен
+   * React key + уникальность на сегмент). lineId у ВСЕХ коробок одной линии
+   * (целая стена, подоконник, перемычка, хвост) совпадает с line.id — по
+   * нему собирается высвечивание/выбор стены ЦЕЛИКОМ по клику на любой её
+   * части, а не по отдельному сегменту.
+   */
+  lineId: string
   planLineType: PlanLineType
   /** центр коробки, метры; x/z — план (сверху), y — вертикаль (вверх) */
   center: { x: number; y: number; z: number }
@@ -119,6 +129,7 @@ export function wallToBox3D(
 
   return {
     id: line.id,
+    lineId: line.id,
     planLineType: line.type,
     center: { x: (x1 + x2) / 2, y: centerY, z: (z1 + z2) / 2 },
     size: { sx: length, sy: heightM, sz: mmToM(tMm) },
@@ -219,6 +230,7 @@ export function wallToBoxesWithOpenings3D(
     const midM = (fromM + toM) / 2
     boxes.push({
       id: `${line.id}__${suffix}`,
+      lineId: line.id,
       planLineType: line.type,
       center: { x: startX + ux * midM, y: base.center.y, z: startZ + uz * midM },
       size: { sx: segLen, sy: wallHeightM, sz: base.size.sz },
@@ -233,6 +245,7 @@ export function wallToBoxesWithOpenings3D(
     const midM = (fromM + toM) / 2
     boxes.push({
       id: `${line.id}__${suffix}`,
+      lineId: line.id,
       planLineType: line.type,
       center: { x: startX + ux * midM, y: yFrom + h / 2, z: startZ + uz * midM },
       size: { sx: segLen, sy: h, sz: base.size.sz },

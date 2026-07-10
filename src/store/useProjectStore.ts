@@ -54,6 +54,20 @@ export interface ProjectStore {
   activeLiningId: string | null
 
   /**
+   * Выбранная линия плана (10.07.2026, выбор стены кликом в 3D) — общее
+   * состояние для синхронизации выделения между вкладками «План» (2D,
+   * FloorPlan.tsx) и «3D» (Scene3D.tsx). Эти вкладки — разные React-деревья
+   * (переключение activeTab в App.tsx их полностью размонтирует), поэтому
+   * обычный локальный useState внутри компонента не пережил бы переключение
+   * вкладки — отсюда и вынос в общий стор. НЕ входит в partialize ниже —
+   * это чисто UI-выделение текущей сессии, а не данные проекта, сохранять
+   * его на диск не нужно (и не стоит — id линии может относиться к другому
+   * проекту после перезагрузки).
+   */
+  selectedLineId: string | null
+  setSelectedLineId: (id: string | null) => void
+
+  /**
    * Ошибка последнего сохранения на диск (см. safeLocalStorage выше).
    * null — сохранение прошло успешно (или ещё не было ошибок).
    * Непустая строка — данные живут только в памяти, диск переполнен.
@@ -368,6 +382,8 @@ export const useProjectStore = create<ProjectStore>()(
       floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
       activeWallId: null,
       activeLiningId: null,
+      selectedLineId: null,
+      setSelectedLineId: (id) => set({ selectedLineId: id }),
       customWorkStageTemplates: [],
       saveError: null,
       clearSaveError: () => set({ saveError: null }),

@@ -89,6 +89,40 @@ describe('wallToBox3D', () => {
   })
 })
 
+describe('lineId (10.07.2026, выбор стены кликом в 3D)', () => {
+  it('wallToBox3D: lineId совпадает с id и с id самой линии', () => {
+    const line = baseLine({ id: 'w-42', spec: { material: 'brick', subtype: '200' } })
+    const box = wallToBox3D(line, 10, 3000)
+    expect(box!.lineId).toBe('w-42')
+    expect(box!.lineId).toBe(box!.id)
+  })
+
+  it('wallToBoxesWithOpenings3D: ВСЕ сегменты одной линии (seg/sill/lintel/tail) делят один lineId, хотя их id разные', () => {
+    const line: PlanLine = {
+      id: 'w-with-window', x1: 0, y1: 0, x2: 200, y2: 0,
+      type: 'wall_existing', lengthMm: 2000, label: 'С-1',
+      spec: { material: 'brick', subtype: '200' },
+      heightMm: 3000,
+      openings: [{ id: 'op1', type: 'window', offsetMm: 300, widthMm: 1200, heightMm: 1200, sillHeightMm: 900, label: 'О-1' }],
+    }
+    const boxes = wallToBoxesWithOpenings3D(line, 10, 3000)
+    expect(boxes.length).toBeGreaterThan(1) // проверяем именно случай нескольких сегментов
+    expect(boxes.every(b => b.lineId === 'w-with-window')).toBe(true)
+    // id при этом остаются РАЗНЫМИ (React key / уникальность на сегмент)
+    expect(new Set(boxes.map(b => b.id)).size).toBe(boxes.length)
+  })
+
+  it('wallsToBoxes3D: короба разных линий не путают lineId между собой', () => {
+    const lines: PlanLine[] = [
+      baseLine({ id: 'a', spec: { material: 'brick', subtype: '200' } }),
+      baseLine({ id: 'b', x1: 0, y1: 100, x2: 100, y2: 100, spec: { material: 'block', subtype: '125' } }),
+    ]
+    const boxes = wallsToBoxes3D(lines, 10)
+    expect(boxes.find(b => b.id === 'a')!.lineId).toBe('a')
+    expect(boxes.find(b => b.id === 'b')!.lineId).toBe('b')
+  })
+})
+
 describe('wallsToBoxes3D', () => {
   it('пропускает линии без толщины, строит остальные', () => {
     const lines: PlanLine[] = [
