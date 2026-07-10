@@ -560,6 +560,54 @@ const VISUAL_SCALE_OPTIONS = [1, 5, 10] as const
 type VisualScale = typeof VISUAL_SCALE_OPTIONS[number]
 
 /**
+ * Секущая плоскость (10.07.2026) — идея №2 из списка "3D-вид на объекте"
+ * (KONSPEKT-снапшот сессии 09.07.2026, обсуждение визуального масштаба).
+ * Горизонтальная (по высоте) и вертикальная (по одной оси плана, X) —
+ * каждая включается независимо, слайдером внутри диапазона реальных
+ * координат модели (см. modelBoundsM в Scene3D).
+ *
+ * Технически — глобальные THREE.Plane на renderer.clippingPlanes (world-
+ * space, не требует localClippingEnabled — это отдельная штука для
+ * per-material клиппинга, здесь не нужна). Каждая плоскость подключается,
+ * только если соответствующий чекбокс включён — иначе массив пуст и
+ * ничего не режется (см. п. "срез выключен по умолчанию" в обсуждении).
+ *
+ * Значения слайдеров (horizontalM/verticalM) приходят в ЛОКАЛЬНЫХ
+ * координатах модели (внутри <group scale={visualScale}>, см. Canvas
+ * ниже) — ровно как и modelBoundsM, от которого их диапазон считается.
+ * Плоскости же — МИРОВЫЕ (renderer.clippingPlanes работает в мировом
+ * пространстве, вне scale-группы), поэтому domножаем constant на
+ * visualScale — тот же приём, что и в CameraScaleSync/focusOnRoom/
+ * MeasureOverlay выше по файлу для той же самой проблемы (локальные
+ * координаты модели vs мировые координаты рендерера при активном
+ * визуальном масштабе).
+ */
+function SectionPlaneController({
+  horizontalEnabled, horizontalM, verticalEnabled, verticalM, visualScale,
+}: {
+  horizontalEnabled: boolean; horizontalM: number
+  verticalEnabled: boolean; verticalM: number
+  visualScale: VisualScale
+}) {
+  const { gl } = useThree()
+
+  useEffect(() => {
+    const planes: THREE.Plane[] = []
+    // normal (0,-1,0): сохраняет всё НИЖЕ constant (срезает то, что выше) —
+    // чтобы заглянуть сверху внутрь помещения/каркаса.
+    if (horizontalEnabled) planes.push(new THREE.Plane(new THREE.Vector3(0, -1, 0), horizontalM * visualScale))
+    // normal (-1,0,0): сохраняет всё С МЕНЬШИМ X (срезает то, что правее по
+    // плану) — направление среза не переключается пользователем (не
+    // запрашивалось), но при необходимости легко добавить переключатель.
+    if (verticalEnabled) planes.push(new THREE.Plane(new THREE.Vector3(-1, 0, 0), verticalM * visualScale))
+    gl.clippingPlanes = planes
+    return () => { gl.clippingPlanes = [] }
+  }, [gl, horizontalEnabled, horizontalM, verticalEnabled, verticalM, visualScale])
+
+  return null
+}
+
+/**
  * Синхронизирует камеру и OrbitControls.target с visualScale (см. кнопки
  * 1x/5x/10x в Scene3D), чтобы при смене визуального масштаба объект
  * оставался в кадре примерно тем же по размеру на экране — а не "улетал"
@@ -603,6 +651,11 @@ export default function Scene3D() {
   const [visualScale, setVisualScale] = useState<VisualScale>(1)
   const [measuring, setMeasuring] = useState(false)
   const [measurePoints, setMeasurePoints] = useState<THREE.Vector3[]>([])
+  const [sectionPanelOpen, setSectionPanelOpen] = useState(false)
+  const [horizontalSectionEnabled, setHorizontalSectionEnabled] = useState(false)
+  const [horizontalSectionM, setHorizontalSectionM] = useState<number | null>(null)
+  const [verticalSectionEnabled, setVerticalSectionEnabled] = useState(false)
+  const [verticalSectionM, setVerticalSectionM] = useState<number | null>(null)
   const controlsRef = useRef<any>(null)
   const levels = useProjectStore(s => s.levels)
   const activeLevelId = useProjectStore(s => s.activeLevelId)
@@ -611,6 +664,42 @@ export default function Scene3D() {
   // на вкладке «План», если туда переключиться, и наоборот.
   const selectedLineId = useProjectStore(s => s.selectedLineId)
   const setSelectedLineId = useProjectStore(s => s.setSelectedLineId)
+
+  // Границы модели (метры, ЛОКАЛЬНЫЕ координаты — до применения visualScale)
+  // — нужны только чтобы задать разумный диапазон слайдеров секущей
+  // плоскости (см. SectionPlaneController). Точность не критична (слайдер,
+  // не расчёт материалов) — считаем по центрам стен/точкам контуров
+  // помещений с запасом (pad), без учёта поворота коробок стен, этого
+  // достаточно, чтобы диапазон гарантированно накрывал модель целиком.
+  const modelBoundsM = useMemo(() => {
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
+    let minY = 0, maxY = 3
+    for (const lv of levels) {
+      const scaleMmPx = lv.floorPlan.scaleMmPerPx ?? 10
+      const lines = lv.floorPlan.lines ?? []
+      const offsetY = mmToM(lv.elevationMm)
+      const ceilingMm = estimateCeilingMm(lines)
+      minY = Math.min(minY, offsetY)
+      maxY = Math.max(maxY, offsetY + mmToM(ceilingMm))
+      for (const p of roomsToPolygons3D(lv.floorPlan.rooms ?? [], lines, scaleMmPx)) {
+        for (const pt of p.points) {
+          minX = Math.min(minX, pt.x); maxX = Math.max(maxX, pt.x)
+          minZ = Math.min(minZ, pt.z); maxZ = Math.max(maxZ, pt.z)
+        }
+      }
+      for (const box of wallsToBoxes3D(lines, scaleMmPx, lv.floorPlan.rectColumns ?? [])) {
+        const half = Math.max(box.size.sx, box.size.sz) / 2
+        minX = Math.min(minX, box.center.x - half); maxX = Math.max(maxX, box.center.x + half)
+        minZ = Math.min(minZ, box.center.z - half); maxZ = Math.max(maxZ, box.center.z + half)
+      }
+    }
+    if (!isFinite(minX)) { minX = -3; maxX = 3; minZ = -3; maxZ = 3 } // пустой план — просто дефолт
+    const pad = 0.3
+    return { minX: minX - pad, maxX: maxX + pad, minZ: minZ - pad, maxZ: maxZ + pad, minY, maxY: maxY + pad }
+  }, [levels])
+
+  const effectiveHorizontalM = horizontalSectionM ?? (modelBoundsM.minY + modelBoundsM.maxY) / 2
+  const effectiveVerticalM = verticalSectionM ?? (modelBoundsM.minX + modelBoundsM.maxX) / 2
 
   function toggleMeasuring() {
     setMeasuring(v => !v)
@@ -706,6 +795,62 @@ export default function Scene3D() {
           }}>
           {measuring ? '📏 Измерение (вкл)' : '📏 Измерить расстояние'}
         </button>
+        <button
+          onClick={() => setSectionPanelOpen(v => !v)}
+          style={{
+            padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            border: '1px solid #00897b', borderRadius: 6,
+            background: (horizontalSectionEnabled || verticalSectionEnabled) ? '#00897b' : '#fff',
+            color: (horizontalSectionEnabled || verticalSectionEnabled) ? '#fff' : '#00897b',
+          }}>
+          {(horizontalSectionEnabled || verticalSectionEnabled) ? '✂ Разрез (вкл)' : '✂ Разрез'}
+        </button>
+        {sectionPanelOpen && (
+          <div style={{
+            padding: '10px 12px', fontSize: 12, color: '#444', background: '#e6f6f3',
+            border: '1px solid #8fd4c6', borderRadius: 6, maxWidth: 240, lineHeight: 1.4,
+            display: 'flex', flexDirection: 'column', gap: 10,
+          }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={horizontalSectionEnabled}
+                  onChange={e => setHorizontalSectionEnabled(e.target.checked)}
+                />
+                Горизонтальный (высота: {Math.round(effectiveHorizontalM * 1000)} мм)
+              </span>
+              <input
+                type="range"
+                min={modelBoundsM.minY} max={modelBoundsM.maxY} step={0.01}
+                value={effectiveHorizontalM}
+                onChange={e => setHorizontalSectionM(Number(e.target.value))}
+                disabled={!horizontalSectionEnabled}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={verticalSectionEnabled}
+                  onChange={e => setVerticalSectionEnabled(e.target.checked)}
+                />
+                Вертикальный (позиция: {Math.round(effectiveVerticalM * 1000)} мм)
+              </span>
+              <input
+                type="range"
+                min={modelBoundsM.minX} max={modelBoundsM.maxX} step={0.01}
+                value={effectiveVerticalM}
+                onChange={e => setVerticalSectionM(Number(e.target.value))}
+                disabled={!verticalSectionEnabled}
+              />
+            </label>
+            <span style={{ color: '#00695c' }}>
+              Реальные размеры и расчёты материалов не меняются — срез только
+              скрывает часть модели для обзора.
+            </span>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 4 }}>
           {VISUAL_SCALE_OPTIONS.map(opt => (
             <button
@@ -798,6 +943,13 @@ export default function Scene3D() {
           ))}
         </group>
         <MeasureOverlay points={measurePoints} visualScale={visualScale} />
+        <SectionPlaneController
+          horizontalEnabled={horizontalSectionEnabled}
+          horizontalM={effectiveHorizontalM}
+          verticalEnabled={verticalSectionEnabled}
+          verticalM={effectiveVerticalM}
+          visualScale={visualScale}
+        />
         <CameraScaleSync scale={visualScale} controlsRef={controlsRef} />
         {cameraMode === 'orbit'
           ? <OrbitControls ref={controlsRef} makeDefault />
