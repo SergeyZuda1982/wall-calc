@@ -389,6 +389,14 @@ export function roomsToPolygons3D(rooms: Room[], lines: PlanLine[], scaleMmPx: n
 
 export interface FreeformPrism3D {
   id: string
+  /**
+   * id исходного FreeformStructure (10.07.2026, выбор кликом в 3D) —
+   * ОТДЕЛЬНО от `id` выше по той же причине, что и lineId у WallBox3D:
+   * при нескольких проёмах на разной высоте один FreeformStructure даёт
+   * НЕСКОЛЬКО призм (band'ов) с id вида `${fs.id}__band_${i}` — structureId
+   * у всех них общий, по нему собирается выделение конструкции ЦЕЛИКОМ.
+   */
+  structureId: string
   kind: 'wall' | 'column'
   /** точки контура в метрах, план сверху (x,z) */
   points: { x: number; z: number }[]
@@ -443,7 +451,7 @@ export function freeformStructuresToPrisms3D(
       .filter(o => o.topM - o.sillM > EPS)
 
     if (openings.length === 0) {
-      result.push({ id: fs.id, kind: fs.kind, points, heightM: totalHeightM, bottomM: 0, holes: [] })
+      result.push({ id: fs.id, structureId: fs.id, kind: fs.kind, points, heightM: totalHeightM, bottomM: 0, holes: [] })
       continue
     }
 
@@ -460,6 +468,7 @@ export function freeformStructuresToPrisms3D(
         .map(o => o.contourM)
       result.push({
         id: `${fs.id}__band_${i}`,
+        structureId: fs.id,
         kind: fs.kind,
         points,
         heightM: bandH,

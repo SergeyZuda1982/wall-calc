@@ -561,6 +561,45 @@ describe('freeformStructuresToPrisms3D', () => {
   })
 })
 
+describe('structureId (10.07.2026, выбор колонны/произвольной конструкции кликом в 3D)', () => {
+  function baseFreeform(overrides: Partial<FreeformStructure>): FreeformStructure {
+    return {
+      id: 'fs1', kind: 'column', label: 'Конструкция 1',
+      outer: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+      ...overrides,
+    }
+  }
+
+  it('без проёмов (один призм): structureId совпадает с id и с id самой конструкции', () => {
+    const prisms = freeformStructuresToPrisms3D([baseFreeform({ id: 'fs-42' })], 10, 2700)
+    expect(prisms).toHaveLength(1)
+    expect(prisms[0].structureId).toBe('fs-42')
+    expect(prisms[0].structureId).toBe(prisms[0].id)
+  })
+
+  it('окно режет конструкцию на 3 band — ВСЕ делят один structureId, хотя id разные', () => {
+    const fs = baseFreeform({
+      id: 'fs-with-window', kind: 'wall', heightMm: 2700,
+      openings: [{
+        id: 'op1', type: 'window', label: 'Окно 1', sillHeightMm: 900, heightMm: 1200,
+        contour: [{ x: 20, y: 20 }, { x: 80, y: 20 }, { x: 80, y: 80 }, { x: 20, y: 80 }],
+      }],
+    })
+    const prisms = freeformStructuresToPrisms3D([fs], 10, 2700)
+    expect(prisms).toHaveLength(3)
+    expect(prisms.every(p => p.structureId === 'fs-with-window')).toBe(true)
+    expect(new Set(prisms.map(p => p.id)).size).toBe(prisms.length)
+  })
+
+  it('несколько конструкций — короба разных структур не путают structureId между собой', () => {
+    const prisms = freeformStructuresToPrisms3D(
+      [baseFreeform({ id: 'a' }), baseFreeform({ id: 'b', kind: 'wall' })], 10, 2700,
+    )
+    expect(prisms.find(p => p.id === 'a')!.structureId).toBe('a')
+    expect(prisms.find(p => p.id === 'b')!.structureId).toBe('b')
+  })
+})
+
 describe('wallToBox3D — axisOverride (расширенная ось стыка, см. wallJoin.ts)', () => {
   it('без axisOverride — как раньше, футпринт по сырым x1/y1/x2/y2', () => {
     const line = baseLine({ x1: 0, y1: 0, x2: 100, y2: 0, spec: { material: 'brick', subtype: '200' } })
