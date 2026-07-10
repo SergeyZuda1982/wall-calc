@@ -909,15 +909,20 @@ export default function FloorPlan() {
 
   function applySnap(x: number, y: number, excludeId?: string): { x: number; y: number } {
     const thresh = SNAP_SCREEN_PX / stageScaleRef.current
-    // refDir/newHalfThicknessPx — только когда реально рисуем прямую стену
-    // (mode 'draw' и уже поставлена 1-я точка): см. комментарий в snapPoint
-    // про флэш-снап двух параллельных стен.
+    // refDir — только когда уже поставлена 1-я точка (нужны две точки, чтобы
+    // знать направление) — см. комментарий в snapPoint про флэш-снап двух
+    // параллельных стен. newHalfThicknessPx же не зависит от того, поставлена
+    // ли уже точка: тип/спек будущей стены выбран в левой панели ДО первого
+    // клика по холсту — поэтому считаем его всегда в режиме 'draw', иначе
+    // "флюш"-фикс коллинеарного примыкания разной толщины (см. Фикс 3 в
+    // planSnap.ts) не срабатывал бы именно на первом клике — том самом,
+    // которым пользователь целится в нужную грань старой конструкции.
     let refDir: { dx: number; dy: number } | undefined
     let newHalfThicknessPx = 0
-    if (mode === 'draw' && drawing) {
-      refDir = { dx: x - drawing.x1, dy: y - drawing.y1 }
+    if (mode === 'draw') {
       const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
       newHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
+      if (drawing) refDir = { dx: x - drawing.x1, dy: y - drawing.y1 }
     }
     const snapped = snapPoint(x, y, lines, scaleMmPx, excludeId, thresh, refDir, newHalfThicknessPx)
     if (orthoMode && drawing && !snapped.snapped) {
