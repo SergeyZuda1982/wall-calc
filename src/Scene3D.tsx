@@ -31,6 +31,7 @@ import type { PlanLineType, FloorPlan } from './types'
 import CeilingGridMesh from './components/CeilingGridMesh'
 import { formatDistanceM } from './core/formatDistance'
 import { lineProgressColor, lineProgressSummary } from './core/lineProgress'
+import { getWallTexture, tintOverTexture } from './textures3D'
 
 const TYPE_COLOR_3D: Record<PlanLineType, string> = {
   wall_new:      '#e57373',
@@ -44,6 +45,7 @@ const TYPE_COLOR_3D: Record<PlanLineType, string> = {
 const FLOOR_COLOR = '#c9c2b4'
 const CEILING_COLOR = '#e8e8ec'
 const COLUMN_COLOR = '#9aa5ad'
+const CONCRETE_DEFAULT_TILE_M = 2
 
 /**
  * Стена в 3D — коробка three.js. Клик по стене (10.07.2026, выбор стены в
@@ -69,6 +71,14 @@ function WallMesh({ box, opacity = 1, selected = false, measuring = false, onSel
   onSelect?: (lineId: string) => void
 }) {
   const color = TYPE_COLOR_3D[box.planLineType]
+  // Текстура материала (бетон/кирпич/блок) — только если материал задан
+  // (spec.material); для 'unknown' остаётся прежний плоский цвет типа линии.
+  // См. textures3D.ts — repeat считается из реальных sx/sy стены.
+  const texture = useMemo(
+    () => getWallTexture(box.materialKind, box.size.sx, box.size.sy),
+    [box.materialKind, box.size.sx, box.size.sy],
+  )
+  const tint = useMemo(() => tintOverTexture(color), [color])
   function handleClick(e: ThreeEvent<MouseEvent>) {
     if (measuring || !onSelect) return
     e.stopPropagation()
@@ -83,7 +93,8 @@ function WallMesh({ box, opacity = 1, selected = false, measuring = false, onSel
     >
       <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
       <meshStandardMaterial
-        color={color}
+        map={texture}
+        color={texture ? tint : color}
         roughness={0.9}
         transparent={opacity < 1}
         opacity={opacity}
@@ -104,6 +115,21 @@ function WallMesh({ box, opacity = 1, selected = false, measuring = false, onSel
 function SlabOrColumn({ room, ceilingMm, skipFloor, opacity = 1 }: { room: RoomPolygon3D; ceilingMm: number; skipFloor: boolean; opacity?: number }) {
   const ceilingM = mmToM(ceilingMm)
   const transparent = opacity < 1
+
+  // Плиты/колонны-помещения в этом проекте всегда бетон/монолит по смыслу
+  // (нет отдельного spec.material, как у стены) — текстура берётся всегда,
+  // repeat считается по bounding box контура (см. textures3D.ts, для бетона
+  // это просто масштаб шума, не модуль кладки — точность тут не критична).
+  const bbox = useMemo(() => {
+    if (room.points.length === 0) return { w: CONCRETE_DEFAULT_TILE_M, d: CONCRETE_DEFAULT_TILE_M }
+    const xs = room.points.map(p => p.x), zs = room.points.map(p => p.z)
+    return { w: Math.max(...xs) - Math.min(...xs), d: Math.max(...zs) - Math.min(...zs) }
+  }, [room.points])
+  const floorTex = useMemo(() => getWallTexture('concrete', bbox.w, bbox.d), [bbox.w, bbox.d])
+  const columnTex = useMemo(() => getWallTexture('concrete', bbox.w, ceilingM), [bbox.w, ceilingM])
+  const floorTint = useMemo(() => tintOverTexture(FLOOR_COLOR), [])
+  const ceilingTint = useMemo(() => tintOverTexture(CEILING_COLOR), [])
+  const columnTint = useMemo(() => tintOverTexture(COLUMN_COLOR), [])
 
   const floorGeo = useMemo(() => {
     if (room.points.length < 3) return null
@@ -137,7 +163,7 @@ function SlabOrColumn({ room, ceilingMm, skipFloor, opacity = 1 }: { room: RoomP
     if (!columnGeo) return null
     return (
       <mesh geometry={columnGeo} castShadow receiveShadow>
-        <meshStandardMaterial color={COLUMN_COLOR} roughness={0.9} transparent={transparent} opacity={opacity} />
+        <meshStandardMaterial map={columnTex} color={columnTint} roughness={0.9} transparent={transparent} opacity={opacity} />
       </mesh>
     )
   }
@@ -146,12 +172,12 @@ function SlabOrColumn({ room, ceilingMm, skipFloor, opacity = 1 }: { room: RoomP
     <>
       {floorGeo && !skipFloor && (
         <mesh geometry={floorGeo} receiveShadow>
-          <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} transparent={transparent} opacity={opacity} />
+          <meshStandardMaterial map={floorTex} color={floorTint} roughness={0.9} transparent={transparent} opacity={opacity} />
         </mesh>
       )}
       {ceilingGeo && (
         <mesh geometry={ceilingGeo} receiveShadow>
-          <meshStandardMaterial color={CEILING_COLOR} roughness={0.9} transparent={transparent} opacity={opacity} />
+          <meshStandardMaterial map={floorTex} color={ceilingTint} roughness={0.9} transparent={transparent} opacity={opacity} />
         </mesh>
       )}
     </>
@@ -167,6 +193,13 @@ function SlabOrColumn({ room, ceilingMm, skipFloor, opacity = 1 }: { room: RoomP
  * сцены теперь показываются вместе (см. LevelGroup/Scene3D).
  */
 function HandDrawnSlabMesh({ slab, opacity = 1 }: { slab: SlabPolygon3D; opacity?: number }) {
+  const bbox = useMemo(() => {
+    if (slab.outer.length === 0) return { w: CONCRETE_DEFAULT_TILE_M, d: CONCRETE_DEFAULT_TILE_M }
+    const xs = slab.outer.map(p => p.x), zs = slab.outer.map(p => p.z)
+    return { w: Math.max(...xs) - Math.min(...xs), d: Math.max(...zs) - Math.min(...zs) }
+  }, [slab.outer])
+  const tex = useMemo(() => getWallTexture('concrete', bbox.w, bbox.d), [bbox.w, bbox.d])
+  const tint = useMemo(() => tintOverTexture(FLOOR_COLOR), [])
   const geo = useMemo(() => {
     const shape = new THREE.Shape(slab.outer.map(p => new THREE.Vector2(p.x, -p.z)))
     for (const hole of slab.holes) {
@@ -181,7 +214,7 @@ function HandDrawnSlabMesh({ slab, opacity = 1 }: { slab: SlabPolygon3D; opacity
 
   return (
     <mesh geometry={geo} receiveShadow>
-      <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
+      <meshStandardMaterial map={tex} color={tint} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
     </mesh>
   )
 }
@@ -203,6 +236,8 @@ function RoundColumnMesh({ cyl, opacity = 1, selected = false, measuring = false
   measuring?: boolean
   onSelect?: (id: string) => void
 }) {
+  const tex = useMemo(() => getWallTexture('concrete', 2 * Math.PI * cyl.radius, cyl.heightM), [cyl.radius, cyl.heightM])
+  const tint = useMemo(() => tintOverTexture(COLUMN_COLOR), [])
   function handleClick(e: ThreeEvent<MouseEvent>) {
     if (measuring || !onSelect) return
     e.stopPropagation()
@@ -212,7 +247,8 @@ function RoundColumnMesh({ cyl, opacity = 1, selected = false, measuring = false
     <mesh position={[cyl.cx, cyl.heightM / 2, cyl.cz]} castShadow receiveShadow onClick={handleClick}>
       <cylinderGeometry args={[cyl.radius, cyl.radius, cyl.heightM, 24]} />
       <meshStandardMaterial
-        color={COLUMN_COLOR}
+        map={tex}
+        color={tint}
         roughness={0.9}
         transparent={opacity < 1}
         opacity={opacity}
@@ -237,6 +273,8 @@ function RectColumnMesh({ box, opacity = 1, selected = false, measuring = false,
   measuring?: boolean
   onSelect?: (id: string) => void
 }) {
+  const tex = useMemo(() => getWallTexture('concrete', box.size.sx, box.size.sy), [box.size.sx, box.size.sy])
+  const tint = useMemo(() => tintOverTexture(COLUMN_COLOR), [])
   function handleClick(e: ThreeEvent<MouseEvent>) {
     if (measuring || !onSelect) return
     e.stopPropagation()
@@ -246,7 +284,8 @@ function RectColumnMesh({ box, opacity = 1, selected = false, measuring = false,
     <mesh position={[box.center.x, box.center.y, box.center.z]} rotation={[0, box.rotationY, 0]} castShadow receiveShadow onClick={handleClick}>
       <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
       <meshStandardMaterial
-        color={COLUMN_COLOR}
+        map={tex}
+        color={tint}
         roughness={0.9}
         transparent={opacity < 1}
         opacity={opacity}
@@ -289,8 +328,21 @@ function FreeformStructureMesh({ prism, opacity = 1, selected = false, measuring
     if (prism.bottomM) geo.translate(0, prism.bottomM, 0)
     return geo
   }, [prism.points, prism.heightM, prism.bottomM, prism.holes])
-  if (!geo) return null
   const color = prism.kind === 'column' ? COLUMN_COLOR : TYPE_COLOR_3D.wall_existing
+  const bbox = useMemo(() => {
+    if (prism.points.length === 0) return { w: CONCRETE_DEFAULT_TILE_M, d: CONCRETE_DEFAULT_TILE_M }
+    const xs = prism.points.map(p => p.x), zs = prism.points.map(p => p.z)
+    return { w: Math.max(...xs) - Math.min(...xs), d: Math.max(...zs) - Math.min(...zs) }
+  }, [prism.points])
+  // Для стены (kind: 'wall') главная видимая грань — вдоль контура, высота
+  // сегмента (band); для колонны просто периметр × высота, то же упрощение,
+  // что и у остальных колонн (RoundColumnMesh/RectColumnMesh) выше.
+  const tex = useMemo(
+    () => getWallTexture(prism.materialKind, Math.max(bbox.w, bbox.d), prism.heightM),
+    [prism.materialKind, bbox.w, bbox.d, prism.heightM],
+  )
+  const tint = useMemo(() => tintOverTexture(color), [color])
+  if (!geo) return null
   function handleClick(e: ThreeEvent<MouseEvent>) {
     if (measuring || !onSelect) return
     e.stopPropagation()
@@ -299,7 +351,8 @@ function FreeformStructureMesh({ prism, opacity = 1, selected = false, measuring
   return (
     <mesh geometry={geo} castShadow receiveShadow onClick={handleClick}>
       <meshStandardMaterial
-        color={color}
+        map={tex}
+        color={tex ? tint : color}
         roughness={0.9}
         transparent={opacity < 1}
         opacity={opacity}
