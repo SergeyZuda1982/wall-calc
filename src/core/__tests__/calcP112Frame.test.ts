@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   calcFrameRowPositions,
+  snapHangerPositionsToAxis,
   resolveHangerKind,
   resolveKnaufHangerStep,
   resolveFrameParams,
@@ -265,5 +266,107 @@ describe('resolveFrameParams', () => {
   it("mode='knauf' с запрещённой комбинацией — предупреждение прокидывается наружу", () => {
     const r = resolveFrameParams({ stepC: 1200, layoutMode: 'knauf', mountDirection: 'crosswise', loadClass: 0.40 })
     expect(r.warning).toBeDefined()
+  })
+})
+
+describe('snapHangerPositionsToAxis', () => {
+  it('пустой список позиций основного профиля -> пустой список подвесов', () => {
+    expect(snapHangerPositionsToAxis([], 1150)).toEqual([])
+  })
+
+  it('одна позиция основного профиля -> один подвес именно на ней', () => {
+    expect(snapHangerPositionsToAxis([600], 1150)).toEqual([600])
+  })
+
+  it('все подвесы — подмножество mainPositions (никогда не создаёт новых точек)', () => {
+    const main = [700, 1300, 1900, 2500, 3100, 3850]
+    const result = snapHangerPositionsToAxis(main, 1150)
+    for (const p of result) expect(main).toContain(p)
+  })
+
+  it('всегда включает первую и последнюю позицию основного профиля', () => {
+    const main = [700, 1300, 1900, 2500, 3100, 3850]
+    const result = snapHangerPositionsToAxis(main, 1150)
+    expect(result[0]).toBe(main[0])
+    expect(result[result.length - 1]).toBe(main[main.length - 1])
+  })
+
+  it('реальный кейс из фото пользователя: c=600, a=1150 -> подвес на каждом основном профиле', () => {
+    const main = [600, 1200, 1800, 2400, 3000, 3600]
+    const result = snapHangerPositionsToAxis(main, 1150)
+    expect(result).toEqual([600, 1200, 1800, 2400, 3000, 3600])
+  })
+
+  it('шаг основного профиля намного меньше a -> подвесы реже, но строго на позициях основного профиля', () => {
+    const main = [300, 600, 900, 1200, 1500, 1800, 2100, 2400, 2700, 3000]
+    const result = snapHangerPositionsToAxis(main, 1000)
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i] - result[i - 1]).toBeLessThanOrEqual(1000)
+    }
+    for (const p of result) expect(main).toContain(p)
+    expect(result[0]).toBe(300)
+    expect(result[result.length - 1]).toBe(3000)
+  })
+
+  it('a меньше шага основного профиля -> берёт каждую позицию, не зависает', () => {
+    const main = [800, 1600, 2400, 3200]
+    const result = snapHangerPositionsToAxis(main, 100)
+    expect(result).toEqual(main)
+  })
+})
+
+describe('calcP112FrameGeometry — подвесы строго на оси основного профиля (10.07.2026)', () => {
+  it('hangerPositions — подмножество mainPositions, не независимая сетка', () => {
+    const geo = calcP112FrameGeometry(4000, 4000, 600, 1150, 300, true, 'user')
+    for (const hp of geo.hangerPositions) {
+      expect(geo.mainPositions).toContain(hp)
+    }
+  })
+
+  it('реальный кейс пользователя (4000x4000, c=600, b=1150, user) — подвес на каждом основном профиле', () => {
+    const geo = calcP112FrameGeometry(4000, 4000, 600, 1150, 300, true, 'user', { stepA: 1150 })
+    expect(geo.mainPositions).toEqual([600, 1200, 1800, 2400, 3000, 3750])
+    expect(geo.hangerPositions).toEqual(geo.mainPositions)
+    expect(geo.hangersPerBearing).toBe(6)
+  })
+
+  it('mainPositions/bearingPositions присутствуют и согласованы со счётчиками', () => {
+    const geo = calcP112FrameGeometry(4000, 4000, 600, 1150, 300, true, 'user')
+    expect(geo.mainPositions.length).toBe(geo.mainCount)
+    expect(geo.bearingPositions.length).toBe(geo.bearingCount)
+    expect(geo.hangerPositions.length).toBe(geo.hangersPerBearing)
+  })
+
+  it('hangersTotal = hangersPerBearing × bearingCount', () => {
+    const geo = calcP112FrameGeometry(5000, 3500, 1000, 500, 300, true, 'knauf', { stepA: 950, wallOffsetMainMm: 100, wallOffsetBearingMm: 100 })
+    expect(geo.hangersTotal).toBe(geo.hangersPerBearing * geo.bearingCount)
+  })
+})
+
+describe('resolveFrameParams — ceilingType (10.07.2026, поддержка П113)', () => {
+  it("ceilingType не задан -> старое поведение (P112_HANGER_STEP)", () => {
+    const r = resolveFrameParams({ stepC: 600, layoutMode: 'user' })
+    expect(r.stepB).toBe(1150)
+  })
+
+  it("ceilingType='p112' явно -> тот же P112_HANGER_STEP", () => {
+    const r = resolveFrameParams({ stepC: 600, layoutMode: 'user', ceilingType: 'p112' })
+    expect(r.stepB).toBe(1150)
+  })
+
+  it("ceilingType='p113', c=800 -> значение П113, отличное от П112", () => {
+    const r = resolveFrameParams({ stepC: 800, layoutMode: 'user', ceilingType: 'p113' })
+    expect(r.stepB).toBe(1050)
+  })
+
+  it("ceilingType='p113', c=600 (нет в таблице П113) -> fallback 950, НЕ значение П112 (1150)", () => {
+    const r = resolveFrameParams({ stepC: 600, layoutMode: 'user', ceilingType: 'p113' })
+    expect(r.stepB).toBe(950)
+    expect(r.stepB).not.toBe(1150)
+  })
+
+  it("ceilingType='p113' с userStepB — пользовательское значение в приоритете", () => {
+    const r = resolveFrameParams({ stepC: 600, layoutMode: 'user', ceilingType: 'p113', userStepB: 777 })
+    expect(r.stepB).toBe(777)
   })
 })

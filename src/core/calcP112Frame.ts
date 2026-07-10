@@ -35,7 +35,7 @@
 import type { CeilingLoadClass, CeilingMountDirection, CeilingStep } from '../data/ceilingData'
 import {
   KNAUF_HANGER_SPACING_TABLE, KNAUF_BEARING_STEP_BY_MOUNT, KNAUF_WALL_OFFSET_MM,
-  P112_HANGER_STEP,
+  P112_HANGER_STEP, P113_HANGER_STEP,
 } from '../data/ceilingData'
 
 export type HangerKind = 'direct' | 'direct_extended' | 'rod_500' | 'rod_1000'
@@ -140,6 +140,54 @@ export function calcFrameRowPositions(
 }
 
 /**
+ * 10.07.2026: подвес обязательно должен висеть строго по оси ОСНОВНОГО
+ * профиля — крепление идёт в точке пересечения основной/несущий (там же
+ * одноуровневый соединитель-краб), не по независимой сетке "шаг a от
+ * стены". Раньше подвесы считались отдельной сеткой через stepA — из-за
+ * этого они физически "не попадали" ни в один основной профиль (см.
+ * KONSPEKT.md, жалоба "подвесы слетели с оси").
+ *
+ * Официальная таблица (лист 40/76 КНАУФ) даёт a — это МАКСИМАЛЬНО
+ * допустимое расстояние между соседними подвесами при заданной нагрузке,
+ * а не обязательный шаг. Раз подвес обязан стоять на оси основного
+ * профиля (шаг c), реальная расстановка — это подмножество позиций
+ * основного профиля: берём первую позицию, дальше жадно продвигаемся к
+ * САМОЙ ДАЛЬНЕЙ следующей позиции основного профиля, которая ещё не
+ * превышает maxHangerStepMm от последнего выбранного подвеса. Если c
+ * почти равен или больше a (шаг основного профиля крупный) — придётся
+ * ставить подвес на КАЖДОМ основном профиле (пропускать нельзя, иначе
+ * превысим допустимое расстояние a).
+ *
+ * Всегда включает первую и последнюю позицию основного профиля (первый и
+ * последний ряды несущего каркаса тоже должны быть подвешены).
+ */
+export function snapHangerPositionsToAxis(
+  mainPositions: number[],
+  maxHangerStepMm: number,
+): number[] {
+  if (mainPositions.length === 0) return []
+  const result: number[] = [mainPositions[0]]
+  let i = 0
+  while (i < mainPositions.length - 1) {
+    let j = i
+    while (
+      j + 1 < mainPositions.length &&
+      mainPositions[j + 1] - mainPositions[i] <= maxHangerStepMm
+    ) {
+      j++
+    }
+    if (j === i) {
+      // даже ближайшая следующая позиция превышает max — деваться некуда,
+      // на объекте так и будет (a задан слишком маленьким относительно c)
+      j = i + 1
+    }
+    result.push(mainPositions[j])
+    i = j
+  }
+  return result
+}
+
+/**
  * Тип подвеса по зазору "плита -> черновой (несущий) каркас", мм.
  * Правила со слов пользователя:
  *   ≤100мм         — обычный прямой подвес
@@ -239,6 +287,9 @@ export function resolveFrameParams(opts: {
   userStepB?: number
   mountDirection?: CeilingMountDirection
   loadClass?: CeilingLoadClass
+  /** П112/П113 — своя таблица дефолтного шага b в 'user'-режиме. Не задан
+   *  → 'p112' (старое поведение, обратная совместимость). */
+  ceilingType?: 'p112' | 'p113'
 }): ResolvedFrameParams {
   if (opts.layoutMode === 'knauf') {
     const mountDirection = opts.mountDirection ?? 'crosswise'
@@ -251,7 +302,9 @@ export function resolveFrameParams(opts: {
       warning,
     }
   }
-  const stepB = opts.userStepB ?? (P112_HANGER_STEP[opts.stepC as CeilingStep] ?? 1000)
+  const table = opts.ceilingType === 'p113' ? P113_HANGER_STEP : P112_HANGER_STEP
+  const fallback = opts.ceilingType === 'p113' ? 950 : 1000
+  const stepB = opts.userStepB ?? (table[opts.stepC as CeilingStep] ?? fallback)
   return { stepB, stepA: stepB }
 }
 
@@ -261,14 +314,22 @@ export interface P112FrameGeometry {
   /** Длина каждого несущего профиля, мм (= пролёт A). */
   bearingLengthEachMm: number
   bearingTotalLm: number
+  /** Позиции рядов несущего профиля вдоль B, мм (для превью-канваса). */
+  bearingPositions: number[]
   /** Число подвесов на одном несущем профиле. */
   hangersPerBearing: number
   hangersTotal: number
+  /** Позиции подвесов вдоль A, мм — ПОДМНОЖЕСТВО mainPositions (подвес
+   *  всегда строго на оси основного профиля, см. snapHangerPositionsToAxis).
+   *  Одни и те же для каждого ряда несущего профиля. */
+  hangerPositions: number[]
   /** Число рядов основного профиля (поперёк направления A, шаг c). */
   mainCount: number
   /** Длина каждого основного профиля, мм (= пролёт B). */
   mainLengthEachMm: number
   mainTotalLm: number
+  /** Позиции рядов основного профиля вдоль A, мм (для превью-канваса). */
+  mainPositions: number[]
   /** Соединитель двухуровневый — по пересечениям (bearingCount × mainCount). */
   connectorsTotal: number
   bearingExtenders: number
@@ -305,27 +366,31 @@ export function calcP112FrameGeometry(
   const wallOffsetMainMm = extra.wallOffsetMainMm ?? defaultWallOffset
 
   // Несущий профиль (ряды поперёк B).
-  const bearingCount = calcFrameRowPositions(
+  const bearingPositions = calcFrameRowPositions(
     B, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm },
-  ).length
+  )
+  const bearingCount = bearingPositions.length
   const bearingLengthEachMm = A
   const bearingTotalLm = (bearingCount * bearingLengthEachMm) / 1000
 
-  // Подвесы вдоль несущего профиля — ОТДЕЛЬНЫЙ шаг stepA (не путать с stepB,
-  // см. шапку файла). Не задан явно -> = stepB (старое поведение 'user':
-  // на объекте это часто одно и то же расстояние по факту).
-  const stepA = extra.stepA ?? stepB
-  const hangersPerBearing = calcFrameRowPositions(
-    A, stepA, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm },
-  ).length
-  const hangersTotal = bearingCount * hangersPerBearing
-
   // Основной профиль — перпендикулярно несущему, расставлен вдоль A с шагом c
-  const mainCount = calcFrameRowPositions(
+  const mainPositions = calcFrameRowPositions(
     A, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm },
-  ).length
+  )
+  const mainCount = mainPositions.length
   const mainLengthEachMm = B
   const mainTotalLm = (mainCount * mainLengthEachMm) / 1000
+
+  // 10.07.2026: подвес обязан висеть строго по оси основного профиля (см.
+  // snapHangerPositionsToAxis) — берём ТЕ ЖЕ mainPositions, не отдельную
+  // сетку. stepA здесь — это МАКСИМАЛЬНО допустимое расстояние между
+  // подвесами по таблице (не обязательный шаг), не задан явно -> = stepB
+  // (старое поведение 'user': на объекте это часто одно и то же расстояние
+  // по факту).
+  const stepA = extra.stepA ?? stepB
+  const hangerPositions = snapHangerPositionsToAxis(mainPositions, stepA)
+  const hangersPerBearing = hangerPositions.length
+  const hangersTotal = bearingCount * hangersPerBearing
 
   const connectorsTotal = bearingCount * mainCount
 
@@ -335,9 +400,9 @@ export function calcP112FrameGeometry(
   const { kind, warning } = resolveHangerKind(slabGapMm)
 
   return {
-    bearingCount, bearingLengthEachMm, bearingTotalLm,
-    hangersPerBearing, hangersTotal,
-    mainCount, mainLengthEachMm, mainTotalLm,
+    bearingCount, bearingLengthEachMm, bearingTotalLm, bearingPositions,
+    hangersPerBearing, hangersTotal, hangerPositions,
+    mainCount, mainLengthEachMm, mainTotalLm, mainPositions,
     connectorsTotal, bearingExtenders, mainExtenders,
     hangerKind: kind, hangerWarning: warning,
   }
