@@ -29,6 +29,7 @@ import {
 } from './core/planTo3D'
 import type { PlanLineType, FloorPlan } from './types'
 import CeilingGridMesh from './components/CeilingGridMesh'
+import { resolveFrameParams } from './core/calcP112Frame'
 import { formatDistanceM } from './core/formatDistance'
 import { lineProgressColor, lineProgressSummary } from './core/lineProgress'
 import { getWallTexture, tintOverTexture } from './textures3D'
@@ -715,15 +716,34 @@ function LevelGroup({
         />
       ))}
       {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} opacity={opacity} />)}
-      {showCeilingGrid && !dimmed && polygons.filter(r => !r.isColumn).map(room => (
-        <CeilingGridMesh
-          key={`grid-${room.id}`}
-          roomPoints={room.points}
-          ceilingM={mmToM(ceilingMm)}
-          onFocusElement={onFocusElement}
-          measuring={measuring}
-        />
-      ))}
+      {showCeilingGrid && !dimmed && polygons.filter(r => !r.isColumn).map(room => {
+        // 10.07.2026: если для этого Room сохранён ceilingSpec (CeilingCalc.tsx
+        // → «Сохранить в 3D», см. KONSPEKT.md), считаем реальный шаг несущего/
+        // подвесов через тот же resolveFrameParams, что и сам калькулятор —
+        // единая точка правды, число не разъезжается между 2D-превью и 3D.
+        // Не задан -> CeilingGridMesh падает на дефолты (DEFAULT_GRID_STEP_B/C),
+        // как раньше.
+        const spec = room.ceilingSpec
+        const frameParams = spec
+          ? resolveFrameParams({
+              stepC: spec.stepC, layoutMode: spec.layoutMode ?? 'user', userStepB: spec.stepB,
+              mountDirection: spec.mountDirection, loadClass: spec.loadClass, ceilingType: spec.type === 'p113' ? 'p113' : 'p112',
+            })
+          : null
+        return (
+          <CeilingGridMesh
+            key={`grid-${room.id}`}
+            roomPoints={room.points}
+            ceilingM={mmToM(ceilingMm)}
+            stepB={frameParams?.stepB}
+            stepC={spec?.stepC}
+            stepA={frameParams?.stepA}
+            bearingAlongLength={spec?.bearingAlongLength}
+            onFocusElement={onFocusElement}
+            measuring={measuring}
+          />
+        )
+      })}
       {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} opacity={opacity} />)}
       {columnCylinders.map(cyl => (
         <RoundColumnMesh

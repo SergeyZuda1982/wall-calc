@@ -40,6 +40,7 @@ import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
 import { slabToCeilingSeed } from './core/slabToCeilingSeed'
 import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
+import { roomToCeilingSeed } from './core/roomToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { combineCeilingSeeds } from './core/combineCeilingSeeds'
 import { snapPoint, snapOrtho, getFlushCandidates } from './core/planSnap'
@@ -2609,6 +2610,47 @@ export default function FloorPlan() {
               </div>
             )}
           </div>
+
+          {/* Помещения (замкнутые контуры по стенам) — второй, автоматический
+              способ передать периметр в расчёт потолка: в отличие от Плиты/
+              Потолка (обводка карандашом), тут ничего обводить не нужно —
+              контур уже есть, как только стены сомкнулись в петлю. Без
+              объединения (только у Плиты/Потолка) и без удаления из этого
+              списка — Room живёт своей жизнью через правку стен, этот блок
+              только читает и отправляет уже готовые rooms. См. roomToCeilingSeed.ts,
+              KONSPEKT.md "3D-сетка потолка по реальным настройкам" (10.07.2026). */}
+          {rooms.filter(r => !r.isColumn).length > 0 && (
+            <div style={{ padding: '4px 14px 8px' }}>
+              <div style={{ fontSize: 10, color: '#8a9ac8', marginBottom: 4, textTransform: 'uppercase' }}>
+                Помещения
+              </div>
+              {rooms.filter(r => !r.isColumn).map(room => {
+                const seed = roomToCeilingSeed(room, lines, scaleMmPx)
+                return (
+                  <div key={room.id} style={{ marginBottom: 5, borderRadius: 4, border: '1px solid #3a4060' }}>
+                    <div style={{ padding: '5px 10px', fontSize: 11, color: '#8a9ac8' }}>
+                      {room.label}
+                      {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
+                      {room.ceilingSpec && <span style={{ color: '#7fb37f' }}> · каркас настроен</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px' }}>
+                      <button
+                        disabled={!seed}
+                        onClick={() => { if (seed) setCeilingSeed(seed) }}
+                        title="Отправить площадь и периметр этого помещения в расчёт потолка"
+                        style={{
+                          flex: 1, fontSize: 10, padding: '4px 6px', borderRadius: 3,
+                          border: '1px solid #3a6ea5', background: 'transparent', color: '#6fa8dc',
+                          cursor: seed ? 'pointer' : 'not-allowed', opacity: seed ? 1 : 0.4,
+                        }}>
+                        → Потолок
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {/* Объединение нескольких зон (Плита и/или Потолок) в один расчёт
               потолка — "несколько именованных зон одновременно"

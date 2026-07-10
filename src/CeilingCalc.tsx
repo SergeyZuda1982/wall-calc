@@ -13,6 +13,7 @@ import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult } from './core/calcCeiling'
 import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } from './core/calcP112Frame'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
+import { useProjectStore } from './store/useProjectStore'
 import type { Point2D } from './core/geometry2d'
 import { polygonSides } from './core/geometry2d'
 import type { CeilingSeedZone } from './store/useCeilingSeedStore'
@@ -95,6 +96,14 @@ export default function CeilingCalc() {
   // холста показываем реально обведённую форму(ы), а не только цифры
   // площади/периметра (см. KONSPEKT.md 10.07.2026, пункты 3 и 4).
   const [seedZones, setSeedZones] = useState<CeilingSeedZone[] | null>(null)
+  // НОВОЕ (10.07.2026): если seed пришёл из Room (не из Плиты/Потолка),
+  // здесь хранится id этого Room — чтобы кнопка «Сохранить в 3D» знала,
+  // куда писать настройки каркаса (updateRoom), и чтобы можно было
+  // подставить в форму то, что для этого Room уже было сохранено раньше.
+  const [seedRoomId, setSeedRoomId] = useState<string | null>(null)
+  const [savedToRoom, setSavedToRoom] = useState(false)
+  const floorPlanRooms = useProjectStore(s => s.floorPlan?.rooms ?? [])
+  const updateRoom = useProjectStore(s => s.updateRoom)
   // Пункт 5 плана (KONSPEKT.md 10.07.2026): выбор стены начала раскладки
   // профилей для непрямоугольного контура — пока UI-заглушка, само значение
   // никуда в расчёт не идёт (алгоритм раскладки по полигону — пункт 6,
@@ -109,6 +118,9 @@ export default function CeilingCalc() {
   const clearSeed = useCeilingSeedStore(s => s.clearSeed)
   useEffect(() => {
     if (!consumeSeed) return
+    const savedSpec = consumeSeed.roomId
+      ? floorPlanRooms.find(r => r.id === consumeSeed.roomId)?.ceilingSpec
+      : undefined
     setForm(prev => {
       const next: CeilingSpecFull = {
         ...prev,
@@ -116,15 +128,29 @@ export default function CeilingCalc() {
         roomWidthMm: 0,
         areaSqm: consumeSeed.areaSqm,
         perimeterM: consumeSeed.perimeterM,
+        // Если для этого Room раньше уже сохраняли каркас (см. кнопку
+        // «Сохранить в 3D» ниже) — подставляем его вместо дефолтов формы,
+        // чтобы не заставлять настраивать заново при повторном открытии.
+        ...(savedSpec ? {
+          type: savedSpec.type,
+          stepC: savedSpec.stepC,
+          stepB: savedSpec.stepB,
+          layoutMode: savedSpec.layoutMode,
+          bearingAlongLength: savedSpec.bearingAlongLength,
+          mountDirection: savedSpec.mountDirection,
+          loadClass: savedSpec.loadClass,
+        } : {}),
       }
       setResult(calcCeiling(next))
       return next
     })
     setSeedBanner({ label: consumeSeed.label, holesCount: consumeSeed.holesCount, zoneCount: consumeSeed.zones.length })
     setSeedZones(consumeSeed.zones)
+    setSeedRoomId(consumeSeed.roomId ?? null)
+    setSavedToRoom(false)
     setStartWall(null)
     clearSeed()
-  }, [consumeSeed, clearSeed])
+  }, [consumeSeed, clearSeed, floorPlanRooms])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -196,6 +222,52 @@ export default function CeilingCalc() {
             </button>
           ))}
         </Card>
+
+        {seedRoomId && (
+          <div style={{
+            padding: '8px 10px', background: savedToRoom ? '#f0fdf4' : C.accentLight,
+            border: `1px solid ${savedToRoom ? C.success : C.accent}`,
+            borderRadius: 6, fontSize: 11, color: C.text,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6,
+          }}>
+            <div>
+              Расчёт привязан к помещению на плане.
+              {savedToRoom
+                ? <span style={{ color: C.success }}> Настройки каркаса сохранены — 3D-вид обновится.</span>
+                : ' Настройте раскладку и нажмите «Сохранить в 3D», чтобы 3D-сцена рисовала именно этот каркас, а не дефолтный.'}
+            </div>
+            <button
+              onClick={() => {
+                if (!seedRoomId) return
+                const ceilingSpec: CeilingSpecFull = form
+                updateRoom(seedRoomId, {
+                  ceilingSpec: {
+                    type: ceilingSpec.type,
+                    layers: ceilingSpec.layers,
+                    material: ceilingSpec.material,
+                    thickness: ceilingSpec.thickness,
+                    stepC: ceilingSpec.stepC,
+                    areaSqm: ceilingSpec.areaSqm,
+                    perimeterM: ceilingSpec.perimeterM,
+                    stepB: ceilingSpec.stepB,
+                    bearingAlongLength: ceilingSpec.bearingAlongLength,
+                    layoutMode: ceilingSpec.layoutMode,
+                    mountDirection: ceilingSpec.mountDirection,
+                    loadClass: ceilingSpec.loadClass,
+                  },
+                })
+                setSavedToRoom(true)
+              }}
+              title="Записать текущую раскладку/шаг/тип каркаса на это помещение — 3D-сцена (Scene3D) будет рисовать сетку по этим настройкам вместо дефолтных"
+              style={{
+                flexShrink: 0, fontSize: 11, padding: '6px 10px', borderRadius: 6,
+                border: `1px solid ${C.accent}`, background: C.accent, color: '#fff',
+                cursor: 'pointer', fontWeight: 600,
+              }}>
+              Сохранить в 3D
+            </button>
+          </div>
+        )}
 
         {seedBanner && (
           <div style={{
