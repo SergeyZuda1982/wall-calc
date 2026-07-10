@@ -305,6 +305,10 @@ export interface RoomPolygon3D {
   /** точки контура в метрах, план сверху (x,z) — по часовой/против часовой,
    *  как пришли из extractContourPoints, без изменений */
   points: { x: number; z: number }[]
+  /** НОВОЕ (10.07.2026): настройки каркаса подвесного потолка, если были
+   *  сохранены из CeilingCalc.tsx («Сохранить в 3D», см. roomToCeilingSeed.ts).
+   *  Не задано -> Scene3D рисует CeilingGridMesh по дефолтам, как раньше. */
+  ceilingSpec?: Room['ceilingSpec']
 }
 
 export interface ColumnCylinder3D {
@@ -382,6 +386,7 @@ export function roomsToPolygons3D(rooms: Room[], lines: PlanLine[], scaleMmPx: n
         isColumn: !!room.isColumn,
         label: room.label,
         points: pts.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
+        ...(room.ceilingSpec ? { ceilingSpec: room.ceilingSpec } : {}),
       }
     })
     .filter((r): r is RoomPolygon3D => r !== null)

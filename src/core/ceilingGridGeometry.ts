@@ -28,7 +28,7 @@
  * значениям из формы, независимо от того, что нарисовано в 3D.
  */
 
-import { calcFrameRowPositions } from './calcP112Frame'
+import { calcFrameRowPositions, snapHangerPositionsToAxis } from './calcP112Frame'
 import type { CeilingStep } from '../data/ceilingData'
 
 export const DEFAULT_GRID_STEP_B: CeilingStep = 600
@@ -46,6 +46,11 @@ export interface CeilingGridInput {
   stepC: number
   /** несущий профиль идёт вдоль X (true) или вдоль Z (false) */
   bearingAlongLength: boolean
+  /** 10.07.2026: максимально допустимое расстояние между подвесами (шаг "a"
+   *  из таблицы КНАУФ) — подвес всегда ставится строго на оси основного
+   *  профиля (см. snapHangerPositionsToAxis), это лишь ограничение "не реже
+   *  чем". Не задан -> = stepB (та же практика, что и в calcP112Frame). */
+  stepA?: number
 }
 
 /** Отрезок профиля в локальных координатах помещения (мм), 0..lengthMm/widthMm по обеим осям. */
@@ -79,7 +84,7 @@ export interface CeilingGridResult {
  * стороне (CeilingGridMesh), т.к. там же известны сдвиг и масштаб помещения.
  */
 export function calcCeilingGrid(input: CeilingGridInput): CeilingGridResult {
-  const { lengthMm, widthMm, stepB, stepC, bearingAlongLength } = input
+  const { lengthMm, widthMm, stepB, stepC, bearingAlongLength, stepA } = input
   // A — пролёт, вдоль которого идёт (своей длиной) несущий профиль
   // B — пролёт, поперёк которого несущий профиль расставлен с шагом stepB
   const A = bearingAlongLength ? lengthMm : widthMm
@@ -87,7 +92,12 @@ export function calcCeilingGrid(input: CeilingGridInput): CeilingGridResult {
 
   const bearingPositions = calcFrameRowPositions(B, stepB)
   const mainPositions = calcFrameRowPositions(A, stepC)
-  const hangerOffsets = calcFrameRowPositions(A, stepB)
+  // 10.07.2026: подвес обязан висеть строго по оси основного профиля (тот же
+  // фикс, что и в calcP112FrameGeometry/CeilingCalc.tsx, см. KONSPEKT.md,
+  // "подвесы слетели с оси") — раньше здесь была НЕЗАВИСИМАЯ сетка через
+  // calcFrameRowPositions(A, stepB), из-за чего подвесы в 3D физически не
+  // попадали ни на один основной профиль. Теперь — подмножество mainPositions.
+  const hangerOffsets = snapHangerPositionsToAxis(mainPositions, stepA ?? stepB)
 
   // toXZ переводит (координата вдоль A, координата поперёк B) в мировые (x,z)
   // локали помещения — учитывая, куда реально смотрит несущий профиль.
