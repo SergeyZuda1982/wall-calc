@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { snapPoint, snapOrtho } from '../planSnap'
+import { snapPoint, snapOrtho, getFlushCandidates } from '../planSnap'
 import type { PlanLine } from '../../types'
 
 // scaleMmPx = 10 (как дефолт в FloorPlan), т.е. 1px = 10мм
@@ -142,6 +142,45 @@ describe('snapPoint — флюш-грань при коллинеарном пр
     expect(res.snapped).toBe(true)
     expect(res.x).toBeCloseTo(87.5, 5)
     expect(res.x).not.toBeCloseTo(95, 1)
+  })
+})
+
+describe('getFlushCandidates (10.07.2026, точки для визуального маркера флюш-снапа)', () => {
+  it('возвращает 4 точки для одной стены другой толщины', () => {
+    const wall = blockWall('bottom', 100, 300, 100, 100, '250')
+    const points = getFlushCandidates([wall], 10, 7.5)
+    expect(points).toHaveLength(4)
+    // Одна из них — та самая (95,100), что и в snapPoint-тесте выше
+    expect(points.some(p => Math.abs(p.x - 95) < 1e-6 && Math.abs(p.y - 100) < 1e-6)).toBe(true)
+  })
+
+  it('толщина совпадает — пустой список (маркер не нужен, нечего подсказывать)', () => {
+    const wall = blockWall('bottom', 100, 300, 100, 100, '250')
+    expect(getFlushCandidates([wall], 10, 12.5)).toEqual([])
+  })
+
+  it('newHalfThicknessPx=0 (толщина ещё не выбрана) — пустой список', () => {
+    const wall = blockWall('bottom', 100, 300, 100, 100, '250')
+    expect(getFlushCandidates([wall], 10, 0)).toEqual([])
+  })
+
+  it('линия нулевой толщины (например, окраска стены — wall_lining/paint) — пропускается', () => {
+    const zeroLine: PlanLine = {
+      id: 'z', x1: 0, y1: 0, x2: 100, y2: 0, type: 'wall_lining', lengthMm: 0, label: 'z',
+      spec: { material: 'paint' },
+    }
+    expect(getFlushCandidates([zeroLine], 10, 7.5)).toEqual([])
+  })
+
+  it('excludeId исключает конкретную линию из результата', () => {
+    const wall = blockWall('bottom', 100, 300, 100, 100, '250')
+    expect(getFlushCandidates([wall], 10, 7.5, 'bottom')).toEqual([])
+  })
+
+  it('несколько линий — точки собираются со всех подходящих', () => {
+    const a = blockWall('a', 100, 300, 100, 100, '250')
+    const b = blockWall('b', 300, 300, 300, 100, '250')
+    expect(getFlushCandidates([a, b], 10, 7.5)).toHaveLength(8)
   })
 })
 

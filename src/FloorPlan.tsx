@@ -42,7 +42,7 @@ import { slabToCeilingSeed } from './core/slabToCeilingSeed'
 import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { combineCeilingSeeds } from './core/combineCeilingSeeds'
-import { snapPoint, snapOrtho } from './core/planSnap'
+import { snapPoint, snapOrtho, getFlushCandidates } from './core/planSnap'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
@@ -998,10 +998,10 @@ export default function FloorPlan() {
     const snapThresh = SNAP_SCREEN_PX / stageScaleRef.current
     let moveRefDir: { dx: number; dy: number } | undefined
     let moveNewHalfThicknessPx = 0
-    if (mode === 'draw' && drawing) {
-      moveRefDir = { dx: rawX - drawing.x1, dy: rawY - drawing.y1 }
+    if (mode === 'draw') {
       const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
       moveNewHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
+      if (drawing) moveRefDir = { dx: rawX - drawing.x1, dy: rawY - drawing.y1 }
     }
     const snappedInfo = snapPoint(rawX, rawY, lines, scaleMmPx, undefined, snapThresh, moveRefDir, moveNewHalfThicknessPx)
     // В draw-режиме: дополнительно проверяем снап к началу цепочки (замыкание)
@@ -1961,6 +1961,23 @@ export default function FloorPlan() {
   const previewX2    = previewPt?.x ?? 0
   const previewY2    = previewPt?.y ?? 0
   // allPoints убраны — snap-точки на холсте не рисуются
+
+  // Маркеры флюш-точек (10.07.2026, по просьбе пользователя) — сама точка
+  // "грань новой стены встык со старой" физически лежит ВНУТРИ тела старой
+  // стены (см. Фикс 3 в core/planSnap.ts), ничем визуально не обозначена —
+  // неудобно прицеливаться на глаз. Показываем маленький маркер у каждой
+  // такой точки, но только пока реально рисуем (mode 'draw') и только те,
+  // что физически близко к курсору — иначе на насыщенном плане маркеры
+  // возле каждой стены другой толщины превратились бы в шум.
+  const flushCandidatesNearCursor = useMemo(() => {
+    if (mode !== 'draw' || !cursor) return []
+    const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
+    const newHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
+    if (newHalfThicknessPx <= 0) return []
+    const all = getFlushCandidates(lines, scaleMmPx, newHalfThicknessPx)
+    const nearThresh = (SNAP_SCREEN_PX * 3) / stageScaleRef.current
+    return all.filter(p => dist(p.x, p.y, cursor.x, cursor.y) <= nearThresh)
+  }, [mode, cursor, drawType, drawSpec, scaleMmPx, lines])
 
   // ── Wall join: скорректированные точки для стыков (стены + грани колонн,
   // см. buildWallsForJoin в wallJoin.ts — общая логика для 2D и 3D) ────────
@@ -4229,6 +4246,27 @@ export default function FloorPlan() {
                       </>
                     )
                   })()}
+
+                  {/* Маркеры флюш-точек (10.07.2026) — точка, куда нужно
+                      подвести ось новой стены другой толщины, чтобы её
+                      ГРАНЬ совпала с гранью существующей (см. Фикс 3 в
+                      core/planSnap.ts) — сама по себе ничем не обозначена
+                      на плане (лежит внутри тела старой стены), поэтому
+                      рисуем маленькое кольцо-подсказку у каждой такой
+                      точки в пределах видимости курсора. Цвет — янтарный,
+                      отличается и от зелёного (обычный активный снап), и
+                      от цвета самой линии, чтобы не путать с чем-то ещё. */}
+                  {flushCandidatesNearCursor.map((p, i) => (
+                    <Circle
+                      key={`flush-${i}`}
+                      x={p.x} y={p.y}
+                      radius={5 / stageScale}
+                      stroke="#ff9800" strokeWidth={1.5 / stageScale}
+                      fill="rgba(255,152,0,0.18)"
+                      dash={[3 / stageScale, 2 / stageScale]}
+                      listening={false}
+                    />
+                  ))}
 
                   {/* Точки масштаба — крестики, масштабируются с зумом для точности клика */}
                   {scalePt1 && (() => {
