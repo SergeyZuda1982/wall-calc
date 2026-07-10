@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clipRectBySlopedTop, polygonArea, polygonPerimeter, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from '../geometry2d'
+import { clipRectBySlopedTop, polygonArea, polygonPerimeter, polygonSides, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from '../geometry2d'
 
 describe('polygonArea', () => {
   it('площадь прямоугольника', () => {
@@ -32,6 +32,32 @@ describe('polygonPerimeter', () => {
     const cw = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 }, { x: 0, y: 5 }]
     const ccw = [...cw].reverse()
     expect(polygonPerimeter(ccw)).toBe(polygonPerimeter(cw))
+  })
+})
+
+describe('polygonSides', () => {
+  it('прямоугольник даёт 4 стороны в порядке обхода с правильной длиной', () => {
+    const sides = polygonSides([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 }, { x: 0, y: 5 }])
+    expect(sides).toHaveLength(4)
+    expect(sides.map(s => s.lengthMm)).toEqual([10, 5, 10, 5])
+    expect(sides.map(s => s.index)).toEqual([0, 1, 2, 3])
+  })
+
+  it('последняя сторона замыкает контур на первую точку', () => {
+    const sides = polygonSides([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 5 }])
+    expect(sides).toHaveLength(3)
+    expect(sides[2].start).toEqual({ x: 0, y: 5 })
+    expect(sides[2].end).toEqual({ x: 0, y: 0 })
+  })
+
+  it('стороны короче 1мм пропускаются (дубль точки при обводке)', () => {
+    const sides = polygonSides([{ x: 0, y: 0 }, { x: 0.5, y: 0.5 }, { x: 10, y: 0 }, { x: 0, y: 5 }])
+    expect(sides).toHaveLength(3)
+  })
+
+  it('меньше 2 точек — пустой список', () => {
+    expect(polygonSides([{ x: 0, y: 0 }])).toEqual([])
+    expect(polygonSides([])).toEqual([])
   })
 })
 

@@ -47,6 +47,33 @@ export function polygonPerimeter(points: Point2D[]): number {
   return sum
 }
 
+/** Одна сторона замкнутого многоугольника — для UI-выбора "с какой стены
+ *  начинать раскладку" (см. CeilingCalc.tsx, пункт 5 плана по потолкам). */
+export interface PolygonSide {
+  /** Индекс стороны по порядку обхода контура (0 — от первой точки до второй). */
+  index: number
+  start: Point2D
+  end: Point2D
+  lengthMm: number
+}
+
+/** Разбивает замкнутый многоугольник на стороны (рёбра) — точка i к точке
+ *  i+1, последняя точка замыкается на первую. Порядок обхода сохраняется
+ *  как есть (не нормализуется по часовой/против часовой), стороны короче
+ *  1мм пропускаются (защита от дублей/самопересечений при обводке). */
+export function polygonSides(points: Point2D[]): PolygonSide[] {
+  if (points.length < 2) return []
+  const sides: PolygonSide[] = []
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]
+    const b = points[(i + 1) % points.length]
+    const lengthMm = Math.hypot(b.x - a.x, b.y - a.y)
+    if (lengthMm < 1) continue
+    sides.push({ index: sides.length, start: a, end: b, lengthMm })
+  }
+  return sides
+}
+
 /**
  * Дуга, построенная по хорде (x1,y1)→(x2,y2) и стреле (H в классической
  * формуле R=(L²+H²)/2H, L — половина хорды).

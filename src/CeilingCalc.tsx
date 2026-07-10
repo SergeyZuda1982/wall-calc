@@ -15,6 +15,7 @@ import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } 
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { useProjectStore } from './store/useProjectStore'
 import type { Point2D } from './core/geometry2d'
+import { polygonSides } from './core/geometry2d'
 import type { CeilingSeedZone } from './store/useCeilingSeedStore'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
@@ -103,6 +104,11 @@ export default function CeilingCalc() {
   const [savedToRoom, setSavedToRoom] = useState(false)
   const floorPlanRooms = useProjectStore(s => s.floorPlan?.rooms ?? [])
   const updateRoom = useProjectStore(s => s.updateRoom)
+  // Пункт 5 плана (KONSPEKT.md 10.07.2026): выбор стены начала раскладки
+  // профилей для непрямоугольного контура — пока UI-заглушка, само значение
+  // никуда в расчёт не идёт (алгоритм раскладки по полигону — пункт 6,
+  // ещё не реализован), только запоминается и подсвечивается на превью.
+  const [startWall, setStartWall] = useState<{ zoneIndex: number; sideIndex: number } | null>(null)
 
   // Плита ("карандаш"), отправленная с плана — площадь/периметр вычислены
   // по факту обведённого контура (не прямоугольник), поэтому обнуляем
@@ -142,6 +148,7 @@ export default function CeilingCalc() {
     setSeedZones(consumeSeed.zones)
     setSeedRoomId(consumeSeed.roomId ?? null)
     setSavedToRoom(false)
+    setStartWall(null)
     clearSeed()
   }, [consumeSeed, clearSeed, floorPlanRooms])
 
@@ -286,7 +293,7 @@ export default function CeilingCalc() {
                 </div>
               )}
             </div>
-            <button onClick={() => { setSeedBanner(null); setSeedZones(null) }}
+            <button onClick={() => { setSeedBanner(null); setSeedZones(null); setStartWall(null) }}
               style={{ border: 'none', background: 'none', color: C.muted, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
           </div>
         )}
@@ -331,6 +338,22 @@ export default function CeilingCalc() {
             </div>
           </div>
         </Card>
+
+        {/* Стена начала раскладки — пункт 5 плана (KONSPEKT.md 10.07.2026).
+            Только для непрямоугольного контура (пришёл с плана, L×W не заданы).
+            Пока UI-заглушка: выбор запоминается и подсвечивается на превью,
+            но сам расчёт раскладки по полигону ещё не реализован (пункт 6) —
+            для прямоугольного помещения (hasRoom) раскладка уже точная и
+            стена старта там не нужна. */}
+        {!hasRoom && seedZones && seedZones.some(z => z.outerMm.length >= 3) && (
+          <Card title="СТЕНА НАЧАЛА РАСКЛАДКИ">
+            <StartWallPicker
+              zones={seedZones}
+              value={startWall}
+              onChange={setStartWall}
+            />
+          </Card>
+        )}
 
         {/* Параметры конструкции */}
         {form.type !== 'p19' && (
@@ -534,6 +557,7 @@ export default function CeilingCalc() {
                       canvasW={canvasW}
                       areaSqm={form.areaSqm}
                       perimeterM={form.perimeterM}
+                      startWall={startWall}
                     />
                   ) : (
                     <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -658,11 +682,12 @@ const ZONE_COLORS = ['#2563eb', '#c9a68a', '#16a34a', '#dc2626', '#9333ea', '#08
  * произвольного полигона — отдельная нерешённая задача (пункт 6), это
  * превью её не делает, только показывает форму(ы).
  */
-function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM }: {
+function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall }: {
   zones: CeilingSeedZone[]
   canvasW: number
   areaSqm: number
   perimeterM: number
+  startWall?: { zoneIndex: number; sideIndex: number } | null
 }) {
   const PAD = 32
   const STAGE_H = 300
@@ -707,6 +732,18 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM }: {
                   const s = toStage(p)
                   return <Rect key={pi} x={s.x - 3} y={s.y - 3} width={6} height={6} fill={color} />
                 })}
+                {startWall && startWall.zoneIndex === zi && (() => {
+                  const side = polygonSides(zone.outerMm)[startWall.sideIndex]
+                  if (!side) return null
+                  const a = toStage(side.start)
+                  const b = toStage(side.end)
+                  return (
+                    <Group>
+                      <Line points={[a.x, a.y, b.x, b.y]} stroke={C.warning} strokeWidth={4} lineCap="round" />
+                      <Rect x={a.x - 4} y={a.y - 4} width={8} height={8} fill={C.warning} cornerRadius={1} />
+                    </Group>
+                  )
+                })()}
                 {validZones.length > 1 && (
                   <Text x={c.x} y={c.y} text={zone.label} fontSize={11} fill={color}
                     fontStyle="bold" offsetX={zone.label.length * 3} offsetY={5} />
@@ -729,6 +766,73 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM }: {
       <div style={{ textAlign: 'center', fontSize: 11, color: C.muted, marginTop: 6, lineHeight: 1.4 }}>
         {validZones.length > 1 ? 'Зоны объединены' : 'Контур обведён на плане'} · {areaSqm.toFixed(2)} м² · {perimeterM.toFixed(2)} пог.м
         <br />Нестандартная форма — точный чертёж раскладки каркаса пока доступен только для прямоугольных потолков.
+        {startWall && <><br />Оранжевым — выбранная стена начала раскладки (пока не участвует в расчёте).</>}
+      </div>
+    </div>
+  )
+}
+
+// ─── Выбор стены начала раскладки (пункт 5, UI-заглушка) ────────────────────
+//
+// Показывает стороны контура выбранной зоны как список кнопок; при
+// нескольких зонах — сначала переключатель зоны. Само значение пока
+// никак не участвует в расчёте (алгоритм раскладки по полигону —
+// пункт 6, ещё не реализован) — только запоминается и подсвечивается
+// на CeilingContourPreview, чтобы был задел на будущее.
+function StartWallPicker({ zones, value, onChange }: {
+  zones: CeilingSeedZone[]
+  value: { zoneIndex: number; sideIndex: number } | null
+  onChange: (v: { zoneIndex: number; sideIndex: number } | null) => void
+}) {
+  const validZones = zones
+    .map((z, zi) => ({ zone: z, zi }))
+    .filter(({ zone }) => zone.outerMm.length >= 3)
+
+  const [activeZi, setActiveZi] = useState(validZones[0]?.zi ?? 0)
+  const activeEntry = validZones.find(({ zi }) => zi === activeZi) ?? validZones[0]
+  if (!activeEntry) return null
+  const sides = polygonSides(activeEntry.zone.outerMm)
+
+  return (
+    <div>
+      {validZones.length > 1 && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+          {validZones.map(({ zone, zi }) => (
+            <button key={zi} onClick={() => setActiveZi(zi)} style={{
+              padding: '4px 8px', fontSize: 11, borderRadius: 5, cursor: 'pointer',
+              border: `1px solid ${activeZi === zi ? C.accent : C.border}`,
+              background: activeZi === zi ? C.accentLight : '#fff',
+              color: activeZi === zi ? C.accent : C.text,
+            }}>
+              {zone.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {sides.map(side => {
+          const isSelected = value?.zoneIndex === activeZi && value?.sideIndex === side.index
+          return (
+            <button key={side.index}
+              onClick={() => onChange(isSelected ? null : { zoneIndex: activeZi, sideIndex: side.index })}
+              style={{
+                display: 'flex', justifyContent: 'space-between', padding: '6px 10px',
+                borderRadius: 6, fontSize: 12, cursor: 'pointer', textAlign: 'left',
+                border: `1.5px solid ${isSelected ? C.warning : C.border}`,
+                background: isSelected ? '#fffbeb' : '#fff',
+                color: isSelected ? C.warning : C.text,
+                fontWeight: isSelected ? 600 : 400,
+              }}>
+              <span>Сторона {side.index + 1}</span>
+              <span>{Math.round(side.lengthMm)} мм</span>
+            </button>
+          )
+        })}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 10, color: C.muted, lineHeight: 1.4 }}>
+        Заготовка на будущее: сам чертёж раскладки профилей от выбранной стены
+        для полигона произвольной формы ещё не реализован — выбор пока только
+        подсвечивается на превью слева.
       </div>
     </div>
   )

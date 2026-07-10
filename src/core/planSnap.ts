@@ -100,6 +100,53 @@ export interface SnapResult {
  *   общая ось — см. Фикс 3 выше);
  * - ближайшая грань T-образного примыкания вдоль тела линии.
  */
+/**
+ * 4 угловые точки грани линии `l`, сдвинутые на `offsetPx` от оси вдоль
+ * нормали (nx,ny) — общий помощник для "сырых" угловых кандидатов
+ * (offsetPx=halfThicknessPx) и для флюш-кандидатов Фикса 3
+ * (offsetPx=halfThicknessPx-newHalfThicknessPx). Вынесено в общую функцию,
+ * чтобы не дублировать формулу между snapPoint и getFlushCandidates ниже
+ * (последняя нужна для визуальной подсказки — маленького маркера у флюш-
+ * точки, см. FloorPlan.tsx, по просьбе пользователя 10.07.2026: невидимая
+ * иначе точка "на 50мм внутрь стены" неудобно искать на глаз).
+ */
+function cornerPoints(l: PlanLine, nx: number, ny: number, offsetPx: number): [number, number][] {
+  return [
+    [l.x1 + nx * offsetPx, l.y1 + ny * offsetPx],
+    [l.x1 - nx * offsetPx, l.y1 - ny * offsetPx],
+    [l.x2 + nx * offsetPx, l.y2 + ny * offsetPx],
+    [l.x2 - nx * offsetPx, l.y2 - ny * offsetPx],
+  ]
+}
+
+/**
+ * Флюш-кандидаты (Фикс 3, 10.07.2026) для ВСЕХ линий плана сразу — то же,
+ * что считает snapPoint внутри себя для ближайшей линии, но здесь отдаётся
+ * полный список точек (без привязки к курсору) для визуальной подсказки:
+ * маленький маркер у каждой такой точки, пока пользователь рисует стену
+ * другой толщины рядом с существующей — иначе точка ничем не обозначена
+ * на глаз (лежит внутри тела старой стены, не на её видимой грани).
+ */
+export function getFlushCandidates(
+  lines: PlanLine[], scaleMmPx: number, newHalfThicknessPx: number, excludeId?: string,
+): { x: number; y: number }[] {
+  if (newHalfThicknessPx <= 0) return []
+  const out: { x: number; y: number }[] = []
+  for (const l of lines) {
+    if (l.id === excludeId) continue
+    const dx = l.x2 - l.x1, dy = l.y2 - l.y1
+    const len = Math.sqrt(dx * dx + dy * dy)
+    const ux = len > 1 ? dx / len : 0, uy = len > 1 ? dy / len : 0
+    const nx = -uy, ny = ux
+    const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
+    const halfThicknessPx = vis.thicknessMm > 0 ? (vis.thicknessMm / 2) / scaleMmPx : 0
+    if (halfThicknessPx <= 0 || Math.abs(newHalfThicknessPx - halfThicknessPx) <= 0.01) continue
+    const flushOffsetPx = halfThicknessPx - newHalfThicknessPx
+    for (const [px, py] of cornerPoints(l, nx, ny, flushOffsetPx)) out.push({ x: px, y: py })
+  }
+  return out
+}
+
 export function snapPoint(
   x: number, y: number, lines: PlanLine[], scaleMmPx: number,
   excludeId?: string, threshPx = 24,
@@ -129,13 +176,7 @@ export function snapPoint(
     // грани независимо от толщины (см. докстринг файла, Фикс 1). Только для
     // линий с реальной толщиной — у нулевой толщины грань совпадает с осью.
     if (halfThicknessPx > 0) {
-      const corners: [number, number][] = [
-        [l.x1 + nx * halfThicknessPx, l.y1 + ny * halfThicknessPx],
-        [l.x1 - nx * halfThicknessPx, l.y1 - ny * halfThicknessPx],
-        [l.x2 + nx * halfThicknessPx, l.y2 + ny * halfThicknessPx],
-        [l.x2 - nx * halfThicknessPx, l.y2 - ny * halfThicknessPx],
-      ]
-      for (const [px, py] of corners) {
+      for (const [px, py] of cornerPoints(l, nx, ny, halfThicknessPx)) {
         const d = dist(x, y, px, py)
         if (d <= threshPx && d < best.d) best = { x: px, y: py, snapped: true, d }
       }
@@ -157,16 +198,11 @@ export function snapPoint(
       // Кандидат осмысленно отличается от "сырого" только когда толщина
       // новой стены уже известна и заметно отличается от старой — иначе
       // (newHalfThicknessPx=0 или совпадает) он просто совпадёт с "сырым"
-      // и не будет лишним/мешающим.
+      // и не будет лишним/мешающим. Видимая подсказка для этой точки —
+      // getFlushCandidates выше, рендерится в FloorPlan.tsx как маркер.
       if (newHalfThicknessPx > 0 && Math.abs(newHalfThicknessPx - halfThicknessPx) > 0.01) {
         const flushOffsetPx = halfThicknessPx - newHalfThicknessPx
-        const flushCorners: [number, number][] = [
-          [l.x1 + nx * flushOffsetPx, l.y1 + ny * flushOffsetPx],
-          [l.x1 - nx * flushOffsetPx, l.y1 - ny * flushOffsetPx],
-          [l.x2 + nx * flushOffsetPx, l.y2 + ny * flushOffsetPx],
-          [l.x2 - nx * flushOffsetPx, l.y2 - ny * flushOffsetPx],
-        ]
-        for (const [px, py] of flushCorners) {
+        for (const [px, py] of cornerPoints(l, nx, ny, flushOffsetPx)) {
           const d = dist(x, y, px, py)
           if (d <= threshPx && d < best.d) best = { x: px, y: py, snapped: true, d }
         }

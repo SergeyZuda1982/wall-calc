@@ -72,6 +72,28 @@ export function estimateCeilingMm(lines: PlanLine[]): number {
   return existing.length > 0 ? Math.max(...existing) : DEFAULT_HEIGHT_MM
 }
 
+/**
+ * Огрублённая "визуальная" категория материала стены для 3D (не путать с
+ * PlanLineSpec.material — тем более детальным строковым значением из
+ * таксономии типа 'gasblock'/'foamblock'/'block'/etc). Для 3D-текстур важна
+ * только категория внешнего вида: кирпичная кладка / блочная кладка (газо-
+ * блок, пеноблок, обычный блок — визуально те же ряды и швы, просто другой
+ * оттенок) / монолит-бетон / неизвестно (нет данных — нейтральная плоская
+ * штукатурка, как было раньше). ГКЛ (gkl), плитка, штукатурка как отделка
+ * (wall_lining) и wall_new без заданного материала кладки сюда НЕ попадают —
+ * это не кладка, у них остаётся текущий плоский вид (см. KONSPEKT.md,
+ * обсуждение с пользователем: реалистичный ГКЛ-каркас — отдельная, более
+ * крупная задача, пока не начата).
+ */
+export type WallMaterialKind = 'brick' | 'block' | 'concrete' | 'unknown'
+
+export function wallMaterialKindOf(material: string | undefined): WallMaterialKind {
+  if (material === 'brick') return 'brick'
+  if (material === 'gasblock' || material === 'foamblock' || material === 'block') return 'block'
+  if (material === 'concrete') return 'concrete'
+  return 'unknown'
+}
+
 export interface WallBox3D {
   id: string
   /**
@@ -91,6 +113,8 @@ export interface WallBox3D {
   size: { sx: number; sy: number; sz: number }
   /** поворот вокруг вертикальной оси Y, радианы */
   rotationY: number
+  /** визуальная категория материала для 3D-текстуры, см. wallMaterialKindOf */
+  materialKind: WallMaterialKind
 }
 
 /**
@@ -134,6 +158,7 @@ export function wallToBox3D(
     center: { x: (x1 + x2) / 2, y: centerY, z: (z1 + z2) / 2 },
     size: { sx: length, sy: heightM, sz: mmToM(tMm) },
     rotationY: Math.atan2(-dz, dx),
+    materialKind: wallMaterialKindOf(line.spec?.material),
   }
 }
 
@@ -235,6 +260,7 @@ export function wallToBoxesWithOpenings3D(
       center: { x: startX + ux * midM, y: base.center.y, z: startZ + uz * midM },
       size: { sx: segLen, sy: wallHeightM, sz: base.size.sz },
       rotationY: base.rotationY,
+      materialKind: base.materialKind,
     })
   }
 
@@ -250,6 +276,7 @@ export function wallToBoxesWithOpenings3D(
       center: { x: startX + ux * midM, y: yFrom + h / 2, z: startZ + uz * midM },
       size: { sx: segLen, sy: h, sz: base.size.sz },
       rotationY: base.rotationY,
+      materialKind: base.materialKind,
     })
   }
 
@@ -411,6 +438,13 @@ export interface FreeformPrism3D {
   bottomM: number
   /** вырезы (проёмы), активные на всём протяжении этого сегмента — контуры в метрах, план сверху (x,z) */
   holes: { x: number; z: number }[][]
+  /**
+   * визуальная категория материала для 3D-текстуры (см. wallMaterialKindOf).
+   * Для kind: 'column' всегда 'concrete' (произвольные колонны в этом проекте
+   * не заводят отдельный spec.material для внешнего вида, как и остальные
+   * колонны — RoundColumnMesh/RectColumnMesh); для kind: 'wall' — из fs.spec.
+   */
+  materialKind: WallMaterialKind
 }
 
 /**
@@ -444,6 +478,7 @@ export function freeformStructuresToPrisms3D(
     if (fs.outer.length < 3) continue
     const points = toM(fs.outer)
     const totalHeightM = mmToM(fs.heightMm ?? ceilingMm)
+    const materialKind: WallMaterialKind = fs.kind === 'column' ? 'concrete' : wallMaterialKindOf(fs.spec?.material)
 
     const openings = (fs.openings ?? [])
       .filter(o => o.contour.length >= 3)
@@ -456,7 +491,7 @@ export function freeformStructuresToPrisms3D(
       .filter(o => o.topM - o.sillM > EPS)
 
     if (openings.length === 0) {
-      result.push({ id: fs.id, structureId: fs.id, kind: fs.kind, points, heightM: totalHeightM, bottomM: 0, holes: [] })
+      result.push({ id: fs.id, structureId: fs.id, kind: fs.kind, points, heightM: totalHeightM, bottomM: 0, holes: [], materialKind })
       continue
     }
 
@@ -479,6 +514,7 @@ export function freeformStructuresToPrisms3D(
         heightM: bandH,
         bottomM: bFrom,
         holes: activeHoles,
+        materialKind,
       })
     }
   }
