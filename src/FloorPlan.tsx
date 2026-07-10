@@ -39,6 +39,7 @@ import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
 import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
 import { slabToCeilingSeed } from './core/slabToCeilingSeed'
+import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { snapPoint, snapOrtho } from './core/planSnap'
 
@@ -75,7 +76,7 @@ function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
 }
 
-type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'stamp' | 'trim' | 'opening' | 'freeform' | 'freeformOpening' | 'mep_route'
+type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'ceiling' | 'stamp' | 'trim' | 'opening' | 'freeform' | 'freeformOpening' | 'mep_route'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -325,6 +326,7 @@ export default function FloorPlan() {
     setBackgroundImage, updateBackgroundImage,
     levels, activeLevelId, addLevel, duplicateLevel, removeLevel, renameLevel, setLevelElevation, selectLevel,
     addSlab, addSlabHole, removeSlab,
+    addCeiling, removeCeiling,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
     addFreeformStructure, updateFreeformStructure, removeFreeformStructure,
@@ -344,6 +346,7 @@ export default function FloorPlan() {
   const contours  = floorPlan?.contours ?? []
   const rooms     = floorPlan?.rooms    ?? []
   const slabs     = floorPlan?.slabs    ?? []
+  const ceilings  = floorPlan?.ceilings ?? []
   const roundColumns = floorPlan?.roundColumns ?? []
   const rectColumns  = floorPlan?.rectColumns  ?? []
   const freeformStructures = floorPlan?.freeformStructures ?? []
@@ -381,6 +384,7 @@ export default function FloorPlan() {
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
   const [pencilPts, setPencilPts] = useState<{ x: number; y: number }[]>([])       // карандаш: накопленные точки контура
   const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
+  const [ceilingPts, setCeilingPts] = useState<{ x: number; y: number }[]>([])     // потолок: накопленные точки контура (та же механика, что у pencilPts, но отдельная сущность — см. types/index.ts)
   const [freeformPts, setFreeformPts] = useState<{ x: number; y: number }[]>([])   // обводка (стена/колонна произвольной формы) ИЛИ проём на ней: накопленные точки контура (переиспользуется, режимы взаимоисключающие)
   const [freeformKind, setFreeformKind] = useState<'wall' | 'column'>('column')     // что создаём при замыкании контура (режим 'freeform')
   const [openingTargetFreeformId, setOpeningTargetFreeformId] = useState<string | null>(null) // режим 'freeformOpening': в какую стену вписываем проём
@@ -1192,6 +1196,9 @@ export default function FloorPlan() {
     if (mode === 'pencil') {
       setPencilPts(prev => prev.slice(0, -1))
     }
+    if (mode === 'ceiling') {
+      setCeilingPts(prev => prev.slice(0, -1))
+    }
     if (mode === 'freeform') {
       setFreeformPts(prev => prev.slice(0, -1))
     }
@@ -1317,6 +1324,25 @@ export default function FloorPlan() {
       }
       const pt = applySnap(pos.x, pos.y)
       setPencilPts(prev => [...prev, { x: pt.x, y: pt.y }])
+      return
+    }
+
+    if (mode === 'ceiling') {
+      // Та же механика замыкания/удаления точки, что у pencil — см. комментарии там.
+      const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
+      const closing = ceilingPts.length >= 3 && dist(pos.x, pos.y, ceilingPts[0].x, ceilingPts[0].y) <= closeThresh
+      if (closing) {
+        addCeiling(ceilingPts)
+        setCeilingPts([])
+        return
+      }
+      const hitIdx = ceilingPts.findIndex((p, i) => i > 0 && dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
+      if (hitIdx !== -1) {
+        setCeilingPts(prev => prev.filter((_, i) => i !== hitIdx))
+        return
+      }
+      const pt2 = applySnap(pos.x, pos.y)
+      setCeilingPts(prev => [...prev, { x: pt2.x, y: pt2.y }])
       return
     }
 
@@ -1530,7 +1556,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') { setSelected(null); setSelectedOpening(null) }
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, ceilingPts, addCeiling, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1622,6 +1648,7 @@ export default function FloorPlan() {
       } else {
         setDrawing(null); setSelected(null); setScaleStep(0); setScalePt1(null); setScalePt2(null)
         setPencilPts([])
+        setCeilingPts([])
         setFreeformPts([])
         setMepRoutePts([])
         setSelectedOpening(null)
@@ -2410,6 +2437,86 @@ export default function FloorPlan() {
             )}
           </div>
 
+          {/* Потолок — отдельная от Плиты сущность (10.07.2026, см. types/index.ts).
+              Та же механика обводки, что у Плиты (клик-клик-клик, замыкание у
+              старта), но концептуально другое: один физический потолок может
+              перекрывать несколько помещений экспликации разом (без капитальной
+              перегородки между ними). Пока без вырезов (holes) и без привязки
+              к Room — свободный контур, единственный источник геометрии. */}
+          <div>
+            <div style={{ ...sectionHeaderStyle, color: '#c9a68a' }}>Потолок</div>
+            <button
+              onClick={() => { setCeilingPts([]); setMode('ceiling') }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 14px', background: 'transparent', border: 'none',
+                cursor: 'pointer', width: '100%', textAlign: 'left',
+                borderLeft: mode === 'ceiling' ? '3px solid #c9a68a' : '3px solid transparent',
+                color: mode === 'ceiling' ? '#fff' : '#8a9ac8', fontSize: 12,
+              }}>
+              <span style={{ fontSize: 14, minWidth: 16, textAlign: 'center' }}>🏠✏️</span>
+              <span>Обвести потолок</span>
+            </button>
+            {mode === 'ceiling' && (
+              <div style={{ padding: '2px 14px 8px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
+                Клик — точка контура. Клик рядом с первой точкой — замкнуть.
+                ПКМ или Esc — отменить текущий контур. Можно обвести сразу
+                несколько помещений одним контуром, если между ними нет
+                капитальной перегородки и потолок физически один.
+                {ceilingPts.length > 0 && <div style={{ marginTop: 2 }}>Точек: {ceilingPts.length}</div>}
+              </div>
+            )}
+            {ceilings.length > 0 && (
+              <div style={{ padding: '4px 14px 8px' }}>
+                <div style={{ fontSize: 10, color: '#8a9ac8', marginBottom: 4, textTransform: 'uppercase' }}>
+                  Потолки
+                </div>
+                {ceilings.map(cl => {
+                  const seed = ceilingToCeilingSeed(cl, scaleMmPx)
+                  return (
+                    <div key={cl.id} style={{
+                      marginBottom: 5, borderRadius: 4, border: '1px solid #3a4060',
+                    }}>
+                      <div style={{ padding: '5px 10px', fontSize: 11, color: '#8a9ac8' }}>
+                        {cl.label}
+                        {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
+                      </div>
+                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px' }}>
+                        <button
+                          disabled={!seed}
+                          onClick={() => {
+                            if (!seed) return
+                            setCeilingSeed({ ...seed, label: cl.label })
+                          }}
+                          title="Отправить площадь и периметр этого потолка в расчёт потолка"
+                          style={{
+                            flex: 1, fontSize: 10, padding: '4px 6px', borderRadius: 3,
+                            border: '1px solid #3a6ea5', background: 'transparent', color: '#6fa8dc',
+                            cursor: seed ? 'pointer' : 'not-allowed', opacity: seed ? 1 : 0.4,
+                          }}>
+                          → Потолок
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Удалить потолок «${cl.label}»?`)) {
+                              removeCeiling(cl.id)
+                            }
+                          }}
+                          title="Удалить потолок"
+                          style={{
+                            fontSize: 10, padding: '4px 8px', borderRadius: 3,
+                            border: '1px solid #7a3a3a', background: 'transparent', color: '#d98a8a', cursor: 'pointer',
+                          }}>
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Обводка произвольной формы (07.07.2026) — тот же принцип, что у
               плиты-карандаша (реальный контур, не деление на отрезки), но для
               стен/перегородок ИЛИ колонн неровной/разной формы, где шаблон
@@ -3166,6 +3273,24 @@ export default function FloorPlan() {
                     />
                   ))}
 
+                  {/* Потолки — отдельный от Плит слой (10.07.2026), без дырок, свой цвет (тёплый бежевый) */}
+                  {ceilings.map(cl => (
+                    <Shape
+                      key={cl.id}
+                      fill="#c9a68a22"
+                      stroke="#c9a68a"
+                      strokeWidth={1.5}
+                      listening={false}
+                      sceneFunc={(ctx, shape) => {
+                        ctx.beginPath()
+                        ctx.moveTo(cl.outer[0].x, cl.outer[0].y)
+                        for (let i = 1; i < cl.outer.length; i++) ctx.lineTo(cl.outer[i].x, cl.outer[i].y)
+                        ctx.closePath()
+                        ctx.fillStrokeShape(shape)
+                      }}
+                    />
+                  ))}
+
                   {/* Круглые колонны — Konva Circle, заштрихованы как и прямоугольные (Room isColumn) */}
                   {roundColumns.map(rc => {
                     const r = mmToPx(rc.diameterMm, scaleMmPx) / 2
@@ -3362,6 +3487,30 @@ export default function FloorPlan() {
                         ) : (
                           <Circle key={i} x={p.x} y={p.y} radius={3} fill="#8d99ae" listening={false} />
                         )
+                      ))}
+                    </>
+                  )}
+
+                  {/* Превью текущего контура потолка (та же механика, что у pencil выше,
+                      но простые кружки-точки без карандашной иконки — своя, более
+                      простая сущность) */}
+                  {mode === 'ceiling' && ceilingPts.length > 0 && (
+                    <>
+                      {cursor && (
+                        <Line
+                          points={[...ceilingPts.flatMap(p => [p.x, p.y]), cursor.x, cursor.y]}
+                          stroke="#c9a68a" strokeWidth={1.5} dash={[6, 3]} listening={false}
+                        />
+                      )}
+                      {ceilingPts.length >= 3 && (
+                        <Circle x={ceilingPts[0].x} y={ceilingPts[0].y}
+                          radius={SNAP_SCREEN_PX / stageScaleRef.current}
+                          stroke="#c9a68a" strokeWidth={1 / stageScale} dash={[4 / stageScale, 3 / stageScale]}
+                          listening={false} />
+                      )}
+                      {ceilingPts.map((p, i) => (
+                        <Circle key={i} x={p.x} y={p.y} radius={3}
+                          fill={i === 0 ? '#e53935' : '#c9a68a'} listening={false} />
                       ))}
                     </>
                   )}

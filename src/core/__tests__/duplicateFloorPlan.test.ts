@@ -74,6 +74,16 @@ describe('duplicateFloorPlanGeometry', () => {
     expect(copy.rectColumns[0].widthMm).toBe(400)
   })
 
+  it('ceilings получают новые id (отдельная от slabs сущность, та же логика)', () => {
+    const src: FloorPlan = {
+      ...DEFAULT_FLOOR_PLAN,
+      ceilings: [{ id: 'srcCeiling', outer: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], label: 'Потолок 1' }],
+    }
+    const copy = duplicateFloorPlanGeometry(src, makeCountingIdGen())
+    expect(copy.ceilings[0].id).not.toBe('srcCeiling')
+    expect(copy.ceilings[0].label).toBe('Потолок 1')
+  })
+
   it('пустой план — не падает, возвращает пустые массивы', () => {
     const copy = duplicateFloorPlanGeometry(DEFAULT_FLOOR_PLAN, makeCountingIdGen())
     expect(copy.lines).toEqual([])
