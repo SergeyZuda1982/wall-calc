@@ -7,7 +7,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Line, Text, Group } from 'react-konva'
 import type { CeilingSpecFull } from './data/ceilingData'
-import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, CEILING_MOUNT_DIRECTION_LABELS, CEILING_LOAD_CLASS_OPTIONS } from './data/ceilingData'
+import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, CEILING_LOAD_CLASS_OPTIONS } from './data/ceilingData'
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep, CeilingLoadClass } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult, CeilingPolygonInput } from './core/calcCeiling'
@@ -462,23 +462,13 @@ export default function CeilingCalc() {
 
             {layoutModeUi === 'knauf' ? (
               <>
-                <div style={{ marginBottom: 8 }}>
-                  <label style={lbl}>Монтаж КНАУФ-листов</label>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {(['crosswise', 'lengthwise'] as const).map(md => (
-                      <button key={md}
-                        onClick={() => setField('mountDirection', md)}
-                        style={{
-                          flex: 1, padding: '6px 8px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
-                          border: `1px solid ${(form.mountDirection ?? 'crosswise') === md ? C.accent : '#3a4060'}`,
-                          background: (form.mountDirection ?? 'crosswise') === md ? C.accent : 'transparent',
-                          color: (form.mountDirection ?? 'crosswise') === md ? '#fff' : C.muted,
-                        }}>
-                        {CEILING_MOUNT_DIRECTION_LABELS[md]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {/* 11.07.2026: переключатель "Поперечно/Продольно" убран для
+                    П112 — по официальному документу (лист 1.045.9-2.08.1-2)
+                    у П112 есть только один вариант монтажа, b=500мм
+                    константа. Продольный монтаж (b=400мм) относится к П113,
+                    см. ceilingData.ts (CeilingMountDirection). mountDirection
+                    больше не задаётся из UI для П112 → resolveFrameParams
+                    использует дефолт 'crosswise'. */}
                 <div style={{ marginBottom: 8 }}>
                   <label style={lbl}>Класс нагрузки на подвесы, кН/м²</label>
                   <select style={inp} value={form.loadClass ?? 0.15}

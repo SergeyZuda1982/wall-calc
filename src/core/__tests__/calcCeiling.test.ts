@@ -141,8 +141,11 @@ describe('calcCeiling — П112, точная геометрия (с slabGapMm)'
     const item = withKnauf.materials.find(m => m.name.includes('несущий, верхний'))
     expect(item!.qty).toBe(Math.ceil(expectedKnaufGeo.bearingTotalLm))
     expect(withKnauf.materials).not.toEqual(res.materials)
-    // c=600 вне официальной таблицы (только 800/1000/1200) -> должно быть предупреждение
-    expect(withKnauf.warnings.some(w => w.includes('таблиц'))).toBe(true)
+    // 11.07.2026: c=600 раньше ошибочно считался вне официальной таблицы
+    // (тогда покрывались только 800/1000/1200) — после сверки по фото
+    // документа таблица покрывает весь диапазон c=500..1200, поэтому для
+    // c=600 предупреждения больше быть не должно (см. ceilingData.ts).
+    expect(withKnauf.warnings.some(w => w.includes('таблиц'))).toBe(false)
   })
 
   it('layoutMode:"knauf" с mountDirection:"lengthwise" даёт stepB=400 (не 500)', () => {
