@@ -7,10 +7,16 @@
  * этот файл — только начальный набор, не жёсткий справочник.
  */
 
-import type { WorkStageTemplate } from '../types'
+import type { WorkStageTemplate, WorkStepMeaning3D } from '../types'
 
 function steps(labels: string[]): WorkStageTemplate['steps'] {
   return labels.map((label, i) => ({ id: `s${i + 1}`, label }))
+}
+
+/** Та же steps(), но с тегами meaning3D для конкретных шагов (см. WorkStepMeaning3D) —
+ *  labelToMeaning ключ по label (проще читать здесь, чем по индексу). */
+function stepsWithMeaning3D(labels: string[], labelToMeaning: Record<string, WorkStepMeaning3D>): WorkStageTemplate['steps'] {
+  return labels.map((label, i) => ({ id: `s${i + 1}`, label, meaning3D: labelToMeaning[label] }))
 }
 
 export const BUILTIN_WORK_STAGE_TEMPLATES: WorkStageTemplate[] = [
@@ -27,7 +33,10 @@ export const BUILTIN_WORK_STAGE_TEMPLATES: WorkStageTemplate[] = [
   {
     id: 'gkl_partition',
     label: 'Перегородка ГКЛ',
-    steps: steps(['Разметка', 'Каркас', 'Зашивка стороны 1', 'Минвата', 'Зашивка стороны 2', 'Готово']),
+    steps: stepsWithMeaning3D(
+      ['Разметка', 'Каркас', 'Зашивка стороны 1', 'Минвата', 'Зашивка стороны 2', 'Готово'],
+      { 'Каркас': 'frame', 'Зашивка стороны 1': 'sheet_a', 'Зашивка стороны 2': 'sheet_b' },
+    ),
   },
   {
     id: 'floor_screed_tile',
