@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { lineProgressStatus, lineProgressColor, isLineBuiltForRender, lineProgressSummary } from '../lineProgress'
+import { lineProgressStatus, lineProgressColor, isLineBuiltForRender, lineProgressSummary, wallGklVisual3D } from '../lineProgress'
 import { applyTemplate, confirmStep, rejectStep } from '../workProgress'
 import type { PlanLine, WorkStageTemplate } from '../../types'
 
@@ -9,6 +9,17 @@ const tpl: WorkStageTemplate = {
   steps: [
     { id: 's1', label: 'Разметка' },
     { id: 's2', label: 'Каркас' },
+  ],
+}
+
+const gklFrameTpl: WorkStageTemplate = {
+  id: 'gkl_partition_tagged',
+  label: 'Перегородка ГКЛ (с тегами)',
+  steps: [
+    { id: 's1', label: 'Разметка' },
+    { id: 's2', label: 'Каркас', meaning3D: 'frame' },
+    { id: 's3', label: 'Зашивка стороны 1', meaning3D: 'sheet_a' },
+    { id: 's4', label: 'Зашивка стороны 2', meaning3D: 'sheet_b' },
   ],
 }
 
@@ -104,5 +115,47 @@ describe('lineProgressSummary', () => {
     p = confirmStep(p, 0)
     p = confirmStep(p, 1)
     expect(lineProgressSummary(p)).toBe('Готово · 100%')
+  })
+})
+
+describe('wallGklVisual3D (10-11.07.2026, Этап 2 — 3D-каркас ГКЛ)', () => {
+  it('не gkl (кладка/бетон) — null, эта функция не участвует', () => {
+    const l = line({ type: 'wall_existing', spec: { material: 'brick' } })
+    expect(wallGklVisual3D(l)).toBeNull()
+  })
+
+  it('wall_new без spec.material вообще — null (не gkl, категория не резолвится)', () => {
+    expect(wallGklVisual3D(line())).toBeNull()
+  })
+
+  it('gkl, buildProgress не настроен — legacy (сплошная стена, как раньше)', () => {
+    const l = line({ spec: { material: 'gkl' } })
+    expect(wallGklVisual3D(l)).toEqual({ mode: 'legacy', sheetA: false, sheetB: false })
+  })
+
+  it('gkl, buildProgress настроен, но ничего не подтверждено — frame, обе стороны голые', () => {
+    const l = line({ spec: { material: 'gkl' }, buildProgress: applyTemplate(gklFrameTpl) })
+    expect(wallGklVisual3D(l)).toEqual({ mode: 'frame', sheetA: false, sheetB: false })
+  })
+
+  it('подтверждён шаг с тегом sheet_a — sheetA true, sheetB всё ещё false', () => {
+    let p = applyTemplate(gklFrameTpl)
+    p = confirmStep(p, 0) // Разметка
+    p = confirmStep(p, 1) // Каркас
+    p = confirmStep(p, 2) // Зашивка стороны 1 (sheet_a)
+    const l = line({ spec: { material: 'gkl' }, buildProgress: p })
+    expect(wallGklVisual3D(l)).toEqual({ mode: 'frame', sheetA: true, sheetB: false })
+  })
+
+  it('подтверждены обе обшивки — sheetA и sheetB true', () => {
+    let p = applyTemplate(gklFrameTpl)
+    for (let i = 0; i < 4; i++) p = confirmStep(p, i)
+    const l = line({ spec: { material: 'gkl' }, buildProgress: p })
+    expect(wallGklVisual3D(l)).toEqual({ mode: 'frame', sheetA: true, sheetB: true })
+  })
+
+  it('прогресс без тегов вообще (обычный шаблон tpl) — frame, но обе стороны голые (нет тегов — некому подтверждаться)', () => {
+    const l = line({ spec: { material: 'gkl' }, buildProgress: applyTemplate(tpl) })
+    expect(wallGklVisual3D(l)).toEqual({ mode: 'frame', sheetA: false, sheetB: false })
   })
 })

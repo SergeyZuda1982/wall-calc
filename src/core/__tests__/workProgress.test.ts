@@ -8,6 +8,7 @@ import {
   isNotStarted,
   isComplete,
   isBlocked,
+  hasConfirmedStepWithMeaning,
   confirmStep,
   rejectStep,
   resetStep,
@@ -21,10 +22,10 @@ const gklTemplate: WorkStageTemplate = {
   label: 'Перегородка ГКЛ',
   steps: [
     { id: 's1', label: 'Разметка' },
-    { id: 's2', label: 'Каркас' },
-    { id: 's3', label: 'Зашивка стороны 1' },
+    { id: 's2', label: 'Каркас', meaning3D: 'frame' },
+    { id: 's3', label: 'Зашивка стороны 1', meaning3D: 'sheet_a' },
     { id: 's4', label: 'Минвата' },
-    { id: 's5', label: 'Зашивка стороны 2' },
+    { id: 's5', label: 'Зашивка стороны 2', meaning3D: 'sheet_b' },
   ],
 }
 
@@ -36,6 +37,14 @@ describe('applyTemplate / createWorkProgress', () => {
     expect(p.steps).toHaveLength(5)
     expect(p.steps.every(s => s.outcome === 'pending')).toBe(true)
     expect(p.steps[0]).toEqual({ stepId: 's1', label: 'Разметка', outcome: 'pending' })
+  })
+
+  it('копирует meaning3D вместе с остальными полями шага (10-11.07.2026, Этап 2)', () => {
+    const p = applyTemplate(gklTemplate)
+    expect(p.steps[1].meaning3D).toBe('frame')
+    expect(p.steps[2].meaning3D).toBe('sheet_a')
+    expect(p.steps[4].meaning3D).toBe('sheet_b')
+    expect(p.steps[0].meaning3D).toBeUndefined() // "Разметка" без тега
   })
 
   it('createWorkProgress строит список с нуля, без templateId', () => {
@@ -52,6 +61,36 @@ describe('applyTemplate / createWorkProgress', () => {
   })
 })
 
+describe('hasConfirmedStepWithMeaning (10-11.07.2026, Этап 2 — 3D-каркас ГКЛ)', () => {
+  it('false, если тег есть, но шаг не подтверждён', () => {
+    const p = applyTemplate(gklTemplate)
+    expect(hasConfirmedStepWithMeaning(p, 'frame')).toBe(false)
+  })
+
+  it('true, если шаг с этим тегом подтверждён', () => {
+    let p = applyTemplate(gklTemplate)
+    p = confirmStep(p, 0) // Разметка
+    p = confirmStep(p, 1) // Каркас (meaning3D: 'frame')
+    expect(hasConfirmedStepWithMeaning(p, 'frame')).toBe(true)
+    expect(hasConfirmedStepWithMeaning(p, 'sheet_a')).toBe(false)
+  })
+
+  it('ищет тег в любом месте списка, не только по первому шагу', () => {
+    let p = applyTemplate(gklTemplate)
+    p = confirmStep(p, 0)
+    p = confirmStep(p, 1)
+    p = confirmStep(p, 2) // Зашивка стороны 1 (sheet_a)
+    expect(hasConfirmedStepWithMeaning(p, 'sheet_a')).toBe(true)
+    expect(hasConfirmedStepWithMeaning(p, 'sheet_b')).toBe(false)
+  })
+
+  it('без тегов вообще (произвольный список без meaning3D) — всегда false', () => {
+    let p = createWorkProgress([{ id: 'a', label: 'Свой шаг' }])
+    p = confirmStep(p, 0)
+    expect(hasConfirmedStepWithMeaning(p, 'frame')).toBe(false)
+  })
+})
+
 describe('saveAsTemplate', () => {
   it('строит шаблон только из id/label, без outcome/причин', () => {
     let p = applyTemplate(gklTemplate)
@@ -62,10 +101,10 @@ describe('saveAsTemplate', () => {
     expect(tpl.label).toBe('Мой шаблон')
     expect(tpl.steps).toEqual([
       { id: 's1', label: 'Разметка' },
-      { id: 's2', label: 'Каркас' },
-      { id: 's3', label: 'Зашивка стороны 1' },
+      { id: 's2', label: 'Каркас', meaning3D: 'frame' },
+      { id: 's3', label: 'Зашивка стороны 1', meaning3D: 'sheet_a' },
       { id: 's4', label: 'Минвата' },
-      { id: 's5', label: 'Зашивка стороны 2' },
+      { id: 's5', label: 'Зашивка стороны 2', meaning3D: 'sheet_b' },
     ])
   })
 })

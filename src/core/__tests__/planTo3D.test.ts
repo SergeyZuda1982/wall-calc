@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   wallThicknessMm, wallToBox3D, wallsToBoxes3D, estimateCeilingMm,
   roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM,
-  freeformStructuresToPrisms3D, wallMaterialKindOf,
+  freeformStructuresToPrisms3D, wallMaterialKindOf, wallStudPositionsMm,
 } from '../planTo3D'
 import type { PlanLine, Room, Slab, RoundColumn, RectColumn, PlanOpening, FreeformStructure } from '../../types'
 
@@ -93,6 +93,57 @@ describe('freeformStructuresToPrisms3D — materialKind (10.07.2026)', () => {
     const prisms = freeformStructuresToPrisms3D([fs], 10, 3000)
     expect(prisms.length).toBeGreaterThan(0)
     for (const p of prisms) expect(p.materialKind).toBe('concrete')
+  })
+})
+
+describe('wallStudPositionsMm (10-11.07.2026, Этап 2 — 3D-каркас ГКЛ)', () => {
+  it('нулевая длина — пустой список', () => {
+    const line = baseLine({ type: 'wall_new', spec: { material: 'gkl', subtype: 'ps50' }, lengthMm: 0 })
+    expect(wallStudPositionsMm(line)).toEqual([])
+  })
+
+  it('wall_new с поддержанным профилем (ps50) — совпадает с реальным раскроем buildPositions (тот же расчёт, что и в смете)', () => {
+    const line = baseLine({ type: 'wall_new', spec: { material: 'gkl', subtype: 'ps50' }, lengthMm: 2000 })
+    const positions = wallStudPositionsMm(line)
+    // Реальный расчёт даёт периодическую сетку с шагом 600мм от фазы 0
+    // плюс крайние стойки на 0 и на длине стены (см. buildPositions.ts,
+    // mergeStuds(..., 'both') — торцевые стойки всегда учитываются)
+    expect(positions).toEqual([0, 600, 1200, 1800, 2000])
+  })
+
+  it('проём (дверь) сдвигает раскрой так, чтобы стойки не конфликтовали с краями проёма', () => {
+    const line = baseLine({
+      type: 'wall_new', spec: { material: 'gkl', subtype: 'ps50' }, lengthMm: 2000,
+      openings: [{ id: 'd1', type: 'door', offsetMm: 590, widthMm: 20, heightMm: 2000, label: 'Д-1' }],
+    })
+    const positions = wallStudPositionsMm(line)
+    // Стойки проёма — 590 и 610 (края двери), рядовая стойка на 600 конфликтовала бы (MIN_GAP=150) —
+    // фаза подбирается заново так, чтобы конфликтов не было (см. buildPositions.ts)
+    expect(positions).toContain(590)
+    expect(positions).toContain(610)
+    for (const p of positions) {
+      if (p === 590 || p === 610) continue
+      expect(Math.abs(p - 590)).toBeGreaterThan(150)
+      expect(Math.abs(p - 610)).toBeGreaterThan(150)
+    }
+  })
+
+  it('wall_new с неподдержанным профилем (ps125) — упрощённая равномерная сетка без учёта проёмов', () => {
+    const line = baseLine({
+      type: 'wall_new', spec: { material: 'gkl', subtype: 'ps125' }, lengthMm: 1800,
+      openings: [{ id: 'd1', type: 'door', offsetMm: 590, widthMm: 20, heightMm: 2000, label: 'Д-1' }],
+    })
+    expect(wallStudPositionsMm(line)).toEqual([600, 1200])
+  })
+
+  it('wall_lining (облицовка) — упрощённая равномерная сетка (нет полноценного WallInput для облицовки)', () => {
+    const line = baseLine({ type: 'wall_lining', spec: { material: 'gkl' }, lengthMm: 1800 })
+    expect(wallStudPositionsMm(line)).toEqual([600, 1200])
+  })
+
+  it('свой шаг (spec.step) вместо дефолтных 600мм учитывается', () => {
+    const line = baseLine({ type: 'wall_lining', spec: { material: 'gkl', step: 400 }, lengthMm: 1000 })
+    expect(wallStudPositionsMm(line)).toEqual([400, 800])
   })
 })
 
