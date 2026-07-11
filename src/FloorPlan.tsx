@@ -2035,26 +2035,69 @@ export default function FloorPlan() {
   // с координатами КОНЦОВ каждой стены в мм (не только точка стыка), чтобы
   // можно было воспроизвести конкретный узел в юнит-тесте один-в-один по
   // цифрам с реального объекта (см. KONSPEKT.md 11.07.2026, открытый вопрос №1/2).
+  //
+  // 11.07.2026, повторная сессия: пользователь сообщил, что бейдж угла НЕ
+  // появляется вообще на реальном угле C-2/C-3 (только на маленьком
+  // прямоугольнике перемычки) — т.е. join там не находится ни для митра,
+  // ни для угла. Возможные причины: (а) концы стен не совпадают в пределах
+  // JOIN_EPS=3px после фикса planSnap (тот самый исходный баг), (б) стена
+  // отфильтрована ИЗ buildWallsForJoin целиком (например wall_existing без
+  // material — см. несовпадение фильтра с lineAttachments в FloorPlan.tsx).
+  // Поэтому дампим ВСЕ квалифицирующиеся стены (буквально то, что попало на
+  // вход computeWallJoins/computeJoinAngles) — если нужной стены в списке
+  // нет вообще, значит причина (б); если есть, но не рядом — причина (а),
+  // и near-miss ниже покажет фактический зазор.
   useEffect(() => {
-    if (!showJoinAngles || joinAngles.length === 0) return
+    if (!showJoinAngles) return
+    const allWalls = buildWallsForJoin(lines, scaleMmPx, rectColumns)
     const linesById = new Map(lines.map(l => [l.id, l]))
+    const toMm = (px: number) => Math.round(px * scaleMmPx)
     // eslint-disable-next-line no-console
-    console.log('[wall-calc] узлы стен — углы и координаты (мм):')
-    joinAngles.forEach(a => {
-      const la = linesById.get(a.wallAId)
-      const lb = linesById.get(a.wallBId)
-      const toMm = (l: typeof la) => l && {
-        x1: Math.round(l.x1 * scaleMmPx), y1: Math.round(l.y1 * scaleMmPx),
-        x2: Math.round(l.x2 * scaleMmPx), y2: Math.round(l.y2 * scaleMmPx),
-      }
+    console.log(`[wall-calc] углы: всего стен/граней на входе join = ${allWalls.length}`)
+    allWalls.forEach(w => {
+      const l = linesById.get(w.id)
       // eslint-disable-next-line no-console
       console.log(
-        `  угол ${a.angleDeg.toFixed(2)}°  точка стыка (${Math.round(a.x * scaleMmPx)}, ${Math.round(a.y * scaleMmPx)}) мм`,
-        '\n    A:', a.wallAId, toMm(la),
-        '\n    B:', a.wallBId, toMm(lb),
+        `  ${w.id}${l ? ` (${l.type}${l.spec?.material ? `, ${l.spec.material}${l.spec.subtype ? '/' + l.spec.subtype : ''}` : ', БЕЗ material'})` : ' (грань колонны)'}`,
+        `x1,y1=(${toMm(w.x1)},${toMm(w.y1)})  x2,y2=(${toMm(w.x2)},${toMm(w.y2)})  halfPx=${w.halfPx.toFixed(2)}`,
       )
     })
-  }, [showJoinAngles, joinAngles, lines, scaleMmPx])
+
+    if (joinAngles.length > 0) {
+      console.log('[wall-calc] найденные узлы (углы):')
+      joinAngles.forEach(a => {
+        console.log(`  угол ${a.angleDeg.toFixed(2)}°  точка (${toMm(a.x)}, ${toMm(a.y)}) мм  A=${a.wallAId}  B=${a.wallBId}`)
+      })
+    }
+
+    // Near-miss: пары концов стен, которые ВИЗУАЛЬНО рядом (в пределах 800мм),
+    // но не совпали в пределах JOIN_EPS=3px — значит, именно поэтому join не
+    // находится. Показываем фактический зазор в мм, чтобы не гадать.
+    const NEAR_MISS_MAX_MM = 800
+    const nearMissMaxPx = NEAR_MISS_MAX_MM / scaleMmPx
+    const JOIN_EPS_PX = 3
+    const ends = (w: typeof allWalls[number]) => [
+      { end: 'end1' as const, x: w.x1, y: w.y1 },
+      { end: 'end2' as const, x: w.x2, y: w.y2 },
+    ]
+    let anyNearMiss = false
+    for (let i = 0; i < allWalls.length; i++) {
+      for (let j = i + 1; j < allWalls.length; j++) {
+        for (const ea of ends(allWalls[i])) {
+          for (const eb of ends(allWalls[j])) {
+            const dpx = Math.hypot(ea.x - eb.x, ea.y - eb.y)
+            if (dpx <= JOIN_EPS_PX || dpx > nearMissMaxPx) continue
+            if (!anyNearMiss) { console.log('[wall-calc] БЛИЗКИЕ, НО НЕ СОВПАВШИЕ концы (зазор > 3px, вероятная причина отсутствия join):'); anyNearMiss = true }
+            console.log(
+              `  ${allWalls[i].id}.${ea.end} ↔ ${allWalls[j].id}.${eb.end}`,
+              `зазор = ${Math.round(dpx * scaleMmPx)} мм`,
+              `  A=(${toMm(ea.x)},${toMm(ea.y)})  B=(${toMm(eb.x)},${toMm(eb.y)})`,
+            )
+          }
+        }
+      }
+    }
+  }, [showJoinAngles, joinAngles, lines, rectColumns, scaleMmPx])
 
   // ── Боковое примыкание: к чему упирается каждый конец линии ──────────────
   const lineAttachments = useMemo(() => {
