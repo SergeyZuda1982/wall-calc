@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   wallThicknessMm, wallToBox3D, wallsToBoxes3D, estimateCeilingMm,
-  roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM,
+  roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM,
   freeformStructuresToPrisms3D, wallMaterialKindOf, wallStudPositionsMm,
 } from '../planTo3D'
-import type { PlanLine, Room, Slab, RoundColumn, RectColumn, PlanOpening, FreeformStructure } from '../../types'
+import type { PlanLine, Room, Slab, Ceiling, RoundColumn, RectColumn, PlanOpening, FreeformStructure } from '../../types'
 
 function baseLine(overrides: Partial<PlanLine>): PlanLine {
   return {
@@ -366,6 +366,38 @@ describe('slabsToPolygons3D', () => {
     const polys = slabsToPolygons3D(slabs, 10)
     expect(polys).toHaveLength(1)
     expect(polys[0].holes).toHaveLength(0)
+  })
+})
+
+describe('ceilingsToPolygons3D', () => {
+  it('переводит контур в метры (outerM) и в мм (outerMm), сохраняет ceilingSpec/startWallSideIndex', () => {
+    const ceilings: Ceiling[] = [{
+      id: 'cl1', label: 'Потолок 1',
+      outer: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+      ceilingSpec: { type: 'p112', layers: 1, material: 'gsp', thickness: 12.5, stepC: 600, areaSqm: 10, perimeterM: 12, slabGapMm: 80 },
+      startWallSideIndex: 2,
+    }]
+    const polys = ceilingsToPolygons3D(ceilings, 10) // 10мм/px
+    expect(polys).toHaveLength(1)
+    expect(polys[0].outerM[1]).toEqual({ x: 1, z: 0 }) // 100px*10мм = 1000мм = 1м
+    expect(polys[0].outerMm[1]).toEqual({ x: 1000, y: 0 })
+    expect(polys[0].ceilingSpec?.type).toBe('p112')
+    expect(polys[0].startWallSideIndex).toBe(2)
+  })
+
+  it('потолок без хотя бы 3 точек контура — пропущен', () => {
+    const ceilings: Ceiling[] = [{ id: 'cl1', label: 'X', outer: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }]
+    expect(ceilingsToPolygons3D(ceilings, 10)).toHaveLength(0)
+  })
+
+  it('без сохранённой раскладки — ceilingSpec/startWallSideIndex не заданы', () => {
+    const ceilings: Ceiling[] = [{
+      id: 'cl1', label: 'Потолок 1',
+      outer: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }],
+    }]
+    const polys = ceilingsToPolygons3D(ceilings, 10)
+    expect(polys[0].ceilingSpec).toBeUndefined()
+    expect(polys[0].startWallSideIndex).toBeUndefined()
   })
 })
 
