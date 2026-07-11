@@ -10,6 +10,22 @@ import {
   P131_FRAME_RATES, P131_SPECIAL_RATES, P131_SHEET_RATES,
 } from '../data/ceilingData'
 import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL } from './calcP112Frame'
+import { calcPolygonP112Frame, type PolygonP112FrameResult } from './calcPolygonP112Frame'
+import { calcPolygonSheetLayout, type PolygonSheetLayoutResult } from './calcPolygonSheetLayout'
+import type { Point2D } from './geometry2d'
+
+/**
+ * Контур потолка произвольной формы (в т.ч. вогнутой) + выбранная стена
+ * начала раскладки — пункт 6 плана (KONSPEKT.md 10.07.2026). Если передан
+ * при расчёте П112 — вместо усреднённого/прямоугольного расчёта каркаса и
+ * раскроя листов используется точная геометрия по контуру
+ * (calcPolygonP112Frame.ts / calcPolygonSheetLayout.ts).
+ */
+export interface CeilingPolygonInput {
+  outerMm: Point2D[]
+  holesMm: Point2D[][]
+  startSide: { start: Point2D; end: Point2D }
+}
 
 // ─── Результат расчёта ────────────────────────────────────────────────────────
 
@@ -61,8 +77,14 @@ export interface CeilingCalcResult {
   perimeterM: number
   /** Спецификация материалов */
   materials: CeilingMaterialItem[]
-  /** Раскрой листов (для визуализации) */
+  /** Раскрой листов (для визуализации, только прямоугольное помещение) */
   sheetLayout: CeilingSheetLayout | null
+  /** Точная геометрия каркаса по контуру произвольной формы (пункт 6,
+   *  KONSPEKT.md 10.07.2026) — заполнено только если calcCeiling вызван
+   *  с polygonInput и тип П112. */
+  polygonFrame: PolygonP112FrameResult | null
+  /** Раскрой листов по контуру произвольной формы — см. polygonFrame. */
+  polygonSheetLayout: PolygonSheetLayoutResult | null
   /** Предупреждения */
   warnings: string[]
 }
@@ -84,16 +106,19 @@ function getHangerStep(type: CeilingSpec['type'], stepC: CeilingStep): number {
 
 // ─── Основная функция ─────────────────────────────────────────────────────────
 
-export function calcCeiling(spec: CeilingSpec): CeilingCalcResult {
+export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInput): CeilingCalcResult {
   const { type, layers, areaSqm, perimeterM, stepC } = spec
   const warnings: string[] = []
   const materials: CeilingMaterialItem[] = []
+  let polygonFrame: PolygonP112FrameResult | null = null
 
   if (type === 'p19') {
     return {
       spec, areaSqm, perimeterM,
       materials: [],
       sheetLayout: null,
+      polygonFrame: null,
+      polygonSheetLayout: null,
       warnings: ['П19 (многоуровневый) — расчёт выполняется по индивидуальному проекту'],
     }
   }
@@ -114,11 +139,41 @@ export function calcCeiling(spec: CeilingSpec): CeilingCalcResult {
     // П112: точный геометрический расчёт, если заданы размеры помещения и
     // зазор до плиты (см. calcP112Frame.ts, КОНСПЕКТ.md сессия 05.07.2026).
     // Без этих данных — старый усреднённый расход на м² (fallback ниже).
+    // 10.07.2026: третий вариант — точный расчёт по контуру произвольной
+    // формы (polygonInput), см. calcPolygonP112Frame.ts, пункт 6 плана.
     const full = spec as CeilingSpecFull
-    const hasPreciseGeometry = type === 'p112'
+    const hasPolygonGeometry = type === 'p112' && !!polygonInput && !!full.slabGapMm
+    const hasPreciseGeometry = !hasPolygonGeometry && type === 'p112'
       && !!full.roomLengthMm && !!full.roomWidthMm && !!full.slabGapMm
 
-    if (hasPreciseGeometry) {
+    if (hasPolygonGeometry) {
+      const layoutMode = full.layoutMode ?? 'user'
+      const frameParams = resolveFrameParams({
+        stepC, layoutMode, userStepB: full.stepB, mountDirection: full.mountDirection, loadClass: full.loadClass,
+      })
+      if (frameParams.warning) warnings.push(frameParams.warning)
+      polygonFrame = calcPolygonP112Frame(
+        polygonInput!.outerMm, polygonInput!.holesMm, polygonInput!.startSide,
+        stepC, frameParams.stepB, full.slabGapMm!, layoutMode,
+        {
+          stepA: frameParams.stepA,
+          wallOffsetMainMm: frameParams.wallOffsetMainMm,
+          wallOffsetBearingMm: frameParams.wallOffsetBearingMm,
+        },
+      )
+      warnings.push(...polygonFrame.warnings)
+
+      materials.push({ name: 'Профиль ПП 60×27 (несущий, верхний уровень)', unit: 'пог.м', qty: ceil(polygonFrame.bearingTotalLm) })
+      materials.push({ name: 'Профиль ПП 60×27 (основной, нижний уровень)', unit: 'пог.м', qty: ceil(polygonFrame.mainTotalLm) })
+      const extendersTotal = polygonFrame.bearingExtenders + polygonFrame.mainExtenders
+      if (extendersTotal > 0) {
+        materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotal })
+      }
+      materials.push({ name: 'Соединитель двухуровневый ПП 60×27', unit: 'шт', qty: polygonFrame.connectorsTotal })
+      materials.push({ name: HANGER_LABEL[polygonFrame.hangerKind], unit: 'шт', qty: polygonFrame.hangersTotal })
+      materials.push({ name: 'Анкер-клин (крепление подвеса к плите)', unit: 'шт', qty: polygonFrame.hangersTotal })
+      materials.push({ name: 'Шуруп LN (крепление в подвесе)', unit: 'шт', qty: polygonFrame.hangersTotal * 2 })
+    } else if (hasPreciseGeometry) {
       const layoutMode = full.layoutMode ?? 'user'
       const bearingAlongLength = full.bearingAlongLength ?? true
       const frameParams = resolveFrameParams({
@@ -288,9 +343,22 @@ export function calcCeiling(spec: CeilingSpec): CeilingCalcResult {
   materials.push({ name: 'Грунтовка КНАУФ-Тифенгрунд', unit: 'кг', qty: Math.ceil(sheetRates.primer_kg * areaSqm * 10) / 10 })
 
   // ─── Раскрой листов ────────────────────────────────────────────────────────
-  const sheetLayout = calcCeilingSheetLayout(spec)
+  // Контур произвольной формы (пункт 6) — только П112, только если передан
+  // polygonInput; прямоугольный расчёт (calcCeilingSheetLayout) в этом случае
+  // не используется — sheetLayout остаётся null, чтобы старый рендер-канвас
+  // (CeilingCanvas, рассчитан на прямоугольник) не пытался его отрисовать.
+  const polygonSheetLayout = (type === 'p112' && polygonInput)
+    ? calcPolygonSheetLayout(polygonInput.outerMm, polygonInput.holesMm, polygonInput.startSide, sheetLengthFromSpec(spec))
+    : null
+  const sheetLayout = polygonInput ? null : calcCeilingSheetLayout(spec)
 
-  return { spec, areaSqm, perimeterM, materials, sheetLayout, warnings }
+  return { spec, areaSqm, perimeterM, materials, sheetLayout, polygonFrame, polygonSheetLayout, warnings }
+}
+
+/** Длина листа для раскроя — из spec, с тем же дефолтом 2500мм, что и
+ *  calcCeilingSheetLayout (прямоугольная версия), см. ниже. */
+function sheetLengthFromSpec(spec: CeilingSpec): number {
+  return (spec as CeilingSpecFull).sheetLengthMm ?? 2500
 }
 
 // ─── Раскрой листов для потолка ──────────────────────────────────────────────

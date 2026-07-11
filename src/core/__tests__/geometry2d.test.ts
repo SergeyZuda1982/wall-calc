@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clipRectBySlopedTop, polygonArea, polygonPerimeter, polygonSides, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from '../geometry2d'
+import { clipRectBySlopedTop, polygonArea, polygonPerimeter, polygonSides, insideSegments, pointInPolygon, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from '../geometry2d'
 
 describe('polygonArea', () => {
   it('площадь прямоугольника', () => {
@@ -58,6 +58,62 @@ describe('polygonSides', () => {
   it('меньше 2 точек — пустой список', () => {
     expect(polygonSides([{ x: 0, y: 0 }])).toEqual([])
     expect(polygonSides([])).toEqual([])
+  })
+})
+
+describe('scanlineCrossings / insideSegments / pointInPolygon', () => {
+  const rect = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 }, { x: 0, y: 5 }]
+
+  it('прямоугольник: одна горизонталь даёт один отрезок во всю ширину', () => {
+    expect(insideSegments([rect], 2, 'y')).toEqual([[0, 10]])
+  })
+
+  it('прямоугольник: вертикаль даёт один отрезок во всю высоту', () => {
+    expect(insideSegments([rect], 5, 'x')).toEqual([[0, 5]])
+  })
+
+  it('линия по касательной к вершине не даёт лишних пересечений', () => {
+    // y=5 — верхняя грань, полуоткрытый интервал не должен её задеть
+    expect(insideSegments([rect], 5, 'y')).toEqual([])
+  })
+
+  // L-образный контур (объединение двух прямоугольников без общей перегородки):
+  // большой 10×10 с вырезанным углом 5×5 сверху справа
+  const lShape = [
+    { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 },
+    { x: 5, y: 5 }, { x: 5, y: 10 }, { x: 0, y: 10 },
+  ]
+
+  it('L-образный контур: низкая горизонталь — один отрезок во всю ширину', () => {
+    expect(insideSegments([lShape], 2, 'y')).toEqual([[0, 10]])
+  })
+
+  it('L-образный контур: высокая горизонталь — отрезок только по узкой части', () => {
+    expect(insideSegments([lShape], 8, 'y')).toEqual([[0, 5]])
+  })
+
+  it('L-образный контур: точка в вырезанном углу — снаружи', () => {
+    expect(pointInPolygon({ x: 8, y: 8 }, [lShape])).toBe(false)
+  })
+
+  it('L-образный контур: точка в основной части — внутри', () => {
+    expect(pointInPolygon({ x: 2, y: 2 }, [lShape])).toBe(true)
+  })
+
+  // Прямоугольник 10×10 с квадратной дыркой 2×2 по центру (шахта/короб)
+  const hole = [{ x: 4, y: 4 }, { x: 6, y: 4 }, { x: 6, y: 6 }, { x: 4, y: 6 }]
+  const withHole = [rect.map(p => ({ x: p.x, y: p.y * 2 })), hole] // растянем rect до 10×10
+
+  it('контур с дыркой: горизонталь через дырку даёт два отрезка', () => {
+    expect(insideSegments(withHole, 5, 'y')).toEqual([[0, 4], [6, 10]])
+  })
+
+  it('контур с дыркой: точка внутри дырки — снаружи материала', () => {
+    expect(pointInPolygon({ x: 5, y: 5 }, withHole)).toBe(false)
+  })
+
+  it('контур с дыркой: точка рядом с дыркой — внутри материала', () => {
+    expect(pointInPolygon({ x: 1, y: 1 }, withHole)).toBe(true)
   })
 })
 

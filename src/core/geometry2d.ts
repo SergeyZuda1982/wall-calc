@@ -75,6 +75,51 @@ export function polygonSides(points: Point2D[]): PolygonSide[] {
 }
 
 /**
+ * Точки пересечения линии (axis='y' — горизонтальная, y=fixed; axis='x' —
+ * вертикальная, x=fixed) с рёбрами одного или нескольких контуров.
+ * Передав [внешний, дырка1, дырка2, ...] одним списком — дырки автоматически
+ * обрабатываются по правилу чёт-нечёт (стандартный алгоритм скан-линии для
+ * полигона с отверстиями, не требует явно помечать контур как "дырку").
+ * Полуоткрытый интервал (a<=fixed && b>fixed) — защита от двойного счёта,
+ * когда линия проходит ровно через вершину.
+ */
+export function scanlineCrossings(loops: Point2D[][], fixed: number, axis: 'x' | 'y'): number[] {
+  const cross: number[] = []
+  for (const loop of loops) {
+    for (let i = 0; i < loop.length; i++) {
+      const a = loop[i]
+      const b = loop[(i + 1) % loop.length]
+      const a1 = axis === 'y' ? a.y : a.x
+      const b1 = axis === 'y' ? b.y : b.x
+      const a2 = axis === 'y' ? a.x : a.y
+      const b2 = axis === 'y' ? b.x : b.y
+      if ((a1 <= fixed && b1 > fixed) || (b1 <= fixed && a1 > fixed)) {
+        const t = (fixed - a1) / (b1 - a1)
+        cross.push(a2 + t * (b2 - a2))
+      }
+    }
+  }
+  cross.sort((p, q) => p - q)
+  return cross
+}
+
+/** Отрезки "внутри" контура (с учётом дырок) вдоль линии — пары точек из
+ *  scanlineCrossings по правилу чёт-нечёт. Нечётное последнее пересечение
+ *  (вырожденный случай — самопересечение/дефект контура) отбрасывается. */
+export function insideSegments(loops: Point2D[][], fixed: number, axis: 'x' | 'y'): [number, number][] {
+  const xs = scanlineCrossings(loops, fixed, axis)
+  const segs: [number, number][] = []
+  for (let i = 0; i + 1 < xs.length; i += 2) segs.push([xs[i], xs[i + 1]])
+  return segs
+}
+
+/** Точка внутри контура (с учётом дырок) — через insideSegments по той же
+ *  горизонтали. */
+export function pointInPolygon(p: Point2D, loops: Point2D[][]): boolean {
+  return insideSegments(loops, p.y, 'y').some(([a, b]) => p.x >= a && p.x <= b)
+}
+
+/**
  * Дуга, построенная по хорде (x1,y1)→(x2,y2) и стреле (H в классической
  * формуле R=(L²+H²)/2H, L — половина хорды).
  */
