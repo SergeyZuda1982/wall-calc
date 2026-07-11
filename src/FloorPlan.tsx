@@ -26,7 +26,7 @@ import { useTemplateStore } from './store/useTemplateStore'
 import {
   rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
 } from './core/columnStamp'
-import { computeWallJoins, buildWallsForJoin, defaultCategory } from './core/wallJoin'
+import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory } from './core/wallJoin'
 import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
@@ -472,6 +472,10 @@ export default function FloorPlan() {
   // orthoMode (прямой угол/15°) — ОТДЕЛЬНАЯ, независимая настройка; можно
   // сочетать оба сразу (свободно по позиции, но с зажатым углом).
   const [freeSnapMode, setFreeSnapMode] = useState(false)
+  // Debug/справочно: показ угла узла в градусах у каждого L-стыка (см.
+  // KONSPEKT.md 11.07.2026 — открытая задача + диагностика самопересекающегося
+  // клина на остром угле). Не влияет на расчёт митра, только подпись на плане.
+  const [showJoinAngles, setShowJoinAngles] = useState(false)
   const [drawing, setDrawing]           = useState<{ x1: number; y1: number } | null>(null)
   const [cursor, setCursor]             = useState<{ x: number; y: number } | null>(null)
   const [selectedId, setSelected]       = useState<string | null>(null)
@@ -2019,6 +2023,39 @@ export default function FloorPlan() {
     [lines, rectColumns, scaleMmPx],
   )
 
+  // Углы узлов в градусах (debug/справочно) — считаются только когда включён
+  // тумблер showJoinAngles, чтобы не тратить время на насыщенных планах,
+  // когда это не нужно. См. computeJoinAngles в core/wallJoin.ts.
+  const joinAngles = useMemo(
+    () => (showJoinAngles ? computeJoinAngles(buildWallsForJoin(lines, scaleMmPx, rectColumns)) : []),
+    [showJoinAngles, lines, rectColumns, scaleMmPx],
+  )
+
+  // Дублируем в консоль сырые данные узлов при включении тумблера — вместе
+  // с координатами КОНЦОВ каждой стены в мм (не только точка стыка), чтобы
+  // можно было воспроизвести конкретный узел в юнит-тесте один-в-один по
+  // цифрам с реального объекта (см. KONSPEKT.md 11.07.2026, открытый вопрос №1/2).
+  useEffect(() => {
+    if (!showJoinAngles || joinAngles.length === 0) return
+    const linesById = new Map(lines.map(l => [l.id, l]))
+    // eslint-disable-next-line no-console
+    console.log('[wall-calc] узлы стен — углы и координаты (мм):')
+    joinAngles.forEach(a => {
+      const la = linesById.get(a.wallAId)
+      const lb = linesById.get(a.wallBId)
+      const toMm = (l: typeof la) => l && {
+        x1: Math.round(l.x1 * scaleMmPx), y1: Math.round(l.y1 * scaleMmPx),
+        x2: Math.round(l.x2 * scaleMmPx), y2: Math.round(l.y2 * scaleMmPx),
+      }
+      // eslint-disable-next-line no-console
+      console.log(
+        `  угол ${a.angleDeg.toFixed(2)}°  точка стыка (${Math.round(a.x * scaleMmPx)}, ${Math.round(a.y * scaleMmPx)}) мм`,
+        '\n    A:', a.wallAId, toMm(la),
+        '\n    B:', a.wallBId, toMm(lb),
+      )
+    })
+  }, [showJoinAngles, joinAngles, lines, scaleMmPx])
+
   // ── Боковое примыкание: к чему упирается каждый конец линии ──────────────
   const lineAttachments = useMemo(() => {
     const surfaces: AttachSurface[] = []
@@ -3279,6 +3316,16 @@ export default function FloorPlan() {
               🔓 Свободно
             </button>
 
+            {/* Debug: угол узла в градусах у каждого L-стыка (см. KONSPEKT.md
+                11.07.2026). Также дублирует координаты концов стен в мм в
+                консоль браузера — чтобы воспроизвести конкретный узел в
+                юнит-тесте по точным цифрам с объекта. */}
+            <button onClick={() => setShowJoinAngles(v => !v)}
+              title="Показать угол узла в градусах на плане (и в консоли браузера)"
+              style={toolBtnStyle(showJoinAngles)}>
+              ∠ Углы
+            </button>
+
             {/* Параллельная */}
             <button onClick={() => selectedLine && setShowParallelDialog(true)}
               disabled={!selectedLine}
@@ -4377,6 +4424,23 @@ export default function FloorPlan() {
                   )}
 
                   {/* snap-точки концов убраны — они перекрывали конструкции */}
+
+                  {/* Debug: угол узла в градусах (см. showJoinAngles выше) —
+                      маленький жёлтый бейдж у каждого L-стыка. Полные цифры
+                      (координаты концов стен в мм) дублируются в консоль. */}
+                  {showJoinAngles && joinAngles.map((a, i) => (
+                    <Group key={`joinangle-${i}`} x={a.x} y={a.y} listening={false}>
+                      <Circle radius={3 / stageScale} fill="#fbc02d" />
+                      <Text
+                        x={8 / stageScale} y={-8 / stageScale}
+                        text={`${a.angleDeg.toFixed(1)}°`}
+                        fontSize={12 / stageScale}
+                        fontStyle="bold"
+                        fill="#f57f17"
+                        listening={false}
+                      />
+                    </Group>
+                  ))}
                 </Layer>
               </Stage>
             </div>

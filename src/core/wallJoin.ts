@@ -344,6 +344,75 @@ function setEnd(
 // в FloorPlan.tsx и 3D-переводчиком в planTo3D.ts, чтобы не дублировать
 // логику "какие линии/колонны считаются стенами для стыковки") ────────────
 
+// ─── угол узла (debug/справочно) ───────────────────────────────────────────
+
+export interface JoinAngleInfo {
+  /** Точка стыка, мировые px */
+  x: number; y: number
+  /** Внутренний угол узла в градусах (0..180) — угол между стенами,
+   *  считая от точки стыка наружу вдоль каждой стены. Побочный продукт
+   *  той же геометрии, что и биссектриса митра в applyL. */
+  angleDeg: number
+  wallAId: string
+  wallBId: string
+}
+
+/**
+ * Находит все L-стыки (конец=конец) среди стен и возвращает угол узла в
+ * градусах для каждого. Не пересчитывает митр — только диагностика/
+ * подпись на плане, использует ту же пару направлений, что и applyL.
+ *
+ * См. KONSPEKT.md 11.07.2026 — открытая задача "показывать угол узла
+ * в градусах", а также диагностика самопересекающегося клина на остром
+ * угле (safeCorner) — угол в градусах нужен, чтобы воспроизвести кейс
+ * в юнит-тесте по точным цифрам с объекта.
+ */
+export function computeJoinAngles(walls: WallForJoin[]): JoinAngleInfo[] {
+  const result: JoinAngleInfo[] = []
+  const EPS2 = JOIN_EPS * JOIN_EPS
+
+  for (let i = 0; i < walls.length; i++) {
+    const a = walls[i]
+    const dxA = a.x2 - a.x1, dyA = a.y2 - a.y1
+    const lenA = Math.sqrt(dxA * dxA + dyA * dyA)
+    if (lenA < 1) continue
+
+    for (let j = i + 1; j < walls.length; j++) {
+      const b = walls[j]
+      const dxB = b.x2 - b.x1, dyB = b.y2 - b.y1
+      const lenB = Math.sqrt(dxB * dxB + dyB * dyB)
+      if (lenB < 1) continue
+
+      const aEnds: [number, number, 'end1' | 'end2'][] = [
+        [a.x1, a.y1, 'end1'], [a.x2, a.y2, 'end2'],
+      ]
+      const bEnds: [number, number, 'end1' | 'end2'][] = [
+        [b.x1, b.y1, 'end1'], [b.x2, b.y2, 'end2'],
+      ]
+
+      for (const [ax, ay, aEnd] of aEnds) {
+        for (const [bx, by, bEnd] of bEnds) {
+          if (d2(ax, ay, bx, by) > EPS2) continue
+
+          // Направления ОТ точки стыка наружу вдоль каждой стены
+          const vax = aEnd === 'end1' ? dxA / lenA : -dxA / lenA
+          const vay = aEnd === 'end1' ? dyA / lenA : -dyA / lenA
+          const vbx = bEnd === 'end1' ? dxB / lenB : -dxB / lenB
+          const vby = bEnd === 'end1' ? dyB / lenB : -dyB / lenB
+
+          const dot = vax * vbx + vay * vby
+          const clamped = Math.max(-1, Math.min(1, dot))
+          const angleDeg = Math.acos(clamped) * 180 / Math.PI
+
+          result.push({ x: ax, y: ay, angleDeg, wallAId: a.id, wallBId: b.id })
+        }
+      }
+    }
+  }
+
+  return result
+}
+
 /** Капитал по умолчанию — периметр (wall_existing) и ригели, всё остальное изменяемое */
 export function defaultCategory(type: PlanLineType): LineCategory {
   return (type === 'wall_existing' || type === 'rib_beam') ? 'capital' : 'mutable'
