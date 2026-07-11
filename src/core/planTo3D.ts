@@ -27,7 +27,7 @@
  *   было от чего повесить ригель
  */
 
-import type { PlanLine, PlanLineType, Room, Slab, RoundColumn, RectColumn, FreeformStructure } from '../types'
+import type { PlanLine, PlanLineType, Room, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 import { isLineBuiltForRender } from './lineProgress'
@@ -371,6 +371,41 @@ export function slabsToPolygons3D(slabs: Slab[], scaleMmPx: number): SlabPolygon
       id: sl.id,
       outer: toM(sl.outer),
       holes: sl.holes.filter(h => h.length >= 3).map(toM),
+    }))
+}
+
+export interface CeilingPolygon3D {
+  id: string
+  label: string
+  /** внешний контур в метрах, план сверху (x,z) — для плоскости потолка */
+  outerM: { x: number; z: number }[]
+  /** тот же контур в мм, план {x,y} — для calcPolygonP112Frame.ts (пункт 6),
+   *  которому нужны именно plan-мм-координаты (та же система, что и
+   *  outerMm в CeilingSeedZone, см. ceilingToCeilingSeed.ts). */
+  outerMm: { x: number; y: number }[]
+  /** Раскладка каркаса, сохранённая из CeilingCalc.tsx («Сохранить в 3D»,
+   *  пункт 7 плана, KONSPEKT.md 10.07.2026) — не задано → Scene3D рисует
+   *  только плоскость без сетки (как раньше, ceilings вообще не рисовались). */
+  ceilingSpec?: Ceiling['ceilingSpec']
+  startWallSideIndex?: number
+}
+
+/**
+ * Свободные Ceiling-контуры (обведены на плане, «Плита»/«Потолок» →
+ * «→ Потолок» в CeilingCalc.tsx, см. KONSPEKT.md 10.07.2026) → полигоны в
+ * метрах для 3D. До пункта 7 эти сущности вообще не попадали в 3D-сцену —
+ * ни плоскостью, ни тем более сеткой каркаса.
+ */
+export function ceilingsToPolygons3D(ceilings: Ceiling[], scaleMmPx: number): CeilingPolygon3D[] {
+  return ceilings
+    .filter(cl => cl.outer.length >= 3)
+    .map(cl => ({
+      id: cl.id,
+      label: cl.label,
+      outerM: cl.outer.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
+      outerMm: cl.outer.map(p => ({ x: p.x * scaleMmPx, y: p.y * scaleMmPx })),
+      ceilingSpec: cl.ceilingSpec,
+      startWallSideIndex: cl.startWallSideIndex,
     }))
 }
 export interface RoomPolygon3D {

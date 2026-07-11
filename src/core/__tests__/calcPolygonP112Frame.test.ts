@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { calcPolygonP112Frame, buildLocalFrame, toLocal, toWorld } from '../calcPolygonP112Frame'
 import { calcP112FrameGeometry } from '../calcP112Frame'
 import type { Point2D } from '../geometry2d'
+import { pointInPolygon } from '../geometry2d'
 
 const rect = (L: number, W: number): Point2D[] => [
   { x: 0, y: 0 }, { x: L, y: 0 }, { x: L, y: W }, { x: 0, y: W },
@@ -125,5 +126,34 @@ describe('calcPolygonP112Frame — контур с дыркой (шахта)', (
     const noHole = calcPolygonP112Frame(outer, [], startSide, 1000, 500, 80, 'user')
     expect(withHole.mainTotalLm).toBeLessThan(noHole.mainTotalLm)
     expect(withHole.bearingTotalLm).toBeLessThan(noHole.bearingTotalLm)
+  })
+})
+
+describe('calcPolygonP112Frame — crabPoints/hangerPoints (для 3D, пункт 7)', () => {
+  it('длина массивов совпадает со счётчиками', () => {
+    const outer = rect(6000, 4000)
+    const startSide = { start: outer[0], end: outer[1] }
+    const poly = calcPolygonP112Frame(outer, [], startSide, 1000, 500, 80, 'user')
+    expect(poly.crabPoints).toHaveLength(poly.connectorsTotal)
+    expect(poly.hangerPoints).toHaveLength(poly.hangersTotal)
+  })
+
+  it('все точки крабов и подвесов лежат внутри контура', () => {
+    const outer = rect(6000, 4000)
+    const startSide = { start: outer[0], end: outer[1] }
+    const poly = calcPolygonP112Frame(outer, [], startSide, 1000, 500, 80, 'user')
+    const loopsLocal = [outer.map(p => toLocal(p, poly.frame))]
+    for (const p of [...poly.crabPoints, ...poly.hangerPoints]) {
+      expect(pointInPolygon(p, loopsLocal)).toBe(true)
+    }
+  })
+
+  it('подвесы — подмножество крабов (каждая точка подвеса есть среди крабов)', () => {
+    const outer = rect(6000, 4000)
+    const startSide = { start: outer[0], end: outer[1] }
+    const poly = calcPolygonP112Frame(outer, [], startSide, 1000, 500, 80, 'user')
+    for (const h of poly.hangerPoints) {
+      expect(poly.crabPoints.some(c => c.x === h.x && c.y === h.y)).toBe(true)
+    }
   })
 })

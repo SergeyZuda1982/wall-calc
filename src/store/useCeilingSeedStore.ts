@@ -52,6 +52,17 @@ export interface CeilingSeed {
    * записать параметры обратно через updateRoom(roomId, { ceilingSpec }).
    */
   roomId?: string
+  /**
+   * НОВОЕ (10.07.2026, пункт 7 — мост с 3D): id сущности Ceiling (Потолок,
+   * свободный контур), если сид пришёл от кнопки «→ Потолок» именно на
+   * карточке Потолка (не Плиты — та не привязана ни к какой сохраняемой
+   * сущности, «Плита» может остаться плитой пола, а не стать потолком).
+   * Задано ТОЛЬКО когда зона одна — как и roomId, при объединении зон не
+   * переносится (настройки каркаса сохраняются на конкретный Ceiling).
+   * CeilingCalc.tsx использует это поле для кнопки «Сохранить в 3D»
+   * (updateCeiling(ceilingEntityId, { ceilingSpec, startWallSideIndex })).
+   */
+  ceilingEntityId?: string
 }
 
 interface CeilingSeedState {

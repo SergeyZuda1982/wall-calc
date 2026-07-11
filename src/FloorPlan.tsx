@@ -2698,7 +2698,7 @@ export default function FloorPlan() {
                           disabled={!seed}
                           onClick={() => {
                             if (!seed) return
-                            setCeilingSeed({ label: cl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, holesCount: seed.holesCount, zones: [{ label: cl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, outerMm: seed.outerMm, holesMm: seed.holesMm }] })
+                            setCeilingSeed({ label: cl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, holesCount: seed.holesCount, zones: [{ label: cl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, outerMm: seed.outerMm, holesMm: seed.holesMm }], ceilingEntityId: cl.id })
                           }}
                           title="Отправить площадь и периметр этого потолка в расчёт потолка"
                           style={{
