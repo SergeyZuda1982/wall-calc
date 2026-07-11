@@ -228,3 +228,43 @@ describe('snapOrtho', () => {
     expect(res.y).toBeCloseTo(0, 5) // почти горизонталь → защёлкивается на 0°
   })
 })
+
+describe('snapPoint — endpointsOnly (Фикс 5, 11.07.2026, режим "Свободно")', () => {
+  it('endpointsOnly=true: привязка конец-к-концу по-прежнему работает', () => {
+    const wall = blockWall('B', 100, 0, 100, 100, '125')
+    const cursor = { x: 102, y: 101 } // рядом с концом оси (100,100)
+    const res = snapPoint(cursor.x, cursor.y, [wall], 10, undefined, 24, undefined, 0, true)
+    expect(res.snapped).toBe(true)
+    expect(res.x).toBeCloseTo(100, 5)
+    expect(res.y).toBeCloseTo(100, 5)
+  })
+
+  it('endpointsOnly=true: грань-кандидат (угол по толщине) НЕ предлагается', () => {
+    const wall = blockWall('B', 100, 0, 100, 100, '125')
+    const cursor = { x: 106, y: 100 } // рядом с углом грани (106.25,100), но не с осью
+    const res = snapPoint(cursor.x, cursor.y, [wall], 10, undefined, 24, undefined, 0, true)
+    // Курсор в 6px от оси (100,100) и в 6.25 от грани — грань ближе, но она
+    // отключена, поэтому либо снап на ось (менее точное совпадение), либо
+    // вообще не снапится, если ось дальше порога. Здесь курсор всё ещё в
+    // пределах threshPx=24 от оси — значит снапится именно на ось.
+    expect(res.snapped).toBe(true)
+    expect(res.x).toBeCloseTo(100, 5) // ОСЬ, не грань (106.25)
+    expect(res.y).toBeCloseTo(100, 5)
+  })
+
+  it('endpointsOnly=true: T-body/флюш-притяжение вдоль тела стены отключено (реальный кейс пользователя)', () => {
+    // Толстая перегородка 250мм, горизонтальная, ось y=50, от x=0 до x=1000.
+    // Пользователь рисует новую стену ВДОЛЬ неё (не у торца, а где-то посередине,
+    // t между 0 и 1) — с обычным снапом курсор утягивается на грань (Фикс 2).
+    const wall = blockWall('W', 0, 50, 1000, 50, '250') // halfPx=12.5
+    const cursor = { x: 500, y: 40 } // рядом с телом стены, НЕ рядом ни с одним концом
+
+    const withSnap = snapPoint(cursor.x, cursor.y, [wall], 10, undefined, 24, undefined, 0, false)
+    expect(withSnap.snapped).toBe(true) // обычный снап тянет на грань T-body
+
+    const free = snapPoint(cursor.x, cursor.y, [wall], 10, undefined, 24, undefined, 0, true)
+    expect(free.snapped).toBe(false) // endpointsOnly — далеко от обоих концов, не снапится вообще
+    expect(free.x).toBe(cursor.x)
+    expect(free.y).toBe(cursor.y)
+  })
+})

@@ -467,8 +467,19 @@ export default function FloorPlan() {
   // хочет — и в целом ряде реальных случаев (наклонное примыкание в проекте
   // "внахлёст", а не по стыку осей; параллельная стена на произвольном
   // отступе, а не впритык) любая из этих готовых точек — попросту не то,
-  // что нужно. Toggle ниже отключает ВЕСЬ снап к линиям (ось/грань/T) в
-  // applySnap/handleMove целиком — курсор ставится ровно там, где кликнули.
+  // что нужно.
+  //
+  // Фикс 5 (11.07.2026): toggle раньше отключал ВЕСЬ снап целиком — включая
+  // простую привязку конец-к-концу (ось в ось). Реальный кейс пользователя:
+  // трассировка существующих стен по фото рядом с уже готовой толстой
+  // перегородкой — "флюш"-притяжение к её грани при рисовании ВДОЛЬ мешало
+  // (Фикс 2 в planSnap.ts), но отключение ВСЕГО снапа заодно убивало и
+  // стыковку углов — трассированные стены переставали физически соприкасаться
+  // друг с другом НИГДЕ (см. консольный дамп через "∠ Углы": зазоры 64–746мм
+  // вместо ожидаемых ~JOIN_EPS=3px), и wallJoin/митр переставали находить
+  // между ними хоть один узел. Теперь toggle передаётся в snapPoint как
+  // endpointsOnly=true — грань/флюш/T-body отключаются (то, что мешало), а
+  // привязка конец-к-концу остаётся активной (нужна для стыковки углов).
   // orthoMode (прямой угол/15°) — ОТДЕЛЬНАЯ, независимая настройка; можно
   // сочетать оба сразу (свободно по позиции, но с зажатым углом).
   const [freeSnapMode, setFreeSnapMode] = useState(false)
@@ -957,9 +968,7 @@ export default function FloorPlan() {
       newHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
       if (drawing) refDir = { dx: x - drawing.x1, dy: y - drawing.y1 }
     }
-    const snapped = freeSnapActive
-      ? { x, y, snapped: false, d: Infinity }
-      : snapPoint(x, y, lines, scaleMmPx, excludeId, thresh, refDir, newHalfThicknessPx)
+    const snapped = snapPoint(x, y, lines, scaleMmPx, excludeId, thresh, refDir, newHalfThicknessPx, freeSnapActive)
     if (orthoMode && drawing && !snapped.snapped) {
       return snapOrtho(drawing.x1, drawing.y1, snapped.x, snapped.y)
     }
@@ -1038,9 +1047,7 @@ export default function FloorPlan() {
       moveNewHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
       if (drawing) moveRefDir = { dx: rawX - drawing.x1, dy: rawY - drawing.y1 }
     }
-    const snappedInfo = freeSnapActive
-      ? { x: rawX, y: rawY, snapped: false, d: Infinity }
-      : snapPoint(rawX, rawY, lines, scaleMmPx, undefined, snapThresh, moveRefDir, moveNewHalfThicknessPx)
+    const snappedInfo = snapPoint(rawX, rawY, lines, scaleMmPx, undefined, snapThresh, moveRefDir, moveNewHalfThicknessPx, freeSnapActive)
     // В draw-режиме: дополнительно проверяем снап к началу цепочки (замыкание)
     const snapToChainStart =
       mode === 'draw' && drawing && chainStartPt &&
@@ -3354,7 +3361,7 @@ export default function FloorPlan() {
                 freeSnapMode выше. На десктопе то же самое временно включает
                 удержание Alt, без переключения кнопки. */}
             <button onClick={() => setFreeSnapMode(v => !v)}
-              title="Свободное позиционирование — без снапа к стенам (или удерживать Alt)"
+              title="Без притяжения к грани соседней стены — стыковка углов конец-к-концу остаётся (или удерживать Alt)"
               style={toolBtnStyle(freeSnapMode)}>
               🔓 Свободно
             </button>
