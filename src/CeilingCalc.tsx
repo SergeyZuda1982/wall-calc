@@ -6,7 +6,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Line, Text, Group } from 'react-konva'
-import type { CeilingSpecFull } from './data/ceilingData'
+import type { CeilingSpecFull, CeilingSpec } from './data/ceilingData'
 import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, CEILING_MOUNT_DIRECTION_LABELS, CEILING_LOAD_CLASS_OPTIONS } from './data/ceilingData'
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep, CeilingLoadClass } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
@@ -162,6 +162,40 @@ export default function CeilingCalc() {
     return () => ro.disconnect()
   }, [])
 
+  // НОВОЕ (11.07.2026, по просьбе пользователя): автосинхронизация вместо
+  // ручной кнопки «Сохранить в 3D» — раньше 3D-вид не обновлялся, пока
+  // пользователь явно не нажимал кнопку (легко забыть, известное
+  // ограничение из KONSPEKT.md). Теперь любое изменение параметров каркаса
+  // сразу пишется в Room.ceilingSpec, если этот расчёт привязан к
+  // помещению (seedRoomId задан). Зависимости — только поля, которые
+  // реально влияют на 3D-сетку/смету каркаса (см. Scene3D.tsx), а не ВСЯ
+  // форма целиком — иначе несвязанные поля (заметки, roomLengthMm для
+  // точной раскладки листов и т.п.) тоже гоняли бы лишние записи в стор.
+  useEffect(() => {
+    if (!seedRoomId) return
+    const ceilingSpec: CeilingSpec = {
+      type: form.type,
+      layers: form.layers,
+      material: form.material,
+      thickness: form.thickness,
+      stepC: form.stepC,
+      areaSqm: form.areaSqm,
+      perimeterM: form.perimeterM,
+      stepB: form.stepB,
+      bearingAlongLength: form.bearingAlongLength,
+      layoutMode: form.layoutMode,
+      mountDirection: form.mountDirection,
+      loadClass: form.loadClass,
+    }
+    updateRoom(seedRoomId, { ceilingSpec })
+    setSavedToRoom(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    seedRoomId, form.type, form.layers, form.material, form.thickness, form.stepC,
+    form.areaSqm, form.perimeterM, form.stepB, form.bearingAlongLength,
+    form.layoutMode, form.mountDirection, form.loadClass,
+  ])
+
   // Пункт 6: выбор/смена стены начала раскладки (или новый набор зон) должны
   // пересчитать смету — раньше эти состояния ни на что не влияли (заглушка
   // пункта 5), теперь buildPolygonInput() задействует их в расчёте.
@@ -262,44 +296,11 @@ export default function CeilingCalc() {
             padding: '8px 10px', background: savedToRoom ? '#f0fdf4' : C.accentLight,
             border: `1px solid ${savedToRoom ? C.success : C.accent}`,
             borderRadius: 6, fontSize: 11, color: C.text,
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6,
           }}>
-            <div>
-              Расчёт привязан к помещению на плане.
-              {savedToRoom
-                ? <span style={{ color: C.success }}> Настройки каркаса сохранены — 3D-вид обновится.</span>
-                : ' Настройте раскладку и нажмите «Сохранить в 3D», чтобы 3D-сцена рисовала именно этот каркас, а не дефолтный.'}
-            </div>
-            <button
-              onClick={() => {
-                if (!seedRoomId) return
-                const ceilingSpec: CeilingSpecFull = form
-                updateRoom(seedRoomId, {
-                  ceilingSpec: {
-                    type: ceilingSpec.type,
-                    layers: ceilingSpec.layers,
-                    material: ceilingSpec.material,
-                    thickness: ceilingSpec.thickness,
-                    stepC: ceilingSpec.stepC,
-                    areaSqm: ceilingSpec.areaSqm,
-                    perimeterM: ceilingSpec.perimeterM,
-                    stepB: ceilingSpec.stepB,
-                    bearingAlongLength: ceilingSpec.bearingAlongLength,
-                    layoutMode: ceilingSpec.layoutMode,
-                    mountDirection: ceilingSpec.mountDirection,
-                    loadClass: ceilingSpec.loadClass,
-                  },
-                })
-                setSavedToRoom(true)
-              }}
-              title="Записать текущую раскладку/шаг/тип каркаса на это помещение — 3D-сцена (Scene3D) будет рисовать сетку по этим настройкам вместо дефолтных"
-              style={{
-                flexShrink: 0, fontSize: 11, padding: '6px 10px', borderRadius: 6,
-                border: `1px solid ${C.accent}`, background: C.accent, color: '#fff',
-                cursor: 'pointer', fontWeight: 600,
-              }}>
-              Сохранить в 3D
-            </button>
+            Расчёт привязан к помещению на плане.
+            {savedToRoom
+              ? <span style={{ color: C.success }}> Настройки каркаса синхронизированы — 3D-вид рисует именно эту раскладку.</span>
+              : ' Синхронизация с 3D-видом...'}
           </div>
         )}
 
