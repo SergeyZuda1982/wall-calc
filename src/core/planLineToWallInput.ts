@@ -33,7 +33,7 @@ import type { PlanLine, WallInput, WallType, ProfileType, Opening, AbutmentType 
 import { DEFAULT_BOARD_SPEC } from '../types'
 import type { LineAttachments } from './attachmentResolver'
 
-const DEFAULT_STEP_MM = 600            // совпадает с дефолтом drawStep в FloorPlan.tsx
+export const DEFAULT_STEP_MM = 600            // совпадает с дефолтом drawStep в FloorPlan.tsx
 const DEFAULT_PROFILE_THICKNESS = '06' // не влияет на BOM, только на предупреждение о высоте
 
 /** wallType по числу слоёв обшивки. */
@@ -65,7 +65,8 @@ export function resolveAbutment(attachments: LineAttachments | undefined): Abutm
   return 'none'
 }
 
-function mapOpenings(line: PlanLine): Opening[] {
+/** Переводит проёмы линии в формат Opening для buildPositions/calcResults (см. planTo3D.ts wallStudPositionsMm). */
+export function mapOpenings(line: PlanLine): Opening[] {
   return (line.openings ?? []).map(o => ({
     id: o.id,
     // 'opening' (просто проём, без двери/окна) для расчёта материала считаем как дверь —

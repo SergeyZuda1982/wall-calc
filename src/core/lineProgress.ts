@@ -12,7 +12,8 @@
  */
 
 import type { PlanLine, WorkProgress } from '../types'
-import { isComplete, isBlocked, hasAnyConfirmedStep, currentStep, progressPercent } from './workProgress'
+import { isComplete, isBlocked, hasAnyConfirmedStep, hasConfirmedStepWithMeaning, currentStep, progressPercent } from './workProgress'
+import { finishMaterialCategoryOf } from './finishResolver'
 
 export type LineProgressStatus = 'legacy' | 'not_started' | 'blocked' | 'in_progress' | 'complete'
 
@@ -64,4 +65,39 @@ export function lineProgressSummary(progress: WorkProgress | undefined): string 
   const step = currentStep(progress!)
   const stepPart = step ? ` — ${step.label}` : ''
   return `${LINE_PROGRESS_STATUS_LABEL[status]}${stepPart} · ${pct}%`
+}
+
+/**
+ * Визуальное состояние ГКЛ-каркаса для 3D (Этап 2 "реалистичные материалы",
+ * 10-11.07.2026, см. обсуждение с пользователем в KONSPEKT.md). Применимо
+ * ТОЛЬКО к линиям с finishMaterialCategoryOf(line) === 'gkl' (wall_new/
+ * wall_lining материалом gkl) — для кладки/бетона/прочего возвращает null,
+ * там остаётся обычный Этап-1 вид (текстура материала), эта функция не
+ * участвует.
+ *
+ * mode: 'legacy' — buildProgress не настроен вообще (обратная совместимость,
+ * как и isLineBuiltForRender выше) — рендерится как раньше, сплошная стена.
+ * mode: 'frame' — buildProgress явно настроен (хотя бы один шаг, неважно
+ * какой, уже подтверждён или нет) — показываем каркас; sheetA/sheetB —
+ * обшита ли соответствующая сторона (подтверждён шаг с meaning3D:'sheet_a'/
+ * 'sheet_b' В ЛЮБОМ месте списка шагов). Если ни один шаг нигде не помечен
+ * meaning3D — обе стороны просто голый каркас (пользователь сознательно не
+ * захотел настраивать теги, это ок — см. обсуждение с пользователем).
+ */
+export interface WallGklVisual3D {
+  mode: 'legacy' | 'frame'
+  sheetA: boolean
+  sheetB: boolean
+}
+
+export function wallGklVisual3D(line: PlanLine): WallGklVisual3D | null {
+  if (finishMaterialCategoryOf(line) !== 'gkl') return null
+  if (!line.buildProgress || line.buildProgress.steps.length === 0) {
+    return { mode: 'legacy', sheetA: false, sheetB: false }
+  }
+  return {
+    mode: 'frame',
+    sheetA: hasConfirmedStepWithMeaning(line.buildProgress, 'sheet_a'),
+    sheetB: hasConfirmedStepWithMeaning(line.buildProgress, 'sheet_b'),
+  }
 }
