@@ -15,12 +15,13 @@ import type {
   StepProgress,
   StepOutcome,
   StepRejectReason,
+  WorkStepMeaning3D,
 } from '../types'
 
 /** Создаёт новый WorkProgress "с нуля" из произвольного списка шагов (свой список на линии) */
 export function createWorkProgress(steps: WorkStageTemplateStep[]): WorkProgress {
   return {
-    steps: steps.map(s => ({ stepId: s.id, label: s.label, outcome: 'pending' as StepOutcome })),
+    steps: steps.map(s => ({ stepId: s.id, label: s.label, meaning3D: s.meaning3D, outcome: 'pending' as StepOutcome })),
   }
 }
 
@@ -32,7 +33,7 @@ export function applyTemplate(template: WorkStageTemplate): WorkProgress {
   return {
     templateId: template.id,
     sourceTemplateLabel: template.label,
-    steps: template.steps.map(s => ({ stepId: s.id, label: s.label, outcome: 'pending' as StepOutcome })),
+    steps: template.steps.map(s => ({ stepId: s.id, label: s.label, meaning3D: s.meaning3D, outcome: 'pending' as StepOutcome })),
   }
 }
 
@@ -45,7 +46,7 @@ export function saveAsTemplate(progress: WorkProgress, templateId: string, label
   return {
     id: templateId,
     label,
-    steps: progress.steps.map(s => ({ id: s.stepId, label: s.label })),
+    steps: progress.steps.map(s => ({ id: s.stepId, label: s.label, meaning3D: s.meaning3D })),
   }
 }
 
@@ -84,6 +85,15 @@ export function hasAnyConfirmedStep(progress: WorkProgress): boolean {
 /** true, если все шаги подтверждены (работа полностью завершена) */
 export function isComplete(progress: WorkProgress): boolean {
   return progress.steps.length > 0 && progress.steps.every(s => s.outcome === 'confirmed')
+}
+
+/**
+ * true, если есть подтверждённый шаг с данным техническим тегом meaning3D
+ * (см. types/index.ts WorkStepMeaning3D) — используется 3D-визуализацией
+ * ГКЛ-каркаса (core/lineProgress.ts wallGklVisual3D), не более того.
+ */
+export function hasConfirmedStepWithMeaning(progress: WorkProgress, meaning: WorkStepMeaning3D): boolean {
+  return progress.steps.some(s => s.meaning3D === meaning && s.outcome === 'confirmed')
 }
 
 /** true, если текущий шаг отклонён (простой/блок с причиной) */

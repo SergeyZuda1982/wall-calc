@@ -520,9 +520,26 @@ export const STEP_REJECT_REASON_LABEL: Record<StepRejectReason, string> = {
 }
 
 /** Один именованный шаг в шаблоне ("Грунтовка", "Каркас", "Плитка"...) */
+/**
+ * НЕОБЯЗАТЕЛЬНЫЙ технический тег шага — что он значит для 3D-визуализации
+ * (см. core/lineProgress.ts wallGklVisual3D, Этап 2 "реалистичные материалы",
+ * 10-11.07.2026). Сам WorkProgress остаётся произвольным списком со свободным
+ * текстом — тег НЕ меняет эту гибкость, просто отмечает, что КОНКРЕТНО этот
+ * шаг физически означает для ГКЛ-каркаса, если пользователь хочет получить
+ * визуальную обратную связь в 3D. Без тегов ни на одном шаге — 3D ведёт себя
+ * как в Этапе 1 (просто сплошная стена по мере готовности, без разбивки на
+ * каркас/обшивку по сторонам) — безопасный дефолт, ничего не ломается.
+ *  - 'frame'   — каркас (стойки+направляющие) собран
+ *  - 'sheet_a' — обшита сторона A
+ *  - 'sheet_b' — обшита сторона Б (актуально только для двусторонних —
+ *    finishSidesOf(line)===2, см. finishResolver.ts)
+ */
+export type WorkStepMeaning3D = 'frame' | 'sheet_a' | 'sheet_b'
+
 export interface WorkStageTemplateStep {
   id: string
   label: string
+  meaning3D?: WorkStepMeaning3D
 }
 
 /**
@@ -544,6 +561,7 @@ export type StepOutcome = 'pending' | 'confirmed' | 'rejected'
 export interface StepProgress {
   stepId: string
   label: string             // копия label на момент применения шаблона (шаблон могли поменять/удалить позже)
+  meaning3D?: WorkStepMeaning3D // копия тега шаблона на момент применения, см. WorkStageTemplateStep
   outcome: StepOutcome
   rejectReason?: StepRejectReason
   rejectNote?: string       // текст своей причины, если rejectReason === 'other'

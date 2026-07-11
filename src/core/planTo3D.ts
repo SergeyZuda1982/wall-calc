@@ -32,6 +32,8 @@ import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 import { isLineBuiltForRender } from './lineProgress'
 import { computeWallJoins, buildWallsForJoin, type JoinedWall } from './wallJoin'
+import { resolveWallProfileType, mapOpenings, DEFAULT_STEP_MM } from './planLineToWallInput'
+import { buildPositions } from './buildPositions'
 
 export const DEFAULT_HEIGHT_MM = 3000
 export const DEFAULT_RIB_SECTION_MM = 300
@@ -94,6 +96,38 @@ export function wallMaterialKindOf(material: string | undefined): WallMaterialKi
   return 'unknown'
 }
 
+/**
+ * Позиции вертикальных стоек каркаса ГКЛ-стены, мм от начала ЛИНИИ (x1,y1) —
+ * для 3D-визуализации каркаса (Этап 2 "реалистичные материалы", 10-11.07.2026,
+ * см. Scene3D.tsx wallGklVisual3D). НЕ рисует сам каркас (это остаётся three.js
+ * стороне, Scene3D.tsx) — только числа, чтобы 3D показывал стойки РЕАЛЬНО ТАМ,
+ * где они физически будут (тот же расчёт, что и материал на смету, см.
+ * planLineToWallInput.ts/buildPositions.ts), а не выдуманную равномерную сетку.
+ *
+ * Полноценный расчёт (buildPositions с учётом проёмов) — только для wall_new
+ * с поддержанным профилем каркаса (ps50/ps75/ps100, см. resolveWallProfileType).
+ * Для wall_lining (облицовка, там нет "каркаса" в смысле calcResults — обрешётка
+ * на кляймерах) и для неподдержанных профилей (ps125/двойной каркас — сам
+ * калькулятор материала их тоже не считает, см. planLineToWallInput.ts) —
+ * упрощённая равномерная сетка с шагом spec.step без учёта проёмов; известное
+ * упрощение, документировано здесь и там же, где аналогичное для материала.
+ */
+export function wallStudPositionsMm(line: PlanLine): number[] {
+  if (line.lengthMm <= 0) return []
+  const stepMm = line.spec?.step ?? DEFAULT_STEP_MM
+
+  if (line.type === 'wall_new') {
+    const profileType = resolveWallProfileType(line.spec?.subtype)
+    if (profileType) {
+      return buildPositions(line.lengthMm, stepMm, stepMm, mapOpenings(line)).positions
+    }
+  }
+
+  const positions: number[] = []
+  for (let p = stepMm; p < line.lengthMm; p += stepMm) positions.push(Math.round(p))
+  return positions
+}
+
 export interface WallBox3D {
   id: string
   /**
@@ -115,6 +149,16 @@ export interface WallBox3D {
   rotationY: number
   /** визуальная категория материала для 3D-текстуры, см. wallMaterialKindOf */
   materialKind: WallMaterialKind
+  /**
+   * Диапазон этого сегмента вдоль оси ЦЕЛОЙ линии, метры от её начала (0..
+   * длина линии) — НЕ путать с center/size (те уже в мировых координатах).
+   * У целой линии без проёмов это просто 0..длина. Нужно для 3D-каркаса
+   * ГКЛ-стены (Этап 2, 10-11.07.2026, см. Scene3D.tsx wallGklVisual3D) —
+   * чтобы взять кусок реального раскроя стоек (wallStudPositionsMm, считается
+   * на ВСЮ линию) именно для этого сегмента, а не пересчитывать заново.
+   */
+  alongFromM: number
+  alongToM: number
 }
 
 /**
@@ -159,6 +203,8 @@ export function wallToBox3D(
     size: { sx: length, sy: heightM, sz: mmToM(tMm) },
     rotationY: Math.atan2(-dz, dx),
     materialKind: wallMaterialKindOf(line.spec?.material),
+    alongFromM: 0,
+    alongToM: length,
   }
 }
 
@@ -261,6 +307,8 @@ export function wallToBoxesWithOpenings3D(
       size: { sx: segLen, sy: wallHeightM, sz: base.size.sz },
       rotationY: base.rotationY,
       materialKind: base.materialKind,
+      alongFromM: fromM,
+      alongToM: toM,
     })
   }
 
@@ -277,6 +325,8 @@ export function wallToBoxesWithOpenings3D(
       size: { sx: segLen, sy: h, sz: base.size.sz },
       rotationY: base.rotationY,
       materialKind: base.materialKind,
+      alongFromM: fromM,
+      alongToM: toM,
     })
   }
 
