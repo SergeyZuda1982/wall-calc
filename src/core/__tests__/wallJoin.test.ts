@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeWallJoins, buildWallsForJoin, defaultCategory, type WallForJoin } from '../wallJoin'
+import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory, type WallForJoin } from '../wallJoin'
 import type { PlanLine, RectColumn } from '../../types'
 
 // scaleMmPx = 10 (как дефолт в FloorPlan), т.е. 1px = 10мм
@@ -322,5 +322,65 @@ describe('buildWallsForJoin — сборка входа для computeWallJoins 
     const res = computeWallJoins(walls)
     const jw = res.get('W1')!
     expect(jw.cap1).toBe(false) // T-стык распознан, торец не рисуется
+  })
+})
+
+describe('computeJoinAngles — угол узла в градусах (см. KONSPEKT.md 11.07.2026)', () => {
+  it('прямой угол (90°) — две перпендикулярные стены, стык конец=конец', () => {
+    const A: WallForJoin = { id: 'A', x1: 0, y1: 0, x2: 200, y2: 0, halfPx: 10, createdIndex: 0 }
+    const B: WallForJoin = { id: 'B', x1: 200, y1: 0, x2: 200, y2: 200, halfPx: 10, createdIndex: 1 }
+    const angles = computeJoinAngles([A, B])
+    expect(angles).toHaveLength(1)
+    expect(angles[0].angleDeg).toBeCloseTo(90, 5)
+    expect(angles[0].x).toBeCloseTo(200, 5)
+    expect(angles[0].y).toBeCloseTo(0, 5)
+  })
+
+  it('коллинеарное продолжение — угол 180°', () => {
+    const A: WallForJoin = { id: 'A', x1: 0, y1: 0, x2: 200, y2: 0, halfPx: 10, createdIndex: 0 }
+    const B: WallForJoin = { id: 'B', x1: 200, y1: 0, x2: 400, y2: 0, halfPx: 10, createdIndex: 1 }
+    const angles = computeJoinAngles([A, B])
+    expect(angles).toHaveLength(1)
+    expect(angles[0].angleDeg).toBeCloseTo(180, 5)
+  })
+
+  it('острый угол (45°) — воспроизводит форму узла из реального кейса (объект, 11.07.2026)', () => {
+    // A — горизонтальная, B — диагональная под 45° от того же узла
+    const A: WallForJoin = { id: 'A', x1: 0, y1: 0, x2: 300, y2: 0, halfPx: 12.5, createdIndex: 0 }
+    const B: WallForJoin = {
+      id: 'B', x1: 0, y1: 0,
+      x2: -180 * Math.SQRT1_2, y2: 180 * Math.SQRT1_2,
+      halfPx: 12.5, createdIndex: 1,
+    }
+    const angles = computeJoinAngles([A, B])
+    expect(angles).toHaveLength(1)
+    expect(angles[0].angleDeg).toBeCloseTo(135, 3) // угол между направлениями "наружу" от узла
+  })
+
+  it('разная толщина стен не влияет на угол — считается только по осям', () => {
+    const A: WallForJoin = { id: 'A', x1: 0, y1: 0, x2: 200, y2: 0, halfPx: 6.25, createdIndex: 0 } // 125мм при 10мм/px
+    const B: WallForJoin = { id: 'B', x1: 200, y1: 0, x2: 200, y2: 200, halfPx: 12.5, createdIndex: 1 } // 250мм
+    const angles = computeJoinAngles([A, B])
+    expect(angles).toHaveLength(1)
+    expect(angles[0].angleDeg).toBeCloseTo(90, 5)
+  })
+
+  it('нет общей точки — угол не находится', () => {
+    const A: WallForJoin = { id: 'A', x1: 0, y1: 0, x2: 200, y2: 0, halfPx: 10, createdIndex: 0 }
+    const B: WallForJoin = { id: 'B', x1: 500, y1: 0, x2: 500, y2: 200, halfPx: 10, createdIndex: 1 }
+    expect(computeJoinAngles([A, B])).toHaveLength(0)
+  })
+
+  it('грань колонны тоже участвует (buildWallsForJoin) — угол между стеной и гранью колонны', () => {
+    const col: RectColumn = { id: 'col1', cx: 0, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'К1' }
+    const wall = {
+      id: 'W1', x1: 15, y1: 0, x2: 215, y2: 0,
+      type: 'wall_new', lengthMm: 2000, label: 'W1',
+      spec: { material: 'gkl', subtype: 'ps75' },
+    } as PlanLine
+    const walls = buildWallsForJoin([wall], 10, [col])
+    const angles = computeJoinAngles(walls)
+    // грань колонны, к которой примыкает стена перпендикулярно — угол 90°
+    expect(angles.some(a => a.angleDeg > 89 && a.angleDeg < 91)).toBe(true)
   })
 })
