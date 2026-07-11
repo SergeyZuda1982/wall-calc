@@ -10,8 +10,10 @@ import type { CeilingSpecFull } from './data/ceilingData'
 import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, CEILING_MOUNT_DIRECTION_LABELS, CEILING_LOAD_CLASS_OPTIONS } from './data/ceilingData'
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep, CeilingLoadClass } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
-import type { CeilingCalcResult } from './core/calcCeiling'
+import type { CeilingCalcResult, CeilingPolygonInput } from './core/calcCeiling'
 import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } from './core/calcP112Frame'
+import type { PolygonP112FrameResult } from './core/calcPolygonP112Frame'
+import { toWorld } from './core/calcPolygonP112Frame'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import type { Point2D } from './core/geometry2d'
 import { polygonSides } from './core/geometry2d'
@@ -96,9 +98,10 @@ export default function CeilingCalc() {
   // площади/периметра (см. KONSPEKT.md 10.07.2026, пункты 3 и 4).
   const [seedZones, setSeedZones] = useState<CeilingSeedZone[] | null>(null)
   // Пункт 5 плана (KONSPEKT.md 10.07.2026): выбор стены начала раскладки
-  // профилей для непрямоугольного контура — пока UI-заглушка, само значение
-  // никуда в расчёт не идёт (алгоритм раскладки по полигону — пункт 6,
-  // ещё не реализован), только запоминается и подсвечивается на превью.
+  // профилей для непрямоугольного контура. С пункта 6 (та же сессия, чуть
+  // позже) значение реально используется в расчёте — buildPolygonInput()
+  // ниже задействует его для точной геометрии каркаса (только для ОДНОЙ
+  // зоны, для объединения нескольких зон см. её же комментарий).
   const [startWall, setStartWall] = useState<{ zoneIndex: number; sideIndex: number } | null>(null)
 
   // Плита ("карандаш"), отправленная с плана — площадь/периметр вычислены
@@ -133,6 +136,17 @@ export default function CeilingCalc() {
     return () => ro.disconnect()
   }, [])
 
+  // Пункт 6: выбор/смена стены начала раскладки (или новый набор зон) должны
+  // пересчитать смету — раньше эти состояния ни на что не влияли (заглушка
+  // пункта 5), теперь buildPolygonInput() задействует их в расчёте.
+  useEffect(() => {
+    setForm(prev => {
+      if (prev.areaSqm > 0) setResult(runCalc(prev))
+      return prev
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startWall, seedZones])
+
   function setField<K extends keyof CeilingSpecFull>(key: K, val: CeilingSpecFull[K]) {
     setForm(prev => {
       const next = { ...prev, [key]: val }
@@ -144,9 +158,29 @@ export default function CeilingCalc() {
           next.perimeterM = Math.round((l + w) * 2 / 1000 * 100) / 100
         }
       }
-      if (next.areaSqm > 0) setResult(calcCeiling(next))
+      if (next.areaSqm > 0) setResult(runCalc(next))
       return next
     })
+  }
+
+  // Пункт 6 плана (KONSPEKT.md 10.07.2026): если контур пришёл с плана
+  // (seedZones) и выбрана стена начала раскладки (startWall) — считаем
+  // каркас и раскрой листов ТОЧНО по контуру, а не по среднему расходу.
+  // Ограничение v1: только ОДНА зона (объединение нескольких зон в общий
+  // геометрический контур — отдельная задача, тут физического union пока
+  // нет, см. combineCeilingSeeds.ts — там только сумма площади/периметра).
+  function buildPolygonInput(): CeilingPolygonInput | undefined {
+    if (!seedZones || !startWall) return undefined
+    if (seedZones.length !== 1 || startWall.zoneIndex !== 0) return undefined
+    const zone = seedZones[0]
+    if (zone.outerMm.length < 3) return undefined
+    const side = polygonSides(zone.outerMm)[startWall.sideIndex]
+    if (!side) return undefined
+    return { outerMm: zone.outerMm, holesMm: zone.holesMm, startSide: { start: side.start, end: side.end } }
+  }
+
+  function runCalc(spec: CeilingSpecFull): CeilingCalcResult {
+    return calcCeiling(spec, buildPolygonInput())
   }
 
   // Материалы по шагам — накопительно
@@ -253,7 +287,7 @@ export default function CeilingCalc() {
               <input style={inp} type="number" min={0} step={0.1}
                 value={form.areaSqm || ''} onChange={e => {
                   const v = +e.target.value
-                  setForm(prev => { const n = { ...prev, areaSqm: v }; if (v > 0) setResult(calcCeiling(n)); return n })
+                  setForm(prev => { const n = { ...prev, areaSqm: v }; if (v > 0) setResult(runCalc(n)); return n })
                 }} />
             </div>
             <div>
@@ -261,7 +295,7 @@ export default function CeilingCalc() {
               <input style={inp} type="number" min={0} step={0.1}
                 value={form.perimeterM || ''} onChange={e => {
                   const v = +e.target.value
-                  setForm(prev => { const n = { ...prev, perimeterM: v }; if (n.areaSqm > 0) setResult(calcCeiling(n)); return n })
+                  setForm(prev => { const n = { ...prev, perimeterM: v }; if (n.areaSqm > 0) setResult(runCalc(n)); return n })
                 }} />
             </div>
           </div>
@@ -269,10 +303,12 @@ export default function CeilingCalc() {
 
         {/* Стена начала раскладки — пункт 5 плана (KONSPEKT.md 10.07.2026).
             Только для непрямоугольного контура (пришёл с плана, L×W не заданы).
-            Пока UI-заглушка: выбор запоминается и подсвечивается на превью,
-            но сам расчёт раскладки по полигону ещё не реализован (пункт 6) —
-            для прямоугольного помещения (hasRoom) раскладка уже точная и
-            стена старта там не нужна. */}
+            С пункта 6 (та же сессия) выбор реально запускает точный расчёт
+            каркаса/листов по контуру (calcPolygonP112Frame.ts) — но только
+            для ОДНОЙ зоны; при объединении нескольких зон геометрического
+            union контуров пока нет, см. buildPolygonInput() и текст в
+            StartWallPicker ниже. Для прямоугольного помещения (hasRoom)
+            раскладка уже точная и стена старта там не нужна. */}
         {!hasRoom && seedZones && seedZones.some(z => z.outerMm.length >= 3) && (
           <Card title="СТЕНА НАЧАЛА РАСКЛАДКИ">
             <StartWallPicker
@@ -486,6 +522,7 @@ export default function CeilingCalc() {
                       areaSqm={form.areaSqm}
                       perimeterM={form.perimeterM}
                       startWall={startWall}
+                      polygonFrame={result?.polygonFrame ?? null}
                     />
                   ) : (
                     <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -610,12 +647,13 @@ const ZONE_COLORS = ['#2563eb', '#c9a68a', '#16a34a', '#dc2626', '#9333ea', '#08
  * произвольного полигона — отдельная нерешённая задача (пункт 6), это
  * превью её не делает, только показывает форму(ы).
  */
-function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall }: {
+function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall, polygonFrame }: {
   zones: CeilingSeedZone[]
   canvasW: number
   areaSqm: number
   perimeterM: number
   startWall?: { zoneIndex: number; sideIndex: number } | null
+  polygonFrame?: PolygonP112FrameResult | null
 }) {
   const PAD = 32
   const STAGE_H = 300
@@ -679,6 +717,20 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall 
               </Group>
             )
           })}
+          {polygonFrame && (
+            <Group>
+              {polygonFrame.mainRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
+                const wa = toStage(toWorld({ x: a, y: row.pos }, polygonFrame.frame))
+                const wb = toStage(toWorld({ x: b, y: row.pos }, polygonFrame.frame))
+                return <Line key={`m-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.accent} strokeWidth={1} opacity={0.6} />
+              }))}
+              {polygonFrame.bearingRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
+                const wa = toStage(toWorld({ x: row.pos, y: a }, polygonFrame.frame))
+                const wb = toStage(toWorld({ x: row.pos, y: b }, polygonFrame.frame))
+                return <Line key={`b-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.text} strokeWidth={1} opacity={0.4} dash={[4, 3]} />
+              }))}
+            </Group>
+          )}
         </Layer>
       </Stage>
       {validZones.length > 1 && (
@@ -693,8 +745,13 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall 
       )}
       <div style={{ textAlign: 'center', fontSize: 11, color: C.muted, marginTop: 6, lineHeight: 1.4 }}>
         {validZones.length > 1 ? 'Зоны объединены' : 'Контур обведён на плане'} · {areaSqm.toFixed(2)} м² · {perimeterM.toFixed(2)} пог.м
-        <br />Нестандартная форма — точный чертёж раскладки каркаса пока доступен только для прямоугольных потолков.
-        {startWall && <><br />Оранжевым — выбранная стена начала раскладки (пока не участвует в расчёте).</>}
+        {polygonFrame ? (
+          <><br />Синим — основной профиль, серым пунктиром — несущий. Смета в списке материалов посчитана точно по этой сетке.</>
+        ) : (
+          <><br />Нестандартная форма — чтобы увидеть точный чертёж раскладки каркаса, выберите стену начала раскладки слева.</>
+        )}
+        {startWall && !polygonFrame && <><br />Оранжевым — выбранная стена начала раскладки.</>}
+        {polygonFrame && <><br />Оранжевым — стена начала раскладки, от неё считается сетка.</>}
       </div>
     </div>
   )
@@ -758,9 +815,9 @@ function StartWallPicker({ zones, value, onChange }: {
         })}
       </div>
       <div style={{ marginTop: 8, fontSize: 10, color: C.muted, lineHeight: 1.4 }}>
-        Заготовка на будущее: сам чертёж раскладки профилей от выбранной стены
-        для полигона произвольной формы ещё не реализован — выбор пока только
-        подсвечивается на превью слева.
+        {zones.filter(z => z.outerMm.length >= 3).length > 1
+          ? 'При объединении нескольких зон точная раскладка каркаса по общему контуру пока не считается (нет физического объединения контуров в один полигон) — выбор стены подсвечивается на превью, но смета остаётся по среднему расходу.'
+          : 'Для типа П112 выбор стены запускает точный расчёт сетки каркаса и раскроя листов по контуру — вместо среднего расхода на м². Сетка видна на превью слева.'}
       </div>
     </div>
   )

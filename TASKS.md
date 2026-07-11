@@ -61,7 +61,16 @@
 
 ## В работе (не смержено в main)
 
-(пусто на момент этой записи)
+- 10.07.2026 — feat/ceiling-calc-polygon-frame-layout: пункт 6 плана
+  (KONSPEKT.md 10.07.2026) — точный расчёт каркаса П112 и раскрой листов
+  ГКЛ для произвольного (в т.ч. вогнутого/L-образного) контура потолка.
+  Новые модули calcPolygonP112Frame.ts + calcPolygonSheetLayout.ts, база —
+  scanlineCrossings/insideSegments/pointInPolygon в geometry2d.ts
+  (чёт-нечёт с учётом дырок). Подключено в calcCeiling.ts (polygonInput) и
+  в CeilingCalc.tsx (buildPolygonInput/runCalc) — сетка каркаса теперь
+  реально считается и рисуется на CeilingContourPreview для ОДНОЙ зоны
+  (объединение нескольких зон в один физический полигон — не сделано,
+  сумма периметров по-прежнему используется для сметы в этом случае).
 
 ---
 

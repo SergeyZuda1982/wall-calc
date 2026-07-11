@@ -336,3 +336,41 @@ describe('calcCeilingSheetLayout — раскрой 2400×2500мм (автоор
     expect(layout.rotated).toBe(true)
   })
 })
+
+describe('calcCeiling — с polygonInput (пункт 6, контур произвольной формы)', () => {
+  // Тот же прямоугольник 5000×4000, но заданный контуром + стеной старта,
+  // а не roomLengthMm/roomWidthMm — материалы каркаса должны совпасть с
+  // прямоугольным точным расчётом (см. calcPolygonP112Frame.test.ts).
+  const outer = [
+    { x: 0, y: 0 }, { x: 5000, y: 0 }, { x: 5000, y: 4000 }, { x: 0, y: 4000 },
+  ]
+  const startSide = { start: outer[0], end: outer[1] }
+  const spec: CeilingSpecFull = {
+    type: 'p112', layers: 1, material: 'gsp', thickness: 12.5,
+    stepC: 600, areaSqm: 20, perimeterM: 18, slabGapMm: 80, sheetLengthMm: 2500,
+    roomLengthMm: 0, roomWidthMm: 0,
+  }
+  const res = calcCeiling(spec, { outerMm: outer, holesMm: [], startSide })
+
+  it('нет предупреждения про "средний расход" — использована точная геометрия по контуру', () => {
+    expect(res.warnings.some(w => w.includes('среднему расходу'))).toBe(false)
+  })
+
+  it('polygonFrame заполнен, sheetLayout (прямоугольный) — null', () => {
+    expect(res.polygonFrame).not.toBeNull()
+    expect(res.sheetLayout).toBeNull()
+    expect(res.polygonSheetLayout).not.toBeNull()
+  })
+
+  it('материалы каркаса посчитаны (несущий/основной профиль, крабы, подвесы)', () => {
+    expect(res.materials.find(m => m.name.includes('несущий'))?.qty).toBeGreaterThan(0)
+    expect(res.materials.find(m => m.name.includes('основной'))?.qty).toBeGreaterThan(0)
+    expect(res.materials.find(m => m.name.includes('Соединитель двухуровневый'))?.qty).toBeGreaterThan(0)
+  })
+
+  it('без polygonInput (тот же spec) считается по среднему расходу — есть warning', () => {
+    const fallback = calcCeiling(spec)
+    expect(fallback.warnings.some(w => w.includes('среднему расходу'))).toBe(true)
+    expect(fallback.polygonFrame).toBeNull()
+  })
+})
