@@ -23,15 +23,16 @@ import * as THREE from 'three'
 import { useProjectStore, type SelectedEntity } from './store/useProjectStore'
 import {
   wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM,
-  freeformStructuresToPrisms3D,
+  freeformStructuresToPrisms3D, wallStudPositionsMm,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D,
 } from './core/planTo3D'
-import type { PlanLineType, FloorPlan } from './types'
+import type { PlanLineType, FloorPlan, PlanLine } from './types'
 import CeilingGridMesh from './components/CeilingGridMesh'
 import { resolveFrameParams } from './core/calcP112Frame'
 import { formatDistanceM } from './core/formatDistance'
-import { lineProgressColor, lineProgressSummary } from './core/lineProgress'
+import { lineProgressColor, lineProgressSummary, wallGklVisual3D } from './core/lineProgress'
+import { finishSidesOf } from './core/finishResolver'
 import { getWallTexture, tintOverTexture } from './textures3D'
 
 const TYPE_COLOR_3D: Record<PlanLineType, string> = {
@@ -47,6 +48,13 @@ const FLOOR_COLOR = '#c9c2b4'
 const CEILING_COLOR = '#e8e8ec'
 const COLUMN_COLOR = '#9aa5ad'
 const CONCRETE_DEFAULT_TILE_M = 2
+
+// ─── Каркас/обшивка ГКЛ-стены (Этап 2 "реалистичные материалы", 10-11.07.2026) ─
+const FRAME_PROFILE_W_M = 0.05     // ширина полки профиля (схематично, ПС50/75/100 визуально не отличаем)
+const FRAME_TRACK_H_M = 0.05       // высота направляющей (верх/низ)
+const FRAME_PROFILE_COLOR = '#8a9199'
+const GKL_SHEET_THICKNESS_M = 0.0125 // стандартный лист 12.5мм
+const GKL_SHEET_COLOR = '#d9d4c5'
 
 /**
  * Стена в 3D — коробка three.js. Клик по стене (10.07.2026, выбор стены в
@@ -64,8 +72,12 @@ const CONCRETE_DEFAULT_TILE_M = 2
  * линии (TYPE_COLOR_3D), не замена цвета: так остаётся видно, что это была
  * за стена (новая/облицовка/существующая), и что она ещё и выбрана.
  */
-function WallMesh({ box, opacity = 1, selected = false, measuring = false, onSelect }: {
+function WallMesh({ box, line, opacity = 1, selected = false, measuring = false, onSelect }: {
   box: WallBox3D
+  /** Линия плана, которой принадлежит box (по box.lineId) — нужна для каркаса
+   *  ГКЛ (wallGklVisual3D/wallStudPositionsMm). Может быть undefined только
+   *  в теории (защита от рассинхрона lines/boxes) — тогда просто нет каркаса. */
+  line?: PlanLine
   opacity?: number
   selected?: boolean
   measuring?: boolean
@@ -80,29 +92,90 @@ function WallMesh({ box, opacity = 1, selected = false, measuring = false, onSel
     [box.materialKind, box.size.sx, box.size.sy],
   )
   const tint = useMemo(() => tintOverTexture(color), [color])
+
+  // ГКЛ-каркас (Этап 2, 10-11.07.2026): применимо только для линий
+  // finishMaterialCategoryOf==='gkl' с ЯВНО настроенным buildProgress —
+  // иначе (кладка/бетон/legacy) обычный вид Этапа 1 ниже.
+  // Короткие вставки у проёма (подоконник/перемычка, id содержит __sill_/
+  // __lintel_) намеренно ВСЕГДА остаются сплошными — россыпь стоек на
+  // 100-900мм высоты нечитаема и не даёт визуальной ценности (см.
+  // обсуждение с пользователем).
+  const gklVisual = useMemo(() => (line ? wallGklVisual3D(line) : null), [line])
+  const isPartialHeightSegment = box.id.includes('__sill_') || box.id.includes('__lintel_')
+  const showFrame = !!gklVisual && gklVisual.mode === 'frame' && !isPartialHeightSegment
+  const sides = line ? finishSidesOf(line) : 2
+
+  const studLocalXs = useMemo(() => {
+    if (!showFrame || !line) return []
+    const allMm = wallStudPositionsMm(line)
+    const fromMm = box.alongFromM * 1000, toMm = box.alongToM * 1000
+    return allMm
+      .filter(p => p > fromMm + 1 && p < toMm - 1) // строго внутри сегмента, края уже заняты торцевыми стойками
+      .map(p => (p - fromMm) / 1000 - box.size.sx / 2)
+  }, [showFrame, line, box.alongFromM, box.alongToM, box.size.sx])
+
   function handleClick(e: ThreeEvent<MouseEvent>) {
     if (measuring || !onSelect) return
     e.stopPropagation()
     onSelect(box.lineId)
   }
+
+  const emissive = selected ? '#ffca28' : '#000000'
+  const emissiveIntensity = selected ? 0.55 : 0
+  const transparent = opacity < 1
+
   return (
-    <mesh
+    <group
       position={[box.center.x, box.center.y, box.center.z]}
       rotation={[0, box.rotationY, 0]}
-      castShadow receiveShadow
       onClick={handleClick}
     >
-      <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
-      <meshStandardMaterial
-        map={texture}
-        color={texture ? tint : color}
-        roughness={0.9}
-        transparent={opacity < 1}
-        opacity={opacity}
-        emissive={selected ? '#ffca28' : '#000000'}
-        emissiveIntensity={selected ? 0.55 : 0}
-      />
-    </mesh>
+      {!showFrame && (
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
+          <meshStandardMaterial
+            map={texture}
+            color={texture ? tint : color}
+            roughness={0.9}
+            transparent={transparent}
+            opacity={opacity}
+            emissive={emissive}
+            emissiveIntensity={emissiveIntensity}
+          />
+        </mesh>
+      )}
+      {showFrame && (
+        <>
+          {/* верхняя/нижняя направляющая */}
+          {[1, -1].map(sign => (
+            <mesh key={`track-${sign}`} position={[0, sign * (box.size.sy / 2 - FRAME_TRACK_H_M / 2), 0]} castShadow receiveShadow>
+              <boxGeometry args={[box.size.sx, FRAME_TRACK_H_M, box.size.sz * 0.9]} />
+              <meshStandardMaterial color={FRAME_PROFILE_COLOR} roughness={0.4} metalness={0.5} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
+            </mesh>
+          ))}
+          {/* торцевые + рядовые стойки (торцевые — на реальной границе сегмента, всегда) */}
+          {[-(box.size.sx / 2 - FRAME_PROFILE_W_M / 2), ...studLocalXs, box.size.sx / 2 - FRAME_PROFILE_W_M / 2].map((x, i) => (
+            <mesh key={`stud-${i}`} position={[x, 0, 0]} castShadow receiveShadow>
+              <boxGeometry args={[FRAME_PROFILE_W_M, box.size.sy - 2 * FRAME_TRACK_H_M, box.size.sz * 0.9]} />
+              <meshStandardMaterial color={FRAME_PROFILE_COLOR} roughness={0.4} metalness={0.5} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
+            </mesh>
+          ))}
+          {/* обшивка стороны А/Б — тонкий лист поверх каркаса, только если подтверждена */}
+          {gklVisual!.sheetA && (
+            <mesh position={[0, 0, box.size.sz / 2 - GKL_SHEET_THICKNESS_M / 2]} castShadow receiveShadow>
+              <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />
+              <meshStandardMaterial color={GKL_SHEET_COLOR} roughness={0.85} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
+            </mesh>
+          )}
+          {gklVisual!.sheetB && sides === 2 && (
+            <mesh position={[0, 0, -(box.size.sz / 2 - GKL_SHEET_THICKNESS_M / 2)]} castShadow receiveShadow>
+              <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />
+              <meshStandardMaterial color={GKL_SHEET_COLOR} roughness={0.85} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
+            </mesh>
+          )}
+        </>
+      )}
+    </group>
   )
 }
 
@@ -622,6 +695,7 @@ function LevelGroup({
   const opacity = dimmed ? 0.35 : 1
 
   const boxes = useMemo(() => wallsToBoxes3D(lines, scaleMmPx, rectColumns), [lines, scaleMmPx, rectColumns])
+  const linesById = useMemo(() => new Map(lines.map(l => [l.id, l])), [lines])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
   const slabPolygons = useMemo(() => slabsToPolygons3D(slabs, scaleMmPx), [slabs, scaleMmPx])
   const ceilingMm = useMemo(() => estimateCeilingMm(lines), [lines])
@@ -709,6 +783,7 @@ function LevelGroup({
         <WallMesh
           key={box.id}
           box={box}
+          line={linesById.get(box.lineId)}
           opacity={opacity}
           selected={box.lineId === selectedWallId}
           measuring={measuring}

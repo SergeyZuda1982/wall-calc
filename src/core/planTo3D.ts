@@ -149,6 +149,16 @@ export interface WallBox3D {
   rotationY: number
   /** визуальная категория материала для 3D-текстуры, см. wallMaterialKindOf */
   materialKind: WallMaterialKind
+  /**
+   * Диапазон этого сегмента вдоль оси ЦЕЛОЙ линии, метры от её начала (0..
+   * длина линии) — НЕ путать с center/size (те уже в мировых координатах).
+   * У целой линии без проёмов это просто 0..длина. Нужно для 3D-каркаса
+   * ГКЛ-стены (Этап 2, 10-11.07.2026, см. Scene3D.tsx wallGklVisual3D) —
+   * чтобы взять кусок реального раскроя стоек (wallStudPositionsMm, считается
+   * на ВСЮ линию) именно для этого сегмента, а не пересчитывать заново.
+   */
+  alongFromM: number
+  alongToM: number
 }
 
 /**
@@ -193,6 +203,8 @@ export function wallToBox3D(
     size: { sx: length, sy: heightM, sz: mmToM(tMm) },
     rotationY: Math.atan2(-dz, dx),
     materialKind: wallMaterialKindOf(line.spec?.material),
+    alongFromM: 0,
+    alongToM: length,
   }
 }
 
@@ -295,6 +307,8 @@ export function wallToBoxesWithOpenings3D(
       size: { sx: segLen, sy: wallHeightM, sz: base.size.sz },
       rotationY: base.rotationY,
       materialKind: base.materialKind,
+      alongFromM: fromM,
+      alongToM: toM,
     })
   }
 
@@ -311,6 +325,8 @@ export function wallToBoxesWithOpenings3D(
       size: { sx: segLen, sy: h, sz: base.size.sz },
       rotationY: base.rotationY,
       materialKind: base.materialKind,
+      alongFromM: fromM,
+      alongToM: toM,
     })
   }
 
