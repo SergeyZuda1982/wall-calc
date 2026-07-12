@@ -135,9 +135,9 @@ describe('calcP112FrameGeometry', () => {
     expect(long.bearingExtenders).toBe(long.bearingCount * 2)
   })
 
-  it('подвесы: hangersTotal = bearingCount * hangersPerBearing', () => {
+  it('подвесы: hangersTotal = mainCount * hangersPerMain', () => {
     const geo = calcP112FrameGeometry(4000, 3000, 600, 900, 50, true)
-    expect(geo.hangersTotal).toBe(geo.bearingCount * geo.hangersPerBearing)
+    expect(geo.hangersTotal).toBe(geo.mainCount * geo.hangersPerMain)
   })
 
   it('тип подвеса прокидывается из slabGapMm', () => {
@@ -176,9 +176,9 @@ describe('calcP112FrameGeometry', () => {
     })
 
     it('extra.stepA переопределяет шаг подвесов НЕЗАВИСИМО от stepB', () => {
-      const withoutStepA = calcP112FrameGeometry(4000, 3000, 600, 900, 50, true, 'user')
-      const withStepA = calcP112FrameGeometry(4000, 3000, 600, 900, 50, true, 'user', { stepA: 1200 })
-      expect(withStepA.hangersPerBearing).not.toBe(withoutStepA.hangersPerBearing)
+      const withoutStepA = calcP112FrameGeometry(4000, 3000, 600, 300, 50, true, 'user')
+      const withStepA = calcP112FrameGeometry(4000, 3000, 600, 300, 50, true, 'user', { stepA: 1200 })
+      expect(withStepA.hangersPerMain).not.toBe(withoutStepA.hangersPerMain)
     })
 
     it('extra.wallOffsetMainMm/wallOffsetBearingMm можно переопределить явно поверх layoutMode', () => {
@@ -315,31 +315,31 @@ describe('snapHangerPositionsToAxis', () => {
   })
 })
 
-describe('calcP112FrameGeometry — подвесы строго на оси основного профиля (10.07.2026)', () => {
-  it('hangerPositions — подмножество mainPositions, не независимая сетка', () => {
+describe('calcP112FrameGeometry — подвесы строго на оси, крепятся к основному профилю (12.07.2026, было наоборот)', () => {
+  it('hangerPositions — подмножество bearingPositions, не независимая сетка', () => {
     const geo = calcP112FrameGeometry(4000, 4000, 600, 1150, 300, true, 'user')
     for (const hp of geo.hangerPositions) {
-      expect(geo.mainPositions).toContain(hp)
+      expect(geo.bearingPositions).toContain(hp)
     }
   })
 
-  it('реальный кейс пользователя (4000x4000, c=600, b=1150, user) — подвес на каждом основном профиле', () => {
+  it('реальный кейс (4000x4000, c=600, b=1150, user, stepA=stepB) — подвес на каждом несущем профиле', () => {
     const geo = calcP112FrameGeometry(4000, 4000, 600, 1150, 300, true, 'user', { stepA: 1150 })
-    expect(geo.mainPositions).toEqual([600, 1200, 1800, 2400, 3000, 3750])
-    expect(geo.hangerPositions).toEqual(geo.mainPositions)
-    expect(geo.hangersPerBearing).toBe(6)
+    // stepA == stepB -> ни одну позицию несущего пропустить нельзя
+    expect(geo.hangerPositions).toEqual(geo.bearingPositions)
+    expect(geo.hangersPerMain).toBe(geo.bearingCount)
   })
 
   it('mainPositions/bearingPositions присутствуют и согласованы со счётчиками', () => {
     const geo = calcP112FrameGeometry(4000, 4000, 600, 1150, 300, true, 'user')
     expect(geo.mainPositions.length).toBe(geo.mainCount)
     expect(geo.bearingPositions.length).toBe(geo.bearingCount)
-    expect(geo.hangerPositions.length).toBe(geo.hangersPerBearing)
+    expect(geo.hangerPositions.length).toBe(geo.hangersPerMain)
   })
 
-  it('hangersTotal = hangersPerBearing × bearingCount', () => {
+  it('hangersTotal = hangersPerMain × mainCount', () => {
     const geo = calcP112FrameGeometry(5000, 3500, 1000, 500, 300, true, 'knauf', { stepA: 950, wallOffsetMainMm: 100, wallOffsetBearingMm: 100 })
-    expect(geo.hangersTotal).toBe(geo.hangersPerBearing * geo.bearingCount)
+    expect(geo.hangersTotal).toBe(geo.hangersPerMain * geo.mainCount)
   })
 })
 

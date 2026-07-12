@@ -23,8 +23,13 @@
  * раскрое, calcProjectSheetLayout.ts — числа не расходятся) и КАЖДЫЙ лист
  * рисуется отдельным боксом с небольшим зазором (шов) от соседних — видно
  * границы, обрезки, смещение слоя 2 "вразбежку". Листы висят прямо под
- * нижней полкой основного профиля (mainY), как в реальной сборке — а не
+ * нижней полкой несущего профиля (bearingY), как в реальной сборке — а не
  * привязаны к плите перекрытия, как старая плоскость-заглушка.
+ * [12.07.2026, той же сессией позже: подвес крепится к ОСНОВНОМУ профилю
+ * (верхний уровень), несущий — ниже, к нему и крепится ГКЛ — см.
+ * calcP112Frame.ts, шапка файла. При автомёрже с этой правкой переменные
+ * mainY/bearingY поменялись местами, ГКЛ переставлен на bearingY, чтобы
+ * остаться под несущим, а не оказаться на новом mainY (теперь верхнем).]
  * Без сохранённой раскладки (showGrid=false или раскладки нет вовсе) —
  * старое поведение: одна плоскость по контуру на условной высоте ceilingM
  * (просто показать форму/наличие потолка).
@@ -128,9 +133,12 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
     return [mmToM(w.x), mmToM(w.y)]
   }
 
-  const dropToBearingM = 0.12
-  const bearingY = ceilingM - dropToBearingM
-  const mainY = bearingY - mmToM(27) - 0.003
+  // 12.07.2026, ИСПРАВЛЕНИЕ: подвес крепится к ОСНОВНОМУ профилю (верхний
+  // уровень), несущий — ниже, соединён с основным крабом (см.
+  // calcP112Frame.ts, шапка файла — было наоборот).
+  const dropToMainM = 0.12
+  const mainY = ceilingM - dropToMainM
+  const bearingY = mainY - mmToM(27) - 0.003
 
   return (
     <group>
@@ -142,7 +150,7 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
       )}
 
       {showSheets && (
-        <SheetLayers sheetLayout={sheetLayout!} toWorldM={toWorldM} topY={mainY} opacity={opacity} />
+        <SheetLayers sheetLayout={sheetLayout!} toWorldM={toWorldM} topY={bearingY} opacity={opacity} />
       )}
 
       {showDetailed && (
@@ -181,7 +189,7 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
 
           {frame!.hangerPoints.map((p, i) => {
             const [x, z] = toWorldM(p)
-            return <Hanger key={`h-${i}`} x={x} y={ceilingM} z={z} dropM={dropToBearingM} />
+            return <Hanger key={`h-${i}`} x={x} y={ceilingM} z={z} dropM={dropToMainM} />
           })}
         </>
       )}

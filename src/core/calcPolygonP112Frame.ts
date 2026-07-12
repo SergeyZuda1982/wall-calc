@@ -30,10 +30,11 @@
  *    основного ряда одновременно (оба ряда — сечения ОДНОГО И ТОГО ЖЕ
  *    контура на пересекающихся линиях, поэтому проверка через контур
  *    эквивалентна проверке пересечения отрезков, но проще).
- * 5. Подвесы — как и в прямоугольном случае (10.07.2026, ось основного
- *    профиля) — но теперь ОТДЕЛЬНО для каждого несущего ряда: берём V-позиции
- *    основного профиля, которые физически пересекают ИМЕННО этот несущий ряд
- *    (через pointInPolygon), и прогоняем через snapHangerPositionsToAxis.
+ * 5. Подвесы — 12.07.2026: подвес физически крепится к ОСНОВНОМУ профилю
+ *    (см. исправление в calcP112Frame.ts, там было наоборот) — ОТДЕЛЬНО для
+ *    каждого ряда основного профиля: берём U-позиции несущего профиля,
+ *    которые физически пересекают ИМЕННО этот ряд основного (через
+ *    pointInPolygon), и прогоняем через snapHangerPositionsToAxis.
  *    Для прямоугольника это давало один и тот же список для всех рядов —
  *    здесь список может отличаться от ряда к ряду (вогнутая форма).
  *
@@ -233,12 +234,15 @@ export function calcPolygonP112Frame(
   const bearingExtenders = bearingRows.reduce((s, r) => s + r.segments.reduce((s2, [a, b]) => s2 + extendersForSegment(b - a), 0), 0)
 
   // ── Соединители-крабы и подвесы ──────────────────────────────────────────
+  // 12.07.2026: подвес — на основном профиле (см. исправление комментария
+  // выше), поэтому внешний цикл теперь по mainRows (не bearingRows), а
+  // снэпаются U-позиции несущего профиля.
   const crabPoints: Point2D[] = []
   const hangerPoints: Point2D[] = []
-  for (const uRow of bearingRows) {
-    const validVs = mainVPositions.filter(v => pointInPolygon({ x: uRow.pos, y: v }, loopsLocal))
-    for (const v of validVs) crabPoints.push({ x: uRow.pos, y: v })
-    for (const v of snapHangerPositionsToAxis(validVs, stepA)) hangerPoints.push({ x: uRow.pos, y: v })
+  for (const vRow of mainRows) {
+    const validUs = bearingUPositions.filter(u => pointInPolygon({ x: u, y: vRow.pos }, loopsLocal))
+    for (const u of validUs) crabPoints.push({ x: u, y: vRow.pos })
+    for (const u of snapHangerPositionsToAxis(validUs, stepA)) hangerPoints.push({ x: u, y: vRow.pos })
   }
   const connectorsTotal = crabPoints.length
   const hangersTotal = hangerPoints.length

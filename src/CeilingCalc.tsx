@@ -1088,17 +1088,15 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // 10.07.2026: подвес обязан висеть строго по оси профиля, на который он
   // физически крепится — в точке пересечения основной/несущий (там же
   // соединитель), а не независимой сеткой от стены.
-  // 12.07.2026: для П113 (см. calcP113Frame.ts) роли ОБРАТНЫЕ по сравнению с
-  // П112 — подвес крепится к ОСНОВНОМУ профилю (вертикальные линии, mainPosX),
-  // и снэпается вдоль его собственного пробега (Y) к позициям НЕСУЩЕГО
-  // профиля (bearingPosY) — один подвес на каждый (mainPosX × снэпнутый Y).
-  // У П112 наоборот: подвес на несущем (bearingPosY), снэпается по X к
-  // позициям основного (mainPosXMm) — один подвес на каждый (снэпнутый X ×
-  // bearingPosY). Сдвиг гребёнки применяется к подвесам так же, как и к
-  // профилю, на котором они сидят — они должны двигаться вместе.
-  const isP113 = form.type === 'p113'
-  const hangerPosXMm = isP113 ? mainPosXMm : snapHangerPositionsToAxis(mainPosXMm, stepA)
-  const hangerPosYMm = isP113 ? snapHangerPositionsToAxis(bearingPosYMm, stepA) : bearingPosYMm
+  // 12.07.2026, ИСПРАВЛЕНИЕ: подвес крепится к ОСНОВНОМУ профилю (вертикальные
+  // линии, mainPosX) — ОДИНАКОВО для П112 и П113 (см. calcP112Frame.ts, шапка
+  // файла — раньше для П112 здесь ошибочно считалось наоборот, на несущем;
+  // для П113 было верно с самого начала). Снэпается вдоль собственного
+  // пробега основного (Y) к позициям НЕСУЩЕГО профиля (bearingPosY) — один
+  // подвес на каждый (mainPosX × снэпнутый Y). Сдвиг гребёнки применяется к
+  // подвесам так же, как и к профилю, на котором они сидят.
+  const hangerPosXMm = mainPosXMm
+  const hangerPosYMm = snapHangerPositionsToAxis(bearingPosYMm, stepA)
   const hangers: { x: number; y: number }[] = []
   // Рисуем подвесы только если их не слишком много (иначе каша)
   const hangerCount = hangerPosYMm.length * hangerPosXMm.length

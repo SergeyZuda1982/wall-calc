@@ -83,13 +83,13 @@ describe('calcCeiling — П112, точная геометрия (с slabGapMm)'
   })
 
   it('несущий профиль — по geometrии (bearingTotalLm)', () => {
-    const item = res.materials.find(m => m.name.includes('несущий, верхний'))
+    const item = res.materials.find(m => m.name.includes('несущий, нижний'))
     expect(item).toBeDefined()
     expect(item!.qty).toBe(Math.ceil(expectedGeo.bearingTotalLm))
   })
 
   it('основной профиль — по геометрии (mainTotalLm)', () => {
-    const item = res.materials.find(m => m.name.includes('основной, нижний'))
+    const item = res.materials.find(m => m.name.includes('основной, верхний'))
     expect(item).toBeDefined()
     expect(item!.qty).toBe(Math.ceil(expectedGeo.mainTotalLm))
   })
@@ -138,7 +138,7 @@ describe('calcCeiling — П112, точная геометрия (с slabGapMm)'
       5000, 4000, PRECISE.stepC, frameParams.stepB, 50, true, 'knauf',
       { stepA: frameParams.stepA, wallOffsetMainMm: frameParams.wallOffsetMainMm, wallOffsetBearingMm: frameParams.wallOffsetBearingMm },
     )
-    const item = withKnauf.materials.find(m => m.name.includes('несущий, верхний'))
+    const item = withKnauf.materials.find(m => m.name.includes('несущий, нижний'))
     expect(item!.qty).toBe(Math.ceil(expectedKnaufGeo.bearingTotalLm))
     expect(withKnauf.materials).not.toEqual(res.materials)
     // c=600 вне официальной таблицы (только 800/1000/1200) -> должно быть предупреждение

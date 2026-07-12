@@ -325,11 +325,14 @@ export default function CeilingGridMesh({
   }, [bbox, stepB, stepC, bearingAlongLength, stepA])
 
   // Вертикальная раскладка уровней относительно низа плиты (ceilingM), вниз:
-  const dropToBearingM = 0.12   // типичный вылет прямого подвеса, для показа
-  const bearingY = ceilingM - dropToBearingM
-  const mainY = bearingY - mmToM(27) - 0.003 // основной чуть ниже несущего + зазор краба
-  const gklY = mainY - mmToM(27 / 2 + 12.5 / 2)
-  const woolY = bearingY - mmToM(20)
+  // 12.07.2026, ИСПРАВЛЕНИЕ: подвес крепится к ОСНОВНОМУ профилю (верхний
+  // уровень), несущий — ниже, соединён с основным крабом, к несущему же
+  // крепится ГКЛ (см. calcP112Frame.ts, шапка файла — было наоборот).
+  const dropToMainM = 0.12   // типичный вылет прямого подвеса, для показа
+  const mainY = ceilingM - dropToMainM
+  const bearingY = mainY - mmToM(27) - 0.003 // несущий чуть ниже основного + зазор краба
+  const gklY = bearingY - mmToM(27 / 2 + 12.5 / 2)
+  const woolY = mainY - mmToM(20)
 
   const ppShape = useMemo(() => ppProfileShape(), [])
 
@@ -392,17 +395,17 @@ export default function CeilingGridMesh({
         )
       })}
 
-      {/* подвесы вдоль несущего профиля */}
+      {/* подвесы вдоль основного профиля */}
       {grid.hangerPoints.map((p, i) => {
         const hx = bbox.minX + p.x / 1000, hz = bbox.minZ + p.z / 1000
-        const hy = ceilingM - dropToBearingM / 2
+        const hy = ceilingM - dropToMainM / 2
         return (
           <Hanger
             key={`hanger-${i}`}
             x={hx}
             y={ceilingM}
             z={hz}
-            dropM={dropToBearingM}
+            dropM={dropToMainM}
             onClick={focusableClick(new THREE.Vector3(hx, hy, hz))}
           />
         )

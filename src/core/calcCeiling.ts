@@ -168,8 +168,8 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       )
       warnings.push(...polygonFrame.warnings)
 
-      materials.push({ name: 'Профиль ПП 60×27 (несущий, верхний уровень)', unit: 'пог.м', qty: ceil(polygonFrame.bearingTotalLm) })
-      materials.push({ name: 'Профиль ПП 60×27 (основной, нижний уровень)', unit: 'пог.м', qty: ceil(polygonFrame.mainTotalLm) })
+      materials.push({ name: 'Профиль ПП 60×27 (несущий, нижний уровень, без подвесов)', unit: 'пог.м', qty: ceil(polygonFrame.bearingTotalLm) })
+      materials.push({ name: 'Профиль ПП 60×27 (основной, верхний уровень, с подвесами)', unit: 'пог.м', qty: ceil(polygonFrame.mainTotalLm) })
       const extendersTotal = polygonFrame.bearingExtenders + polygonFrame.mainExtenders
       if (extendersTotal > 0) {
         materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotal })
@@ -194,8 +194,8 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
         },
       )
 
-      materials.push({ name: 'Профиль ПП 60×27 (несущий, верхний уровень)', unit: 'пог.м', qty: ceil(geo.bearingTotalLm) })
-      materials.push({ name: 'Профиль ПП 60×27 (основной, нижний уровень)', unit: 'пог.м', qty: ceil(geo.mainTotalLm) })
+      materials.push({ name: 'Профиль ПП 60×27 (несущий, нижний уровень, без подвесов)', unit: 'пог.м', qty: ceil(geo.bearingTotalLm) })
+      materials.push({ name: 'Профиль ПП 60×27 (основной, верхний уровень, с подвесами)', unit: 'пог.м', qty: ceil(geo.mainTotalLm) })
       const extendersTotal = geo.bearingExtenders + geo.mainExtenders
       if (extendersTotal > 0) {
         materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotal })
