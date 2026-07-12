@@ -128,9 +128,12 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
     return [mmToM(w.x), mmToM(w.y)]
   }
 
-  const dropToBearingM = 0.12
-  const bearingY = ceilingM - dropToBearingM
-  const mainY = bearingY - mmToM(27) - 0.003
+  // 12.07.2026, ИСПРАВЛЕНИЕ: подвес крепится к ОСНОВНОМУ профилю (верхний
+  // уровень), несущий — ниже, соединён с основным крабом (см.
+  // calcP112Frame.ts, шапка файла — было наоборот).
+  const dropToMainM = 0.12
+  const mainY = ceilingM - dropToMainM
+  const bearingY = mainY - mmToM(27) - 0.003
 
   return (
     <group>
@@ -181,7 +184,7 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
 
           {frame!.hangerPoints.map((p, i) => {
             const [x, z] = toWorldM(p)
-            return <Hanger key={`h-${i}`} x={x} y={ceilingM} z={z} dropM={dropToBearingM} />
+            return <Hanger key={`h-${i}`} x={x} y={ceilingM} z={z} dropM={dropToMainM} />
           })}
         </>
       )}

@@ -67,9 +67,9 @@ export interface CeilingGridPoint {
 }
 
 export interface CeilingGridResult {
-  /** несущий профиль (верхний уровень, к плите через подвесы) */
+  /** несущий профиль (нижний уровень, соединяется с основным крабом, без подвесов) */
   bearingSegments: CeilingGridSegment[]
-  /** основной профиль (нижний уровень, к нему крепится ГКЛ), перпендикулярно несущему */
+  /** основной профиль (верхний уровень, крепится к плите подвесами), перпендикулярно несущему */
   mainSegments: CeilingGridSegment[]
   /** точки соединителя (одноуровневый/двухуровневый) — пересечения несущих и основных линий */
   crabPoints: CeilingGridPoint[]
@@ -92,12 +92,13 @@ export function calcCeilingGrid(input: CeilingGridInput): CeilingGridResult {
 
   const bearingPositions = calcFrameRowPositions(B, stepB)
   const mainPositions = calcFrameRowPositions(A, stepC)
-  // 10.07.2026: подвес обязан висеть строго по оси основного профиля (тот же
-  // фикс, что и в calcP112FrameGeometry/CeilingCalc.tsx, см. KONSPEKT.md,
-  // "подвесы слетели с оси") — раньше здесь была НЕЗАВИСИМАЯ сетка через
-  // calcFrameRowPositions(A, stepB), из-за чего подвесы в 3D физически не
-  // попадали ни на один основной профиль. Теперь — подмножество mainPositions.
-  const hangerOffsets = snapHangerPositionsToAxis(mainPositions, stepA ?? stepB)
+  // 12.07.2026, ИСПРАВЛЕНИЕ: подвес физически крепится к ОСНОВНОМУ профилю,
+  // не к несущему (см. calcP112Frame.ts, шапка файла, — подтверждено
+  // официальными чертежами КНАУФ П112.1 и П113.1). Раньше здесь снэпались
+  // mainPositions и повторялись на каждом bearingPositions (то есть подвес
+  // считался закреплённым НА несущем) — теперь наоборот: снэпаем
+  // bearingPositions и повторяем на каждом mainPositions.
+  const hangerOffsets = snapHangerPositionsToAxis(bearingPositions, stepA ?? stepB)
 
   // toXZ переводит (координата вдоль A, координата поперёк B) в мировые (x,z)
   // локали помещения — учитывая, куда реально смотрит несущий профиль.
@@ -124,8 +125,8 @@ export function calcCeilingGrid(input: CeilingGridInput): CeilingGridResult {
   }
 
   const hangerPoints: CeilingGridPoint[] = []
-  for (const acrossB of bearingPositions) {
-    for (const alongA of hangerOffsets) {
+  for (const alongA of mainPositions) {
+    for (const acrossB of hangerOffsets) {
       hangerPoints.push(toXZ(alongA, acrossB))
     }
   }
