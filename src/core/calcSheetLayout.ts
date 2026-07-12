@@ -148,8 +148,12 @@ function workZones(
  * Разбивает зону [z1, z2] на куски с учётом вертикального смещения слоя.
  * Возвращает массив y-границ: [z1, joint1, joint2, ..., z2].
  * Горизонтальные стыки листов попадают в точки vOffset, vOffset+SL, vOffset+2*SL...
+ *
+ * 12.07.2026: экспортирована — та же функция (без изменений) переиспользуется
+ * в calcPolygonSheetLayout.ts для раскроя ГКЛ потолка по контуру, вместо
+ * повторной реализации той же 4-значной схемы смещения "вразбежку".
  */
-function zoneJoints(z1: number, z2: number, SL: number, vOffset: number): number[] {
+export function zoneJoints(z1: number, z2: number, SL: number, vOffset: number): number[] {
   const pts = [z1]
   // Первый стык ≥ z1
   let j = vOffset % SL  // нормализуем смещение
@@ -227,10 +231,13 @@ function avoidThinWedge(ys: number[], hL: number, hR: number, SL: number, minWed
 }
 
 // ─── Жадный пул обрезков ─────────────────────────────────────────────────────
+// 12.07.2026: экспортированы — переиспользуются в calcPolygonSheetLayout.ts
+// (раскрой ГКЛ потолка), чтобы обрезки одной конструкции объекта реально
+// перетекали в другую (стена → облицовка → потолок) через один и тот же пул.
 
-interface PoolItem { w: number; h: number; used: boolean }
+export interface PoolItem { w: number; h: number; used: boolean }
 
-function takeFromPool(pool: PoolItem[], needW: number, needH: number): PoolItem | null {
+export function takeFromPool(pool: PoolItem[], needW: number, needH: number): PoolItem | null {
   for (const item of pool) {
     if (!item.used && item.w >= needW && item.h >= needH) {
       item.used = true
