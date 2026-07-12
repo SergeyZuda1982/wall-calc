@@ -384,3 +384,40 @@ describe('computeJoinAngles — угол узла в градусах (см. KON
     expect(angles.some(a => a.angleDeg > 89 && a.angleDeg < 91)).toBe(true)
   })
 })
+
+describe('computeWallJoins — реальный узел с объекта (KONSPEKT.md 12.07.2026, C-1/C-2, 123.49°)', () => {
+  it('250мм + 125мм, обе стены стыкуются в END2, острый угол — без самопересечения полигона', () => {
+    // Точные координаты из консольного дампа "∠ Углы" на реальном плане:
+    // C-1 (широкая, block/250, halfPx=15.16) и C-2 (узкая, block/125,
+    // halfPx=7.58) сходятся в одной точке, обе именно вторым концом (end2) —
+    // это единственная комбинация из всех, что реально встретилась на
+    // практике и до сих пор не была явно протестирована (все синтетические
+    // тесты выше стыковали через end1-end1).
+    const A: WallForJoin = { id: 'A', x1: 12748, y1: 9413, x2: 11187, y2: 9413, halfPx: 15.16, createdIndex: 0 }
+    const B: WallForJoin = { id: 'B', x1: 10115, y1: 11034, x2: 11187, y2: 9413, halfPx: 7.58, createdIndex: 1 }
+    const res = computeWallJoins([A, B])
+    const ja = res.get('A')!, jb = res.get('B')!
+
+    expect(ja.cap2).toBe(false) // join найден на этом конце
+    expect(jb.cap2).toBe(false)
+    // Общая митр-грань — ОБЯЗАНА совпадать у обеих стен побитово (иначе
+    // между ними останется щель или нахлёст на плане).
+    expect(ja.p2p).toEqual(jb.p2p)
+    expect(ja.p2m).toEqual(jb.p2m)
+
+    function segCross(a1: {x:number,y:number}, a2: {x:number,y:number}, b1: {x:number,y:number}, b2: {x:number,y:number}) {
+      const cross = (o: {x:number,y:number}, a: {x:number,y:number}, b: {x:number,y:number}) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+      const d1 = cross(b1, b2, a1), d2 = cross(b1, b2, a2)
+      const d3 = cross(a1, a2, b1), d4 = cross(a1, a2, b2)
+      return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+    }
+    for (const jw of [ja, jb]) {
+      expect(segCross(jw.p1p, jw.p2p, jw.p2m, jw.p1m)).toBe(false)
+      expect(segCross(jw.p2p, jw.p2m, jw.p1m, jw.p1p)).toBe(false)
+    }
+
+    const angles = computeJoinAngles([A, B])
+    expect(angles).toHaveLength(1)
+    expect(angles[0].angleDeg).toBeCloseTo(123.49, 1)
+  })
+})
