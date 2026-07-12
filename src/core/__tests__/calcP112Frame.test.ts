@@ -209,9 +209,10 @@ describe('resolveKnaufHangerStep', () => {
   })
 
   it('запрещённая комбинация (прочерк в таблице) — берёт наименьший доступный шаг и предупреждает', () => {
-    // c=1200, поперечный, нагрузка 0.40 -> прочерк в таблице
-    const r = resolveKnaufHangerStep(1200, 'crosswise', 0.40)
-    expect(r.stepAMm).toBe(700) // наименьший доступный в этой строке (900,700)
+    // c=1200, поперечный, нагрузка 0.30 -> прочерк в таблице (единственное
+    // доступное значение в строке — 900, при нагрузке 0.15)
+    const r = resolveKnaufHangerStep(1200, 'crosswise', 0.30)
+    expect(r.stepAMm).toBe(900)
     expect(r.warning).toBeDefined()
   })
 
@@ -221,9 +222,26 @@ describe('resolveKnaufHangerStep', () => {
     expect(r.warning).toBeDefined()
   })
 
-  it('шаг c вне таблицы (500/600/700) — грубый запасной вариант с предупреждением', () => {
+  // 11.07.2026: c=500..1200 теперь ПОЛНОСТЬЮ покрыты официальной таблицей
+  // для поперечного монтажа (сверено по фото документа) — это и есть
+  // основной баг, который чинит эта сессия: раньше c=500/600/700/900/1100
+  // ошибочно считались отсутствующими в таблице.
+  it('c=600 (раньше ошибочно считался отсутствующим в таблице) — теперь есть точное значение, без предупреждения', () => {
     const r = resolveKnaufHangerStep(600, 'crosswise', 0.15)
-    expect(r.stepAMm).toBe(600)
+    expect(r.stepAMm).toBe(1150)
+    expect(r.warning).toBeUndefined()
+  })
+
+  it('весь диапазон c=500..1200 при нагрузке 0.15 (поперечный монтаж) — точные значения по таблице', () => {
+    expect(resolveKnaufHangerStep(500, 'crosswise', 0.15).stepAMm).toBe(1200)
+    expect(resolveKnaufHangerStep(700, 'crosswise', 0.15).stepAMm).toBe(1100)
+    expect(resolveKnaufHangerStep(900, 'crosswise', 0.15).stepAMm).toBe(1000)
+    expect(resolveKnaufHangerStep(1100, 'crosswise', 0.15).stepAMm).toBe(900)
+  })
+
+  it('c=900 при нагрузке 0.50 -> прочерк в таблице, берёт наименьший доступный (1000 при 0.15)', () => {
+    const r = resolveKnaufHangerStep(900, 'crosswise', 0.50)
+    expect(r.stepAMm).toBe(800) // доступны 1000(0.15) и 800(0.30) — наименьший 800
     expect(r.warning).toBeDefined()
   })
 })
@@ -264,7 +282,7 @@ describe('resolveFrameParams', () => {
   })
 
   it("mode='knauf' с запрещённой комбинацией — предупреждение прокидывается наружу", () => {
-    const r = resolveFrameParams({ stepC: 1200, layoutMode: 'knauf', mountDirection: 'crosswise', loadClass: 0.40 })
+    const r = resolveFrameParams({ stepC: 1200, layoutMode: 'knauf', mountDirection: 'crosswise', loadClass: 0.30 })
     expect(r.warning).toBeDefined()
   })
 })
