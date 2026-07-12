@@ -52,7 +52,8 @@
 
 import type { CeilingLoadClass, CeilingMountDirection, CeilingStep } from '../data/ceilingData'
 import {
-  KNAUF_HANGER_SPACING_TABLE, KNAUF_BEARING_STEP_BY_MOUNT, KNAUF_WALL_OFFSET_MM,
+  KNAUF_HANGER_SPACING_TABLE, KNAUF_BEARING_STEP_BY_MOUNT,
+  KNAUF_WALL_OFFSET_MAIN_MM, KNAUF_WALL_OFFSET_BEARING_MM,
   P112_HANGER_STEP, P113_HANGER_STEP,
 } from '../data/ceilingData'
 
@@ -78,28 +79,141 @@ export const STANDARD_BAR_LENGTH_MM = 3000
  *            ШАГА от стены, последний ряд СЖИМАЕТСЯ ближе к дальней стене
  *            (не встаёт строго по сетке, экономит ряд/материал). Уже было
  *            реализовано раньше как единственный режим, теперь default.
- *  'knauf' — строго по официальной таблице КНАУФ (серия 1.045.9-2.08.1-4,
- *            лист 40/76, документ прислан пользователем): и несущий, и
- *            основной профиль — отступ ≤100мм от стены (деталь «Б-Б,
- *            примыкание к стене» — оба сходятся в одной точке у стены),
- *            далее строго через шаг. Последний ряд НЕ сжимается —
- *            расстояние между соседними рядами никогда не должно превышать
- *            номинальный шаг (норма нагрузки/прогиба, не эстетика),
- *            поэтому если естественный остаток у стены есть — он просто
- *            маленький, лишний ряд специально под него не добавляется.
+ *  'knauf' — строго по официальным правилам КНАУФ. 11.07.2026: ПОЛНОСТЬЮ
+ *            ПЕРЕСМОТРЕНО по фото официального документа (лист «А-А,
+ *            примыкание к стене видимым швом», сессия 11.07.2026) —
+ *            выяснилось, что раньше здесь было верно только для несущего
+ *            профиля (частично), а у основного профиля вообще другое
+ *            правило. См. calcMainRowPositionsKnauf /
+ *            calcBearingRowPositionsKnauf ниже — это ДВА РАЗНЫХ алгоритма,
+ *            не один общий:
+ *              - ОСНОВНОЙ профиль (шаг c): первый ряд ≤150мм от стены,
+ *                далее строго шаг c (регулярная сетка). Если у последнего
+ *                ряда сетки до противоположной стены остаётся больше
+ *                150мм — добавляется ЕЩЁ ОДИН ряд на ≤150мм от стены;
+ *                предпоследний (последний ряд регулярной сетки) при этом
+ *                остаётся на месте, не сдвигается. Финишный пролёт между
+ *                ними получается короче c.
+ *              - НЕСУЩИЙ профиль (шаг b): «чистая» сетка от стены (b, 2b,
+ *                3b, ...), шаг НИКОГДА не подгоняется. У каждой стены —
+ *                ОТДЕЛЬНЫЙ дополнительный профиль на ≤100мм от стены (та
+ *                же плоскость, что и остальные несущие — см. фото), если
+ *                ближайшая точка сетки дальше 100мм.
+ *            То есть оба профиля на самом деле следуют ОДНОМУ принципу —
+ *            «добавить лишний ряд у стены, не сдвигать регулярную сетку»,
+ *            отличаются только допуском (150 vs 100мм) и тем, что у
+ *            несущего сетка не привязана к первому ряду (считается от
+ *            самой стены, 0/b/2b/...), а у основного — привязана
+ *            (0+wallOffset/+c/+2c/...).
+ *            Раньше единый код одинаково (и неверно) применял отступ
+ *            ≤100мм и «нет сжатия последнего ряда» к ОБОИМ профилям.
  */
 export type FrameLayoutMode = 'user' | 'knauf'
 
+/** Какой из двух профилей каркаса П112 считаем — правила расстановки
+ *  рядов у них теперь РАЗНЫЕ в mode='knauf' (см. FrameLayoutMode выше). */
+export type FrameProfileKind = 'main' | 'bearing'
+
 /**
- * Отступ первого ряда (несущего ИЛИ основного профиля) от стены по КНАУФ —
- * ≤100мм, см. FrameLayoutMode выше. Официально это максимум, берём как
- * есть (частая практика — ставить максимально близко, насколько разрешено).
+ * Отступ от стены до первого/последнего ряда НЕСУЩЕГО профиля по КНАУФ —
+ * ≤100мм (см. FrameLayoutMode выше). Официально максимум, берём как есть
+ * (частая практика — ставить максимально близко, насколько разрешено).
  */
-export { KNAUF_WALL_OFFSET_MM }
-/** @deprecated используйте KNAUF_WALL_OFFSET_MM — переименовано 09.07.2026,
- *  когда выяснилось, что отступ ≤100мм применяется к ОБОИМ профилям, а не
- *  только к несущему (см. TASKS.md). Оставлено для обратной совместимости. */
-export const KNAUF_BEARING_WALL_OFFSET_MM = KNAUF_WALL_OFFSET_MM
+export { KNAUF_WALL_OFFSET_BEARING_MM, KNAUF_WALL_OFFSET_MAIN_MM }
+/** @deprecated используйте KNAUF_WALL_OFFSET_BEARING_MM для несущего
+ *  профиля или KNAUF_WALL_OFFSET_MAIN_MM для основного — переименовано
+ *  11.07.2026, когда выяснилось (фото документа, лист «А-А»), что у
+ *  основного и несущего профиля отступы РАЗНЫЕ (150 и 100мм
+ *  соответственно), а не одно общее число ≤100мм на оба, как считалось
+ *  раньше (09.07.2026). Оставлено для обратной совместимости. */
+export const KNAUF_WALL_OFFSET_MM = KNAUF_WALL_OFFSET_BEARING_MM
+/** @deprecated см. KNAUF_WALL_OFFSET_BEARING_MM. */
+export const KNAUF_BEARING_WALL_OFFSET_MM = KNAUF_WALL_OFFSET_BEARING_MM
+
+/**
+ * НЕСУЩИЙ профиль, mode='knauf' — «чистая» сетка от стены (позиции b, 2b,
+ * 3b, ...), шаг между рядами НИКОГДА не подгоняется под ширину помещения
+ * (в отличие от основного профиля, см. calcMainRowPositionsKnauf). У
+ * каждой стены — ОТДЕЛЬНЫЙ дополнительный профиль на wallOffsetMm (≤100мм)
+ * от стены, добавляется ТОЛЬКО если ближайшая точка регулярной сетки
+ * дальше wallOffsetMm — иначе крайний ряд сетки уже сам годится, доп.
+ * профиль не нужен. Ничего не сдвигается и не сжимается, просто иногда
+ * появляется лишний ряд у стены. См. фото 11.07.2026, лист «А-А,
+ * Примыкание к стене видимым швом»: та же плоскость, что и все несущие
+ * профили — это не отдельный вид элемента, а полноправный дополнительный
+ * несущий профиль вне регулярной сетки.
+ */
+export function calcBearingRowPositionsKnauf(
+  spanMm: number,
+  stepMm: number,
+  wallOffsetMm: number = KNAUF_WALL_OFFSET_BEARING_MM,
+): number[] {
+  if (stepMm <= 0 || spanMm <= 0) return []
+
+  const grid: number[] = []
+  let pos = stepMm
+  while (pos < spanMm) {
+    grid.push(pos)
+    pos += stepMm
+  }
+
+  const positions: number[] = []
+  const firstGridPos = grid.length > 0 ? grid[0] : spanMm
+  if (firstGridPos > wallOffsetMm) {
+    positions.push(Math.min(wallOffsetMm, spanMm))
+  }
+  positions.push(...grid)
+  const lastGridPos = grid.length > 0 ? grid[grid.length - 1] : 0
+  const gapToFarWall = spanMm - lastGridPos
+  if (gapToFarWall > wallOffsetMm) {
+    positions.push(spanMm - wallOffsetMm)
+  }
+  return positions
+}
+
+/**
+ * ОСНОВНОЙ профиль, mode='knauf' — первый ряд на wallOffsetMm (≤150мм) от
+ * стены, далее строго через шаг c — обычная регулярная сетка. Если у
+ * последнего ряда регулярной сетки остаётся до противоположной стены
+ * больше wallOffsetMm — добавляется ЕЩЁ ОДИН (дополнительный) ряд на
+ * wallOffsetMm от стены; предпоследний (последний ряд регулярной сетки)
+ * при этом остаётся на месте, НЕ сдвигается. Финишный пролёт (между
+ * предпоследним и новым последним рядом) получается короче c — это и
+ * есть смысл правила, а не замена последней позиции сетки на новую (в
+ * отличие от несущего профиля выше — там точно так же ДОБАВЛЯЕТСЯ
+ * дополнительный ряд, не сдвигается существующий, так что оба профиля на
+ * самом деле следуют одному и тому же принципу «добавить, не двигать»).
+ * Если остаток уже ≤wallOffsetMm — последний ряд регулярной сетки уже
+ * годится сам по себе, ничего добавлять не нужно.
+ *
+ * Пример от пользователя (11.07.2026): шаг c=1000, предпоследний ряд уже
+ * на месте, до стены от него остаётся ровно 1000мм (=c, наивный
+ * следующий шаг попал бы точно в стену) — новый последний ряд ставится
+ * не на +1000 (вплотную к стене), а на +850 от предпоследнего
+ * (=1000-150, чтобы попасть точно в допуск ≤150мм).
+ */
+export function calcMainRowPositionsKnauf(
+  spanMm: number,
+  stepMm: number,
+  wallOffsetMm: number = KNAUF_WALL_OFFSET_MAIN_MM,
+): number[] {
+  if (stepMm <= 0 || spanMm <= 0) return []
+
+  const positions: number[] = []
+  let pos = wallOffsetMm
+  while (pos < spanMm) {
+    positions.push(pos)
+    pos += stepMm
+  }
+  if (positions.length === 0) return positions
+
+  const last = positions[positions.length - 1]
+  const gapToWall = spanMm - last
+  if (gapToWall > wallOffsetMm) {
+    positions.push(spanMm - wallOffsetMm)
+  }
+  return positions
+}
 
 /**
  * Позиции рядов профиля вдоль пролёта, мм от начальной стены.
@@ -112,28 +226,24 @@ export const KNAUF_BEARING_WALL_OFFSET_MM = KNAUF_WALL_OFFSET_MM
  * а не ставит лишний ради нескольких см). Если естественный зазор уже
  * небольшой (≤ CLOSE_GAP_MM) — ряд остаётся на своей обычной позиции.
  *
- * mode='knauf': первый ряд — на wallOffsetMm от стены (не задан → тоже
- * один шаг; для отступа по КНАУФ передавайте KNAUF_WALL_OFFSET_MM явно),
- * далее строго через шаг, БЕЗ сжатия последнего ряда — остаток у дальней
- * стены может быть меньше шага, это нормально и ожидаемо, просто не даём
- * расстоянию между рядами превысить номинальный шаг ни в одном пролёте.
+ * mode='knauf': делегирует в calcMainRowPositionsKnauf/
+ * calcBearingRowPositionsKnauf по profileKind (см. их описание — правила
+ * теперь РАЗНЫЕ для основного и несущего профиля, 11.07.2026). Если
+ * profileKind не передан — по умолчанию 'main' (обратная совместимость со
+ * старыми вызовами, где различия между профилями ещё не было).
  */
 export function calcFrameRowPositions(
   spanMm: number,
   stepMm: number,
-  opts: { mode?: FrameLayoutMode; wallOffsetMm?: number } = {},
+  opts: { mode?: FrameLayoutMode; wallOffsetMm?: number; profileKind?: FrameProfileKind } = {},
 ): number[] {
-  const { mode = 'user', wallOffsetMm } = opts
+  const { mode = 'user', wallOffsetMm, profileKind = 'main' } = opts
   if (stepMm <= 0 || spanMm <= 0) return []
 
   if (mode === 'knauf') {
-    const positions: number[] = []
-    let pos = wallOffsetMm ?? stepMm
-    while (pos < spanMm) {
-      positions.push(pos)
-      pos += stepMm
-    }
-    return positions
+    return profileKind === 'bearing'
+      ? calcBearingRowPositionsKnauf(spanMm, stepMm, wallOffsetMm ?? KNAUF_WALL_OFFSET_BEARING_MM)
+      : calcMainRowPositionsKnauf(spanMm, stepMm, wallOffsetMm ?? KNAUF_WALL_OFFSET_MAIN_MM)
   }
 
   const positions: number[] = []
@@ -175,7 +285,7 @@ export function calcFrameRowPositionsSigned(
   minMm: number,
   maxMm: number,
   stepMm: number,
-  opts: { mode?: FrameLayoutMode; wallOffsetMm?: number } = {},
+  opts: { mode?: FrameLayoutMode; wallOffsetMm?: number; profileKind?: FrameProfileKind } = {},
 ): number[] {
   const positive = calcFrameRowPositions(Math.max(0, maxMm), stepMm, opts)
   if (minMm >= 0) return positive
@@ -351,7 +461,7 @@ export function resolveFrameParams(opts: {
     const { stepAMm, warning } = resolveKnaufHangerStep(opts.stepC, mountDirection, loadClass)
     return {
       stepB, stepA: stepAMm,
-      wallOffsetMainMm: KNAUF_WALL_OFFSET_MM, wallOffsetBearingMm: KNAUF_WALL_OFFSET_MM,
+      wallOffsetMainMm: KNAUF_WALL_OFFSET_MAIN_MM, wallOffsetBearingMm: KNAUF_WALL_OFFSET_BEARING_MM,
       warning,
     }
   }
@@ -417,13 +527,14 @@ export function calcP112FrameGeometry(
   const A = bearingAlongLength ? roomLengthMm : roomWidthMm
   const B = bearingAlongLength ? roomWidthMm : roomLengthMm
 
-  const defaultWallOffset = layoutMode === 'knauf' ? KNAUF_WALL_OFFSET_MM : undefined
-  const wallOffsetBearingMm = extra.wallOffsetBearingMm ?? defaultWallOffset
-  const wallOffsetMainMm = extra.wallOffsetMainMm ?? defaultWallOffset
+  const defaultWallOffsetBearing = layoutMode === 'knauf' ? KNAUF_WALL_OFFSET_BEARING_MM : undefined
+  const defaultWallOffsetMain = layoutMode === 'knauf' ? KNAUF_WALL_OFFSET_MAIN_MM : undefined
+  const wallOffsetBearingMm = extra.wallOffsetBearingMm ?? defaultWallOffsetBearing
+  const wallOffsetMainMm = extra.wallOffsetMainMm ?? defaultWallOffsetMain
 
   // Несущий профиль (ряды поперёк B).
   const bearingPositions = calcFrameRowPositions(
-    B, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm },
+    B, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm, profileKind: 'bearing' },
   )
   const bearingCount = bearingPositions.length
   const bearingLengthEachMm = A
@@ -431,7 +542,7 @@ export function calcP112FrameGeometry(
 
   // Основной профиль — перпендикулярно несущему, расставлен вдоль A с шагом c
   const mainPositions = calcFrameRowPositions(
-    A, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm },
+    A, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm, profileKind: 'main' },
   )
   const mainCount = mainPositions.length
   const mainLengthEachMm = B

@@ -54,7 +54,7 @@
 import type { Point2D } from './geometry2d'
 import { insideSegments, pointInPolygon } from './geometry2d'
 import type { CeilingLoadClass, CeilingMountDirection } from '../data/ceilingData'
-import { KNAUF_WALL_OFFSET_MM } from '../data/ceilingData'
+import { KNAUF_WALL_OFFSET_MAIN_MM, KNAUF_WALL_OFFSET_BEARING_MM } from '../data/ceilingData'
 import {
   calcFrameRowPositionsSigned, snapHangerPositionsToAxis, resolveHangerKind,
   STANDARD_BAR_LENGTH_MM, type FrameLayoutMode, type HangerKind,
@@ -206,13 +206,14 @@ export function calcPolygonP112Frame(
     )
   }
 
-  const defaultWallOffset = layoutMode === 'knauf' ? KNAUF_WALL_OFFSET_MM : undefined
-  const wallOffsetMainMm = extra.wallOffsetMainMm ?? defaultWallOffset
-  const wallOffsetBearingMm = extra.wallOffsetBearingMm ?? defaultWallOffset
+  const defaultWallOffsetMain = layoutMode === 'knauf' ? KNAUF_WALL_OFFSET_MAIN_MM : undefined
+  const defaultWallOffsetBearing = layoutMode === 'knauf' ? KNAUF_WALL_OFFSET_BEARING_MM : undefined
+  const wallOffsetMainMm = extra.wallOffsetMainMm ?? defaultWallOffsetMain
+  const wallOffsetBearingMm = extra.wallOffsetBearingMm ?? defaultWallOffsetBearing
   const stepA = extra.stepA ?? stepB
 
   // ── Основной профиль: ряды на фиксированных V, тянутся вдоль U ──────────
-  const mainVPositions = calcFrameRowPositionsSigned(vMin, vMax, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm })
+  const mainVPositions = calcFrameRowPositionsSigned(vMin, vMax, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm, profileKind: 'main' })
   const mainRows: PolygonFrameRow[] = mainVPositions.map(v => {
     const segments = insideSegments(loopsLocal, v, 'y')
     const lengthMm = segments.reduce((s, [a, b]) => s + (b - a), 0)
@@ -220,7 +221,7 @@ export function calcPolygonP112Frame(
   })
 
   // ── Несущий профиль: ряды на фиксированных U, тянутся вдоль V ───────────
-  const bearingUPositions = calcFrameRowPositionsSigned(uMin, uMax, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm })
+  const bearingUPositions = calcFrameRowPositionsSigned(uMin, uMax, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm, profileKind: 'bearing' })
   const bearingRows: PolygonFrameRow[] = bearingUPositions.map(u => {
     const segments = insideSegments(loopsLocal, u, 'x')
     const lengthMm = segments.reduce((s, [a, b]) => s + (b - a), 0)
