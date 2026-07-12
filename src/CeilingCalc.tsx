@@ -7,7 +7,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Line, Text, Group } from 'react-konva'
 import type { CeilingSpecFull, CeilingSpec } from './data/ceilingData'
-import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, CEILING_MOUNT_DIRECTION_LABELS, CEILING_LOAD_CLASS_OPTIONS } from './data/ceilingData'
+import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, P113_HANGER_STEP, CEILING_MOUNT_DIRECTION_LABELS, CEILING_LOAD_CLASS_OPTIONS } from './data/ceilingData'
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep, CeilingLoadClass } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult, CeilingPolygonInput } from './core/calcCeiling'
@@ -37,7 +37,8 @@ const C = {
   ppMain:       '#37474f',   // Основной ПП — тёмный
   ppBearing:    '#546e7a',   // Несущий ПП — чуть светлее
   hanger:       '#e53935',   // Подвес
-  crab:         '#f57c00',   // Краб (соединитель)
+  crab:         '#f57c00',   // Краб — соединитель двухуровневый (П112)
+  crab1lvl:     '#8e24aa',   // Соединитель одноуровневый (П113) — другая деталь, свой цвет
   sheetFill:    'rgba(144,202,249,0.22)',
   sheetBorder:  '#1e88e5',
   sheetCutFill: 'rgba(255,183,77,0.28)',
@@ -315,6 +316,7 @@ export default function CeilingCalc() {
   const frameParamsUi = resolveFrameParams({
     stepC: form.stepC, layoutMode: layoutModeUi, userStepB: form.stepB,
     mountDirection: form.mountDirection, loadClass: form.loadClass,
+    ceilingType: form.type === 'p113' ? 'p113' : 'p112',
   })
 
   return (
@@ -501,8 +503,11 @@ export default function CeilingCalc() {
           </Card>
         )}
 
-        {/* Точный расчёт каркаса П112 — см. calcP112Frame.ts, КОНСПЕКТ.md 05.07.2026 */}
-        {form.type === 'p112' && (
+        {/* Точный расчёт каркаса П112/П113 — см. calcP112Frame.ts / calcP113Frame.ts.
+             12.07.2026: карточка открыта и для П113 — точная геометрия уже
+             есть (calcCeiling.ts, hasPreciseGeometryP113), раньше это условие
+             молча выключало её для П113. */}
+        {(form.type === 'p112' || form.type === 'p113') && (
           <Card title="ТОЧНЫЙ РАСЧЁТ КАРКАСА">
             <div style={{ marginBottom: 8 }}>
               <label style={lbl}>Вариант раскладки рядов</label>
@@ -566,7 +571,7 @@ export default function CeilingCalc() {
               <div style={{ marginBottom: 8 }}>
                 <label style={lbl}>Шаг несущего (b), мм</label>
                 <input style={inp} type="number" min={0} step={50}
-                  placeholder={String(P112_HANGER_STEP[form.stepC] ?? 1000)}
+                  placeholder={String((form.type === 'p113' ? P113_HANGER_STEP : P112_HANGER_STEP)[form.stepC] ?? (form.type === 'p113' ? 950 : 1000))}
                   value={form.stepB ?? ''} onChange={e => setField('stepB', +e.target.value || undefined)} />
               </div>
             )}
@@ -579,7 +584,9 @@ export default function CeilingCalc() {
             <label style={{ ...lbl, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={form.bearingAlongLength ?? true}
                 onChange={e => setField('bearingAlongLength', e.target.checked)} />
-              Несущий профиль вдоль длины (снять — вдоль ширины)
+              {form.type === 'p113'
+                ? 'Основной профиль вдоль длины (снять — вдоль ширины)'
+                : 'Несущий профиль вдоль длины (снять — вдоль ширины)'}
             </label>
             {!form.slabGapMm && (
               <div style={{ marginTop: 6, fontSize: 11, color: C.warning }}>
@@ -690,7 +697,9 @@ export default function CeilingCalc() {
                 {step >= 2 && <LegItem color={C.ppMain} label="Осн. ПП 60×27" />}
                 {step >= 2 && <LegItem color={C.hanger} label="Подвес" dot />}
                 {step >= 3 && <LegItem color={C.ppBearing} label="Несущий ПП 60×27" />}
-                {step >= 3 && <LegItem color={C.crab} label="Краб" dot />}
+                {step >= 3 && (form.type === 'p113'
+                  ? <LegItem color={C.crab1lvl} label="Соединитель одноур." dot />
+                  : <LegItem color={C.crab} label="Краб" dot />)}
                 {step >= 4 && <LegItem color={C.sheetBorder} bg={C.sheetFill} label="ГКЛ целый" />}
                 {step >= 4 && <LegItem color={C.sheetCutBorder} bg={C.sheetCutFill} label="ГКЛ резаный" />}
               </div>
@@ -1070,28 +1079,38 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     .filter(x => x >= 0 && x <= L * scale)
 
   // ── Несущие профили (Y, шаг b) ──
-  const bearingPosY = calcFrameRowPositions(W_room, stepB, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm })
+  const bearingPosYMm = calcFrameRowPositions(W_room, stepB, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm })
+  const bearingPosY = bearingPosYMm
     .map(p => (p + shiftBearingMm) * scale)
     .filter(y => y >= 0 && y <= W_room * scale)
 
   // ── Подвесы ──
-  // 10.07.2026: подвес обязан висеть строго по оси ОСНОВНОГО профиля — крепится
-  // в точке пересечения основной/несущий (там же одноуровневый соединитель).
-  // Раньше подвесы считались НЕЗАВИСИМОЙ сеткой через stepA от стены и физически
-  // не попадали ни на один основной профиль ("подвесы слетели с оси"). Теперь
-  // hangerPosXMm — подмножество ТЕХ ЖЕ mainPosXMm (см. snapHangerPositionsToAxis
-  // в calcP112Frame.ts — та же функция, что уже использует смета calcCeiling.ts
-  // для П112). Сдвиг гребёнки shiftMainMm применяется к подвесам ТАК ЖЕ, как и
-  // к основному профилю — они должны двигаться вместе, раз сидят на его оси.
-  const hangerPosXMm = snapHangerPositionsToAxis(mainPosXMm, stepA)
+  // 10.07.2026: подвес обязан висеть строго по оси профиля, на который он
+  // физически крепится — в точке пересечения основной/несущий (там же
+  // соединитель), а не независимой сеткой от стены.
+  // 12.07.2026: для П113 (см. calcP113Frame.ts) роли ОБРАТНЫЕ по сравнению с
+  // П112 — подвес крепится к ОСНОВНОМУ профилю (вертикальные линии, mainPosX),
+  // и снэпается вдоль его собственного пробега (Y) к позициям НЕСУЩЕГО
+  // профиля (bearingPosY) — один подвес на каждый (mainPosX × снэпнутый Y).
+  // У П112 наоборот: подвес на несущем (bearingPosY), снэпается по X к
+  // позициям основного (mainPosXMm) — один подвес на каждый (снэпнутый X ×
+  // bearingPosY). Сдвиг гребёнки применяется к подвесам так же, как и к
+  // профилю, на котором они сидят — они должны двигаться вместе.
+  const isP113 = form.type === 'p113'
+  const hangerPosXMm = isP113 ? mainPosXMm : snapHangerPositionsToAxis(mainPosXMm, stepA)
+  const hangerPosYMm = isP113 ? snapHangerPositionsToAxis(bearingPosYMm, stepA) : bearingPosYMm
   const hangers: { x: number; y: number }[] = []
   // Рисуем подвесы только если их не слишком много (иначе каша)
-  const hangerCount = bearingPosY.length * hangerPosXMm.length
+  const hangerCount = hangerPosYMm.length * hangerPosXMm.length
   const showHangers = hangerCount <= 200
   if (showHangers) {
-    for (const py of bearingPosY) {
+    for (const hyMm of hangerPosYMm) {
+      const hy = (hyMm + shiftBearingMm) * scale
+      if (hy < 0 || hy > W_room * scale) continue
       for (const hxMm of hangerPosXMm) {
-        hangers.push({ x: (hxMm + shiftMainMm) * scale, y: py })
+        const hx = (hxMm + shiftMainMm) * scale
+        if (hx < 0 || hx > L * scale) continue
+        hangers.push({ x: hx, y: hy })
       }
     }
   }
@@ -1261,8 +1280,35 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
           </Group>
         ))}
 
-        {/* ── Шаг 3+: Несущие ПП 60×27 (горизонтальные) ── */}
-        {step >= 3 && bearingPosY.map((py, i) => (
+        {/* ── Шаг 3+: Несущие ПП 60×27 (горизонтальные) ──
+             П112: несущий — сплошной на всю ширину W (как раньше).
+             П113 (12.07.2026, роли ОБРАТНЫЕ — см. calcP113Frame.ts): несущий
+             тут режется короткими вставками между рядами основного профиля
+             (mainPosX), с зазором на месте одноуровневого соединителя — не
+             идёт сплошняком, как у П112. Основной профиль (mainPosX, выше)
+             при этом сплошной у ОБОИХ типов — рисовка вертикальных линий не
+             меняется. */}
+        {step >= 3 && form.type === 'p113' && bearingPosY.map((py, i) => {
+          const GAP = PP_W * 0.5
+          const boundaries = [0, ...mainPosX, W]
+          const segs: { xa: number; xb: number }[] = []
+          for (let b = 0; b < boundaries.length - 1; b++) {
+            let xa = boundaries[b]
+            let xb = boundaries[b + 1]
+            if (b > 0) xa += GAP
+            if (b < boundaries.length - 2) xb -= GAP
+            if (xb > xa) segs.push({ xa, xb })
+          }
+          return (
+            <Group key={`bp${i}`}>
+              {segs.map((s, si) => (
+                <Rect key={`bpseg${i}_${si}`} x={s.xa} y={py - PP_W / 2} width={s.xb - s.xa} height={PP_W}
+                  fill={C.ppBearing} opacity={0.75} cornerRadius={1} />
+              ))}
+            </Group>
+          )
+        })}
+        {step >= 3 && form.type !== 'p113' && bearingPosY.map((py, i) => (
           <Group key={`bp${i}`}>
             <Rect x={0} y={py - PP_W / 2} width={W} height={PP_W / 4}
               fill={C.ppBearing} opacity={0.9} />
@@ -1273,14 +1319,16 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
           </Group>
         ))}
 
-        {/* ── Шаг 3+: Крабы на пересечениях ── */}
+        {/* ── Шаг 3+: Соединители на пересечениях — двухуровневый краб (П112)
+             или одноуровневый (П113, другой цвет, т.к. физически другая
+             деталь, см. calcP113Frame.ts) ── */}
         {step >= 3 && mainPosX.map((px, mi) =>
           bearingPosY.map((py, bi) => (
             <Group key={`cr${mi}_${bi}`} x={px} y={py}>
               <Rect x={-4} y={-4} width={8} height={8}
-                fill={C.crab} opacity={0.9} cornerRadius={1} />
-              <Line points={[-6, 0, 6, 0]} stroke={C.crab} strokeWidth={1} />
-              <Line points={[0, -6, 0, 6]} stroke={C.crab} strokeWidth={1} />
+                fill={form.type === 'p113' ? C.crab1lvl : C.crab} opacity={0.9} cornerRadius={1} />
+              <Line points={[-6, 0, 6, 0]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
+              <Line points={[0, -6, 0, 6]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
             </Group>
           ))
         )}

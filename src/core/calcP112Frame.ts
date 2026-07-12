@@ -140,6 +140,33 @@ export function calcFrameRowPositions(
 }
 
 /**
+ * Как calcFrameRowPositions, но для диапазона [minMm, maxMm] вместо [0, span]
+ * — нужно, когда выбранная стена старта раскладки НЕ находится в самом
+ * крайнем углу контура (см. calcPolygonP112Frame.ts) и часть контура лежит
+ * "по другую сторону" от стены (minMm < 0). 12.07.2026: раньше в этом случае
+ * та часть контура просто не получала рядов профиля — теперь строим их и в
+ * отрицательную сторону, зеркально по тем же правилам первого отступа/
+ * сжатия последнего ряда (правило то же самое, "дальняя стена" в зеркальной
+ * половине — это просто minMm, край контура, а не физическая стена).
+ *
+ * 0 (позиция самой выбранной стены) в результат никогда не попадает — ряды
+ * всегда начинаются с отступа (шаг или wallOffsetMm), что для 0, что для
+ * отрицательной стороны.
+ */
+export function calcFrameRowPositionsSigned(
+  minMm: number,
+  maxMm: number,
+  stepMm: number,
+  opts: { mode?: FrameLayoutMode; wallOffsetMm?: number } = {},
+): number[] {
+  const positive = calcFrameRowPositions(Math.max(0, maxMm), stepMm, opts)
+  if (minMm >= 0) return positive
+  const negativeMirrored = calcFrameRowPositions(-minMm, stepMm, opts)
+  const negative = negativeMirrored.map(p => -p).sort((a, b) => a - b)
+  return [...negative, ...positive]
+}
+
+/**
  * 10.07.2026: подвес обязательно должен висеть строго по оси ОСНОВНОГО
  * профиля — крепление идёт в точке пересечения основной/несущий (там же
  * одноуровневый соединитель-краб), не по независимой сетке "шаг a от

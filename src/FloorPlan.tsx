@@ -35,7 +35,7 @@ import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFas
 import { finishMaterialCategoryOf, finishSidesOf } from './core/finishResolver'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
-import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
+import { calcProjectSheetLayout, buildCeilingSurfaceInputs } from './core/calcProjectSheetLayout'
 import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
 import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
@@ -1967,9 +1967,11 @@ export default function FloorPlan() {
   const inspectorLine = lines.find(l => l.id === inspectorId)
 
   // Смета раскроя листов по всему проекту — пересчитывается только при изменении линий
+  // (12.07.2026, шаг 2 плана — см. чат): + потолки (Ceiling-контуры), тот же
+  // сквозной пул обрезков, что и у перегородок/облицовок (calcProjectSheetLayout.ts).
   const sheetSummary: ProjectSheetResult = useMemo(
-    () => calcProjectSheetLayout(planLinesToSurfaceInputs(lines)),
-    [lines],
+    () => calcProjectSheetLayout(planLinesToSurfaceInputs(lines), buildCeilingSurfaceInputs(ceilings, scaleMmPx)),
+    [lines, ceilings, scaleMmPx],
   )
 
   // Общий % выполнения по объекту + разбивка по типу работ (см. lineProgress.ts/workProgress.ts).
@@ -4076,10 +4078,37 @@ export default function FloorPlan() {
                             const slen = Math.sqrt(sdx*sdx+sdy*sdy)
                             const snx = slen > 0 ? -sdy/slen*half : 0
                             const sny = slen > 0 ?  sdx/slen*half : 0
-                            const sAx=seg.ax1+snx, sAy=seg.ay1+sny
-                            const sBx=seg.ax2+snx, sBy=seg.ay2+sny
-                            const sCx=seg.ax2-snx, sCy=seg.ay2-sny
-                            const sDx=seg.ax1-snx, sDy=seg.ay1-sny
+                            let sAx=seg.ax1+snx, sAy=seg.ay1+sny
+                            let sBx=seg.ax2+snx, sBy=seg.ay2+sny
+                            let sCx=seg.ax2-snx, sCy=seg.ay2-sny
+                            let sDx=seg.ax1-snx, sDy=seg.ay1-sny
+
+                            // Фикс 6 (11.07.2026): на настоящем стыке (не на торце
+                            // у проёма, а там, где cap1/cap2 = false — реальный
+                            // wall-join с соседней стеной) наивное перпендикулярное
+                            // смещение ВСЕГДА даёт прямоугольник, даже если соседняя
+                            // стена подходит не под 90° — а wallJoin.ts уже честно
+                            // посчитал настоящие митр-точки (пересечение граней через
+                            // rayX, см. applyL/safeCorner). Раньше эти точки
+                            // ИГНОРИРОВАЛИСЬ здесь целиком: заливка/штриховка/обводка
+                            // рисовались по наивному прямоугольнику, а не по митру —
+                            // на остром угле это давало лишний треугольный "флажок"
+                            // поверх настоящей формы стены (см. KONSPEKT.md 11.07.2026,
+                            // скриншот подложки без перегородок — как должно выглядеть,
+                            // против скриншота с "флажком" на пересчитанном стыке).
+                            // Только для КРАЙНИХ сегментов (первый/последний — там, где
+                            // physически находится настоящий конец стены), и только
+                            // когда cap=false (значит jw реально что-то посчитал для
+                            // этого конца, а не оставил его свободным торцом).
+                            if (jw && si === 0 && !cap1) {
+                              sAx = jw.p1p.x; sAy = jw.p1p.y
+                              sDx = jw.p1m.x; sDy = jw.p1m.y
+                            }
+                            if (jw && si === segments.length - 1 && !cap2) {
+                              sBx = jw.p2p.x; sBy = jw.p2p.y
+                              sCx = jw.p2m.x; sCy = jw.p2m.y
+                            }
+
                             const sp1p = { x: sAx, y: sAy }, sp2p = { x: sBx, y: sBy }
                             const sp1m = { x: sDx, y: sDy }, sp2m = { x: sCx, y: sCy }
                             return (
@@ -5626,7 +5655,7 @@ export default function FloorPlan() {
 
             {sheetSummary.surfaces.length === 0 ? (
               <div style={{ padding: 24, fontSize: 12, color: '#888', textAlign: 'center' }}>
-                Нет конструкций с раскроем ГКЛ — задайте материал «ГКЛ» перегородкам или облицовкам на плане
+                Нет конструкций с раскроем ГКЛ — задайте материал «ГКЛ» перегородкам, облицовкам или раскладку потолку на плане
               </div>
             ) : (
               <>

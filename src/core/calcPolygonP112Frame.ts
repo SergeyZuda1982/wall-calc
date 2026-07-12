@@ -39,9 +39,11 @@
  *
  * ─── Осознанные упрощения / известные границы (v1, 10.07.2026) ────────────
  * — Если выбранная стена не в САМОМ дальнем углу контура (часть фигуры
- *   оказывается "позади" неё, т.е. U<0 или V<0) — эта часть в сетку НЕ
- *   попадает, выдаётся warning. Реальная практика: начинать с угла, это
- *   ожидаемое использование, не баг.
+ *   оказывается "позади" неё, т.е. U<0 или V<0) — раньше (до 12.07.2026)
+ *   эта часть в сетку не попадала. Теперь calcFrameRowPositionsSigned
+ *   (calcP112Frame.ts) строит ряды и в отрицательную сторону — сетка
+ *   покрывает весь контур при любой выбранной стене, просто выдаётся
+ *   мягкий warning: для минимума обрезков удобнее стена от крайнего угла.
  * — Дырки (holesMm) уже поддержаны на уровне геометрии (scanlineCrossings),
  *   но сама сущность "вырез в потолке" как отдельная фича — пункт 1 плана,
  *   ещё не реализована; здесь они учитываются просто потому что структура
@@ -53,7 +55,7 @@ import { insideSegments, pointInPolygon } from './geometry2d'
 import type { CeilingLoadClass, CeilingMountDirection } from '../data/ceilingData'
 import { KNAUF_WALL_OFFSET_MM } from '../data/ceilingData'
 import {
-  calcFrameRowPositions, snapHangerPositionsToAxis, resolveHangerKind,
+  calcFrameRowPositionsSigned, snapHangerPositionsToAxis, resolveHangerKind,
   STANDARD_BAR_LENGTH_MM, type FrameLayoutMode, type HangerKind,
 } from './calcP112Frame'
 
@@ -192,13 +194,14 @@ export function calcPolygonP112Frame(
   if (uMin < -TOL) {
     warnings.push(
       `Часть контура выходит за пределы выбранной стены (примерно на ${Math.round(-uMin)}мм влево от её начала) ` +
-      `— эта часть НЕ попадёт в сетку каркаса. Возможно, стоит выбрать сторону, начинающуюся в самом крайнем углу контура.`,
+      `— сетка каркаса всё равно посчитана и для этой части (профиль продолжен в обратную сторону тем же шагом), ` +
+      `но для наименьшего числа обрезков удобнее выбрать сторону, начинающуюся в самом крайнем углу контура.`,
     )
   }
   if (vMin < -TOL) {
     warnings.push(
       `Часть контура находится «позади» выбранной стены (примерно на ${Math.round(-vMin)}мм) ` +
-      `— эта часть НЕ попадёт в сетку каркаса.`,
+      `— сетка каркаса всё равно посчитана и для этой части тем же шагом.`,
     )
   }
 
@@ -208,7 +211,7 @@ export function calcPolygonP112Frame(
   const stepA = extra.stepA ?? stepB
 
   // ── Основной профиль: ряды на фиксированных V, тянутся вдоль U ──────────
-  const mainVPositions = calcFrameRowPositions(Math.max(0, vMax), stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm })
+  const mainVPositions = calcFrameRowPositionsSigned(vMin, vMax, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm })
   const mainRows: PolygonFrameRow[] = mainVPositions.map(v => {
     const segments = insideSegments(loopsLocal, v, 'y')
     const lengthMm = segments.reduce((s, [a, b]) => s + (b - a), 0)
@@ -216,7 +219,7 @@ export function calcPolygonP112Frame(
   })
 
   // ── Несущий профиль: ряды на фиксированных U, тянутся вдоль V ───────────
-  const bearingUPositions = calcFrameRowPositions(Math.max(0, uMax), stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm })
+  const bearingUPositions = calcFrameRowPositionsSigned(uMin, uMax, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm })
   const bearingRows: PolygonFrameRow[] = bearingUPositions.map(u => {
     const segments = insideSegments(loopsLocal, u, 'x')
     const lengthMm = segments.reduce((s, [a, b]) => s + (b - a), 0)
