@@ -163,7 +163,7 @@ export function buildSurfaceInputs(
 
 // ─── Потолки (Ceiling-контуры) — параллельный билдер, см. заголовок файла ───
 
-function boardSpecFromCeilingSpec(spec: CeilingSpecFull | { material: 'gsp' | 'gvl'; thickness: number }): BoardSpec {
+export function boardSpecFromCeilingSpec(spec: CeilingSpecFull | { material: 'gsp' | 'gvl'; thickness: number }): BoardSpec {
   return {
     material: spec.material === 'gvl' ? 'gvl' : 'gkl',
     subtype: null,
