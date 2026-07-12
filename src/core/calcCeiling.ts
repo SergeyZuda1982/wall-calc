@@ -10,6 +10,7 @@ import {
   P131_FRAME_RATES, P131_SPECIAL_RATES, P131_SHEET_RATES,
 } from '../data/ceilingData'
 import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL } from './calcP112Frame'
+import { calcP113FrameGeometry } from './calcP113Frame'
 import { calcPolygonP112Frame, type PolygonP112FrameResult } from './calcPolygonP112Frame'
 import { calcPolygonSheetLayout, type PolygonSheetLayoutResult } from './calcPolygonSheetLayout'
 import type { Point2D } from './geometry2d'
@@ -145,6 +146,10 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
     const hasPolygonGeometry = type === 'p112' && !!polygonInput && !!full.slabGapMm
     const hasPreciseGeometry = !hasPolygonGeometry && type === 'p112'
       && !!full.roomLengthMm && !!full.roomWidthMm && !!full.slabGapMm
+    // 12.07.2026: то же для П113, см. calcP113Frame.ts. Контур произвольной
+    // формы (polygonInput) для П113 пока не реализован — только прямоугольник.
+    const hasPreciseGeometryP113 = type === 'p113'
+      && !!full.roomLengthMm && !!full.roomWidthMm && !!full.slabGapMm
 
     if (hasPolygonGeometry) {
       const layoutMode = full.layoutMode ?? 'user'
@@ -202,6 +207,40 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       // практика обжима/крепления, не табличное значение).
       materials.push({ name: 'Шуруп LN (крепление в подвесе)', unit: 'шт', qty: geo.hangersTotal * 2 })
       if (geo.hangerWarning) warnings.push(geo.hangerWarning)
+    } else if (hasPreciseGeometryP113) {
+      // 12.07.2026: топология П113 — см. calcP113Frame.ts. Роли профилей
+      // ОБРАТНЫЕ по сравнению с П112 (подтверждено пользователем, реальная
+      // практика объекта): основной — сплошной, с подвесами; несущий —
+      // короткие вставки между рядами основного. bearingAlongLength здесь
+      // означает ориентацию СПЛОШНОГО (основного) профиля — то же поле
+      // спецификации, что и для П112, переиспользуется по аналогии.
+      const layoutMode = full.layoutMode ?? 'user'
+      const mainAlongLength = full.bearingAlongLength ?? true
+      const frameParams = resolveFrameParams({
+        stepC, layoutMode, userStepB: full.stepB, mountDirection: full.mountDirection,
+        loadClass: full.loadClass, ceilingType: 'p113',
+      })
+      if (frameParams.warning) warnings.push(frameParams.warning)
+      const geo113 = calcP113FrameGeometry(
+        full.roomLengthMm, full.roomWidthMm, stepC, frameParams.stepB, full.slabGapMm!, mainAlongLength, layoutMode,
+        {
+          stepA: frameParams.stepA,
+          wallOffsetMainMm: frameParams.wallOffsetMainMm,
+          wallOffsetBearingMm: frameParams.wallOffsetBearingMm,
+        },
+      )
+
+      materials.push({ name: 'Профиль ПП 60×27 (основной, сплошной, с подвесами)', unit: 'пог.м', qty: ceil(geo113.mainTotalLm) })
+      materials.push({ name: 'Профиль ПП 60×27 (несущий, вставки между рядами основного)', unit: 'пог.м', qty: ceil(geo113.bearingTotalLm) })
+      const extendersTotal113 = geo113.bearingExtenders + geo113.mainExtenders
+      if (extendersTotal113 > 0) {
+        materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotal113 })
+      }
+      materials.push({ name: 'Соединитель одноуровневый ПП 60×27', unit: 'шт', qty: geo113.connectorsTotal })
+      materials.push({ name: HANGER_LABEL[geo113.hangerKind], unit: 'шт', qty: geo113.hangersTotal })
+      materials.push({ name: 'Анкер-клин (крепление подвеса к плите)', unit: 'шт', qty: geo113.hangersTotal })
+      materials.push({ name: 'Шуруп LN (крепление в подвесе)', unit: 'шт', qty: geo113.hangersTotal * 2 })
+      if (geo113.hangerWarning) warnings.push(geo113.hangerWarning)
     } else {
       // ─── Fallback: старый усреднённый расход на м² ──────────────────────
       if (type === 'p112') {
@@ -273,9 +312,10 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       materials.push({ name: 'Дюбель для ПН 28×27', unit: 'шт', qty: pn_dowels })
     }
 
-    // Соединитель одноуровневый (П113) — остаётся по среднему расходу,
-    // точная геометрия сделана пока только для П112 (см. план дальше).
-    if (type === 'p113' && frameRates.connector1lvl) {
+    // Соединитель одноуровневый (П113) — по среднему расходу ТОЛЬКО в
+    // fallback-режиме без точных размеров; при hasPreciseGeometryP113 он уже
+    // добавлен выше через calcP113Frame.ts (не дублируем).
+    if (type === 'p113' && !hasPreciseGeometryP113 && frameRates.connector1lvl) {
       materials.push({
         name: 'Соединитель одноуровневый ПП 60×27',
         unit: 'шт',
