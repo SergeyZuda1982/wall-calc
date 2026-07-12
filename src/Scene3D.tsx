@@ -899,7 +899,13 @@ function levelHasGeometry(floorPlan: FloorPlan): boolean {
     slabsToPolygons3D(floorPlan.slabs ?? [], scaleMmPx).length > 0 ||
     roundColumnsToCylinders3D(floorPlan.roundColumns ?? [], scaleMmPx, ceilingMm).length > 0 ||
     rectColumnsToBoxes3D(floorPlan.rectColumns ?? [], scaleMmPx, ceilingMm).length > 0 ||
-    freeformStructuresToPrisms3D(floorPlan.freeformStructures ?? [], scaleMmPx, ceilingMm).length > 0
+    freeformStructuresToPrisms3D(floorPlan.freeformStructures ?? [], scaleMmPx, ceilingMm).length > 0 ||
+    // 12.07.2026: свободные Ceiling-контуры (пункт 7, отдельная от Room
+    // сущность) раньше не учитывались здесь — план с одним только обведённым
+    // потолком (без стен/комнат/плит со спецификацией) считался "пустым" и
+    // 3D показывал заглушку "нечего показывать", хотя CeilingEntityMesh
+    // ниже по файлу готов был его отрисовать.
+    ceilingsToPolygons3D(floorPlan.ceilings ?? [], scaleMmPx).length > 0
   )
 }
 
