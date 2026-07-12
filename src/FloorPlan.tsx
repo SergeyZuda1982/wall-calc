@@ -30,6 +30,7 @@ import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory
 import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
+import { calcPlanFrameEstimate } from './core/planFrameEstimate'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf } from './core/finishResolver'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
@@ -497,6 +498,7 @@ export default function FloorPlan() {
   const [eraseIds, setEraseIds]         = useState<string[]>([])
   const [showSheetSummary, setShowSheetSummary] = useState(false)
   const [showFastenerSummary, setShowFastenerSummary] = useState(false)
+  const [showFrameSummary, setShowFrameSummary] = useState(false)
   const [showParallelDialog, setShowParallelDialog] = useState(false)
   const [parallelDist, setParallelDist]             = useState('100')
   const [rightTab, setRightTab]         = useState<'construction' | 'finish' | 'materials' | 'calc'>('construction')
@@ -2154,6 +2156,15 @@ export default function FloorPlan() {
     const totalQty = totalsList.reduce((s, t) => s + t.qty, 0)
     return { rows, totalsList, totalQty }
   }, [lines, lineAttachments])
+
+  // ── Смета каркаса ГКЛ (стойки ПС) по всему проекту, с дедупликацией
+  // угловой стойки на 90°-примыканиях (короба/ниши/колонны, углы двух
+  // перегородок) — см. TASKS.md/KONSPEKT.md "дедупликация угловой
+  // стойки". Пересчитывается только при изменении линий/колонн/масштаба.
+  const frameSummary = useMemo(
+    () => calcPlanFrameEstimate(lines, lineAttachments, scaleMmPx, rectColumns),
+    [lines, lineAttachments, scaleMmPx, rectColumns],
+  )
 
   // ── Подсчёт площади выбранной линии ───────────────────────────────────────
   function calcLineArea(l: PlanLine): number {
@@ -4536,6 +4547,16 @@ export default function FloorPlan() {
                     🔩 Смета крепежа ({fastenerSummary.totalQty} шт)
                   </button>
                   )}
+                  {frameSummary.perLine.length > 0 && (
+                  <button onClick={() => setShowFrameSummary(true)}
+                    style={{
+                      fontSize: 11, fontWeight: 600, color: '#fff', background: '#2f9e6e',
+                      border: 'none', borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 5,
+                    }}>
+                    📐 Смета каркаса ({frameSummary.studsCount} шт)
+                  </button>
+                  )}
                 </div>
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -5729,6 +5750,85 @@ export default function FloorPlan() {
                     Крепёж по умолчанию подобран автоматически по материалу соседней
                     конструкции — тип и шаг можно переопределить вручную в инспекторе
                     линии, раздел «Боковое примыкание и крепёж».
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Смета каркаса ГКЛ (стойки ПС, проектный расчёт с дедупликацией
+           угловой стойки на 90°-примыканиях) ── */}
+      {showFrameSummary && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          onClick={() => setShowFrameSummary(false)}>
+          <div style={{ background: '#fff', borderRadius: 10, padding: 0, width: 640, maxWidth: '92vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.25)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #e0e4ee' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#1e2433' }}>📐 Смета каркаса ГКЛ (стойки ПС)</div>
+              <button onClick={() => setShowFrameSummary(false)} style={iconBtnStyle2}>✕</button>
+            </div>
+
+            {frameSummary.perLine.length === 0 ? (
+              <div style={{ padding: 24, fontSize: 12, color: '#888', textAlign: 'center' }}>
+                Нет линий с поддержанным каркасом ГКЛ (ПС50/ПС75/ПС100) —
+                смета считается только для перегородок «Новая стена» с
+                материалом ГКЛ.
+              </div>
+            ) : (
+              <>
+                <div style={{ overflowY: 'auto', padding: '0 20px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: '#f5f7fb' }}>
+                        <th style={thS}>№</th>
+                        <th style={thS}>Конструкция</th>
+                        <th style={thS}>Стоек, шт</th>
+                        <th style={thS}>ПС, м</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {frameSummary.perLine.map((row, i) => {
+                        const line = lines.find(l => l.id === row.lineId)
+                        return (
+                          <tr key={row.lineId} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                            <td style={tdS}>{i + 1}</td>
+                            <td style={tdS}>{line?.label ?? row.lineId}</td>
+                            <td style={tdS}>{row.result.studsCount}</td>
+                            <td style={tdS}>{row.result.cwTotal.toFixed(2)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ padding: '14px 20px', borderTop: '1px solid #e0e4ee', background: '#f5f7fb' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#555', marginBottom: 3 }}>
+                    <span>Сумма по линиям без дедупликации</span>
+                    <span>{frameSummary.studsCountRaw} шт · {frameSummary.cwTotalMRaw.toFixed(2)} м</span>
+                  </div>
+                  {frameSummary.cornerNodesCount > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#2f9e6e', marginBottom: 3 }}>
+                      <span>− дублирующиеся угловые стойки (90°-узлов: {frameSummary.cornerNodesCount})</span>
+                      <span>−{frameSummary.cornerNodesCount} шт · −{(frameSummary.cwTotalMRaw - frameSummary.cwTotalM).toFixed(2)} м</span>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, color: '#1e2433', marginTop: 6 }}>
+                    <span>Итого стоек ПС</span>
+                    <span>{frameSummary.studsCount} шт · {frameSummary.cwTotalM.toFixed(2)} м</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#555', marginTop: 8 }}>
+                    <span>Раскрой прутков 3м</span>
+                    <span style={{ fontWeight: 600 }}>{frameSummary.studCutList.totalBars} шт</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#aaa', marginTop: 8 }}>
+                    На 90°-углах (короба/ниши/колонны, углы двух перегородок ГКЛ)
+                    угловая стойка физически одна общая — калькулятор считал бы
+                    её дважды (по разу от каждого сегмента), здесь дубль вычтен
+                    автоматически. Примыкание к капитальной стене, Т-стык,
+                    крест и торец-в-торец не затронуты — считаются как раньше.
                   </div>
                 </div>
               </>
