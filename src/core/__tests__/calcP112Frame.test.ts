@@ -1,13 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import {
   calcFrameRowPositions,
+  calcMainRowPositionsKnauf,
+  calcBearingRowPositionsKnauf,
   snapHangerPositionsToAxis,
   resolveHangerKind,
   resolveKnaufHangerStep,
   resolveFrameParams,
   calcP112FrameGeometry,
   CLOSE_GAP_MM,
-  KNAUF_WALL_OFFSET_MM,
+  KNAUF_WALL_OFFSET_MAIN_MM,
+  KNAUF_WALL_OFFSET_BEARING_MM,
 } from '../calcP112Frame'
 
 describe('calcFrameRowPositions', () => {
@@ -53,34 +56,121 @@ describe('calcFrameRowPositions', () => {
     expect(withOffset).not.toEqual(withoutOffset)
   })
 
+  // 11.07.2026: 'knauf' режим ПОЛНОСТЬЮ пересмотрен по фото официального
+  // документа (лист «А-А, примыкание к стене видимым швом») — правила
+  // теперь РАЗНЫЕ для основного (profileKind='main', допуск 150мм) и
+  // несущего (profileKind='bearing', допуск 100мм) профиля. См.
+  // calcMainRowPositionsKnauf/calcBearingRowPositionsKnauf ниже — прямые
+  // тесты на сами функции содержат более полное покрытие; здесь —
+  // проверка, что calcFrameRowPositions(mode:'knauf') корректно
+  // делегирует по profileKind (default = 'main', обратная совместимость).
   describe('mode=knauf', () => {
-    it('по умолчанию (без wallOffsetMm) первый ряд тоже на расстоянии одного шага — совпадает с user на старте', () => {
-      const positions = calcFrameRowPositions(2800, 900, { mode: 'knauf' })
-      expect(positions[0]).toBe(900)
+    it("profileKind не передан -> по умолчанию 'main' (обратная совместимость)", () => {
+      const viaDispatch = calcFrameRowPositions(2800, 900, { mode: 'knauf' })
+      const direct = calcMainRowPositionsKnauf(2800, 900)
+      expect(viaDispatch).toEqual(direct)
     })
 
-    it('с явным wallOffsetMm (несущий профиль, 100мм) — старт НЕ равен шагу', () => {
-      // span=2800, step=500, offset=100: 100,600,1100,1600,2100,2600
-      const positions = calcFrameRowPositions(2800, 500, { mode: 'knauf', wallOffsetMm: KNAUF_WALL_OFFSET_MM })
-      expect(positions).toEqual([100, 600, 1100, 1600, 2100, 2600])
+    it("profileKind='main' делегирует в calcMainRowPositionsKnauf", () => {
+      const viaDispatch = calcFrameRowPositions(4150, 1000, { mode: 'knauf', profileKind: 'main' })
+      const direct = calcMainRowPositionsKnauf(4150, 1000)
+      expect(viaDispatch).toEqual(direct)
     })
 
-    it('НЕ сжимает последний ряд — просто оставляет естественный остаток у стены как есть', () => {
-      // span=4000, step=900: user подвигает последний ряд на 4000-250=3750 (сжатие),
-      // knauf оставляет обычную сетку 900/1800/2700/3600 (остаток 400мм у стены — это ОК)
-      const userPositions = calcFrameRowPositions(4000, 900, { mode: 'user' })
-      const knaufPositions = calcFrameRowPositions(4000, 900, { mode: 'knauf' })
-      expect(userPositions).toEqual([900, 1800, 2700, 3750])
-      expect(knaufPositions).toEqual([900, 1800, 2700, 3600])
-      expect(4000 - knaufPositions[knaufPositions.length - 1]).toBe(400)
+    it("profileKind='bearing' делегирует в calcBearingRowPositionsKnauf", () => {
+      const viaDispatch = calcFrameRowPositions(3000, 500, { mode: 'knauf', profileKind: 'bearing' })
+      const direct = calcBearingRowPositionsKnauf(3000, 500)
+      expect(viaDispatch).toEqual(direct)
     })
 
-    it('расстояние между соседними рядами никогда не превышает номинальный шаг', () => {
-      const positions = calcFrameRowPositions(5137, 600, { mode: 'knauf' })
-      for (let i = 1; i < positions.length; i++) {
-        expect(positions[i] - positions[i - 1]).toBe(600)
-      }
+    it('явный wallOffsetMm переопределяет дефолтный отступ по profileKind', () => {
+      const positions = calcFrameRowPositions(2800, 500, { mode: 'knauf', profileKind: 'bearing', wallOffsetMm: 50 })
+      expect(positions[0]).toBe(50)
     })
+  })
+})
+
+describe('calcMainRowPositionsKnauf (ОСНОВНОЙ профиль, mode=knauf)', () => {
+  it('первый ряд на wallOffsetMm (по умолчанию 150мм) от стены, далее строго через шаг', () => {
+    // span=2800, step=900, offset=150 (default): 150,1050,1950 — до стены 850мм
+    // (>150) -> добавляем ещё один ряд на 2800-150=2650
+    const positions = calcMainRowPositionsKnauf(2800, 900)
+    expect(positions).toEqual([150, 1050, 1950, 2650])
+  })
+
+  it('пример пользователя (11.07.2026): шаг c=1000, остаток от предпоследнего ровно 1000мм -> последний на +850', () => {
+    // span=1150, step=1000, offset=150: регулярная сетка даёт только [150]
+    // (следующий кандидат 1150 не < 1150). Остаток до стены = 1000 (=шаг,
+    // ровно наивный следующий шаг попал бы в стену) -> добавляем ряд на
+    // 1150-150=1000, то есть +850 от предыдущего (150+850=1000)
+    const positions = calcMainRowPositionsKnauf(1150, 1000)
+    expect(positions).toEqual([150, 1000])
+    expect(positions[1] - positions[0]).toBe(850)
+  })
+
+  it('предпоследний ряд регулярной сетки ОСТАЁТСЯ на месте (не сдвигается) — добавляется ДОПОЛНИТЕЛЬНЫЙ последний', () => {
+    // span=4150, step=1000, offset=150: регулярная сетка 150,1150,2150,3150
+    // (3150<4150; следующий кандидат 4150 не <4150). Остаток=1000>150 ->
+    // добавляем ряд на 4150-150=4000. 3150 должен ОСТАТЬСЯ в массиве.
+    const positions = calcMainRowPositionsKnauf(4150, 1000)
+    expect(positions).toEqual([150, 1150, 2150, 3150, 4000])
+    expect(positions).toContain(3150) // предпоследний не тронут
+  })
+
+  it('если естественный остаток у стены уже ≤150мм — лишний ряд не добавляется', () => {
+    // span=1300, step=1000, offset=150: сетка [150], next candidate 1150<1300
+    // тоже пушится -> [150,1150], остаток=1300-1150=150 (<=150) -> без добавления
+    const positions = calcMainRowPositionsKnauf(1300, 1000)
+    expect(positions).toEqual([150, 1150])
+  })
+
+  it('нестандартный отступ через параметр wallOffsetMm', () => {
+    const positions = calcMainRowPositionsKnauf(1150, 1000, 50)
+    // сетка: 50,1050 (1050<1150; след.кандидат 2050 не<1150) -> остаток=1150-1050=100>50
+    // -> доп. ряд на 1150-50=1100
+    expect(positions).toEqual([50, 1050, 1100])
+  })
+
+  it('пустой пролёт или нулевой шаг -> пустой массив', () => {
+    expect(calcMainRowPositionsKnauf(0, 900)).toEqual([])
+    expect(calcMainRowPositionsKnauf(4000, 0)).toEqual([])
+  })
+})
+
+describe('calcBearingRowPositionsKnauf (НЕСУЩИЙ профиль, mode=knauf)', () => {
+  it('регулярная сетка от стены (b,2b,3b,...) + доп. профиль ≤100мм у каждой стены', () => {
+    // span=3000, step=500: сетка 500,1000,1500,2000,2500 (2500<3000, next
+    // 3000 не <3000). Ближняя стена: 500>100 -> доп.профиль на 100.
+    // Дальняя: остаток=3000-2500=500>100 -> доп.профиль на 3000-100=2900.
+    const positions = calcBearingRowPositionsKnauf(3000, 500)
+    expect(positions).toEqual([100, 500, 1000, 1500, 2000, 2500, 2900])
+  })
+
+  it('шаг между рядами регулярной сетки НИКОГДА не отличается от номинального (не считая доп. профилей у стен)', () => {
+    const positions = calcBearingRowPositionsKnauf(5137, 600)
+    // средние ряды (без первого и последнего — это доп. профили у стен)
+    for (let i = 2; i < positions.length - 2; i++) {
+      expect(positions[i] - positions[i - 1]).toBe(600)
+    }
+  })
+
+  it('если крайняя точка сетки уже сама попадает в допуск — доп. профиль НЕ добавляется', () => {
+    // span=2733, step=500: сетка 500..2500, остаток=233 -> добавляем доп.
+    // Проверим случай, где остаток уже мал: span=2580 -> сетка 500..2500,
+    // остаток=80 (<=100) -> без доп. профиля у дальней стены
+    const positions = calcBearingRowPositionsKnauf(2580, 500)
+    expect(positions[positions.length - 1]).toBe(2500) // не 2480
+  })
+
+  it('нестандартный отступ через параметр wallOffsetMm', () => {
+    const positions = calcBearingRowPositionsKnauf(3000, 500, 50)
+    expect(positions[0]).toBe(50)
+    expect(positions[positions.length - 1]).toBe(2950)
+  })
+
+  it('пустой пролёт или нулевой шаг -> пустой массив', () => {
+    expect(calcBearingRowPositionsKnauf(0, 500)).toEqual([])
+    expect(calcBearingRowPositionsKnauf(3000, 0)).toEqual([])
   })
 })
 
@@ -152,12 +242,12 @@ describe('calcP112FrameGeometry', () => {
       expect(withDefault).toEqual(withUser)
     })
 
-    it('knauf даёт несущему профилю фиксированный отступ 100мм от стены, а не отступ=шагу', () => {
-      // B=3000 (шаг несущего поперёк), stepB=500 -> knauf: 100,600,1100,1600,2100,2600 (6 рядов)
-      // user: 500,1000,1500,2000,2500(зазор500>250->сдвиг)=2750 (5 рядов, обычная формула)
+    it('knauf: несущий профиль — сетка от стены + доп. профиль ≤100мм у каждой стены', () => {
+      // B=3000, stepB=500 -> knauf: 100,500,1000,1500,2000,2500,2900 (7 рядов,
+      // см. calcBearingRowPositionsKnauf)
       const geoKnauf = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'knauf')
       const geoUser = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'user')
-      expect(geoKnauf.bearingCount).toBe(6)
+      expect(geoKnauf.bearingCount).toBe(7)
       expect(geoKnauf.bearingCount).not.toBe(geoUser.bearingCount)
     })
 
@@ -166,12 +256,11 @@ describe('calcP112FrameGeometry', () => {
       expect(geo.connectorsTotal).toBe(geo.bearingCount * geo.mainCount)
     })
 
-    it('knauf применяет отступ ≤100мм и к ОСНОВНОМУ профилю тоже (не только к несущему)', () => {
-      // A=4000, stepC=600 -> knauf: 100,700,1300,1900,2500,3100,3700 (7 рядов)
-      // user (отступ=шагу): 600,1200,1800,2400,3000,3600(зазор400<=250? нет,>250->сдвиг)=3750 (6 рядов)
+    it('knauf: основной профиль — своя сетка (шаг 150мм от стены) + доп. ряд у дальней стены, если нужно', () => {
+      // A=4000, stepC=600 -> knauf: 150,750,1350,1950,2550,3150,3750,3850 (8 рядов)
       const geoKnauf = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'knauf')
       const geoUser = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'user')
-      expect(geoKnauf.mainCount).toBe(7)
+      expect(geoKnauf.mainCount).toBe(8)
       expect(geoKnauf.mainCount).not.toBe(geoUser.mainCount)
     })
 
@@ -183,9 +272,9 @@ describe('calcP112FrameGeometry', () => {
 
     it('extra.wallOffsetMainMm/wallOffsetBearingMm можно переопределить явно поверх layoutMode', () => {
       const geo = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'user', {
-        wallOffsetMainMm: KNAUF_WALL_OFFSET_MM, wallOffsetBearingMm: KNAUF_WALL_OFFSET_MM,
+        wallOffsetMainMm: KNAUF_WALL_OFFSET_MAIN_MM, wallOffsetBearingMm: KNAUF_WALL_OFFSET_BEARING_MM,
       })
-      // 'user' обычно не сжимает отступ до 100мм — с явным extra это происходит и в user-режиме
+      // 'user' обычно не сжимает отступ до 100/150мм — с явным extra это происходит и в user-режиме
       const plainUser = calcP112FrameGeometry(4000, 3000, 600, 500, 50, true, 'user')
       expect(geo.mainCount).not.toBe(plainUser.mainCount)
     })
@@ -242,12 +331,12 @@ describe('resolveFrameParams', () => {
     expect(r.stepA).toBe(1234)
   })
 
-  it("mode='knauf' поперечный монтаж — stepB=500, stepA из таблицы, отступ ≤100мм для обоих", () => {
+  it("mode='knauf' поперечный монтаж — stepB=500, stepA из таблицы, разные отступы для основного (150) и несущего (100)", () => {
     const r = resolveFrameParams({ stepC: 800, layoutMode: 'knauf', mountDirection: 'crosswise', loadClass: 0.15 })
     expect(r.stepB).toBe(500)
     expect(r.stepA).toBe(1050)
-    expect(r.wallOffsetMainMm).toBe(KNAUF_WALL_OFFSET_MM)
-    expect(r.wallOffsetBearingMm).toBe(KNAUF_WALL_OFFSET_MM)
+    expect(r.wallOffsetMainMm).toBe(KNAUF_WALL_OFFSET_MAIN_MM)
+    expect(r.wallOffsetBearingMm).toBe(KNAUF_WALL_OFFSET_BEARING_MM)
     expect(r.warning).toBeUndefined()
   })
 

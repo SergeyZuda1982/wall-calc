@@ -1073,13 +1073,13 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // ряд на расстоянии шага от стены, последний просто ближе к дальней стене
   // — не наивная сетка от 0; в режиме 'knauf' — строго по официальной сетке,
   // без сжатия последнего ряда. shiftMainMm — ручной сдвиг гребёнки поверх.
-  const mainPosXMm = calcFrameRowPositions(L, stepC, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetMainMm })
+  const mainPosXMm = calcFrameRowPositions(L, stepC, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetMainMm, profileKind: 'main' })
   const mainPosX = mainPosXMm
     .map(p => (p + shiftMainMm) * scale)
     .filter(x => x >= 0 && x <= L * scale)
 
   // ── Несущие профили (Y, шаг b) ──
-  const bearingPosYMm = calcFrameRowPositions(W_room, stepB, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm })
+  const bearingPosYMm = calcFrameRowPositions(W_room, stepB, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm, profileKind: 'bearing' })
   const bearingPosY = bearingPosYMm
     .map(p => (p + shiftBearingMm) * scale)
     .filter(y => y >= 0 && y <= W_room * scale)
