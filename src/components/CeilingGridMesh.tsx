@@ -108,7 +108,7 @@ function useMinThicknessScale(
 // Размеры совпадают с расходными таблицами (см. data/ceilingData.ts:
 // pp6027_lm) — не выдуманы отдельно для 3D.
 
-function ppProfileShape(width = 60, height = 27, t = 0.6, lip = 5): THREE.Shape {
+export function ppProfileShape(width = 60, height = 27, t = 0.6, lip = 5): THREE.Shape {
   const s = new THREE.Shape()
   const w = width, h = height
   s.moveTo(-lip, h)
@@ -126,7 +126,7 @@ function ppProfileShape(width = 60, height = 27, t = 0.6, lip = 5): THREE.Shape 
 }
 
 /** Экструзия сечения (мм, в плоскости XY) вдоль длины (мм) → geometry в метрах. */
-function extrudeProfileM(shape: THREE.Shape, lengthMm: number): THREE.ExtrudeGeometry {
+export function extrudeProfileM(shape: THREE.Shape, lengthMm: number): THREE.ExtrudeGeometry {
   const geo = new THREE.ExtrudeGeometry(shape, { depth: lengthMm, bevelEnabled: false, curveSegments: 1 })
   geo.scale(0.001, 0.001, 0.001) // мм -> м
   return geo
@@ -140,7 +140,7 @@ function extrudeProfileM(shape: THREE.Shape, lengthMm: number): THREE.ExtrudeGeo
  * метрах (27мм для ПП, см. ppProfileShape) — консервативная оценка "самого
  * тонкого" измерения, которое рискует пропасть первым.
  */
-function ThinProfileMesh({
+export function ThinProfileMesh({
   geometry, material, position, rotation, actualLocalHeightM, onClick,
 }: {
   geometry: THREE.BufferGeometry
@@ -157,8 +157,8 @@ function ThinProfileMesh({
   )
 }
 
-const metalMat = new THREE.MeshStandardMaterial({ color: '#b7bcc2', metalness: 0.75, roughness: 0.42 })
-const crabMat = new THREE.MeshStandardMaterial({ color: '#9aa4ad', metalness: 0.6, roughness: 0.5 })
+export const metalMat = new THREE.MeshStandardMaterial({ color: '#b7bcc2', metalness: 0.75, roughness: 0.42 })
+export const crabMat = new THREE.MeshStandardMaterial({ color: '#9aa4ad', metalness: 0.6, roughness: 0.5 })
 const gklMat = new THREE.MeshStandardMaterial({ color: '#e9e4d8', roughness: 0.92, metalness: 0 })
 
 // ─── Минвата: box с шумом по вершинам верха + процедурная текстура ─────────
@@ -205,7 +205,7 @@ function fibrousTexture(): THREE.CanvasTexture {
 
 // ─── Краб (соединитель одноуровневый) — крестовая пластина ─────────────────
 
-function crabGeometry(sizeMm = 22, thickMm = 1.4): THREE.BufferGeometry {
+export function crabGeometry(sizeMm = 22, thickMm = 1.4): THREE.BufferGeometry {
   const s = new THREE.Shape()
   const a = sizeMm, b = sizeMm * 0.28
   s.moveTo(-b, -a); s.lineTo(b, -a); s.lineTo(b, -b); s.lineTo(a, -b)
@@ -230,7 +230,7 @@ function HangerRod({ dropM }: { dropM: number }) {
 }
 
 /** Подвес прямой: пластина у плиты + стержень + гнутый зажим (упрощённая форма). */
-function Hanger({ x, y, z, dropM, onClick }: {
+export function Hanger({ x, y, z, dropM, onClick }: {
   x: number; y: number; z: number; dropM: number
   onClick?: (e: ThreeEvent<MouseEvent>) => void
 }) {

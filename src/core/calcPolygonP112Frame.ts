@@ -132,6 +132,13 @@ export interface PolygonP112FrameResult {
   bearingExtenders: number
   connectorsTotal: number
   hangersTotal: number
+  /** Точки кабов (пересечения несущего/основного внутри контура), локальные
+   *  координаты (u,v), мм — для 3D-рендера (CeilingGridMesh), пункт 7 плана
+   *  (KONSPEKT.md 10.07.2026). connectorsTotal === crabPoints.length. */
+  crabPoints: Point2D[]
+  /** Точки подвесов (подмножество crabPoints по snapHangerPositionsToAxis),
+   *  локальные (u,v), мм — для 3D. hangersTotal === hangerPoints.length. */
+  hangerPoints: Point2D[]
   hangerKind: HangerKind
   warnings: string[]
 }
@@ -223,13 +230,15 @@ export function calcPolygonP112Frame(
   const bearingExtenders = bearingRows.reduce((s, r) => s + r.segments.reduce((s2, [a, b]) => s2 + extendersForSegment(b - a), 0), 0)
 
   // ── Соединители-крабы и подвесы ──────────────────────────────────────────
-  let connectorsTotal = 0
-  let hangersTotal = 0
+  const crabPoints: Point2D[] = []
+  const hangerPoints: Point2D[] = []
   for (const uRow of bearingRows) {
     const validVs = mainVPositions.filter(v => pointInPolygon({ x: uRow.pos, y: v }, loopsLocal))
-    connectorsTotal += validVs.length
-    hangersTotal += snapHangerPositionsToAxis(validVs, stepA).length
+    for (const v of validVs) crabPoints.push({ x: uRow.pos, y: v })
+    for (const v of snapHangerPositionsToAxis(validVs, stepA)) hangerPoints.push({ x: uRow.pos, y: v })
   }
+  const connectorsTotal = crabPoints.length
+  const hangersTotal = hangerPoints.length
 
   const { kind: hangerKind, warning: hangerWarning } = resolveHangerKind(slabGapMm)
   if (hangerWarning) warnings.push(hangerWarning)
@@ -237,6 +246,6 @@ export function calcPolygonP112Frame(
   return {
     frame, mainRows, bearingRows, mainTotalLm, bearingTotalLm,
     mainExtenders, bearingExtenders, connectorsTotal, hangersTotal,
-    hangerKind, warnings,
+    crabPoints, hangerPoints, hangerKind, warnings,
   }
 }

@@ -155,6 +155,7 @@ export interface ProjectStore {
   addCeiling: (outer: { x: number; y: number }[]) => string
   removeCeiling: (id: string) => void
   updateCeilingOuter: (id: string, outer: { x: number; y: number }[]) => void
+  updateCeiling: (id: string, patch: Partial<Ceiling>) => void
   updateSlabOuter: (id: string, outer: { x: number; y: number }[]) => void
   addSlabHole: (id: string, hole: { x: number; y: number }[]) => void
   removeSlabHole: (id: string, holeIndex: number) => void
@@ -852,6 +853,14 @@ export const useProjectStore = create<ProjectStore>()(
       updateCeilingOuter: (id, outer) => {
         set(s => updateActiveFloorPlan(s, fp => ({
           ...fp, ceilings: (fp.ceilings ?? []).map(cl => cl.id === id ? { ...cl, outer } : cl),
+        })))
+      },
+
+      // 10.07.2026 (пункт 7 плана): «Сохранить в 3D» из CeilingCalc.tsx —
+      // тот же паттерн, что updateRoom(id, { ceilingSpec }) для комнат.
+      updateCeiling: (id, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, ceilings: (fp.ceilings ?? []).map(cl => cl.id === id ? { ...cl, ...patch } : cl),
         })))
       },
 

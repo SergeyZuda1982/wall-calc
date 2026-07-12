@@ -22,13 +22,14 @@ import { OrbitControls, Grid, FlyControls, Html, Line, Sphere } from '@react-thr
 import * as THREE from 'three'
 import { useProjectStore, type SelectedEntity } from './store/useProjectStore'
 import {
-  wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM,
+  wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM,
   freeformStructuresToPrisms3D, wallStudPositionsMm,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D,
 } from './core/planTo3D'
 import type { PlanLineType, FloorPlan, PlanLine } from './types'
 import CeilingGridMesh from './components/CeilingGridMesh'
+import CeilingEntityMesh from './components/CeilingEntityMesh'
 import { resolveFrameParams } from './core/calcP112Frame'
 import { formatDistanceM } from './core/formatDistance'
 import { lineProgressColor, lineProgressSummary, wallGklVisual3D } from './core/lineProgress'
@@ -688,6 +689,7 @@ function LevelGroup({
   const lines = floorPlan.lines ?? []
   const rooms = floorPlan.rooms ?? []
   const slabs = floorPlan.slabs ?? []
+  const ceilings = floorPlan.ceilings ?? []
   const roundColumns = floorPlan.roundColumns ?? []
   const rectColumns = floorPlan.rectColumns ?? []
   const freeformStructures = floorPlan.freeformStructures ?? []
@@ -698,6 +700,7 @@ function LevelGroup({
   const linesById = useMemo(() => new Map(lines.map(l => [l.id, l])), [lines])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
   const slabPolygons = useMemo(() => slabsToPolygons3D(slabs, scaleMmPx), [slabs, scaleMmPx])
+  const ceilingPolygons = useMemo(() => ceilingsToPolygons3D(ceilings, scaleMmPx), [ceilings, scaleMmPx])
   const ceilingMm = useMemo(() => estimateCeilingMm(lines), [lines])
   const columnCylinders = useMemo(
     () => roundColumnsToCylinders3D(roundColumns, scaleMmPx, ceilingMm),
@@ -820,6 +823,15 @@ function LevelGroup({
         )
       })}
       {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} opacity={opacity} />)}
+      {ceilingPolygons.map(cl => (
+        <CeilingEntityMesh
+          key={`ceiling-${cl.id}`}
+          ceiling={cl}
+          ceilingM={mmToM(ceilingMm)}
+          opacity={opacity}
+          showGrid={showCeilingGrid && !dimmed}
+        />
+      ))}
       {columnCylinders.map(cyl => (
         <RoundColumnMesh
           key={cyl.id}

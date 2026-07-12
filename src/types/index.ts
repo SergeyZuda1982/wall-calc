@@ -697,6 +697,17 @@ export interface Ceiling {
   id: string
   outer: { x: number; y: number }[]      // внешний контур, px (как у линий/Slab)
   label: string                           // "Потолок 1", "Потолок 2"...
+  /**
+   * НОВОЕ (10.07.2026, пункт 7 плана — мост с расчётом): раскладка каркаса,
+   * сохранённая из CeilingCalc.tsx («Сохранить в 3D»), тот же принцип, что
+   * и Room.ceilingSpec ниже — единая точка правды для сметы и 3D-сцены,
+   * числа не расходятся. startWallSideIndex — индекс стороны контура
+   * (см. polygonSides() в geometry2d.ts), с которой начинается раскладка
+   * (пункт 5) — без него сетку по контуру в 3D построить нельзя (нет точки
+   * отсчёта локальных координат, см. calcPolygonP112Frame.ts).
+   */
+  ceilingSpec?: CeilingSpec
+  startWallSideIndex?: number
 }
 
 /**

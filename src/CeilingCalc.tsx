@@ -104,6 +104,11 @@ export default function CeilingCalc() {
   // подставить в форму то, что для этого Room уже было сохранено раньше.
   const [seedRoomId, setSeedRoomId] = useState<string | null>(null)
   const [savedToRoom, setSavedToRoom] = useState(false)
+  // Пункт 7 плана (KONSPEKT.md 10.07.2026) — та же механика «Сохранить в
+  // 3D», что и у Room выше, но для свободного контура Ceiling: id сущности
+  // (см. ceilingEntityId в useCeilingSeedStore.ts) + флаг «уже сохранено».
+  const [seedCeilingId, setSeedCeilingId] = useState<string | null>(null)
+  const [savedToCeiling, setSavedToCeiling] = useState(false)
   const floorPlanRooms = useProjectStore(s => s.floorPlan?.rooms ?? [])
   const updateRoom = useProjectStore(s => s.updateRoom)
   // Пункт 5 плана (KONSPEKT.md 10.07.2026): выбор стены начала раскладки
@@ -117,13 +122,19 @@ export default function CeilingCalc() {
   // по факту обведённого контура (не прямоугольник), поэтому обнуляем
   // roomLengthMm/roomWidthMm: точная раскладка листов по L×W для такой
   // формы всё равно была бы неверной, работаем в режиме "площадь+периметр".
+  const floorPlanCeilings = useProjectStore(s => s.floorPlan?.ceilings ?? [])
+  const updateCeiling = useProjectStore(s => s.updateCeiling)
   const consumeSeed = useCeilingSeedStore(s => s.seed)
   const clearSeed = useCeilingSeedStore(s => s.clearSeed)
   useEffect(() => {
     if (!consumeSeed) return
-    const savedSpec = consumeSeed.roomId
+    const savedRoomSpec = consumeSeed.roomId
       ? floorPlanRooms.find(r => r.id === consumeSeed.roomId)?.ceilingSpec
       : undefined
+    const savedCeilingEntity = consumeSeed.ceilingEntityId
+      ? floorPlanCeilings.find(cl => cl.id === consumeSeed.ceilingEntityId)
+      : undefined
+    const savedSpec = savedRoomSpec ?? savedCeilingEntity?.ceilingSpec
     setForm(prev => {
       const next: CeilingSpecFull = {
         ...prev,
@@ -131,9 +142,10 @@ export default function CeilingCalc() {
         roomWidthMm: 0,
         areaSqm: consumeSeed.areaSqm,
         perimeterM: consumeSeed.perimeterM,
-        // Если для этого Room раньше уже сохраняли каркас (см. кнопку
-        // «Сохранить в 3D» ниже) — подставляем его вместо дефолтов формы,
-        // чтобы не заставлять настраивать заново при повторном открытии.
+        // Если для этого Room/Ceiling раньше уже сохраняли каркас (см.
+        // кнопку «Сохранить в 3D» ниже) — подставляем его вместо дефолтов
+        // формы, чтобы не заставлять настраивать заново при повторном
+        // открытии.
         ...(savedSpec ? {
           type: savedSpec.type,
           stepC: savedSpec.stepC,
@@ -151,9 +163,17 @@ export default function CeilingCalc() {
     setSeedZones(consumeSeed.zones)
     setSeedRoomId(consumeSeed.roomId ?? null)
     setSavedToRoom(false)
-    setStartWall(null)
+    setSeedCeilingId(consumeSeed.ceilingEntityId ?? null)
+    setSavedToCeiling(false)
+    // Сохранённая ранее стена старта (startWallSideIndex) — та же зона
+    // (индекс 0, у Ceiling-сида зона всегда одна, см. ceilingEntityId).
+    setStartWall(
+      savedCeilingEntity?.startWallSideIndex != null
+        ? { zoneIndex: 0, sideIndex: savedCeilingEntity.startWallSideIndex }
+        : null,
+    )
     clearSeed()
-  }, [consumeSeed, clearSeed, floorPlanRooms])
+  }, [consumeSeed, clearSeed, floorPlanRooms, floorPlanCeilings])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -301,6 +321,57 @@ export default function CeilingCalc() {
             {savedToRoom
               ? <span style={{ color: C.success }}> Настройки каркаса синхронизированы — 3D-вид рисует именно эту раскладку.</span>
               : ' Синхронизация с 3D-видом...'}
+          </div>
+        )}
+
+        {seedCeilingId && form.type === 'p112' && seedZones?.length === 1 && (
+          <div style={{
+            padding: '8px 10px', background: savedToCeiling ? '#f0fdf4' : C.accentLight,
+            border: `1px solid ${savedToCeiling ? C.success : C.accent}`,
+            borderRadius: 6, fontSize: 11, color: C.text,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6,
+          }}>
+            <div>
+              Расчёт привязан к потолку на плане.
+              {!startWall
+                ? ' Выберите стену начала раскладки выше, потом можно сохранить в 3D.'
+                : savedToCeiling
+                  ? <span style={{ color: C.success }}> Раскладка сохранена — потолок в 3D теперь с реальной сеткой каркаса.</span>
+                  : ' Нажмите «Сохранить в 3D», чтобы 3D-сцена нарисовала именно эту раскладку (сейчас потолок в 3D — просто плоскость).'}
+            </div>
+            <button
+              disabled={!startWall}
+              onClick={() => {
+                if (!seedCeilingId || !startWall) return
+                updateCeiling(seedCeilingId, {
+                  ceilingSpec: {
+                    type: form.type,
+                    layers: form.layers,
+                    material: form.material,
+                    thickness: form.thickness,
+                    stepC: form.stepC,
+                    areaSqm: form.areaSqm,
+                    perimeterM: form.perimeterM,
+                    stepB: form.stepB,
+                    bearingAlongLength: form.bearingAlongLength,
+                    layoutMode: form.layoutMode,
+                    mountDirection: form.mountDirection,
+                    loadClass: form.loadClass,
+                    slabGapMm: form.slabGapMm,
+                  },
+                  startWallSideIndex: startWall.sideIndex,
+                })
+                setSavedToCeiling(true)
+              }}
+              title="Записать раскладку (шаг, стену старта, зазор до плиты) на этот потолок — 3D-сцена нарисует реальную сетку каркаса по контуру вместо плоскости"
+              style={{
+                flexShrink: 0, fontSize: 11, padding: '6px 10px', borderRadius: 6,
+                border: `1px solid ${C.accent}`, background: startWall ? C.accent : C.border,
+                color: startWall ? '#fff' : C.muted,
+                cursor: startWall ? 'pointer' : 'not-allowed', fontWeight: 600,
+              }}>
+              Сохранить в 3D
+            </button>
           </div>
         )}
 
