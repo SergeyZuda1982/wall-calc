@@ -4065,10 +4065,37 @@ export default function FloorPlan() {
                             const slen = Math.sqrt(sdx*sdx+sdy*sdy)
                             const snx = slen > 0 ? -sdy/slen*half : 0
                             const sny = slen > 0 ?  sdx/slen*half : 0
-                            const sAx=seg.ax1+snx, sAy=seg.ay1+sny
-                            const sBx=seg.ax2+snx, sBy=seg.ay2+sny
-                            const sCx=seg.ax2-snx, sCy=seg.ay2-sny
-                            const sDx=seg.ax1-snx, sDy=seg.ay1-sny
+                            let sAx=seg.ax1+snx, sAy=seg.ay1+sny
+                            let sBx=seg.ax2+snx, sBy=seg.ay2+sny
+                            let sCx=seg.ax2-snx, sCy=seg.ay2-sny
+                            let sDx=seg.ax1-snx, sDy=seg.ay1-sny
+
+                            // Фикс 6 (11.07.2026): на настоящем стыке (не на торце
+                            // у проёма, а там, где cap1/cap2 = false — реальный
+                            // wall-join с соседней стеной) наивное перпендикулярное
+                            // смещение ВСЕГДА даёт прямоугольник, даже если соседняя
+                            // стена подходит не под 90° — а wallJoin.ts уже честно
+                            // посчитал настоящие митр-точки (пересечение граней через
+                            // rayX, см. applyL/safeCorner). Раньше эти точки
+                            // ИГНОРИРОВАЛИСЬ здесь целиком: заливка/штриховка/обводка
+                            // рисовались по наивному прямоугольнику, а не по митру —
+                            // на остром угле это давало лишний треугольный "флажок"
+                            // поверх настоящей формы стены (см. KONSPEKT.md 11.07.2026,
+                            // скриншот подложки без перегородок — как должно выглядеть,
+                            // против скриншота с "флажком" на пересчитанном стыке).
+                            // Только для КРАЙНИХ сегментов (первый/последний — там, где
+                            // physически находится настоящий конец стены), и только
+                            // когда cap=false (значит jw реально что-то посчитал для
+                            // этого конца, а не оставил его свободным торцом).
+                            if (jw && si === 0 && !cap1) {
+                              sAx = jw.p1p.x; sAy = jw.p1p.y
+                              sDx = jw.p1m.x; sDy = jw.p1m.y
+                            }
+                            if (jw && si === segments.length - 1 && !cap2) {
+                              sBx = jw.p2p.x; sBy = jw.p2p.y
+                              sCx = jw.p2m.x; sCy = jw.p2m.y
+                            }
+
                             const sp1p = { x: sAx, y: sAy }, sp2p = { x: sBx, y: sBy }
                             const sp1m = { x: sDx, y: sDy }, sp2m = { x: sCx, y: sCy }
                             return (
