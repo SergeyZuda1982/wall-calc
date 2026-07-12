@@ -377,3 +377,57 @@ describe('calcCeiling — с polygonInput (пункт 6, контур произ
     expect(fallback.polygonFrame).toBeNull()
   })
 })
+
+describe('calcCeiling — с polygonInput, П113 (13.07.2026, calcPolygonP113Frame подключён)', () => {
+  // Тот же прямоугольник 5000×4000, что и в блоке для П112 выше — сверяем
+  // материалы полигональной ветки с прямоугольной точной геометрией П113
+  // (hasPreciseGeometryP113, calcP113Frame.ts) — на прямоугольнике оба пути
+  // должны давать одинаковые метры/штуки профиля и соединителей.
+  const outer = [
+    { x: 0, y: 0 }, { x: 5000, y: 0 }, { x: 5000, y: 4000 }, { x: 0, y: 4000 },
+  ]
+  const startSide = { start: outer[0], end: outer[1] }
+  const polygonSpec: CeilingSpecFull = {
+    type: 'p113', layers: 1, material: 'gsp', thickness: 12.5,
+    stepC: 600, areaSqm: 20, perimeterM: 18, slabGapMm: 80, sheetLengthMm: 2500,
+    roomLengthMm: 0, roomWidthMm: 0,
+  }
+  const rectSpec: CeilingSpecFull = {
+    ...polygonSpec, roomLengthMm: 5000, roomWidthMm: 4000,
+  }
+  const resPolygon = calcCeiling(polygonSpec, { outerMm: outer, holesMm: [], startSide })
+  const resRect = calcCeiling(rectSpec)
+
+  it('нет предупреждения про "средний расход" — использована точная геометрия по контуру', () => {
+    expect(resPolygon.warnings.some(w => w.includes('среднему расходу'))).toBe(false)
+  })
+
+  it('polygonFrame заполнен, прямоугольный sheetLayout — null', () => {
+    expect(resPolygon.polygonFrame).not.toBeNull()
+    expect(resPolygon.sheetLayout).toBeNull()
+  })
+
+  it('метки материалов — одноуровневая система П113 (не "двухуровневый")', () => {
+    expect(resPolygon.materials.some(m => m.name.includes('Соединитель одноуровневый'))).toBe(true)
+    expect(resPolygon.materials.some(m => m.name.includes('Соединитель двухуровневый'))).toBe(false)
+    expect(resPolygon.materials.find(m => m.name.includes('основной'))?.name).toContain('сплошной')
+    expect(resPolygon.materials.find(m => m.name.includes('несущий'))?.name).toContain('вставки')
+  })
+
+  it('на прямоугольнике даёт те же метры/штуки, что и точная rect-геометрия (hasPreciseGeometryP113)', () => {
+    const byName = (r: typeof resPolygon, needle: string) => r.materials.find(m => m.name.includes(needle))?.qty
+    expect(byName(resPolygon, 'основной')).toBe(byName(resRect, 'основной'))
+    expect(byName(resPolygon, 'несущий')).toBe(byName(resRect, 'несущий'))
+    expect(byName(resPolygon, 'одноуровневый')).toBe(byName(resRect, 'одноуровневый'))
+    expect(byName(resPolygon, 'Анкер-клин')).toBe(byName(resRect, 'Анкер-клин'))
+  })
+
+  it('без polygonInput (тот же spec, roomLengthMm/roomWidthMm=0) — не полигональная ветка, polygonFrame пуст', () => {
+    // roomLengthMm/roomWidthMm у polygonSpec — 0, поэтому без polygonInput ни
+    // hasPolygonGeometryP113, ни hasPreciseGeometryP113 не активны — уходит в
+    // средний расход на м² (fallback), но это не предмет данного теста, важно
+    // только что полигональная геометрия не подставляется случайно.
+    const fallback = calcCeiling(polygonSpec)
+    expect(fallback.polygonFrame).toBeNull()
+  })
+})

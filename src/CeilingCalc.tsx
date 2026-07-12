@@ -14,6 +14,7 @@ import type { CeilingCalcResult, CeilingPolygonInput } from './core/calcCeiling'
 import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } from './core/calcP112Frame'
 import type { PolygonP112FrameResult } from './core/calcPolygonP112Frame'
 import { toWorld } from './core/calcPolygonP112Frame'
+import type { PolygonP113FrameResult } from './core/calcPolygonP113Frame'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { useProjectStore } from './store/useProjectStore'
 import type { Point2D } from './core/geometry2d'
@@ -809,7 +810,7 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
   areaSqm: number
   perimeterM: number
   startWall?: { zoneIndex: number; sideIndex: number } | null
-  polygonFrame?: PolygonP112FrameResult | null
+  polygonFrame?: PolygonP112FrameResult | PolygonP113FrameResult | null
 }) {
   const PAD = 32
   const STAGE_H = 300

@@ -13,6 +13,7 @@ import {
 import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL } from './calcP112Frame'
 import { calcP113FrameGeometry } from './calcP113Frame'
 import { calcPolygonP112Frame, type PolygonP112FrameResult } from './calcPolygonP112Frame'
+import { calcPolygonP113Frame, type PolygonP113FrameResult } from './calcPolygonP113Frame'
 import { calcPolygonSheetLayout, type PolygonSheetLayoutResult } from './calcPolygonSheetLayout'
 import type { Point2D } from './geometry2d'
 
@@ -83,8 +84,10 @@ export interface CeilingCalcResult {
   sheetLayout: CeilingSheetLayout | null
   /** Точная геометрия каркаса по контуру произвольной формы (пункт 6,
    *  KONSPEKT.md 10.07.2026) — заполнено только если calcCeiling вызван
-   *  с polygonInput и тип П112. */
-  polygonFrame: PolygonP112FrameResult | null
+   *  с polygonInput. Тип П112 (двухуровневый) или П113 (одноуровневый) —
+   *  см. 13.07.2026, calcPolygonP113Frame.ts; поля структурно совпадают,
+   *  различается только физика (заполняется одним из двух калькуляторов). */
+  polygonFrame: PolygonP112FrameResult | PolygonP113FrameResult | null
   /** Раскрой листов по контуру произвольной формы — см. polygonFrame. */
   polygonSheetLayout: PolygonSheetLayoutResult | null
   /** Предупреждения */
@@ -112,7 +115,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
   const { type, layers, areaSqm, perimeterM, stepC } = spec
   const warnings: string[] = []
   const materials: CeilingMaterialItem[] = []
-  let polygonFrame: PolygonP112FrameResult | null = null
+  let polygonFrame: PolygonP112FrameResult | PolygonP113FrameResult | null = null
 
   if (type === 'p19') {
     return {
@@ -147,9 +150,11 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
     const hasPolygonGeometry = type === 'p112' && !!polygonInput && !!full.slabGapMm
     const hasPreciseGeometry = !hasPolygonGeometry && type === 'p112'
       && !!full.roomLengthMm && !!full.roomWidthMm && !!full.slabGapMm
-    // 12.07.2026: то же для П113, см. calcP113Frame.ts. Контур произвольной
-    // формы (polygonInput) для П113 пока не реализован — только прямоугольник.
-    const hasPreciseGeometryP113 = type === 'p113'
+    // 13.07.2026: контур произвольной формы для П113 — см. calcPolygonP113Frame.ts
+    // (PR #16, геометрия сделана параллельной сессией; здесь — подключение к смете).
+    const hasPolygonGeometryP113 = type === 'p113' && !!polygonInput && !!full.slabGapMm
+    // 12.07.2026: то же для П113, но прямоугольное помещение, см. calcP113Frame.ts.
+    const hasPreciseGeometryP113 = !hasPolygonGeometryP113 && type === 'p113'
       && !!full.roomLengthMm && !!full.roomWidthMm && !!full.slabGapMm
 
     if (hasPolygonGeometry) {
@@ -179,6 +184,39 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       materials.push({ name: HANGER_LABEL[polygonFrame.hangerKind], unit: 'шт', qty: polygonFrame.hangersTotal })
       materials.push({ name: 'Анкер-клин (крепление подвеса к плите)', unit: 'шт', qty: polygonFrame.hangersTotal })
       materials.push({ name: 'Шуруп LN (крепление в подвесе)', unit: 'шт', qty: polygonFrame.hangersTotal * 2 })
+    } else if (hasPolygonGeometryP113) {
+      // 13.07.2026: контур произвольной формы, П113 — см. calcPolygonP113Frame.ts.
+      // Роли профилей и подписи материалов — как у прямоугольной ветки
+      // hasPreciseGeometryP113 ниже (основной сплошной с подвесами, несущий —
+      // короткие вставки, соединитель одноуровневый), геометрия — по контуру.
+      const layoutMode = full.layoutMode ?? 'user'
+      const frameParams = resolveFrameParams({
+        stepC, layoutMode, userStepB: full.stepB, mountDirection: full.mountDirection,
+        loadClass: full.loadClass, ceilingType: 'p113',
+      })
+      if (frameParams.warning) warnings.push(frameParams.warning)
+      const polygonFrameP113 = calcPolygonP113Frame(
+        polygonInput!.outerMm, polygonInput!.holesMm, polygonInput!.startSide,
+        stepC, frameParams.stepB, full.slabGapMm!, layoutMode,
+        {
+          stepA: frameParams.stepA,
+          wallOffsetMainMm: frameParams.wallOffsetMainMm,
+          wallOffsetBearingMm: frameParams.wallOffsetBearingMm,
+        },
+      )
+      polygonFrame = polygonFrameP113
+      warnings.push(...polygonFrameP113.warnings)
+
+      materials.push({ name: 'Профиль ПП 60×27 (основной, сплошной, с подвесами)', unit: 'пог.м', qty: ceil(polygonFrameP113.mainTotalLm) })
+      materials.push({ name: 'Профиль ПП 60×27 (несущий, вставки между рядами основного)', unit: 'пог.м', qty: ceil(polygonFrameP113.bearingTotalLm) })
+      const extendersTotalP113 = polygonFrameP113.bearingExtenders + polygonFrameP113.mainExtenders
+      if (extendersTotalP113 > 0) {
+        materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotalP113 })
+      }
+      materials.push({ name: 'Соединитель одноуровневый ПП 60×27', unit: 'шт', qty: polygonFrameP113.connectorsTotal })
+      materials.push({ name: HANGER_LABEL[polygonFrameP113.hangerKind], unit: 'шт', qty: polygonFrameP113.hangersTotal })
+      materials.push({ name: 'Анкер-клин (крепление подвеса к плите)', unit: 'шт', qty: polygonFrameP113.hangersTotal })
+      materials.push({ name: 'Шуруп LN (крепление в подвесе)', unit: 'шт', qty: polygonFrameP113.hangersTotal * 2 })
     } else if (hasPreciseGeometry) {
       const layoutMode = full.layoutMode ?? 'user'
       const bearingAlongLength = full.bearingAlongLength ?? true
@@ -314,9 +352,9 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
     }
 
     // Соединитель одноуровневый (П113) — по среднему расходу ТОЛЬКО в
-    // fallback-режиме без точных размеров; при hasPreciseGeometryP113 он уже
-    // добавлен выше через calcP113Frame.ts (не дублируем).
-    if (type === 'p113' && !hasPreciseGeometryP113 && frameRates.connector1lvl) {
+    // fallback-режиме без точных размеров; при hasPreciseGeometryP113 или
+    // hasPolygonGeometryP113 он уже добавлен выше (не дублируем).
+    if (type === 'p113' && !hasPreciseGeometryP113 && !hasPolygonGeometryP113 && frameRates.connector1lvl) {
       materials.push({
         name: 'Соединитель одноуровневый ПП 60×27',
         unit: 'шт',
