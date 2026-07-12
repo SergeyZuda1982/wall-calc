@@ -44,6 +44,19 @@
  * строились только от 0 (стены) и дальше в плюс (Math.max(0, vMax)) — часть
  * контура "позади" стены не попадала в раскрой вообще. Теперь диапазон
  * полос считается по РЕАЛЬНЫМ vMin..vMax (может быть отрицательным).
+ *
+ * ─── 12.07.2026: разбежка торцевых швов кратно b (пункт 5 плана) ───────────
+ * Старая 4-значная схема vOffset (унаследованная от стен, calcSheetLayout.ts)
+ * сдвигает шов между соседними рядами на ¼ длины листа — для стены это ок
+ * (норма Кнауф п.8.16 — разбег ≥400мм), но для потолка П112 (поперечный
+ * монтаж) шов обязан попадать на несущий профиль, то есть сдвиг обязан быть
+ * кратен шагу b (обычно 500мм). Новый необязательный параметр
+ * `bearingStepMm` — если задан, включает альтернативную схему: сдвиг ровно
+ * на 1×b на каждый следующий ряд (bandIndex), по модулю длины листа (по
+ * решению пользователя). Вызывающий код передаёт его ТОЛЬКО для П112,
+ * поперечный монтаж (calcCeiling.ts, calcProjectSheetLayout.ts) — для
+ * прочих типов потолка (П113/П131/П19) и старых вызовов без этого параметра
+ * поведение не меняется (старая ¼-схема).
  */
 
 import type { Point2D } from './geometry2d'
@@ -162,6 +175,7 @@ function calcLayerDetailed(
   layer: 1 | 2,
   spec: BoardSpec,
   sharedPool: PoolItem[],
+  bearingStepMm?: number,
 ): PolygonSheetLayerResult {
   // Слой 2 сдвигает саму сетку полос на пол-ширины листа — швы между полосами
   // не совпадают со швами слоя 1 (см. заголовок файла).
@@ -181,11 +195,27 @@ function calcLayerDetailed(
     const bandCenter = Math.min(v1 + cw / 2, vMax - 1e-6)
     const segs = insideSegments(loopsLocal, bandCenter, 'y')
 
-    // Та же 4-значная схема, что и у стен/облицовок (calcSheetLayout.ts,
-    // zoneJoints) — bandIndex играет роль globalSlot, sideIndex всегда 0
-    // (у потолка одна "сторона"), +2 слота для слоя 2 (сдвиг на SL/2).
     const bandIndex = Math.round((v1 - bandPhase) / SHEET_W)
-    const vOffset = ((bandIndex + (layer === 2 ? 2 : 0)) % 4 + 4) % 4 * (sheetL / 4)
+
+    let vOffset: number
+    if (bearingStepMm) {
+      // П112, поперечный монтаж (12.07.2026, пункт 5 плана): торцевой шов
+      // должен попадать на несущий профиль — значит смещение между соседними
+      // рядами обязано быть кратно шагу b, а не произвольной долей длины
+      // листа. По требованию пользователя — ровно 1×b на каждый следующий
+      // ряд (bandIndex), с циклом по модулю длины листа. Слой 2 дополнительно
+      // сдвинут от слоя 1 на ~половину длины листа, округлённую ВНИЗ до
+      // ближайшего кратного b (чтобы шов слоя 2 тоже попадал на профиль).
+      const layer2ShiftSteps = layer === 2 ? Math.floor(sheetL / bearingStepMm / 2) : 0
+      const rawOffset = (bandIndex + layer2ShiftSteps) * bearingStepMm
+      vOffset = ((rawOffset % sheetL) + sheetL) % sheetL
+    } else {
+      // Старая универсальная 4-значная схема (стены/облицовки, calcSheetLayout.ts
+      // zoneJoints) — bandIndex играет роль globalSlot, sideIndex всегда 0
+      // (у потолка одна "сторона"), +2 слота для слоя 2 (сдвиг на SL/2).
+      // Используется для П113/П131/П19 и любых старых вызовов без bearingStepMm.
+      vOffset = ((bandIndex + (layer === 2 ? 2 : 0)) % 4 + 4) % 4 * (sheetL / 4)
+    }
 
     for (const [a, b] of segs) {
       const runLen = b - a
@@ -260,6 +290,14 @@ export function calcPolygonSheetLayout(
   layer1Spec: BoardSpec = DEFAULT_BOARD_SPEC,
   layer2Spec: BoardSpec = DEFAULT_BOARD_SPEC,
   initialPool: BoardOffcut[] = [],
+  /**
+   * Шаг несущего профиля b, мм (12.07.2026, пункт 5 плана) — если задан,
+   * торцевые швы между соседними рядами смещаются кратно b (см.
+   * calcLayerDetailed). Только для П112, поперечный монтаж — вызывающий
+   * код передаёт его ТОЛЬКО в этом случае (см. calcCeiling.ts,
+   * calcProjectSheetLayout.ts); не задан → старая универсальная схема.
+   */
+  bearingStepMm?: number,
 ): PolygonSheetLayoutResult | null {
   if (outerMm.length < 3) return null
 
@@ -287,9 +325,9 @@ export function calcPolygonSheetLayout(
   const [chosenMin, chosenMax] = useRotated ? [uMin, uMax] : [vMin, vMax]
 
   const sharedPool: PoolItem[] = initialPool.map(o => ({ ...o, used: false }))
-  const layer1 = calcLayerDetailed(chosenLoops, chosenMin, chosenMax, sheetLengthMm, 1, layer1Spec, sharedPool)
+  const layer1 = calcLayerDetailed(chosenLoops, chosenMin, chosenMax, sheetLengthMm, 1, layer1Spec, sharedPool, bearingStepMm)
   const layer2 = gklLayers === 2
-    ? calcLayerDetailed(chosenLoops, chosenMin, chosenMax, sheetLengthMm, 2, layer2Spec, sharedPool)
+    ? calcLayerDetailed(chosenLoops, chosenMin, chosenMax, sheetLengthMm, 2, layer2Spec, sharedPool, bearingStepMm)
     : null
 
   const all = [layer1, layer2].filter((l): l is PolygonSheetLayerResult => l !== null)
