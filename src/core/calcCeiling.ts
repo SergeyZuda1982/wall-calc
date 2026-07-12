@@ -8,6 +8,7 @@ import {
   P112_FRAME_RATES, P112_SHEET_RATES, P112_HANGER_STEP,
   P113_FRAME_RATES, P113_SHEET_RATES, P113_HANGER_STEP,
   P131_FRAME_RATES, P131_SPECIAL_RATES, P131_SHEET_RATES,
+  KNAUF_BEARING_STEP_BY_MOUNT,
 } from '../data/ceilingData'
 import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL } from './calcP112Frame'
 import { calcP113FrameGeometry } from './calcP113Frame'
@@ -387,8 +388,16 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
   // polygonInput; прямоугольный расчёт (calcCeilingSheetLayout) в этом случае
   // не используется — sheetLayout остаётся null, чтобы старый рендер-канвас
   // (CeilingCanvas, рассчитан на прямоугольник) не пытался его отрисовать.
+  // Шаг несущего профиля b — только для П112 (см. calcPolygonSheetLayout.ts,
+  // пункт 5 плана: разбежка торцевых швов кратно b, только поперечный монтаж).
+  const bearingStepMm = type === 'p112'
+    ? KNAUF_BEARING_STEP_BY_MOUNT[spec.mountDirection ?? 'crosswise']
+    : undefined
   const polygonSheetLayout = (type === 'p112' && polygonInput)
-    ? calcPolygonSheetLayout(polygonInput.outerMm, polygonInput.holesMm, polygonInput.startSide, sheetLengthFromSpec(spec))
+    ? calcPolygonSheetLayout(
+        polygonInput.outerMm, polygonInput.holesMm, polygonInput.startSide, sheetLengthFromSpec(spec),
+        1, undefined, undefined, [], bearingStepMm,
+      )
     : null
   const sheetLayout = polygonInput ? null : calcCeilingSheetLayout(spec)
 

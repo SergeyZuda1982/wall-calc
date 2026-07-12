@@ -25,6 +25,7 @@ import type { Opening, BoardSpec, BoardOffcut, BoardSheetResult } from '../types
 import type { WallEntry, LiningEntry } from '../store/useProjectStore'
 import type { Ceiling } from '../types'
 import type { CeilingSpecFull } from '../data/ceilingData'
+import { KNAUF_BEARING_STEP_BY_MOUNT } from '../data/ceilingData'
 import type { Point2D } from './geometry2d'
 import { polygonSides } from './geometry2d'
 import { calcSheetLayout } from './calcSheetLayout'
@@ -66,6 +67,9 @@ export interface PolygonSurfaceInput {
   gklLayers: 1 | 2
   layer1: BoardSpec
   layer2: BoardSpec
+  /** Шаг несущего профиля b, мм (12.07.2026, пункт 5 плана) — задан только
+   *  для П112, поперечный монтаж; см. calcPolygonSheetLayout.ts. */
+  bearingStepMm?: number
 }
 
 export interface PolygonSurfaceResult {
@@ -193,6 +197,11 @@ export function buildCeilingSurfaceInputs(ceilings: Ceiling[], scaleMmPx: number
     if (!side) continue
 
     const boardSpec = boardSpecFromCeilingSpec(spec)
+    // Шаг несущего профиля b — только для П112 (пункт 5 плана: разбежка
+    // торцевых швов кратно b, только поперечный монтаж), см. calcCeiling.ts.
+    const bearingStepMm = spec.type === 'p112'
+      ? KNAUF_BEARING_STEP_BY_MOUNT[spec.mountDirection ?? 'crosswise']
+      : undefined
     out.push({
       id: cl.id,
       label: cl.label,
@@ -203,6 +212,7 @@ export function buildCeilingSurfaceInputs(ceilings: Ceiling[], scaleMmPx: number
       gklLayers: spec.layers,
       layer1: boardSpec,
       layer2: boardSpec,
+      bearingStepMm,
     })
   }
 
@@ -247,6 +257,7 @@ export function calcProjectSheetLayout(
       c.outerMm, c.holesMm, c.startSide, c.sheetLengthMm,
       c.gklLayers, c.layer1, c.layer2,
       pool,            // ← тот же пул, что и у стен/облицовок
+      c.bearingStepMm,
     )
     if (!result) continue
     results.push({ id: c.id, label: c.label, result })
