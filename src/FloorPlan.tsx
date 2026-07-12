@@ -4576,14 +4576,14 @@ export default function FloorPlan() {
                     🔩 Смета крепежа ({fastenerSummary.totalQty} шт)
                   </button>
                   )}
-                  {frameSummary.perLine.length > 0 && (
+                  {(frameSummary.partitions.perLine.length > 0 || frameSummary.lining.perLine.length > 0) && (
                   <button onClick={() => setShowFrameSummary(true)}
                     style={{
                       fontSize: 11, fontWeight: 600, color: '#fff', background: '#2f9e6e',
                       border: 'none', borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
                       display: 'flex', alignItems: 'center', gap: 5,
                     }}>
-                    📐 Смета каркаса ({frameSummary.studsCount} шт)
+                    📐 Смета каркаса ({frameSummary.partitions.studsCount + frameSummary.lining.studsCount} шт)
                   </button>
                   )}
                 </div>
@@ -5792,75 +5792,121 @@ export default function FloorPlan() {
       {showFrameSummary && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
           onClick={() => setShowFrameSummary(false)}>
-          <div style={{ background: '#fff', borderRadius: 10, padding: 0, width: 640, maxWidth: '92vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.25)' }}
+          <div style={{ background: '#fff', borderRadius: 10, padding: 0, width: 680, maxWidth: '92vw', maxHeight: '86vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.25)' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #e0e4ee' }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: '#1e2433' }}>📐 Смета каркаса ГКЛ (стойки ПС)</div>
               <button onClick={() => setShowFrameSummary(false)} style={iconBtnStyle2}>✕</button>
             </div>
 
-            {frameSummary.perLine.length === 0 ? (
+            {frameSummary.partitions.perLine.length === 0 && frameSummary.lining.perLine.length === 0 ? (
               <div style={{ padding: 24, fontSize: 12, color: '#888', textAlign: 'center' }}>
-                Нет линий с поддержанным каркасом ГКЛ (ПС50/ПС75/ПС100) —
-                смета считается только для перегородок «Новая стена» с
+                Нет линий с поддержанным каркасом ГКЛ (ПС50/ПС75/ПС100) — смета
+                считается для перегородок «Новая стена» и облицовки с
                 материалом ГКЛ.
               </div>
             ) : (
-              <>
-                <div style={{ overflowY: 'auto', padding: '0 20px' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                    <thead>
-                      <tr style={{ background: '#f5f7fb' }}>
-                        <th style={thS}>№</th>
-                        <th style={thS}>Конструкция</th>
-                        <th style={thS}>Стоек, шт</th>
-                        <th style={thS}>ПС, м</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {frameSummary.perLine.map((row, i) => {
-                        const line = lines.find(l => l.id === row.lineId)
-                        return (
-                          <tr key={row.lineId} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            <td style={tdS}>{i + 1}</td>
-                            <td style={tdS}>{line?.label ?? row.lineId}</td>
-                            <td style={tdS}>{row.result.studsCount}</td>
-                            <td style={tdS}>{row.result.cwTotal.toFixed(2)}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+              <div style={{ overflowY: 'auto', padding: '16px 20px' }}>
 
-                <div style={{ padding: '14px 20px', borderTop: '1px solid #e0e4ee', background: '#f5f7fb' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#555', marginBottom: 3 }}>
-                    <span>Сумма по линиям без дедупликации</span>
-                    <span>{frameSummary.studsCountRaw} шт · {frameSummary.cwTotalMRaw.toFixed(2)} м</span>
-                  </div>
-                  {frameSummary.cornerNodesCount > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#2f9e6e', marginBottom: 3 }}>
-                      <span>− дублирующиеся угловые стойки (90°-узлов: {frameSummary.cornerNodesCount})</span>
-                      <span>−{frameSummary.cornerNodesCount} шт · −{(frameSummary.cwTotalMRaw - frameSummary.cwTotalM).toFixed(2)} м</span>
+                {/* ── Перегородки — без дедупликации ── */}
+                {frameSummary.partitions.perLine.length > 0 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433', marginBottom: 8 }}>
+                      Перегородки (каждая — свой каркас, углы не дедуплицируются)
                     </div>
-                  )}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, color: '#1e2433', marginTop: 6 }}>
-                    <span>Итого стоек ПС</span>
-                    <span>{frameSummary.studsCount} шт · {frameSummary.cwTotalM.toFixed(2)} м</span>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: '#f5f7fb' }}>
+                          <th style={thS}>№</th>
+                          <th style={thS}>Конструкция</th>
+                          <th style={thS}>Стоек, шт</th>
+                          <th style={thS}>ПС, м</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {frameSummary.partitions.perLine.map((row, i) => {
+                          const line = lines.find(l => l.id === row.lineId)
+                          return (
+                            <tr key={row.lineId} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                              <td style={tdS}>{i + 1}</td>
+                              <td style={tdS}>{line?.label ?? row.lineId}</td>
+                              <td style={tdS}>{row.result.studsCount}</td>
+                              <td style={tdS}>{row.result.cwTotal.toFixed(2)}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, color: '#1e2433', marginTop: 8, padding: '8px 4px', background: '#f5f7fb', borderRadius: 6 }}>
+                      <span>Итого по перегородкам</span>
+                      <span>{frameSummary.partitions.studsCount} шт · {frameSummary.partitions.cwTotalM.toFixed(2)} м</span>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#555', marginTop: 8 }}>
-                    <span>Раскрой прутков 3м</span>
-                    <span style={{ fontWeight: 600 }}>{frameSummary.studCutList.totalBars} шт</span>
+                )}
+
+                {/* ── Облицовка — с дедупликацией угловой стойки ── */}
+                {frameSummary.lining.perLine.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433', marginBottom: 8 }}>
+                      Облицовка (короба/ниши/колонны — угловая стойка общая)
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: '#f5f7fb' }}>
+                          <th style={thS}>№</th>
+                          <th style={thS}>Конструкция</th>
+                          <th style={thS}>Стоек, шт</th>
+                          <th style={thS}>ПС, м</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {frameSummary.lining.perLine.map((row, i) => {
+                          const line = lines.find(l => l.id === row.lineId)
+                          return (
+                            <tr key={row.lineId} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                              <td style={tdS}>{i + 1}</td>
+                              <td style={tdS}>{line?.label ?? row.lineId}</td>
+                              <td style={tdS}>{row.result.studsCount}</td>
+                              <td style={tdS}>{row.result.stud.toFixed(2)}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+
+                    <div style={{ padding: '10px 4px 0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555', marginBottom: 3 }}>
+                        <span>Сумма по линиям без дедупликации</span>
+                        <span>{frameSummary.lining.studsCountRaw} шт · {frameSummary.lining.cwTotalMRaw.toFixed(2)} м</span>
+                      </div>
+                      {frameSummary.lining.cornerNodesCount > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#2f9e6e', marginBottom: 3 }}>
+                          <span>− дублирующиеся угловые стойки (90°-узлов: {frameSummary.lining.cornerNodesCount})</span>
+                          <span>−{frameSummary.lining.cornerNodesCount} шт · −{(frameSummary.lining.cwTotalMRaw - frameSummary.lining.cwTotalM).toFixed(2)} м</span>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, color: '#1e2433', marginTop: 6, padding: '8px 4px', background: '#f5f7fb', borderRadius: 6 }}>
+                        <span>Итого по облицовке</span>
+                        <span>{frameSummary.lining.studsCount} шт · {frameSummary.lining.cwTotalM.toFixed(2)} м</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555', marginTop: 8 }}>
+                        <span>Раскрой прутков 3м (облицовка)</span>
+                        <span style={{ fontWeight: 600 }}>{frameSummary.lining.studCutList.totalBars} шт</span>
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 10, color: '#aaa', marginTop: 8 }}>
-                    На 90°-углах (короба/ниши/колонны, углы двух перегородок ГКЛ)
-                    угловая стойка физически одна общая — калькулятор считал бы
-                    её дважды (по разу от каждого сегмента), здесь дубль вычтен
-                    автоматически. Примыкание к капитальной стене, Т-стык,
-                    крест и торец-в-торец не затронуты — считаются как раньше.
-                  </div>
+                )}
+
+                <div style={{ fontSize: 10, color: '#aaa', marginTop: 16, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+                  Общая угловая стойка на 90°-углах бывает только между сегментами
+                  ОБЛИЦОВКИ (короб вокруг трубы/колонны, ниша, угол двух облицовок) —
+                  там она физически одна. Перегородки — самостоятельный несущий
+                  каркас каждая, в углу двух перегородок у каждой своя угловая
+                  стойка, дедупликация к ним не применяется. Облицовка, начинающаяся
+                  от угла перегородки, тоже не дедуплицируется — там уже стоит
+                  стойка перегородки. Т-стык, крест, торец-в-торец — не затронуты.
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>
