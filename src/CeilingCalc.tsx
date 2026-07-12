@@ -216,6 +216,37 @@ export default function CeilingCalc() {
     form.layoutMode, form.mountDirection, form.loadClass,
   ])
 
+  // 11.07.2026: та же автосинхронизация, что и выше для Room (по свежему
+  // прецеденту той сессии) — но для свободного контура Ceiling (пункт 7).
+  // Дополнительное условие относительно Room: нужна ещё и выбранная стена
+  // старта (startWall) — без неё нет точки отсчёта для calcPolygonP112Frame
+  // (см. CeilingEntityMesh.tsx), поэтому пока стена не выбрана — не пишем.
+  useEffect(() => {
+    if (!seedCeilingId || form.type !== 'p112' || seedZones?.length !== 1 || !startWall) return
+    const ceilingSpec: CeilingSpec = {
+      type: form.type,
+      layers: form.layers,
+      material: form.material,
+      thickness: form.thickness,
+      stepC: form.stepC,
+      areaSqm: form.areaSqm,
+      perimeterM: form.perimeterM,
+      stepB: form.stepB,
+      bearingAlongLength: form.bearingAlongLength,
+      layoutMode: form.layoutMode,
+      mountDirection: form.mountDirection,
+      loadClass: form.loadClass,
+      slabGapMm: form.slabGapMm,
+    }
+    updateCeiling(seedCeilingId, { ceilingSpec, startWallSideIndex: startWall.sideIndex })
+    setSavedToCeiling(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    seedCeilingId, seedZones, startWall, form.type, form.layers, form.material, form.thickness, form.stepC,
+    form.areaSqm, form.perimeterM, form.stepB, form.bearingAlongLength,
+    form.layoutMode, form.mountDirection, form.loadClass, form.slabGapMm,
+  ])
+
   // Пункт 6: выбор/смена стены начала раскладки (или новый набор зон) должны
   // пересчитать смету — раньше эти состояния ни на что не влияли (заглушка
   // пункта 5), теперь buildPolygonInput() задействует их в расчёте.
@@ -329,49 +360,13 @@ export default function CeilingCalc() {
             padding: '8px 10px', background: savedToCeiling ? '#f0fdf4' : C.accentLight,
             border: `1px solid ${savedToCeiling ? C.success : C.accent}`,
             borderRadius: 6, fontSize: 11, color: C.text,
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6,
           }}>
-            <div>
-              Расчёт привязан к потолку на плане.
-              {!startWall
-                ? ' Выберите стену начала раскладки выше, потом можно сохранить в 3D.'
-                : savedToCeiling
-                  ? <span style={{ color: C.success }}> Раскладка сохранена — потолок в 3D теперь с реальной сеткой каркаса.</span>
-                  : ' Нажмите «Сохранить в 3D», чтобы 3D-сцена нарисовала именно эту раскладку (сейчас потолок в 3D — просто плоскость).'}
-            </div>
-            <button
-              disabled={!startWall}
-              onClick={() => {
-                if (!seedCeilingId || !startWall) return
-                updateCeiling(seedCeilingId, {
-                  ceilingSpec: {
-                    type: form.type,
-                    layers: form.layers,
-                    material: form.material,
-                    thickness: form.thickness,
-                    stepC: form.stepC,
-                    areaSqm: form.areaSqm,
-                    perimeterM: form.perimeterM,
-                    stepB: form.stepB,
-                    bearingAlongLength: form.bearingAlongLength,
-                    layoutMode: form.layoutMode,
-                    mountDirection: form.mountDirection,
-                    loadClass: form.loadClass,
-                    slabGapMm: form.slabGapMm,
-                  },
-                  startWallSideIndex: startWall.sideIndex,
-                })
-                setSavedToCeiling(true)
-              }}
-              title="Записать раскладку (шаг, стену старта, зазор до плиты) на этот потолок — 3D-сцена нарисует реальную сетку каркаса по контуру вместо плоскости"
-              style={{
-                flexShrink: 0, fontSize: 11, padding: '6px 10px', borderRadius: 6,
-                border: `1px solid ${C.accent}`, background: startWall ? C.accent : C.border,
-                color: startWall ? '#fff' : C.muted,
-                cursor: startWall ? 'pointer' : 'not-allowed', fontWeight: 600,
-              }}>
-              Сохранить в 3D
-            </button>
+            Расчёт привязан к потолку на плане.
+            {!startWall
+              ? ' Выберите стену начала раскладки выше — после этого 3D-сцена сама нарисует сетку каркаса по этой раскладке.'
+              : savedToCeiling
+                ? <span style={{ color: C.success }}> Настройки каркаса синхронизированы — 3D-вид рисует именно эту раскладку.</span>
+                : ' Синхронизация с 3D-видом...'}
           </div>
         )}
 
