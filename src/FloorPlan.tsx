@@ -34,7 +34,7 @@ import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFas
 import { finishMaterialCategoryOf, finishSidesOf } from './core/finishResolver'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
-import { calcProjectSheetLayout } from './core/calcProjectSheetLayout'
+import { calcProjectSheetLayout, buildCeilingSurfaceInputs } from './core/calcProjectSheetLayout'
 import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
 import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
@@ -1965,9 +1965,11 @@ export default function FloorPlan() {
   const inspectorLine = lines.find(l => l.id === inspectorId)
 
   // Смета раскроя листов по всему проекту — пересчитывается только при изменении линий
+  // (12.07.2026, шаг 2 плана — см. чат): + потолки (Ceiling-контуры), тот же
+  // сквозной пул обрезков, что и у перегородок/облицовок (calcProjectSheetLayout.ts).
   const sheetSummary: ProjectSheetResult = useMemo(
-    () => calcProjectSheetLayout(planLinesToSurfaceInputs(lines)),
-    [lines],
+    () => calcProjectSheetLayout(planLinesToSurfaceInputs(lines), buildCeilingSurfaceInputs(ceilings, scaleMmPx)),
+    [lines, ceilings, scaleMmPx],
   )
 
   // Общий % выполнения по объекту + разбивка по типу работ (см. lineProgress.ts/workProgress.ts).
@@ -5632,7 +5634,7 @@ export default function FloorPlan() {
 
             {sheetSummary.surfaces.length === 0 ? (
               <div style={{ padding: 24, fontSize: 12, color: '#888', textAlign: 'center' }}>
-                Нет конструкций с раскроем ГКЛ — задайте материал «ГКЛ» перегородкам или облицовкам на плане
+                Нет конструкций с раскроем ГКЛ — задайте материал «ГКЛ» перегородкам, облицовкам или раскладку потолку на плане
               </div>
             ) : (
               <>
