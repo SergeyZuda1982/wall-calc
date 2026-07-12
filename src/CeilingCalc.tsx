@@ -50,12 +50,30 @@ const C = {
 // ─── Шаги монтажа ────────────────────────────────────────────────────────────
 
 type Step = 1 | 2 | 3 | 4
-const STEPS: { id: Step; label: string; desc: string }[] = [
-  { id: 1, label: 'ПН 28×27',        desc: 'Периметральный профиль' },
-  { id: 2, label: 'Подвесы + ПП',    desc: 'Основные профили вдоль длины' },
-  { id: 3, label: 'Несущие ПП',      desc: 'Поперёк + крабы' },
-  { id: 4, label: 'Зашить ГКЛ',      desc: 'Раскладка листов' },
-]
+
+// 11.07.2026: ПН 28×27 (периметральный профиль) есть ТОЛЬКО в системе П113 —
+// в П112/П212 крепление к стене идёт через анкерные подвесы (≤100мм от
+// стены), без бортовой направляющей (см. KONSPEKT.md, сессия 11.07.2026,
+// фото официального документа Кнауф лист 1.045.9-2.08.1-2). Раньше Step 1
+// одинаково назывался "ПН 28×27" для ЛЮБОГО типа потолка — для П112 это было
+// не просто лишним визуальным элементом (см. CeilingCanvas ниже), а неверным
+// названием первого шага монтажа.
+function getSteps(type: CeilingType): { id: Step; label: string; desc: string }[] {
+  if (type === 'p113') {
+    return [
+      { id: 1, label: 'ПН 28×27',        desc: 'Периметральный профиль' },
+      { id: 2, label: 'Подвесы + ПП',    desc: 'Основные профили вдоль длины' },
+      { id: 3, label: 'Несущие ПП',      desc: 'Поперёк + крабы' },
+      { id: 4, label: 'Зашить ГКЛ',      desc: 'Раскладка листов' },
+    ]
+  }
+  return [
+    { id: 1, label: 'Подвесы',           desc: 'Анкерные, у стен ≤100мм' },
+    { id: 2, label: 'Подвесы + ПП',      desc: 'Основные профили вдоль длины' },
+    { id: 3, label: 'Несущие ПП',        desc: 'Поперёк + крабы' },
+    { id: 4, label: 'Зашить ГКЛ',        desc: 'Раскладка листов' },
+  ]
+}
 
 // ─── Дефолтная форма ─────────────────────────────────────────────────────────
 
@@ -632,7 +650,7 @@ export default function CeilingCalc() {
             {/* Шаги монтажа */}
             <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, padding: '10px 14px' }}>
               <div style={{ display: 'flex', gap: 6 }}>
-                {STEPS.map(s => (
+                {getSteps(form.type).map(s => (
                   <button key={s.id} onClick={() => setStep(s.id)} style={{
                     flex: 1, padding: '8px 4px', borderRadius: 8, border: 'none', cursor: 'pointer',
                     background: step === s.id ? C.accent : step > s.id ? '#dcfce7' : C.bg,
@@ -683,7 +701,7 @@ export default function CeilingCalc() {
             {/* Легенда */}
             {hasRoom && (
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', padding: '6px 2px' }}>
-                <LegItem color={C.pn} label="ПН 28×27 (периметр)" />
+                {form.type === 'p113' && <LegItem color={C.pn} label="ПН 28×27 (периметр)" />}
                 {step >= 2 && <LegItem color={C.ppMain} label="Осн. ПП 60×27" />}
                 {step >= 2 && <LegItem color={C.hanger} label="Подвес" dot />}
                 {step >= 3 && <LegItem color={C.ppBearing} label="Несущий ПП 60×27" />}
@@ -1235,15 +1253,21 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
             stroke={s.isCut ? C.sheetCutBorder : C.sheetBorder} strokeWidth={1} />
         ))}
 
-        {/* ── Шаг 1+: ПН 28×27 по периметру ── */}
-        {/* Верх */}
-        <Rect x={0} y={0} width={W} height={PN_W} fill={C.pn} opacity={0.85} />
-        {/* Низ */}
-        <Rect x={0} y={H - PN_W} width={W} height={PN_W} fill={C.pn} opacity={0.85} />
-        {/* Лево */}
-        <Rect x={0} y={0} width={PN_W} height={H} fill={C.pn} opacity={0.85} />
-        {/* Право */}
-        <Rect x={W - PN_W} y={0} width={PN_W} height={H} fill={C.pn} opacity={0.85} />
+        {/* ── Шаг 1+: ПН 28×27 по периметру (только П113 — у П112/П212
+             периметрального профиля в системе нет, крепление к стене идёт
+             через анкерные подвесы, см. KONSPEKT.md 11.07.2026) ── */}
+        {form.type === 'p113' && (
+          <>
+            {/* Верх */}
+            <Rect x={0} y={0} width={W} height={PN_W} fill={C.pn} opacity={0.85} />
+            {/* Низ */}
+            <Rect x={0} y={H - PN_W} width={W} height={PN_W} fill={C.pn} opacity={0.85} />
+            {/* Лево */}
+            <Rect x={0} y={0} width={PN_W} height={H} fill={C.pn} opacity={0.85} />
+            {/* Право */}
+            <Rect x={W - PN_W} y={0} width={PN_W} height={H} fill={C.pn} opacity={0.85} />
+          </>
+        )}
 
         {/* ── Шаг 2+: Основные ПП 60×27 (вертикальные) ── */}
         {step >= 2 && mainPosX.map((px, i) => (
