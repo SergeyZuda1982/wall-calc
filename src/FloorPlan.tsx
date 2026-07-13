@@ -953,6 +953,19 @@ export default function FloorPlan() {
     return { x: (pos.x - sp.x) / sc, y: (pos.y - sp.y) / sc }
   }
 
+  // Опорная точка для привязки "прямой угол" (⊾ 90°) — предыдущая точка
+  // текущей цепочки, от которой считается угол. У режима 'draw' это
+  // drawing.x1/y1 (начало ещё не завершённой стены). У 'pencil' (обводка
+  // плиты) и 'ceiling' (обводка потолка) своя цепочка точек контура —
+  // pencilPts/ceilingPts, а не drawing — раньше это было не учтено, и
+  // ⊾ 90° в этих режимах молча не действовал (13.07.2026).
+  function getOrthoRefPoint(): { x: number; y: number } | undefined {
+    if (mode === 'draw' && drawing) return { x: drawing.x1, y: drawing.y1 }
+    if (mode === 'pencil' && pencilPts.length > 0) return pencilPts[pencilPts.length - 1]
+    if (mode === 'ceiling' && ceilingPts.length > 0) return ceilingPts[ceilingPts.length - 1]
+    return undefined
+  }
+
   function applySnap(x: number, y: number, excludeId?: string): { x: number; y: number } {
     const thresh = SNAP_SCREEN_PX / stageScaleRef.current
     // refDir — только когда уже поставлена 1-я точка (нужны две точки, чтобы
@@ -971,8 +984,9 @@ export default function FloorPlan() {
       if (drawing) refDir = { dx: x - drawing.x1, dy: y - drawing.y1 }
     }
     const snapped = snapPoint(x, y, lines, scaleMmPx, excludeId, thresh, refDir, newHalfThicknessPx, freeSnapActive)
-    if (orthoMode && drawing && !snapped.snapped) {
-      return snapOrtho(drawing.x1, drawing.y1, snapped.x, snapped.y)
+    const orthoRef = getOrthoRefPoint()
+    if (orthoMode && orthoRef && !snapped.snapped) {
+      return snapOrtho(orthoRef.x, orthoRef.y, snapped.x, snapped.y)
     }
     return snapped
   }
@@ -1054,10 +1068,11 @@ export default function FloorPlan() {
     const snapToChainStart =
       mode === 'draw' && drawing && chainStartPt &&
       dist(rawX, rawY, chainStartPt.x, chainStartPt.y) <= snapThresh
+    const moveOrthoRef = getOrthoRefPoint()
     const pt = snapToChainStart
       ? { x: chainStartPt!.x, y: chainStartPt!.y, snapped: true }
-      : (orthoMode && drawing && !snappedInfo.snapped)
-        ? snapOrtho(drawing.x1, drawing.y1, snappedInfo.x, snappedInfo.y)
+      : (orthoMode && moveOrthoRef && !snappedInfo.snapped)
+        ? snapOrtho(moveOrthoRef.x, moveOrthoRef.y, snappedInfo.x, snappedInfo.y)
         : snappedInfo
     setCursor({ x: pt.x, y: pt.y })
     setSnapActive(snappedInfo.snapped || !!snapToChainStart)
@@ -1077,7 +1092,7 @@ export default function FloorPlan() {
     }
     const pos = stagePosRef.current; const sc = stageScaleRef.current
     handleMove((sp.x - pos.x) / sc, (sp.y - pos.y) / sc)
-  }, [lines, mode, drawing, orthoMode, freeSnapActive, dragRef.current])
+  }, [lines, mode, drawing, orthoMode, freeSnapActive, dragRef.current, pencilPts, ceilingPts])
 
   function touchDist(t1: Touch, t2: Touch) {
     return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
@@ -3363,7 +3378,17 @@ export default function FloorPlan() {
             borderBottom: '1px solid #e0e4ee', flexWrap: 'wrap',
           }}>
             {/* Прямой угол */}
-            <button onClick={() => { setOrthoMode(o => !o); if (mode !== 'draw') switchMode('draw') }}
+            <button onClick={() => {
+              setOrthoMode(o => !o)
+              // Раньше переключатель ⊾90° насильно уводил в режим 'draw' из
+              // ЛЮБОГО другого режима — включая 'pencil'/'ceiling' (обводка
+              // плиты/потолка), где у пользователя уже накоплен незакрытый
+              // контур. Это молча срывало обводку. 'pencil'/'ceiling' сами
+              // умеют работать с ⊾90° (см. getOrthoRefPoint) — их из
+              // переключения исключаем; для остальных режимов поведение
+              // прежнее (13.07.2026).
+              if (mode !== 'draw' && mode !== 'pencil' && mode !== 'ceiling') switchMode('draw')
+            }}
               title="Прямой угол (Shift)" style={toolBtnStyle(orthoMode)}>
               ⊾ 90°
             </button>
