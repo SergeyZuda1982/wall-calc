@@ -12,6 +12,16 @@
  * шумом по вершинам верхней грани + процедурная fibrous-текстура на canvas,
  * ГКЛ — прямоугольник с фаской УК по кромке.
  *
+ * 13.07.2026: поддержка П113 (ceilingType='p113', см. CeilingGridMeshProps) —
+ * та же сборка мешей, но раскладка берётся из calcCeilingGridP113
+ * (двухуровневая П112 vs одноуровневая П113 — разница только в том, как
+ * заполнен bearingSegments, интерфейс результата один и тот же), и mainY/
+ * bearingY схлопываются в один уровень (см. комментарий у их вычисления
+ * ниже). Крабы для П113 рисуются той же геометрией crabGeometry(), что и
+ * двухуровневый краб П112 — визуально это упрощение (реальный одноуровневый
+ * соединитель другой формы), но для узнаваемости в 3D-схеме этого достаточно
+ * на первом шаге; отдельная геометрия — при желании, не критично.
+ *
  * v1: без picking/интерактива (см. общий план "интерактивный 3D" в
  * KONSPEKT.md) — чисто визуальный слой поверх плоской плиты потолка,
  * которая уже рисуется в SlabOrColumn (Scene3D.tsx). Не заменяет её —
@@ -39,7 +49,7 @@
 import { useMemo, useRef, type RefObject } from 'react'
 import * as THREE from 'three'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { calcCeilingGrid, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH } from '../core/ceilingGridGeometry'
+import { calcCeilingGrid, calcCeilingGridP113, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH } from '../core/ceilingGridGeometry'
 import { calcMinThicknessScale } from '../core/minScreenThickness'
 import { mmToM } from '../core/planTo3D'
 
@@ -266,6 +276,15 @@ export interface CeilingGridMeshProps {
    *  -> = stepB, та же практика, что и в calcP112Frame/CeilingCalc.tsx. */
   stepA?: number
   bearingAlongLength?: boolean
+  /** 13.07.2026: тип потолка — определяет топологию сетки и высоту профилей.
+   *  'p112' (по умолчанию) — двухуровневая система (calcCeilingGrid,
+   *  mainY/bearingY разнесены по высоте, двухуровневый краб между ними).
+   *  'p113' — одноуровневая (calcCeilingGridP113, несущий режется короткими
+   *  вставками, оба профиля физически на одном уровне — см. calcP113Frame.ts).
+   *  bearingAlongLength для 'p113' переиспользуется как mainAlongLength
+   *  (ориентация СПЛОШНОГО профиля) — то же поле спецификации, что и у П112,
+   *  см. calcCeiling.ts, ветка hasPreciseGeometryP113. */
+  ceilingType?: 'p112' | 'p113'
   showWool?: boolean
   showGkl?: boolean
   /**
@@ -297,7 +316,7 @@ const ELEMENT_FOCUS_DISTANCE_M = 1.0
  */
 export default function CeilingGridMesh({
   roomPoints, ceilingM, stepB = DEFAULT_GRID_STEP_B, stepC = DEFAULT_GRID_STEP_C, stepA,
-  bearingAlongLength = DEFAULT_BEARING_ALONG_LENGTH, showWool = true, showGkl = true,
+  bearingAlongLength = DEFAULT_BEARING_ALONG_LENGTH, ceilingType = 'p112', showWool = true, showGkl = true,
   onFocusElement, measuring = false,
 }: CeilingGridMeshProps) {
   // См. WallMesh (Scene3D.tsx) — тот же паттерн: пока активно измерение,
@@ -321,16 +340,24 @@ export default function CeilingGridMesh({
     if (!bbox) return null
     const lengthMm = (bbox.maxX - bbox.minX) * 1000
     const widthMm = (bbox.maxZ - bbox.minZ) * 1000
-    return calcCeilingGrid({ lengthMm, widthMm, stepB, stepC, bearingAlongLength, stepA })
-  }, [bbox, stepB, stepC, bearingAlongLength, stepA])
+    return ceilingType === 'p113'
+      ? calcCeilingGridP113({ lengthMm, widthMm, stepB, stepC, mainAlongLength: bearingAlongLength, stepA })
+      : calcCeilingGrid({ lengthMm, widthMm, stepB, stepC, bearingAlongLength, stepA })
+  }, [bbox, stepB, stepC, bearingAlongLength, stepA, ceilingType])
 
   // Вертикальная раскладка уровней относительно низа плиты (ceilingM), вниз:
   // 12.07.2026, ИСПРАВЛЕНИЕ: подвес крепится к ОСНОВНОМУ профилю (верхний
   // уровень), несущий — ниже, соединён с основным крабом, к несущему же
   // крепится ГКЛ (см. calcP112Frame.ts, шапка файла — было наоборот).
+  // 13.07.2026: у П113 (одноуровневая система) такого разноса по высоте нет
+  // вообще — оба профиля физически на одном уровне, соединены плоским
+  // одноуровневым соединителем (не двухуровневым крабом), см.
+  // calcP113Frame.ts, шапка файла. bearingY === mainY в этом случае — весь
+  // код ниже (крабы/ГКЛ/минвата) не различает типы отдельно, просто получает
+  // одинаковые Y для обоих профилей и корректно "схлопывается" сам.
   const dropToMainM = 0.12   // типичный вылет прямого подвеса, для показа
   const mainY = ceilingM - dropToMainM
-  const bearingY = mainY - mmToM(27) - 0.003 // несущий чуть ниже основного + зазор краба
+  const bearingY = ceilingType === 'p113' ? mainY : mainY - mmToM(27) - 0.003
   const gklY = bearingY - mmToM(27 / 2 + 12.5 / 2)
   const woolY = mainY - mmToM(20)
 

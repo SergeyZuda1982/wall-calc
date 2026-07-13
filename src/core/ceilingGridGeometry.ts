@@ -133,3 +133,99 @@ export function calcCeilingGrid(input: CeilingGridInput): CeilingGridResult {
 
   return { bearingSegments, mainSegments, crabPoints, hangerPoints }
 }
+
+// ─── П113 (одноуровневая система) ──────────────────────────────────────────
+// 13.07.2026: геометрия сетки для 3D — прямой аналог calcCeilingGrid выше, но
+// с топологией П113 (см. core/calcP113Frame.ts, шапка файла — роли профилей
+// ОБРАТНЫЕ по сравнению с П112): основной профиль СПЛОШНОЙ (как mainSegments
+// у П112 по форме, но физика другая — он же несёт подвесы), несущий профиль
+// физически режется КОРОТКИМИ ВСТАВКАМИ между соседними рядами основного —
+// в отличие от П112, где оба профиля сплошные и просто пересекаются.
+// Результат — тот же интерфейс CeilingGridResult (mainSegments/bearingSegments/
+// crabPoints/hangerPoints), поэтому CeilingGridMesh.tsx переиспользует один и
+// тот же рендер-код для обоих типов, различается только то, как заполнен
+// bearingSegments (сплошные линии vs короткие куски) и высота Y на вызывающей
+// стороне (одноуровневая система — один Y для обоих профилей, не mainY/bearingY
+// с вертикальным разносом).
+
+export interface CeilingGridP113Input {
+  /** размер помещения вдоль X (bounding box контура), мм */
+  lengthMm: number
+  /** размер помещения вдоль Z (bounding box контура), мм */
+  widthMm: number
+  /** шаг несущего профиля (коротких вставок), мм */
+  stepB: number
+  /** шаг основного профиля (сплошного, с подвесами), мм */
+  stepC: number
+  /** основной профиль идёт вдоль X (true) или вдоль Z (false) — то же поле
+   *  спецификации, что и bearingAlongLength у П112 (переиспользуется по
+   *  аналогии, см. calcCeiling.ts, ветка hasPreciseGeometryP113). */
+  mainAlongLength: boolean
+  /** макс. допустимое расстояние между подвесами (шаг "a") — как у П112. */
+  stepA?: number
+}
+
+/**
+ * Считает сетку каркаса П113 (одноуровневая система) для прямоугольного
+ * пролёта — та же bounding-box-логика v1, что и у calcCeilingGrid (см. шапку
+ * файла, упрощение №1). Основной профиль — сплошные линии поперёк B на
+ * позициях mainPositions (шаг c). Несущий профиль — на позициях bearingPositions
+ * (шаг b) вдоль A, но КАЖДАЯ такая линия физически разбита на короткие куски
+ * в точках пересечения с mainPositions (та же логика, что и
+ * bearingSegmentLengthsMm в calcP113FrameGeometry, только тут сразу отрезки
+ * с координатами для отрисовки, а не только длины).
+ */
+export function calcCeilingGridP113(input: CeilingGridP113Input): CeilingGridResult {
+  const { lengthMm, widthMm, stepB, stepC, mainAlongLength, stepA } = input
+  // A — пролёт, вдоль которого идёт (своей длиной) основной профиль
+  // B — пролёт, поперёк которого основной профиль расставлен с шагом stepC
+  const A = mainAlongLength ? lengthMm : widthMm
+  const B = mainAlongLength ? widthMm : lengthMm
+
+  const mainPositions = calcFrameRowPositions(B, stepC)
+  const bearingPositions = calcFrameRowPositions(A, stepB)
+  // Подвес — на основном профиле, снэп по позициям несущего (см. calcP113Frame.ts).
+  const hangerOffsets = snapHangerPositionsToAxis(bearingPositions, stepA ?? stepB)
+
+  const toXZ = (alongA: number, acrossB: number): CeilingGridPoint =>
+    mainAlongLength ? { x: alongA, z: acrossB } : { x: acrossB, z: alongA }
+
+  // Основной — сплошной, вдоль A, на каждой позиции acrossB (mainPositions).
+  const mainSegments: CeilingGridSegment[] = mainPositions.map(acrossB => {
+    const p1 = toXZ(0, acrossB)
+    const p2 = toXZ(A, acrossB)
+    return { x1: p1.x, z1: p1.z, x2: p2.x, z2: p2.z }
+  })
+
+  // Несущий — короткие вставки: на каждой позиции alongA (bearingPositions),
+  // порезан позициями mainPositions вдоль B (плюс крайние куски у стен).
+  const cutsB = [0, ...mainPositions, B]
+  const bearingSegments: CeilingGridSegment[] = []
+  for (const alongA of bearingPositions) {
+    for (let i = 0; i + 1 < cutsB.length; i++) {
+      const p1 = toXZ(alongA, cutsB[i])
+      const p2 = toXZ(alongA, cutsB[i + 1])
+      bearingSegments.push({ x1: p1.x, z1: p1.z, x2: p2.x, z2: p2.z })
+    }
+  }
+
+  // Соединители одноуровневые — на пересечениях (тот же перебор, что и
+  // connectorsTotal = mainCount × bearingRowCount в calcP113FrameGeometry).
+  const crabPoints: CeilingGridPoint[] = []
+  for (const alongA of bearingPositions) {
+    for (const acrossB of mainPositions) {
+      crabPoints.push(toXZ(alongA, acrossB))
+    }
+  }
+
+  // Подвесы — на основном профиле (по одному ряду на каждую mainPosition),
+  // позиции вдоль A — подмножество bearingPositions (там же соединитель).
+  const hangerPoints: CeilingGridPoint[] = []
+  for (const acrossB of mainPositions) {
+    for (const alongA of hangerOffsets) {
+      hangerPoints.push(toXZ(alongA, acrossB))
+    }
+  }
+
+  return { mainSegments, bearingSegments, crabPoints, hangerPoints }
+}
