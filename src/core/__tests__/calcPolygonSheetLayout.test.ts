@@ -32,6 +32,27 @@ describe('calcPolygonSheetLayout — прямоугольник', () => {
   })
 })
 
+describe('calcPolygonSheetLayout — координаты кусков при повёрнутой ориентации (13.07.2026)', () => {
+  it('узкий и глубокий контур выбирает вариант Б (rotated) и держит координаты кусков в границах кадра', () => {
+    // 1200×6000: вдоль стены старта (U) узко — ровно ширина полосы, вглубь
+    // (V) далеко. Вариант Б (полосы вдоль U, листы вдоль V) выгоднее —
+    // именно на нём раньше терялась разворотка координат кусков обратно
+    // в систему кадра (баг с раскроем в 3D, см. заголовок файла).
+    const outer = rect(1200, 6000)
+    const startSide = { start: outer[0], end: outer[1] } // вдоль X, длина 1200
+    const r = calcPolygonSheetLayout(outer, [], startSide, 2500)!
+    expect(r.rotated).toBe(true)
+
+    const EPS = 1e-6
+    for (const p of r.layer1.pieces) {
+      expect(p.u1).toBeGreaterThanOrEqual(0 - EPS)
+      expect(p.u2).toBeLessThanOrEqual(1200 + EPS)
+      expect(p.v1).toBeGreaterThanOrEqual(0 - EPS)
+      expect(p.v2).toBeLessThanOrEqual(6000 + EPS)
+    }
+  })
+})
+
 describe('calcPolygonSheetLayout — вогнутый L-образный контур', () => {
   const lShape: Point2D[] = [
     { x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 4000 },
