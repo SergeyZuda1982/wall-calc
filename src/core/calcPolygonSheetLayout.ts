@@ -330,6 +330,24 @@ export function calcPolygonSheetLayout(
     ? calcLayerDetailed(chosenLoops, chosenMin, chosenMax, sheetLengthMm, 2, layer2Spec, sharedPool, bearingStepMm)
     : null
 
+  // ФИКС 13.07.2026: при варианте Б (useRotated) calcLayerDetailed считал
+  // куски в ТРАНСПОНИРОВАННОЙ системе координат (chosenLoops = loopsLocalT,
+  // x<->y). piece.u1/u2/v1/v2 из-за этого оказывались в осях "V вдоль стены,
+  // U вглубь" — наоборот тому, что задокументировано в PolygonSheetPiece
+  // ("та же система, что calcPolygonP112Frame"). Единственный потребитель,
+  // которому реальные координаты кусков важны — CeilingEntityMesh.tsx
+  // (toWorldM через frame.frame, систему БЕЗ транспонирования) — рисовал
+  // листы с перепутанными осями: хаотичный раскрой, не совпадающий с сеткой
+  // каркаса. Агрегатные поля (totalSheets и т.п.) не страдали — не зависят
+  // от того, какая из осей названа u, а какая v. Разворачиваем координаты
+  // кусков обратно в исходную систему кадра сразу после расчёта.
+  if (useRotated) {
+    const swapUV = (pieces: PolygonSheetPiece[]): PolygonSheetPiece[] =>
+      pieces.map(p => ({ ...p, u1: p.v1, u2: p.v2, v1: p.u1, v2: p.u2 }))
+    layer1.pieces = swapUV(layer1.pieces)
+    if (layer2) layer2.pieces = swapUV(layer2.pieces)
+  }
+
   const all = [layer1, layer2].filter((l): l is PolygonSheetLayerResult => l !== null)
   const totalSheetsNeeded = all.reduce((s, l) => s + l.sheetsNeeded, 0)
   const totalUsedAreaM2 = all.reduce((s, l) => s + l.usedAreaM2, 0)
