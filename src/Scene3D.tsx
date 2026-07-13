@@ -817,6 +817,7 @@ function LevelGroup({
             stepC={spec?.stepC}
             stepA={frameParams?.stepA}
             bearingAlongLength={spec?.bearingAlongLength}
+            ceilingType={spec?.type === 'p113' ? 'p113' : 'p112'}
             onFocusElement={onFocusElement}
             measuring={measuring}
           />
