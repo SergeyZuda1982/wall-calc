@@ -64,10 +64,10 @@ describe('calcMinThicknessScale', () => {
     })).toBe(1)
   })
 
-  it('дефолтный maxScale равен 2, если не передан (13.07.2026, было 8)', () => {
+  it('дефолтный maxScale равен 1 — раздувание выключено (13.07.2026, было 8 → 2 → 1)', () => {
     const k = calcMinThicknessScale({
       distanceM: 10000, fovYRad: FOV_50_RAD, viewportPxHeight: 800, minPx: 2, actualWorldSizeM: 0.0006,
     })
-    expect(k).toBe(2)
+    expect(k).toBe(1)
   })
 })
