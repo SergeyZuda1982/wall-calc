@@ -956,13 +956,19 @@ export default function FloorPlan() {
   // Опорная точка для привязки "прямой угол" (⊾ 90°) — предыдущая точка
   // текущей цепочки, от которой считается угол. У режима 'draw' это
   // drawing.x1/y1 (начало ещё не завершённой стены). У 'pencil' (обводка
-  // плиты) и 'ceiling' (обводка потолка) своя цепочка точек контура —
-  // pencilPts/ceilingPts, а не drawing — раньше это было не учтено, и
-  // ⊾ 90° в этих режимах молча не действовал (13.07.2026).
+  // плиты), 'ceiling' (обводка потолка), 'freeform'/'freeformOpening'
+  // (обводка произвольной конструкции и проёма в ней — обе используют
+  // freeformPts, режимы взаимоисключающие) и 'mep_route' (трасса
+  // инженерки) — своя цепочка точек контура, а не drawing. Раньше это
+  // было учтено только для draw/pencil/ceiling (13.07.2026), теперь
+  // добавлены freeform/freeformOpening/mep_route той же причины ради
+  // (13.07.2026, по просьбе — предусмотреть сразу все режимы обводки).
   function getOrthoRefPoint(): { x: number; y: number } | undefined {
     if (mode === 'draw' && drawing) return { x: drawing.x1, y: drawing.y1 }
     if (mode === 'pencil' && pencilPts.length > 0) return pencilPts[pencilPts.length - 1]
     if (mode === 'ceiling' && ceilingPts.length > 0) return ceilingPts[ceilingPts.length - 1]
+    if ((mode === 'freeform' || mode === 'freeformOpening') && freeformPts.length > 0) return freeformPts[freeformPts.length - 1]
+    if (mode === 'mep_route' && mepRoutePts.length > 0) return mepRoutePts[mepRoutePts.length - 1]
     return undefined
   }
 
@@ -1092,7 +1098,7 @@ export default function FloorPlan() {
     }
     const pos = stagePosRef.current; const sc = stageScaleRef.current
     handleMove((sp.x - pos.x) / sc, (sp.y - pos.y) / sc)
-  }, [lines, mode, drawing, orthoMode, freeSnapActive, dragRef.current, pencilPts, ceilingPts])
+  }, [lines, mode, drawing, orthoMode, freeSnapActive, dragRef.current, pencilPts, ceilingPts, freeformPts, mepRoutePts])
 
   function touchDist(t1: Touch, t2: Touch) {
     return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
@@ -3381,13 +3387,16 @@ export default function FloorPlan() {
             <button onClick={() => {
               setOrthoMode(o => !o)
               // Раньше переключатель ⊾90° насильно уводил в режим 'draw' из
-              // ЛЮБОГО другого режима — включая 'pencil'/'ceiling' (обводка
-              // плиты/потолка), где у пользователя уже накоплен незакрытый
-              // контур. Это молча срывало обводку. 'pencil'/'ceiling' сами
-              // умеют работать с ⊾90° (см. getOrthoRefPoint) — их из
-              // переключения исключаем; для остальных режимов поведение
-              // прежнее (13.07.2026).
-              if (mode !== 'draw' && mode !== 'pencil' && mode !== 'ceiling') switchMode('draw')
+              // ЛЮБОГО другого режима — включая режимы обводки контура
+              // ('pencil'/'ceiling'/'freeform'/'freeformOpening'/'mep_route'),
+              // где у пользователя уже накоплен незакрытый контур/трасса. Это
+              // молча срывало обводку (у freeform/mep_route — ещё и физически
+              // стирало накопленные точки, см. switchMode). Все эти режимы
+              // сами умеют работать с ⊾90° (см. getOrthoRefPoint) — их из
+              // переключения исключаем; для остальных режимов (select, erase
+              // и т.д.) поведение прежнее — клик по кнопке из них уводит в
+              // 'draw' (13.07.2026, дополнено под freeform/mep_route).
+              if (!['draw', 'pencil', 'ceiling', 'freeform', 'freeformOpening', 'mep_route'].includes(mode)) switchMode('draw')
             }}
               title="Прямой угол (Shift)" style={toolBtnStyle(orthoMode)}>
               ⊾ 90°
