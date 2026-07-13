@@ -40,6 +40,13 @@ describe('calcResults — направляющие ПН', () => {
     expect(r.uwFloor).toBeCloseTo(6)
   })
 
+  it('окно "от пола" (sillHeight=0, панорамное остекление) вычитается из пола так же, как дверь', () => {
+    const w: Opening = { id: 'w', type: 'window', pos: 1000, width: 1200, height: 2400, sillHeight: 0 }
+    const r = calc(6000, 2700, 600, [w])
+    expect(r.uwFloor).toBeCloseTo((6000 - 1200) / 1000)
+    expect(r.uwSill).toBeCloseTo(0) // подоконника нет
+  })
+
   it('подоконник ПН = ширина + 400мм', () => {
     const w: Opening = { id: 'w', type: 'window', pos: 1000, width: 1200, height: 1200, sillHeight: 900 }
     const r = calc(6000, 2700, 600, [w])
@@ -198,6 +205,34 @@ describe('calcResults — переменная геометрия (ceilingProfil
     // площадь трапеции × 2 стороны / 1e6
     const expected = ((2000 + 3000) / 2 * 4000 * 2) / 1_000_000
     expect(r.gklArea).toBeCloseTo(expected, 2)
+  })
+})
+
+// ─── Саморезы к перемычке/подоконнику ────────────────────────────────────────
+
+describe('calcResults — саморезы TN/MN/XTN у проёмов (calcScrews)', () => {
+  it('дверь: саморезы только к перемычке (n×1×2 стороны)', () => {
+    const d: Opening = { id: 'd', type: 'door', pos: 1000, width: 900, height: 2100, sillHeight: 0 }
+    const r = calc(6000, 2700, 600, [d])
+    const n = Math.ceil(900 / 250)
+    expect(r.screws.count25).toBeGreaterThanOrEqual(n * 2) // как минимум перемычка (плюс стойки)
+  })
+
+  it('окно "от пола" (sillHeight=0) — саморезы к проёму столько же, сколько у двери такой же ширины', () => {
+    const d: Opening = { id: 'd', type: 'door', pos: 1000, width: 900, height: 2100, sillHeight: 0 }
+    const w: Opening = { id: 'w', type: 'window', pos: 1000, width: 900, height: 2400, sillHeight: 0 }
+    const rDoor = calc(6000, 2700, 600, [d])
+    const rWindow = calc(6000, 2700, 600, [w])
+    // Раньше (баг) у окна всегда считалось n×2 (перемычка+подоконник), даже без подоконника
+    expect(rWindow.screws.count25).toBe(rDoor.screws.count25)
+  })
+
+  it('окно с подоконником (sillHeight>0) — саморезов к проёму больше, чем у двери той же ширины (перемычка+подоконник)', () => {
+    const d: Opening = { id: 'd', type: 'door', pos: 1000, width: 900, height: 2100, sillHeight: 0 }
+    const w: Opening = { id: 'w', type: 'window', pos: 1000, width: 900, height: 1200, sillHeight: 900 }
+    const rDoor = calc(6000, 2700, 600, [d])
+    const rWindow = calc(6000, 2700, 600, [w])
+    expect(rWindow.screws.count25).toBeGreaterThan(rDoor.screws.count25)
   })
 })
 

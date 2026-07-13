@@ -20,14 +20,17 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   const worstHeight = maxStudHeight(ceilingProfile, floorProfile, l)
 
   // ─── Направляющие ────────────────────────────────────────────────────────
-  const doorOpenings = activeOpenings.filter(o => o.type === 'door')
+  // Напольная направляющая отсутствует под любым проёмом "от пола"
+  // (sillHeight=0) — не только под дверью, но и под окном/проёмом без
+  // подоконника (например, панорамное остекление в пол).
+  const floorLevelOpenings = activeOpenings.filter(o => o.sillHeight === 0)
 
   // Реальные длины направляющих по ломаной (учитывают скат потолка/пола)
   const ceilingRail = profilePathLength(ceilingProfile, 0, l)
   const floorRail = (() => {
     let total = 0
     let cursor = 0
-    for (const o of [...doorOpenings].sort((a, b) => a.pos - b.pos)) {
+    for (const o of [...floorLevelOpenings].sort((a, b) => a.pos - b.pos)) {
       if (o.pos > cursor) total += profilePathLength(floorProfile, cursor, o.pos)
       cursor = o.pos + o.width
     }

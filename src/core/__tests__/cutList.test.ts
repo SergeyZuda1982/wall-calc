@@ -97,6 +97,12 @@ describe('pnPieces', () => {
     expect(floorTotal).toBe(5000) // пол не прерывается
   })
 
+  it('окно "от пола" (sillHeight=0, панорамное остекление) ТОЖЕ вырезает пол, как дверь', () => {
+    const pieces = pnPieces(5000, [{ type: 'window', pos: 1000, width: 1200, sillHeight: 0 }])
+    const floorTotal = pieces.filter(p => p.role === 'floor').reduce((s, p) => s + p.length, 0)
+    expect(floorTotal).toBe(5000 - 1200) // 3800 — раньше (баг) было бы 5000
+  })
+
   it('перемычка = ширина + 400мм, mustBeWhole=true', () => {
     const pieces = pnPieces(5000, [{ type: 'door', pos: 1000, width: 900, sillHeight: 0 }])
     const lintel = pieces.find(p => p.role === 'lintel')
