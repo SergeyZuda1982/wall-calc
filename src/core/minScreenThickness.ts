@@ -33,7 +33,14 @@ export interface MinThicknessScaleParams {
   /**
    * Верхний предел коэффициента — чтобы элемент не "распухал" до абсурда
    * на очень большом удалении (когда объект виден целиком с большого
-   * расстояния). По умолчанию 8.
+   * расстояния). По умолчанию 2.
+   *
+   * 13.07.2026: было 8 — пользователь на реальном объекте увидел, что при
+   * виде на всё здание целиком (большое удаление) профиль 27/60мм
+   * раздувается почти до толщины бревна (~200мм+), сетка каркаса выглядит
+   * непропорционально массивной относительно масштаба проекта. 2× даёт
+   * заметно более скромное раздувание на любом удалении, сохраняя саму
+   * идею "не потерять тонкий элемент из виду" вблизи-средних дистанциях.
    */
   maxScale?: number
 }
@@ -51,7 +58,7 @@ export interface MinThicknessScaleParams {
  * больше его реального размера.
  */
 export function calcMinThicknessScale(params: MinThicknessScaleParams): number {
-  const { distanceM, fovYRad, viewportPxHeight, minPx, actualWorldSizeM, maxScale = 8 } = params
+  const { distanceM, fovYRad, viewportPxHeight, minPx, actualWorldSizeM, maxScale = 2 } = params
 
   if (actualWorldSizeM <= 0 || distanceM <= 0 || viewportPxHeight <= 0 || fovYRad <= 0 || minPx <= 0) {
     return 1

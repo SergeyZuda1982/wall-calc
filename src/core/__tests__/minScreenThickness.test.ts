@@ -26,6 +26,7 @@ describe('calcMinThicknessScale', () => {
       viewportPxHeight: 800,
       minPx: 2,
       actualWorldSizeM: 0.002, // тонкий стержень подвеса, 2мм
+      maxScale: 100, // явно выше потолка (13.07.2026: дефолт снижен до 2) — тест линейности роста, не потолка
     }
     const kNear = calcMinThicknessScale({ ...base, distanceM: 1 })
     const kFar = calcMinThicknessScale({ ...base, distanceM: 2 })
@@ -63,10 +64,10 @@ describe('calcMinThicknessScale', () => {
     })).toBe(1)
   })
 
-  it('дефолтный maxScale равен 8, если не передан', () => {
+  it('дефолтный maxScale равен 2, если не передан (13.07.2026, было 8)', () => {
     const k = calcMinThicknessScale({
       distanceM: 10000, fovYRad: FOV_50_RAD, viewportPxHeight: 800, minPx: 2, actualWorldSizeM: 0.0006,
     })
-    expect(k).toBe(8)
+    expect(k).toBe(2)
   })
 })
