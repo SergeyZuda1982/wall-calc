@@ -241,8 +241,14 @@ export default function CeilingCalc() {
   // Дополнительное условие относительно Room: нужна ещё и выбранная стена
   // старта (startWall) — без неё нет точки отсчёта для calcPolygonP112Frame
   // (см. CeilingEntityMesh.tsx), поэтому пока стена не выбрана — не пишем.
+  // 13.07.2026: гейт `form.type !== 'p112'` снят — CeilingEntityMesh.tsx
+  // теперь умеет и П113 (calcPolygonP113Frame, одноуровневая система, см.
+  // KONSPEKT.md "3D для П113"). Для остальных типов (П131/П19) точной
+  // геометрии по контуру всё ещё нет — но useFrameResult там и так вернёт
+  // null (проверяет type==='p112'||'p113' сам), просто покажется плоская
+  // плита-заглушка вместо детального каркаса, как и раньше для "не p112".
   useEffect(() => {
-    if (!seedCeilingId || form.type !== 'p112' || seedZones?.length !== 1 || !startWall) return
+    if (!seedCeilingId || (form.type !== 'p112' && form.type !== 'p113') || seedZones?.length !== 1 || !startWall) return
     const ceilingSpec: CeilingSpec = {
       type: form.type,
       layers: form.layers,
@@ -376,7 +382,7 @@ export default function CeilingCalc() {
           </div>
         )}
 
-        {seedCeilingId && form.type === 'p112' && seedZones?.length === 1 && (
+        {seedCeilingId && (form.type === 'p112' || form.type === 'p113') && seedZones?.length === 1 && (
           <div style={{
             padding: '8px 10px', background: savedToCeiling ? '#f0fdf4' : C.accentLight,
             border: `1px solid ${savedToCeiling ? C.success : C.accent}`,

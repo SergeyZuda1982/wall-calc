@@ -43,6 +43,7 @@ import type { Point2D } from '../core/geometry2d'
 import { polygonSides } from '../core/geometry2d'
 import { resolveFrameParams } from '../core/calcP112Frame'
 import { calcPolygonP112Frame, toWorld, type PolygonP112FrameResult } from '../core/calcPolygonP112Frame'
+import { calcPolygonP113Frame, type PolygonP113FrameResult } from '../core/calcPolygonP113Frame'
 import { calcPolygonSheetLayout, type PolygonSheetLayoutResult, type PolygonSheetPiece } from '../core/calcPolygonSheetLayout'
 import { boardSpecFromCeilingSpec } from '../core/calcProjectSheetLayout'
 import {
@@ -59,10 +60,19 @@ const SHEET_GAP_MM = 4
 const sheetMat = new THREE.MeshStandardMaterial({ color: PLATE_COLOR, roughness: 0.92, metalness: 0 })
 const sheetCutMat = new THREE.MeshStandardMaterial({ color: '#ded7c6', roughness: 0.92, metalness: 0 }) // резаный лист — чуть темнее, видно обрезки
 
-function useFrameResult(ceiling: CeilingPolygon3D): PolygonP112FrameResult | null {
+/** 13.07.2026: раньше — только П112 (`spec.type !== 'p112'` → null). Теперь
+ *  поддерживает и П113 (calcPolygonP113Frame — та же геометрия, что уже
+ *  используется в смете, см. calcCeiling.ts, ветка hasPolygonGeometryP113).
+ *  Результат — union двух структурно идентичных интерфейсов (frame/mainRows/
+ *  bearingRows/crabPoints/hangerPoints — те же поля у обоих), поэтому весь
+ *  рендер-код ниже (JSX) не потребовал ветвления по типу — читает общие поля
+ *  напрямую. Различается только topology внутри bearingRows/mainRows (несущий
+ *  режется вставками у П113, см. calcPolygonP113Frame.ts) и высота Y на
+ *  вызывающей стороне (см. mainY/bearingY ниже в компоненте). */
+function useFrameResult(ceiling: CeilingPolygon3D): PolygonP112FrameResult | PolygonP113FrameResult | null {
   return useMemo(() => {
     const spec = ceiling.ceilingSpec
-    if (!spec || spec.type !== 'p112' || !spec.slabGapMm || ceiling.startWallSideIndex == null) return null
+    if (!spec || (spec.type !== 'p112' && spec.type !== 'p113') || !spec.slabGapMm || ceiling.startWallSideIndex == null) return null
     const sides = polygonSides(ceiling.outerMm)
     const side = sides[ceiling.startWallSideIndex]
     if (!side) return null
@@ -70,12 +80,18 @@ function useFrameResult(ceiling: CeilingPolygon3D): PolygonP112FrameResult | nul
     const frameParams = resolveFrameParams({
       stepC: spec.stepC, layoutMode, userStepB: spec.stepB,
       mountDirection: spec.mountDirection, loadClass: spec.loadClass,
+      ceilingType: spec.type === 'p113' ? 'p113' : 'p112',
     })
-    return calcPolygonP112Frame(
-      ceiling.outerMm, [], { start: side.start, end: side.end },
-      spec.stepC, frameParams.stepB, spec.slabGapMm, layoutMode,
-      { stepA: frameParams.stepA, wallOffsetMainMm: frameParams.wallOffsetMainMm, wallOffsetBearingMm: frameParams.wallOffsetBearingMm },
-    )
+    const opts = { stepA: frameParams.stepA, wallOffsetMainMm: frameParams.wallOffsetMainMm, wallOffsetBearingMm: frameParams.wallOffsetBearingMm }
+    return spec.type === 'p113'
+      ? calcPolygonP113Frame(
+          ceiling.outerMm, [], { start: side.start, end: side.end },
+          spec.stepC, frameParams.stepB, spec.slabGapMm, layoutMode, opts,
+        )
+      : calcPolygonP112Frame(
+          ceiling.outerMm, [], { start: side.start, end: side.end },
+          spec.stepC, frameParams.stepB, spec.slabGapMm, layoutMode, opts,
+        )
   }, [ceiling.outerMm, ceiling.ceilingSpec, ceiling.startWallSideIndex])
 }
 
@@ -136,9 +152,13 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
   // 12.07.2026, ИСПРАВЛЕНИЕ: подвес крепится к ОСНОВНОМУ профилю (верхний
   // уровень), несущий — ниже, соединён с основным крабом (см.
   // calcP112Frame.ts, шапка файла — было наоборот).
+  // 13.07.2026: у П113 (одноуровневая система) mainY/bearingY совпадают —
+  // см. тот же комментарий в CeilingGridMesh.tsx (Room-путь), топология
+  // идентична, отличается только источник геометрии (контур vs bbox).
+  const isP113 = ceiling.ceilingSpec?.type === 'p113'
   const dropToMainM = 0.12
   const mainY = ceilingM - dropToMainM
-  const bearingY = mainY - mmToM(27) - 0.003
+  const bearingY = isP113 ? mainY : mainY - mmToM(27) - 0.003
 
   return (
     <group>
