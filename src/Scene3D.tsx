@@ -94,16 +94,16 @@ function WallMesh({ box, line, opacity = 1, selected = false, measuring = false,
   )
   const tint = useMemo(() => tintOverTexture(color), [color])
 
-  // ГКЛ-каркас (Этап 2, 10-11.07.2026): применимо только для линий
-  // finishMaterialCategoryOf==='gkl' с ЯВНО настроенным buildProgress —
-  // иначе (кладка/бетон/legacy) обычный вид Этапа 1 ниже.
+  // ГКЛ-каркас (Этап 2, 10-11.07.2026; 13.07.2026 — гейт buildProgress снят,
+  // см. lineProgress.ts): применимо только для линий finishMaterialCategoryOf
+  // === 'gkl' — иначе (кладка/бетон) обычный вид (текстура материала).
   // Короткие вставки у проёма (подоконник/перемычка, id содержит __sill_/
   // __lintel_) намеренно ВСЕГДА остаются сплошными — россыпь стоек на
   // 100-900мм высоты нечитаема и не даёт визуальной ценности (см.
   // обсуждение с пользователем).
   const gklVisual = useMemo(() => (line ? wallGklVisual3D(line) : null), [line])
   const isPartialHeightSegment = box.id.includes('__sill_') || box.id.includes('__lintel_')
-  const showFrame = !!gklVisual && gklVisual.mode === 'frame' && !isPartialHeightSegment
+  const showFrame = !!gklVisual && !isPartialHeightSegment
   const sides = line ? finishSidesOf(line) : 2
 
   const studLocalXs = useMemo(() => {
