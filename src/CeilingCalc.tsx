@@ -20,7 +20,9 @@ import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { useProjectStore } from './store/useProjectStore'
 import type { Point2D } from './core/geometry2d'
 import { polygonSides } from './core/geometry2d'
-import CeilingCalc3DPreview from './components/CeilingCalc3DPreview'
+import CeilingCalc3DPreview, { CeilingCalcPolygon3DPreview } from './components/CeilingCalc3DPreview'
+import { mmToM } from './core/planTo3D'
+import type { CeilingPolygon3D } from './core/planTo3D'
 import type { CeilingSeedZone } from './store/useCeilingSeedStore'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
@@ -343,6 +345,31 @@ export default function CeilingCalc() {
   )
 
   const hasRoom = form.roomLengthMm > 0 && form.roomWidthMm > 0
+
+  // НОВОЕ (13.07.2026, по прямому запросу пользователя): 3D-превью также
+  // для СЛОЖНОГО контура (много углов), засеянного с реального Ceiling на
+  // плане — та же гейт-логика, что и у buildPolygonInput()/автосинхронизации
+  // с Ceiling чуть ниже (seedZones.length===1, startWall.zoneIndex===0).
+  // ceilingSpec собран тем же списком полей, что и в автосинхронизации с
+  // реальным Ceiling (см. useEffect с updateCeiling ниже) — если меняете
+  // список полей там, обновите и здесь, чтобы 3D-превью в калькуляторе не
+  // разошлось с тем, что реально сохраняется в проект.
+  const polygonInputForPreview = buildPolygonInput()
+  const hasPolygon = !!polygonInputForPreview
+  const syntheticCeilingForPreview: CeilingPolygon3D | null = polygonInputForPreview
+    ? {
+        id: 'calc-preview', label: 'preview',
+        outerM: polygonInputForPreview.outerMm.map(p => ({ x: mmToM(p.x), z: mmToM(p.y) })),
+        outerMm: polygonInputForPreview.outerMm,
+        ceilingSpec: {
+          type: form.type, layers: form.layers, material: form.material, thickness: form.thickness,
+          stepC: form.stepC, areaSqm: form.areaSqm, perimeterM: form.perimeterM, stepB: form.stepB,
+          bearingAlongLength: form.bearingAlongLength, layoutMode: form.layoutMode,
+          mountDirection: form.mountDirection, loadClass: form.loadClass, slabGapMm: form.slabGapMm,
+        },
+        startWallSideIndex: startWall!.sideIndex,
+      }
+    : null
 
   const layoutModeUi = form.layoutMode ?? 'user'
   const frameParamsUi = resolveFrameParams({
@@ -681,7 +708,7 @@ export default function CeilingCalc() {
 
             {/* Холст */}
             <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, padding: 12 }}>
-              {hasRoom && (
+              {(hasRoom || hasPolygon) && (
                 <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
                   <button onClick={() => setPreviewMode('2d')} style={{
                     padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
@@ -694,24 +721,7 @@ export default function CeilingCalc() {
                 </div>
               )}
               <div ref={canvasRef}>
-                {!hasRoom ? (
-                  seedZones ? (
-                    <CeilingContourPreview
-                      zones={seedZones}
-                      canvasW={canvasW}
-                      areaSqm={form.areaSqm}
-                      perimeterM={form.perimeterM}
-                      startWall={startWall}
-                      polygonFrame={result?.polygonFrame ?? null}
-                    />
-                  ) : (
-                    <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: C.muted, flexDirection: 'column', gap: 8 }}>
-                      <div style={{ fontSize: 32 }}>📐</div>
-                      <div style={{ fontSize: 15, fontWeight: 500 }}>Введите размеры помещения</div>
-                    </div>
-                  )
-                ) : previewMode === '3d' ? (
+                {hasRoom && previewMode === '3d' ? (
                   <CeilingCalc3DPreview
                     lengthMm={form.roomLengthMm}
                     widthMm={form.roomWidthMm}
@@ -722,7 +732,7 @@ export default function CeilingCalc() {
                     bearingAlongLength={form.bearingAlongLength}
                     sheetLayout={step === 4 ? (result?.sheetLayout ?? null) : null}
                   />
-                ) : (
+                ) : hasRoom ? (
                   <CeilingCanvas
                     form={form}
                     step={step}
@@ -731,6 +741,29 @@ export default function CeilingCalc() {
                     shiftBearingMm={shiftBearingMm}
                     layout={result?.sheetLayout ?? null}
                   />
+                ) : hasPolygon && previewMode === '3d' ? (
+                  // Сложный контур (много углов), засеян с реального Ceiling
+                  // на плане — переиспользуем тот же CeilingEntityMesh, что
+                  // рисует этот контур в основной 3D-сцене (13.07.2026, по
+                  // прямому запросу пользователя — раньше 3D для такого
+                  // контура было видно только на самом плане, не в
+                  // калькуляторе). См. шапку CeilingCalcPolygon3DPreview.
+                  <CeilingCalcPolygon3DPreview ceiling={syntheticCeilingForPreview!} />
+                ) : seedZones ? (
+                  <CeilingContourPreview
+                    zones={seedZones}
+                    canvasW={canvasW}
+                    areaSqm={form.areaSqm}
+                    perimeterM={form.perimeterM}
+                    startWall={startWall}
+                    polygonFrame={result?.polygonFrame ?? null}
+                  />
+                ) : (
+                  <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: C.muted, flexDirection: 'column', gap: 8 }}>
+                    <div style={{ fontSize: 32 }}>📐</div>
+                    <div style={{ fontSize: 15, fontWeight: 500 }}>Введите размеры помещения</div>
+                  </div>
                 )}
               </div>
             </div>

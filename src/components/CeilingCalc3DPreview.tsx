@@ -29,6 +29,8 @@ import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
 import CeilingGridMesh, { calcGklLevelM } from './CeilingGridMesh'
+import CeilingEntityMesh from './CeilingEntityMesh'
+import type { CeilingPolygon3D } from '../core/planTo3D'
 import { mmToM } from '../core/planTo3D'
 import { calcCeilingSheetRects } from '../core/ceilingGridGeometry'
 import type { CeilingType } from '../data/ceilingData'
@@ -155,3 +157,63 @@ export default function CeilingCalc3DPreview({
   )
 }
 
+
+/**
+ * Тот же 3D-переключатель, что и CeilingCalc3DPreview выше, но для
+ * СЛОЖНОГО контура (много углов) — засеян с реального обведённого Ceiling
+ * на плане, а не введён прямоугольником L×W. 13.07.2026, по прямому
+ * запросу пользователя: раньше такой контур не показывался в 3D прямо в
+ * калькуляторе вообще — переключатель был скрыт (виден только при
+ * hasRoom, а у полигона roomLengthMm/roomWidthMm пустые).
+ *
+ * Переиспользует CeilingEntityMesh НАПРЯМУЮ (тот же компонент, что рисует
+ * этот же контур в основной 3D-сцене Scene3D.tsx) — не копия/дублирование
+ * геометрии: подрезка по реальным углам, раскрой ГКЛ по контуру
+ * (calcPolygonP112Frame/calcPolygonP113Frame + calcPolygonSheetLayout)
+ * гарантированно те же, что и в проекте, одним источником истины.
+ * CeilingEntityMesh ничего не знает про Scene3D/стены — ему достаточно
+ * объекта формы CeilingPolygon3D, который здесь собирается "на лету" из
+ * текущего состояния формы калькулятора (ceiling.tsx строит такой же для
+ * автосинхронизации с реальным Ceiling — см. её код, тот же список полей).
+ */
+export interface CeilingCalcPolygon3DPreviewProps {
+  ceiling: CeilingPolygon3D
+}
+
+export function CeilingCalcPolygon3DPreview({ ceiling }: CeilingCalcPolygon3DPreviewProps) {
+  const bbox = useMemo(() => {
+    const xs = ceiling.outerM.map(p => p.x)
+    const zs = ceiling.outerM.map(p => p.z)
+    return {
+      minX: Math.min(...xs), maxX: Math.max(...xs),
+      minZ: Math.min(...zs), maxZ: Math.max(...zs),
+    }
+  }, [ceiling.outerM])
+  const cx = (bbox.minX + bbox.maxX) / 2
+  const cz = (bbox.minZ + bbox.maxZ) / 2
+  const maxDim = Math.max(bbox.maxX - bbox.minX, bbox.maxZ - bbox.minZ, 1)
+  const hasDetailedGrid = ceiling.ceilingSpec?.type === 'p112' || ceiling.ceilingSpec?.type === 'p113'
+
+  return (
+    <div style={{ height: 460, borderRadius: 10, overflow: 'hidden', position: 'relative', background: '#eef0f4' }}>
+      <Canvas shadows camera={{ position: [cx + maxDim * 1.1, maxDim * 1.1, cz + maxDim * 1.4], fov: 45 }}>
+        <ambientLight intensity={0.6} />
+        <directionalLight position={[cx + maxDim, maxDim * 1.5, cz + maxDim]} intensity={1} castShadow />
+        <Suspense fallback={null}>
+          <CeilingEntityMesh ceiling={ceiling} ceilingM={0} showGrid />
+          {!hasDetailedGrid && (
+            <Html position={[cx, -0.3, cz]} center style={{ pointerEvents: 'none' }}>
+              <div style={{
+                background: 'rgba(255,255,255,0.9)', padding: '4px 10px', borderRadius: 6,
+                fontSize: 12, color: '#666', whiteSpace: 'nowrap',
+              }}>
+                Детальный 3D-каркас для этого типа потолка ещё не реализован — показана плита
+              </div>
+            </Html>
+          )}
+        </Suspense>
+        <OrbitControls target={[cx, -0.3, cz]} makeDefault />
+      </Canvas>
+    </div>
+  )
+}
