@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { calcCeilingGrid, calcCeilingGridP113 } from '../ceilingGridGeometry'
+import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, type CeilingGridResult } from '../ceilingGridGeometry'
+import type { Point2D } from '../geometry2d'
 
 describe('calcCeilingGrid', () => {
   it('несущий профиль идёт вдоль length при bearingAlongLength=true, расставлен по width', () => {
@@ -174,5 +175,90 @@ describe('calcCeilingGridP113 (13.07.2026, одноуровневая систе
     expect(grid.mainSegments).toEqual([])
     expect(grid.crabPoints).toEqual([])
     expect(grid.hangerPoints).toEqual([])
+  })
+})
+
+describe('clipCeilingGridToPolygon', () => {
+  // Ромб (повёрнутый квадрат), вписанный в bbox 4000×4000 мм — вершины
+  // ровно в серединах сторон bbox. |x-2000| + |z-2000| <= 2000 — уравнение
+  // границы ромба, используется ниже для проверки ожидаемых границ отрезков.
+  const diamond: Point2D[] = [
+    { x: 2000, y: 0 },
+    { x: 4000, y: 2000 },
+    { x: 2000, y: 4000 },
+    { x: 0, y: 2000 },
+  ]
+
+  it('горизонтальный отрезок по самой широкой линии ромба (z=2000) не обрезается', () => {
+    const grid: CeilingGridResult = {
+      bearingSegments: [{ x1: 0, z1: 2000, x2: 4000, z2: 2000 }],
+      mainSegments: [], crabPoints: [], hangerPoints: [],
+    }
+    const clipped = clipCeilingGridToPolygon(grid, diamond)
+    expect(clipped.bearingSegments).toEqual([{ x1: 0, z1: 2000, x2: 4000, z2: 2000 }])
+  })
+
+  it('горизонтальный отрезок вне центра ромба обрезается по границе контура (не по bbox)', () => {
+    const grid: CeilingGridResult = {
+      bearingSegments: [{ x1: 0, z1: 500, x2: 4000, z2: 500 }],
+      mainSegments: [], crabPoints: [], hangerPoints: [],
+    }
+    const clipped = clipCeilingGridToPolygon(grid, diamond)
+    // на z=500: |x-2000| <= 2000-1500=500 -> x в [1500, 2500]
+    expect(clipped.bearingSegments.length).toBe(1)
+    expect(clipped.bearingSegments[0].x1).toBeCloseTo(1500, 5)
+    expect(clipped.bearingSegments[0].x2).toBeCloseTo(2500, 5)
+  })
+
+  it('вертикальный отрезок вне центра ромба обрезается аналогично по оси Z', () => {
+    const grid: CeilingGridResult = {
+      bearingSegments: [], mainSegments: [{ x1: 500, z1: 0, x2: 500, z2: 4000 }], crabPoints: [], hangerPoints: [],
+    }
+    const clipped = clipCeilingGridToPolygon(grid, diamond)
+    expect(clipped.mainSegments.length).toBe(1)
+    expect(clipped.mainSegments[0].z1).toBeCloseTo(1500, 5)
+    expect(clipped.mainSegments[0].z2).toBeCloseTo(2500, 5)
+  })
+
+  it('отрезок, лишь касающийся вершины ромба (вырожденный), отбрасывается целиком', () => {
+    const grid: CeilingGridResult = {
+      bearingSegments: [{ x1: 0, z1: 4000, x2: 4000, z2: 4000 }], // z=4000 — только вершина (2000,4000)
+      mainSegments: [], crabPoints: [], hangerPoints: [],
+    }
+    const clipped = clipCeilingGridToPolygon(grid, diamond)
+    expect(clipped.bearingSegments.length).toBe(0)
+  })
+
+  it('точки крабов/подвесов вне контура отфильтровываются, внутри — сохраняются', () => {
+    const grid: CeilingGridResult = {
+      bearingSegments: [], mainSegments: [],
+      crabPoints: [{ x: 2000, z: 2000 }, { x: 100, z: 100 }],
+      hangerPoints: [{ x: 2000, z: 1000 }, { x: 3900, z: 3900 }],
+    }
+    const clipped = clipCeilingGridToPolygon(grid, diamond)
+    expect(clipped.crabPoints).toEqual([{ x: 2000, z: 2000 }])
+    expect(clipped.hangerPoints).toEqual([{ x: 2000, z: 1000 }])
+  })
+
+  it('невыпуклый контур (Г-образная комната) режет один отрезок на несколько кусков', () => {
+    // Г-образная комната 4000×4000 с вырезанным углом 2000×2000 (верхний правый)
+    const lShape: Point2D[] = [
+      { x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 2000 },
+      { x: 2000, y: 2000 }, { x: 2000, y: 4000 }, { x: 0, y: 4000 },
+    ]
+    const grid: CeilingGridResult = {
+      bearingSegments: [{ x1: 0, z1: 3000, x2: 4000, z2: 3000 }], // выше выреза — только левая половина внутри
+      mainSegments: [], crabPoints: [], hangerPoints: [],
+    }
+    const clipped = clipCeilingGridToPolygon(grid, lShape)
+    expect(clipped.bearingSegments).toEqual([{ x1: 0, z1: 3000, x2: 2000, z2: 3000 }])
+  })
+
+  it('меньше 3 точек контура — возвращает исходную сетку без изменений (защита)', () => {
+    const grid: CeilingGridResult = {
+      bearingSegments: [{ x1: 0, z1: 500, x2: 4000, z2: 500 }],
+      mainSegments: [], crabPoints: [], hangerPoints: [],
+    }
+    expect(clipCeilingGridToPolygon(grid, [])).toEqual(grid)
   })
 })
