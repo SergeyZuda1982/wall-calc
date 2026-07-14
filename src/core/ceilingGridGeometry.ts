@@ -18,8 +18,14 @@
  * (lengthMm × widthMm) — для 3D берётся bounding box контура помещения, не
  * сам многоугольник. Это не хуже того, что уже есть в смете
  * (calcP112Frame.ts тоже параметризован прямоугольным помещением) — просто
- * для непрямоугольных комнат сетка в 3D будет чуть шире фактического
- * контура. Подрезка под реальный контур — отдельная задача.
+ * для непрямоугольных комнат (и для комнат, повёрнутых относительно
+ * мировых осей) сама СЕТКА строится шире фактического контура.
+ * 13.07.2026: сама сетка по-прежнему строится по bbox (см. выше) — но
+ * добавлена отдельная подрезка результата по реальному контуру,
+ * clipCeilingGridToPolygon() ниже (использует insideSegments/pointInPolygon
+ * из geometry2d.ts). Раньше нахлёст был виден вживую как "крест" из
+ * профиля, торчащий за пределы плиты — особенно заметно для комнат,
+ * начерченных по диагонали (репорт пользователя со скриншотом).
  *
  * v1 упрощение №2: bearingAlongLength/stepB/stepC пока не читаются из
  * данных помещения (Room ещё не хранит CeilingSpec, см. KONSPEKT.md/
@@ -30,6 +36,7 @@
 
 import { calcFrameRowPositions, snapHangerPositionsToAxis } from './calcP112Frame'
 import type { CeilingStep } from '../data/ceilingData'
+import { insideSegments, pointInPolygon, type Point2D } from './geometry2d'
 
 export const DEFAULT_GRID_STEP_B: CeilingStep = 600
 export const DEFAULT_GRID_STEP_C: CeilingStep = 600
@@ -228,4 +235,76 @@ export function calcCeilingGridP113(input: CeilingGridP113Input): CeilingGridRes
   }
 
   return { mainSegments, bearingSegments, crabPoints, hangerPoints }
+}
+
+/**
+ * Подрезка 3D-сетки каркаса (calcCeilingGrid/calcCeilingGridP113) по
+ * РЕАЛЬНОМУ многоугольнику комнаты — устраняет "v1 упрощение" в шапке
+ * файла: без этой подрезки сетка строится по bounding box, и для комнаты,
+ * повёрнутой относительно мировых осей X/Z (например, начерченной по
+ * диагонали), профиль торчит за пределы плиты характерным "крестом" —
+ * ровно там, где AABB шире самого контура (репорт пользователя со
+ * скриншотом, 13.07.2026).
+ *
+ * `polygonLocalMm` — контур комнаты В ТОЙ ЖЕ локальной системе координат,
+ * что и сегменты grid: origin в углу bounding box (minX/minZ комнаты),
+ * миллиметры, x/z комнаты → x/y Point2D (см. geometry2d.ts — эти функции
+ * не завязаны на конкретный физический смысл осей, просто 2D). Вызывающий
+ * код (CeilingGridMesh.tsx) сам переводит roomPoints (метры, мировые) в
+ * этот локальный вид перед вызовом.
+ *
+ * Использует insideSegments/pointInPolygon (общий скан-лайн алгоритм,
+ * уже применяется для проёмов/зон) — каждая линия профиля (горизонтальная,
+ * z1===z2, или вертикальная, x1===x2) обрезается по пересечениям с
+ * контуром на СВОЕЙ прямой; если комната невыпуклая (Г-образная и т.п.),
+ * один исходный отрезок может распасться на несколько кусков — это
+ * ожидаемо и корректно. Обрезки короче MIN_PIECE_MM у самой границы
+ * контура отбрасываются (не рисовать вырожденные огрызки в 1-2мм).
+ * Точки крабов/подвесов, оказавшиеся за контуром, отфильтровываются
+ * тем же pointInPolygon.
+ *
+ * Раскладка минваты/фрагмента ГКЛ (CeilingGridMesh.tsx) по-прежнему
+ * работает по bbox — это только иллюстративный фрагмент части ячеек, не
+ * претендует на точное совпадение с контуром (см. комментарии там же),
+ * подрезка на него не распространяется.
+ */
+const MIN_CEILING_GRID_PIECE_MM = 30
+
+export function clipCeilingGridToPolygon(grid: CeilingGridResult, polygonLocalMm: Point2D[]): CeilingGridResult {
+  if (polygonLocalMm.length < 3) return grid
+  const loops = [polygonLocalMm]
+
+  function clipSegments(segments: CeilingGridSegment[]): CeilingGridSegment[] {
+    const out: CeilingGridSegment[] = []
+    for (const seg of segments) {
+      const horizontal = Math.abs(seg.z1 - seg.z2) < 1e-6
+      if (horizontal) {
+        const pieces = insideSegments(loops, seg.z1, 'y')
+        const lo0 = Math.min(seg.x1, seg.x2), hi0 = Math.max(seg.x1, seg.x2)
+        for (const [a, b] of pieces) {
+          const lo = Math.max(a, lo0), hi = Math.min(b, hi0)
+          if (hi - lo >= MIN_CEILING_GRID_PIECE_MM) out.push({ x1: lo, z1: seg.z1, x2: hi, z2: seg.z2 })
+        }
+      } else {
+        const pieces = insideSegments(loops, seg.x1, 'x')
+        const lo0 = Math.min(seg.z1, seg.z2), hi0 = Math.max(seg.z1, seg.z2)
+        for (const [a, b] of pieces) {
+          const lo = Math.max(a, lo0), hi = Math.min(b, hi0)
+          if (hi - lo >= MIN_CEILING_GRID_PIECE_MM) out.push({ x1: seg.x1, z1: lo, x2: seg.x2, z2: hi })
+        }
+      }
+    }
+    return out
+  }
+
+  function filterPoints(points: CeilingGridPoint[]): CeilingGridPoint[] {
+    return points.filter(p => pointInPolygon({ x: p.x, y: p.z }, loops))
+  }
+
+  return {
+    bearingSegments: clipSegments(grid.bearingSegments),
+    mainSegments: clipSegments(grid.mainSegments),
+    crabPoints: filterPoints(grid.crabPoints),
+    hangerPoints: filterPoints(grid.hangerPoints),
+  }
 }
