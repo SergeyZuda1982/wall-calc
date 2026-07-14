@@ -50,7 +50,7 @@
 import { useMemo, useRef, type RefObject } from 'react'
 import * as THREE from 'three'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { calcCeilingGrid, calcCeilingGridP113, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH } from '../core/ceilingGridGeometry'
+import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH } from '../core/ceilingGridGeometry'
 import { calcMinThicknessScale } from '../core/minScreenThickness'
 import { mmToM } from '../core/planTo3D'
 
@@ -310,10 +310,12 @@ export interface CeilingGridMeshProps {
 const ELEMENT_FOCUS_DISTANCE_M = 1.0
 
 /**
- * Собирает 3D-каркас подвесного потолка для ОДНОГО помещения. Раскладка —
- * по bounding box контура (см. ceilingGridGeometry.ts, v1 упрощение №1) —
- * для прямоугольных комнат (частый случай) это точно, для непрямоугольных —
- * сетка чуть шире фактического контура.
+ * Собирает 3D-каркас подвесного потолка для ОДНОГО помещения. Раскладка
+ * рядов по-прежнему считается по bounding box контура (см.
+ * ceilingGridGeometry.ts) — но результат подрезается по фактическому
+ * многоугольнику roomPoints (clipCeilingGridToPolygon, 13.07.2026), так что
+ * визуально профиль не выходит за пределы реальной комнаты, даже если она
+ * непрямоугольная или повёрнута относительно мировых осей.
  */
 export default function CeilingGridMesh({
   roomPoints, ceilingM, stepB = DEFAULT_GRID_STEP_B, stepC = DEFAULT_GRID_STEP_C, stepA,
@@ -341,10 +343,21 @@ export default function CeilingGridMesh({
     if (!bbox) return null
     const lengthMm = (bbox.maxX - bbox.minX) * 1000
     const widthMm = (bbox.maxZ - bbox.minZ) * 1000
-    return ceilingType === 'p113'
+    const rawGrid = ceilingType === 'p113'
       ? calcCeilingGridP113({ lengthMm, widthMm, stepB, stepC, mainAlongLength: bearingAlongLength, stepA })
       : calcCeilingGrid({ lengthMm, widthMm, stepB, stepC, bearingAlongLength, stepA })
-  }, [bbox, stepB, stepC, bearingAlongLength, stepA, ceilingType])
+    // 13.07.2026: rawGrid построен по bbox (см. calcCeilingGrid) — торчит
+    // за пределы фактического контура, если комната непрямоугольная или
+    // просто повёрнута относительно мировых осей (тогда и AABB шире самой
+    // комнаты). Подрезаем по реальному roomPoints, переведённому в ту же
+    // локальную систему координат, что и сегменты grid (мм, ноль — угол
+    // bbox). См. clipCeilingGridToPolygon в ceilingGridGeometry.ts.
+    const polygonLocalMm = roomPoints.map(p => ({
+      x: (p.x - bbox.minX) * 1000,
+      y: (p.z - bbox.minZ) * 1000,
+    }))
+    return clipCeilingGridToPolygon(rawGrid, polygonLocalMm)
+  }, [bbox, stepB, stepC, bearingAlongLength, stepA, ceilingType, roomPoints])
 
   // Вертикальная раскладка уровней относительно низа плиты (ceilingM), вниз:
   // 12.07.2026, ИСПРАВЛЕНИЕ: подвес крепится к ОСНОВНОМУ профилю (верхний
