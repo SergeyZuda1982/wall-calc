@@ -2564,8 +2564,9 @@ export default function FloorPlan() {
             {mode === 'opening' && (
               <div style={{ padding: '2px 14px 10px' }}>
                 <div style={{ fontSize: 10, color: '#8a9ac8', lineHeight: 1.4, marginBottom: 8 }}>
-                  Клик по стене на плане — проём ставится сразу там, по центру
-                  клика. Открывать панель каждой стены по отдельности не нужно.
+                  Наведите курсор на стену — увидите пунктиром, где именно
+                  встанет проём (зелёная рамка следует за курсором). Клик —
+                  подтвердить размещение по центру курсора.
                 </div>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
                   {(['door', 'window', 'opening'] as const).map(t => {
@@ -4231,6 +4232,46 @@ export default function FloorPlan() {
                               </Group>
                             )
                           })}
+
+                          {/* Превью проёма ДО клика (14.07.2026, жалоба пользователя:
+                              "не вижу куда я его ставлю" — заданы размеры в панели, но
+                              нет обратной связи, где именно на стене окажется проём,
+                              пока не кликнешь). Пока курсор наведён на эту стену в
+                              режиме 'opening' — рисуем полупрозрачный контур ровно
+                              там, где проём встанет при клике (та же проекция/клэмп,
+                              что и в placeOpeningOnLine → openingOffsetFromClick), с
+                              подписью ширины и отступа. Клик коммитит именно это. */}
+                          {mode === 'opening' && hoveredId === l.id && cursor && (() => {
+                            const defaultWidth = openingType === 'window' ? 1500 : 900
+                            const previewWidth = parseFloat(openingWidth) > 0 ? parseFloat(openingWidth) : defaultWidth
+                            const previewOffset = openingOffsetFromClick(
+                              l.x1, l.y1, l.x2, l.y2, l.lengthMm, cursor.x, cursor.y, previewWidth,
+                            )
+                            if (previewOffset === null) return null
+                            const pStartPx = previewOffset / scaleMmPx
+                            const pEndPx   = (previewOffset + previewWidth) / scaleMmPx
+                            const psx = l.x1 + ux*pStartPx, psy = l.y1 + uy*pStartPx
+                            const pex = l.x1 + ux*pEndPx,   pey = l.y1 + uy*pEndPx
+                            const pdx = pex-psx, pdy = pey-psy
+                            const plen = Math.sqrt(pdx*pdx + pdy*pdy)
+                            const pnx = plen > 0 ? -pdy/plen*half : 0
+                            const pny = plen > 0 ?  pdx/plen*half : 0
+                            const pAx=psx+pnx, pAy=psy+pny, pBx=pex+pnx, pBy=pey+pny
+                            const pCx=pex-pnx, pCy=pey-pny, pDx=psx-pnx, pDy=psy-pny
+                            const pmx = (psx+pex)/2, pmy = (psy+pey)/2
+                            return (
+                              <Group listening={false}>
+                                <Line points={[pAx,pAy, pBx,pBy, pCx,pCy, pDx,pDy]} closed
+                                  stroke="#2ee6a6" strokeWidth={2.5} dash={[7, 4]} fill="#2ee6a63a" />
+                                <Text x={pmx-55} y={pmy-24} width={110}
+                                  text={`${Math.round(previewWidth)}×${Math.round(parseFloat(openingHeight) || 0)}мм`}
+                                  fontSize={10} fill="#2ee6a6" align="center" fontStyle="bold" />
+                                <Text x={pmx-55} y={pmy+10} width={110}
+                                  text={`отступ ${Math.round(previewOffset)}мм`}
+                                  fontSize={9} fill="#2ee6a6" align="center" />
+                              </Group>
+                            )
+                          })()}
 
                           {/* Метка */}
                           {(() => {
