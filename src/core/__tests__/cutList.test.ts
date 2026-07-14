@@ -117,6 +117,18 @@ describe('pnPieces', () => {
     expect(sill?.mustBeWhole).toBe(true)
   })
 
+  it('тип "opening" (просто проём, sillHeight=0) вырезает пол, как дверь; sillHeight>0 — нет', () => {
+    const withoutSill = pnPieces(5000, [{ type: 'opening', pos: 1000, width: 1000, sillHeight: 0 }])
+    const floorTotal1 = withoutSill.filter(p => p.role === 'floor').reduce((s, p) => s + p.length, 0)
+    expect(floorTotal1).toBe(5000 - 1000)
+
+    const withSill = pnPieces(5000, [{ type: 'opening', pos: 1000, width: 800, sillHeight: 1200 }])
+    const floorTotal2 = withSill.filter(p => p.role === 'floor').reduce((s, p) => s + p.length, 0)
+    expect(floorTotal2).toBe(5000) // ниша выше пола — пол не прерывается
+    const sill = withSill.find(p => p.role === 'sill')
+    expect(sill?.length).toBe(800 + 400)
+  })
+
   it('потолок всегда полная длина стены (без проёмов в потолке)', () => {
     const pieces = pnPieces(5000, [{ type: 'door', pos: 500, width: 900, sillHeight: 0 }])
     const ceilTotal = pieces.filter(p => p.role === 'ceiling').reduce((s, p) => s + p.length, 0)

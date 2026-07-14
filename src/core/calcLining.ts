@@ -222,7 +222,7 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     const insideOpening = activeOpenings.find(o => pos > o.pos && pos < o.pos + o.width)
     const onOpeningEdge = activeOpenings.find(o => pos === o.pos || pos === o.pos + o.width)
     const kind: StudKind = insideOpening
-      ? insideOpening.type
+      ? (insideOpening.type === 'door' ? 'door' : 'window')
       : (pos === 0 || pos === l) ? edgeKind(pos) : 'middle'
     // Чередование ориентации нахлёста — как и раньше в компоненте, просто
     // по чётности индекса в массиве позиций (визуальный приём, не влияет

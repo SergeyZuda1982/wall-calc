@@ -103,7 +103,7 @@ export function buildCutList(pieces: Piece[]): CutListResult {
  */
 export function pnPieces(
   l: number,
-  openings: { type: 'door' | 'window'; pos: number; width: number; sillHeight: number }[],
+  openings: { type: 'door' | 'window' | 'opening'; pos: number; width: number; sillHeight: number }[],
   ceilingProfile?: { x: number; y: number }[],
   floorProfile?: { x: number; y: number }[],
 ): Piece[] {

@@ -56,6 +56,11 @@ function emptyDoor(): Opening {
 function emptyWindow(): Opening {
   return { id: newOpeningId(), type: 'window', pos: 0, width: 0, height: 1200, sillHeight: 900 }
 }
+function emptyOpening(): Opening {
+  // "Просто проём" (арка, ниша, портал) — по умолчанию от пола, без подоконника,
+  // высота как у двери. sillHeight можно задать вручную (например, ниша в стене).
+  return { id: newOpeningId(), type: 'opening', pos: 0, width: 0, height: 2100, sillHeight: 0 }
+}
 
 const DEFAULT_INPUT: WallInput = {
   wallType: 'c111',
@@ -280,8 +285,8 @@ export default function App() {
 
   // ─── Управление проёмами ───────────────────────────────────────────────────
 
-  function addOpening(type: 'door' | 'window') {
-    const o = type === 'door' ? emptyDoor() : emptyWindow()
+  function addOpening(type: 'door' | 'window' | 'opening') {
+    const o = type === 'door' ? emptyDoor() : type === 'window' ? emptyWindow() : emptyOpening()
     setForm(prev => ({ ...prev, openings: [...prev.openings, o] }))
   }
 
@@ -313,7 +318,7 @@ export default function App() {
       const a = activeOpenings[i], b = activeOpenings[j]
       const aEnd = a.pos + a.width, bEnd = b.pos + b.width
       if (a.pos < bEnd && aEnd > b.pos) {
-        const label = (o: typeof a) => o.type === 'door' ? 'Дверь' : 'Окно'
+        const label = (o: typeof a) => o.type === 'door' ? 'Дверь' : o.type === 'window' ? 'Окно' : 'Проём'
         openingConflicts.push(`${label(a)} (${a.pos}–${aEnd}) пересекается с ${label(b)} (${b.pos}–${bEnd})`)
       }
     }
@@ -792,18 +797,27 @@ export default function App() {
               style={{ padding: '4px 12px', fontSize: 12, cursor: 'pointer', background: '#f0fff4', border: '1px solid #aca', borderRadius: 4 }}>
               + Оконный
             </button>
+            <button onClick={() => addOpening('opening')}
+              style={{ padding: '4px 12px', fontSize: 12, cursor: 'pointer', background: '#f5f5f5', border: '1px solid #ccc', borderRadius: 4 }}>
+              + Проём
+            </button>
           </div>
 
           {form.openings.length === 0 && (
             <p style={{ margin: 0, fontSize: 12, color: '#999' }}>Нет проёмов — нажмите кнопку для добавления</p>
           )}
 
-          {form.openings.map((o, idx) => (
+          {form.openings.map((o, idx) => {
+            const bg = o.type === 'door' ? '#f8f0ff' : o.type === 'window' ? '#f0fff4' : '#f5f5f5'
+            const border = o.type === 'door' ? '#dcc' : o.type === 'window' ? '#cdc' : '#ccc'
+            const icon = o.type === 'door' ? '🚪' : o.type === 'window' ? '🪟' : '▭'
+            const label = o.type === 'door' ? 'Дверь' : o.type === 'window' ? 'Окно' : 'Проём'
+            return (
             <div key={o.id} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end',
-              marginBottom: 8, padding: '8px 10px', background: o.type === 'door' ? '#f8f0ff' : '#f0fff4',
-              border: `1px solid ${o.type === 'door' ? '#dcc' : '#cdc'}`, borderRadius: 6 }}>
+              marginBottom: 8, padding: '8px 10px', background: bg,
+              border: `1px solid ${border}`, borderRadius: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#666', minWidth: 60, paddingBottom: 6 }}>
-                {o.type === 'door' ? '🚪' : '🪟'} {o.type === 'door' ? 'Дверь' : 'Окно'} {idx + 1}
+                {icon} {label} {idx + 1}
               </span>
               <div style={{ flex: 1, minWidth: 110 }}>
                 <label style={{ fontSize: 11, color: '#666' }}>Начало (мм)</label><br />
@@ -820,11 +834,11 @@ export default function App() {
                 <input type="number" value={o.height || ''} onChange={e => updateOpening(o.id, { height: Number(e.target.value) })}
                   style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} />
               </div>
-              {o.type === 'window' && (
+              {(o.type === 'window' || o.type === 'opening') && (
                 <div style={{ flex: 1, minWidth: 110 }}>
                   <label style={{ fontSize: 11, color: '#666' }}>Подоконник (мм)</label><br />
                   <input type="number" value={o.sillHeight || ''} onChange={e => updateOpening(o.id, { sillHeight: Number(e.target.value) })}
-                    style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} />
+                    style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} placeholder="0 — от пола" />
                 </div>
               )}
               <button onClick={() => removeOpening(o.id)}
@@ -832,7 +846,8 @@ export default function App() {
                 🗑
               </button>
             </div>
-          ))}
+            )
+          })}
         </div>
 
         {/* ─── Нахлёст ─── */}
@@ -1020,9 +1035,12 @@ export default function App() {
                     )
                   })}
 
-                  {/* Направляющие ПН — пол (следует профилю пола, с вырезами под двери) — псевдо-3D */}
+                  {/* Направляющие ПН — пол (следует профилю пола, с вырезами под проёмы "от пола") — псевдо-3D */}
                   {(() => {
-                    const doorOpenings = snapOpenings.filter(o => o.type === 'door' && o.width > 0)
+                    // Совпадает с бэкендом (calcResults.ts/calcLining.ts): вырез не только под
+                    // дверью, а под любым проёмом без подоконника (sillHeight=0) — включая окно
+                    // "от пола" (панорамное остекление) и просто проём.
+                    const floorLevelOpenings = snapOpenings.filter(o => o.sillHeight === 0 && o.width > 0)
                     const floorY = (pos: number) => wallBotAt(pos) - 4
                     const rail3D = (pts: number[], key: string) => (
                       <Group key={key}>
@@ -1031,10 +1049,10 @@ export default function App() {
                         <Line points={pts} stroke={RAIL_LIGHT} strokeWidth={2}   lineCap="round" lineJoin="round" />
                       </Group>
                     )
-                    if (doorOpenings.length === 0) return rail3D(railPoints(floorProfile, floorY, 0, l), 'fl_all')
+                    if (floorLevelOpenings.length === 0) return rail3D(railPoints(floorProfile, floorY, 0, l), 'fl_all')
                     const segments: React.ReactNode[] = []
                     let cursor = 0
-                    for (const o of [...doorOpenings].sort((a, b) => a.pos - b.pos)) {
+                    for (const o of [...floorLevelOpenings].sort((a, b) => a.pos - b.pos)) {
                       if (o.pos > cursor) segments.push(rail3D(railPoints(floorProfile, floorY, cursor, o.pos), `fl${o.id}`))
                       cursor = o.pos + o.width
                     }
@@ -1059,15 +1077,15 @@ export default function App() {
                     const oBottom = wallBotAt(o.pos) - o.sillHeight * scale
                     const oTop = oBottom - o.height * scale
                     const oX = tx(o.pos), oW = o.width * scale
-                    const color = o.type === 'door' ? '#ddeeff' : '#ffeedd'
-                    const stroke = o.type === 'door' ? '#88aacc' : '#ccaa88'
+                    const color = o.type === 'door' ? '#ddeeff' : o.type === 'window' ? '#ffeedd' : '#eeeeee'
+                    const stroke = o.type === 'door' ? '#88aacc' : o.type === 'window' ? '#ccaa88' : '#aaaaaa'
                     return (
                       <Group key={`op${o.id}`}>
                         <Rect x={oX} y={oTop} width={oW} height={o.height * scale} fill={color} stroke={stroke} strokeWidth={1} />
                         {/* Перемычка сверху */}
                         <Rect x={oX - 10} y={oTop - 6} width={oW + 20} height={6} fill="#5a7080" />
-                        {/* Подоконник для окна */}
-                        {o.type === 'window' && o.sillHeight > 0 && (
+                        {/* Подоконник — у любого проёма с sillHeight>0 (окно, либо ниша-"проём") */}
+                        {o.sillHeight > 0 && (
                           <Rect x={oX} y={oBottom - 6} width={oW} height={6} fill="#5a7080" />
                         )}
                         <Text x={oX + oW / 2 - 20} y={oTop + o.height * scale / 2 - 6}

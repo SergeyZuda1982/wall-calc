@@ -58,6 +58,21 @@ describe('calcResults — направляющие ПН', () => {
     const r = calc(6000, 2700, 600, [d])
     expect(r.lintel).toBeCloseTo((900 + 400) / 1000)
   })
+
+  it('тип "opening" (просто проём, sillHeight=0) вычитается из пола, как дверь', () => {
+    const o: Opening = { id: 'o', type: 'opening', pos: 1000, width: 1000, height: 2100, sillHeight: 0 }
+    const r = calc(6000, 2700, 600, [o])
+    expect(r.uwFloor).toBeCloseTo((6000 - 1000) / 1000)
+    expect(r.uwSill).toBeCloseTo(0)
+    expect(r.lintel).toBeCloseTo((1000 + 400) / 1000) // перемычка нужна и у "просто проёма"
+  })
+
+  it('тип "opening" с sillHeight>0 (ниша) не вычитается из пола, добавляет подоконник', () => {
+    const o: Opening = { id: 'o', type: 'opening', pos: 1000, width: 800, height: 600, sillHeight: 1200 }
+    const r = calc(6000, 2700, 600, [o])
+    expect(r.uwFloor).toBeCloseTo(6) // пол не прерывается — ниша висит выше пола
+    expect(r.uwSill).toBeCloseTo((800 + 400) / 1000)
+  })
 })
 
 // ─── Стойки ПС ───────────────────────────────────────────────────────────────

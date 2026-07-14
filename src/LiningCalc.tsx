@@ -26,6 +26,9 @@ function emptyDoor(): Opening {
 function emptyWindow(): Opening {
   return { id: newLid(), type: 'window', pos: 0, width: 0, height: 1200, sillHeight: 900 }
 }
+function emptyOpening(): Opening {
+  return { id: newLid(), type: 'opening', pos: 0, width: 0, height: 2100, sillHeight: 0 }
+}
 
 const DEFAULT_INPUT: LiningInput = {
   liningType: 'c623',
@@ -67,8 +70,8 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
     setForm(prev => ({ ...prev, [key]: value }))
   }
 
-  function addOpening(type: 'door' | 'window') {
-    const o = type === 'door' ? emptyDoor() : emptyWindow()
+  function addOpening(type: 'door' | 'window' | 'opening') {
+    const o = type === 'door' ? emptyDoor() : type === 'window' ? emptyWindow() : emptyOpening()
     setForm(prev => ({ ...prev, openings: [...prev.openings, o] }))
   }
 
@@ -322,14 +325,21 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
             style={{ padding: '4px 12px', fontSize: 12, cursor: 'pointer', background: '#f0f4ff', border: '1px solid #aac', borderRadius: 4 }}>+ Дверной</button>
           <button onClick={() => addOpening('window')}
             style={{ padding: '4px 12px', fontSize: 12, cursor: 'pointer', background: '#f0fff4', border: '1px solid #aca', borderRadius: 4 }}>+ Оконный</button>
+          <button onClick={() => addOpening('opening')}
+            style={{ padding: '4px 12px', fontSize: 12, cursor: 'pointer', background: '#f5f5f5', border: '1px solid #ccc', borderRadius: 4 }}>+ Проём</button>
         </div>
         {form.openings.length === 0 && <p style={{ margin: 0, fontSize: 12, color: '#999' }}>Нет проёмов</p>}
-        {form.openings.map((o, idx) => (
+        {form.openings.map((o, idx) => {
+          const bg = o.type === 'door' ? '#f8f0ff' : o.type === 'window' ? '#f0fff4' : '#f5f5f5'
+          const border = o.type === 'door' ? '#dcc' : o.type === 'window' ? '#cdc' : '#ccc'
+          const icon = o.type === 'door' ? '🚪' : o.type === 'window' ? '🪟' : '▭'
+          const label = o.type === 'door' ? 'Дверь' : o.type === 'window' ? 'Окно' : 'Проём'
+          return (
           <div key={o.id} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end',
-            marginBottom: 8, padding: '8px 10px', background: o.type === 'door' ? '#f8f0ff' : '#f0fff4',
-            border: `1px solid ${o.type === 'door' ? '#dcc' : '#cdc'}`, borderRadius: 6 }}>
+            marginBottom: 8, padding: '8px 10px', background: bg,
+            border: `1px solid ${border}`, borderRadius: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: '#666', minWidth: 60, paddingBottom: 6 }}>
-              {o.type === 'door' ? '🚪' : '🪟'} {o.type === 'door' ? 'Дверь' : 'Окно'} {idx + 1}
+              {icon} {label} {idx + 1}
             </span>
             <div style={{ flex: 1, minWidth: 110 }}>
               <label style={{ fontSize: 11, color: '#666' }}>Начало (мм)</label><br />
@@ -343,16 +353,17 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
               <label style={{ fontSize: 11, color: '#666' }}>Высота (мм)</label><br />
               <input type="number" value={o.height || ''} onChange={e => updateOpening(o.id, { height: Number(e.target.value) })} style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} />
             </div>
-            {o.type === 'window' && (
+            {(o.type === 'window' || o.type === 'opening') && (
               <div style={{ flex: 1, minWidth: 110 }}>
                 <label style={{ fontSize: 11, color: '#666' }}>Подоконник (мм)</label><br />
-                <input type="number" value={o.sillHeight || ''} onChange={e => updateOpening(o.id, { sillHeight: Number(e.target.value) })} style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} />
+                <input type="number" value={o.sillHeight || ''} onChange={e => updateOpening(o.id, { sillHeight: Number(e.target.value) })} style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} placeholder="0 — от пола" />
               </div>
             )}
             <button onClick={() => removeOpening(o.id)}
               style={{ padding: '5px 8px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4, marginBottom: 1 }}>🗑</button>
           </div>
-        ))}
+          )
+        })}
       </div>
 
       <div style={{ marginBottom: 16 }}>

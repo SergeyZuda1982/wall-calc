@@ -126,7 +126,7 @@ export interface Profile {
 
 // ─── Проёмы ─────────────────────────────────────────────────────────────────
 
-export type OpeningType = 'door' | 'window'
+export type OpeningType = 'door' | 'window' | 'opening' // 'opening' — просто проём (проход/ниша), без двери/окна
 
 export interface Opening {
   id: string
