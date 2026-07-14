@@ -114,13 +114,15 @@ export function pnPieces(
   const segLen = (prof: { x: number; y: number }[] | undefined, from: number, to: number) =>
     profilePathLength(prof, from, to)
 
-  // ─── Пол: стена минус дверные проёмы → отдельные куски ──────────────────
-  const doorOpenings = activeOpenings
-    .filter(o => o.type === 'door')
+  // ─── Пол: стена минус проёмы "от пола" (sillHeight=0) → отдельные куски ──
+  // Не только дверные — так же и окно/проём без подоконника (например,
+  // панорамное остекление в пол).
+  const floorLevelOpenings = activeOpenings
+    .filter(o => o.sillHeight === 0)
     .sort((a, b) => a.pos - b.pos)
 
   let cursor = 0
-  for (const o of doorOpenings) {
+  for (const o of floorLevelOpenings) {
     if (o.pos > cursor) {
       let remaining = segLen(floorProfile, cursor, o.pos)
       while (remaining > 0) {

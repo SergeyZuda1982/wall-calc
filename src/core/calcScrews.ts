@@ -114,7 +114,11 @@ export function calcScrews(
   // ─── TN/MN/XTN — к перемычкам ────────────────────────────────────────────
   for (const o of activeOpenings) {
     const n = Math.ceil(o.width / SCREW_STEP)
-    if (o.type === 'door') {
+    // Саморезы нужны к перемычке всегда, и дополнительно к подоконной
+    // направляющей — только если она физически есть (sillHeight>0).
+    // Проём "от пола" (в т.ч. дверь, либо окно/проём без подоконника —
+    // например, панорамное остекление) подоконника не имеет.
+    if (o.sillHeight === 0) {
       count25 += n * sides
       if (gklLayers === 2) count35 += n * sides
     } else {

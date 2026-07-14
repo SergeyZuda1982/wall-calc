@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { calcLining } from '../calcLining'
-import type { LiningInput } from '../../types'
+import { buildPositions } from '../buildPositions'
+import type { LiningInput, Opening } from '../../types'
 import { DEFAULT_BOARD_SPEC } from '../../types'
 
 const base: LiningInput = {
@@ -123,5 +124,34 @@ describe('calcLining — переменная геометрия (ceilingProfile
     const res = calcLining({ ...base, length: 4000, ceilingProfile, floorProfile }, [0, 2000, 4000])
     const expected = ((2000 + 3000) / 2 * 4000) / 1_000_000 // без ×2 — облицовка однослойная по площади (не считает обе стороны)
     expect(res.gklArea).toBeCloseTo(expected, 2)
+  })
+})
+
+// ─── Направляющая ПН под проёмами "от пола" ─────────────────────────────────
+
+describe('calcLining — направляющая ПН под проёмами без подоконника', () => {
+  const floorTotalOf = (res: ReturnType<typeof calcLining>) =>
+    res.rawPieces.pn.filter(p => p.label.startsWith('Пол')).reduce((s, p) => s + p.length, 0)
+
+  it('дверной проём по-прежнему вычитает напольную направляющую', () => {
+    const d: Opening = { id: 'd', type: 'door', pos: 1000, width: 900, height: 2100, sillHeight: 0 }
+    const { positions } = buildPositions(6160, 3600, 600, [d])
+    const withDoor = calcLining({ ...base, openings: [d] }, positions)
+    expect(floorTotalOf(withDoor)).toBeCloseTo(6160 - 900, 0)
+  })
+
+  it('окно "от пола" (sillHeight=0, панорамное остекление) тоже вычитает напольную направляющую', () => {
+    const w: Opening = { id: 'w', type: 'window', pos: 1000, width: 1200, height: 3400, sillHeight: 0 }
+    const { positions } = buildPositions(6160, 3600, 600, [w])
+    const withWindow = calcLining({ ...base, openings: [w] }, positions)
+    // Раньше (баг) напольная направляющая под таким окном не вычиталась вовсе (была бы 6160)
+    expect(floorTotalOf(withWindow)).toBeCloseTo(6160 - 1200, 0)
+  })
+
+  it('обычное окно с подоконником (sillHeight>0) напольную направляющую НЕ вычитает', () => {
+    const w: Opening = { id: 'w', type: 'window', pos: 1000, width: 1200, height: 1200, sillHeight: 900 }
+    const { positions } = buildPositions(6160, 3600, 600, [w])
+    const withWindow = calcLining({ ...base, openings: [w] }, positions)
+    expect(floorTotalOf(withWindow)).toBeCloseTo(6160, 0) // пол не прерывается
   })
 })
