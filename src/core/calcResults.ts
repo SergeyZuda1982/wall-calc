@@ -1,5 +1,5 @@
-import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, AbutmentType, EdgeProfile, BoardSpec, PlywoodInsert } from '../types'
-import { DEFAULT_BOARD_SPEC } from '../types'
+import type { StudKind, StudInfo, StudOrientation, CalcResult, Opening, Communication, AbutmentType, EdgeProfile, BoardSpec, PlywoodInsert } from '../types'
+import { DEFAULT_BOARD_SPEC, COMM_HEADROOM_MIN } from '../types'
 import { calcScrews } from './calcScrews'
 import { calcStudMaterial, STUD_LENGTH } from './calcStudMaterial'
 import { buildOpeningStuds, mergeStuds, attachStudHeights } from './buildPositions'
@@ -30,7 +30,7 @@ function assignOrientations(
       orientation = lastMiddleOrientation === 'down' ? 'up' : 'down'
     }
 
-    return { pos, kind, height, orientation, isAbove: false, openingId: null }
+    return { pos, kind, height, orientation, isAbove: false, openingId: null, communicationId: null }
   })
 }
 
@@ -46,6 +46,30 @@ function assignOpeningContext(
       }
       if (si.pos === o.pos || si.pos === o.pos + o.width) {
         return { ...si, openingId: o.id }
+      }
+    }
+    return si
+  })
+}
+
+/**
+ * Транзитные коммуникации (14.07.2026) — рядовая стойка, попадающая в
+ * диапазон коммуникации, НЕ превращается в торцевую (в отличие от проёма):
+ * она остаётся 'middle'/'user' как была, только помечается isAbove +
+ * communicationId, чтобы её материал/раскрой считались двумя кусками
+ * (см. aboveHeight/belowHeight ниже). Стойка, уже относящаяся к проёму,
+ * не переопределяется (зоны проёмов и коммуникаций не должны пересекаться).
+ */
+function assignCommunicationContext(
+  studInfos: StudInfo[],
+  communications: Communication[],
+): StudInfo[] {
+  const active = communications.filter(c => c.width > 0)
+  return studInfos.map(si => {
+    if (si.openingId) return si
+    for (const c of active) {
+      if (si.pos > c.pos && si.pos < c.pos + c.width) {
+        return { ...si, isAbove: true, communicationId: c.id }
       }
     }
     return si
@@ -69,8 +93,10 @@ export function calcResults(
   // (обшивка только с внешней стороны, вторая сторона ряда обращена
   // в зазор между каркасами и ничем не обшивается сама по себе).
   sides: 1 | 2 = 2,
+  communications: Communication[] = [],
 ): CalcResult {
   const activeOpenings = openings.filter(o => o.width > 0)
+  const activeCommunications = communications.filter(c => c.width > 0)
 
   const openingStuds = buildOpeningStuds(openings)
   const openingPositions = new Set(openingStuds.map(s => s.pos))
@@ -78,7 +104,8 @@ export function calcResults(
   const merged = mergeStuds(grid, openingStuds, l, abutment as AbutmentType)
   const withHeights = attachStudHeights(merged, ceilingProfile, floorProfile)
   const withOrientation = assignOrientations(withHeights)
-  const studInfos = assignOpeningContext(withOrientation, openings)
+  const withOpenings = assignOpeningContext(withOrientation, openings)
+  const studInfos = assignCommunicationContext(withOpenings, activeCommunications)
 
   // ─── Расчёт материала ────────────────────────────────────────────────────
 
@@ -94,14 +121,32 @@ export function calcResults(
     return o.sillHeight
   }
 
+  // Запас от верха коммуникации до верхнего ПН в её собственной точке pos
+  // (единая точка отсчёта для решения "ставить верхнюю перемычку или нет" —
+  // тот же приём, что и aboveStudHeight ниже для первого проёма).
+  function commHeadroom(c: Communication): number {
+    return studHeightAt(c.pos, ceilingProfile, floorProfile) - c.top
+  }
+  function commHasTop(c: Communication): boolean {
+    return commHeadroom(c) > COMM_HEADROOM_MIN
+  }
+
   let cwTotal = 0
   let aboveStuds = 0
 
   for (const si of studInfos) {
-    const { kind, isAbove, orientation, openingId, height } = si
+    const { kind, isAbove, orientation, openingId, communicationId, height } = si
     if (isAbove && openingId) {
       cwTotal += aboveHeight(si, openingId) + belowHeight(openingId)
       aboveStuds++
+    } else if (isAbove && communicationId) {
+      const c = activeCommunications.find(x => x.id === communicationId)
+      if (c) {
+        const belowLen = c.bottom
+        const aboveLen = commHasTop(c) ? (height - c.top) : 0
+        cwTotal += belowLen + aboveLen
+        aboveStuds++
+      }
     } else {
       const calcKind: StudKind = (kind === 'door' || kind === 'window') ? 'middle' : kind
       cwTotal += calcStudMaterial(height, calcKind, overlap, orientation).length
@@ -121,6 +166,13 @@ export function calcResults(
     .reduce((s, o) => s + o.width + 2 * SILL_TRACK_MARGIN, 0)
 
   const lintelTotal = activeOpenings.reduce((s, o) => s + (o.width + 400), 0)
+
+  // Перемычки коммуникаций — нижняя всегда, верхняя только если commHasTop.
+  // Та же формула "ширина+400", что и у проёмов (см. КОНСПЕКТ 14.07.2026).
+  const commLintelTotal = activeCommunications.reduce((s, c) => {
+    const len = c.width + 400
+    return s + len + (commHasTop(c) ? len : 0)
+  }, 0)
 
   // ─── ГКЛ ─────────────────────────────────────────────────────────────────
   // Площадь между потолком и полом интегрируется по всей длине стены
@@ -152,8 +204,8 @@ export function calcResults(
     return total
   })()
 
-  const pnCuts = pnPieces(l, activeOpenings, ceilingProfile, floorProfile)
-  const psCuts = psPieces(studInfos, worstHeight, overlap, activeOpenings)
+  const pnCuts = pnPieces(l, activeOpenings, ceilingProfile, floorProfile, activeCommunications)
+  const psCuts = psPieces(studInfos, worstHeight, overlap, activeOpenings, activeCommunications)
 
   const sealingTape = calcSealingTape(ceilPathLen, floorSegPathLen, studInfos)
 
@@ -172,13 +224,16 @@ export function calcResults(
     overlap,
     plywoodInserts,
     positions,
+    activeCommunications,
+    ceilingProfile,
+    floorProfile,
   )
 
   return {
     uwFloor:      floorSegPathLen / 1000,
     uwCeiling:    ceilPathLen / 1000,
     uwSill:       sillTrackTotal / 1000,
-    lintel:       lintelTotal / 1000,
+    lintel:       (lintelTotal + commLintelTotal) / 1000,
     cwTotal:      cwTotal / 1000,
     studsCount:   positions.length,
     aboveStuds,

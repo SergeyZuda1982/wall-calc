@@ -1,4 +1,5 @@
-import type { LiningInput, LiningResult, StudInfo, StudKind } from '../types'
+import type { LiningInput, LiningResult, StudInfo, StudKind, Communication } from '../types'
+import { COMM_HEADROOM_MIN } from '../types'
 import { calcScrews } from './calcScrews'
 import { buildCutList, BAR_LENGTH } from './cutList'
 import { middleStudTotalLength, middleStudPieceCount } from './calcStudMaterial'
@@ -10,6 +11,7 @@ const STUD_LENGTH = 3000
 export function calcLining(input: LiningInput, positions: number[]): LiningResult {
   const { length: l, height: h, hangerStep, gklLayers, openings, layer1, layer2, plywoodInserts } = input
   const activeOpenings = openings.filter(o => o.width > 0)
+  const activeCommunications = (input.communications ?? []).filter(c => c.width > 0)
 
   const isC623 = input.liningType === 'c623'
 
@@ -39,6 +41,16 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   })()
   const lintelTotal = activeOpenings.reduce((s, o) => s + (o.width + 400), 0)
 
+  // Коммуникации (14.07.2026): нижняя перемычка всегда, верхняя — если запас
+  // от верха коммуникации до верхнего ПН больше COMM_HEADROOM_MIN.
+  function commHasTop(c: Communication): boolean {
+    return heightAt(c.pos) - c.top > COMM_HEADROOM_MIN
+  }
+  const commLintelTotal = activeCommunications.reduce((s, c) => {
+    const len = c.width + 400
+    return s + len + (commHasTop(c) ? len : 0)
+  }, 0)
+
   // Боковые направляющие (С623) — на той стороне(ах), где облицовка примыкает
   // к существующей стене (см. edgeKind ниже): pos=0 при abutment 'both'/'left',
   // pos=l при abutment 'both'/'right'. Длина — локальная высота в этой точке.
@@ -47,9 +59,9 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     let sideRail = 0
     if (input.abutment === 'both' || input.abutment === 'left')  sideRail += heightAt(0)
     if (input.abutment === 'both' || input.abutment === 'right') sideRail += heightAt(l)
-    guideRail = (floorRail + ceilingRail + sideRail + lintelTotal) / 1000
+    guideRail = (floorRail + ceilingRail + sideRail + lintelTotal + commLintelTotal) / 1000
   } else {
-    guideRail = (floorRail + ceilingRail + lintelTotal) / 1000
+    guideRail = (floorRail + ceilingRail + lintelTotal + commLintelTotal) / 1000
   }
 
   // ─── Стойки ──────────────────────────────────────────────────────────────
@@ -83,6 +95,20 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     return null
   }
 
+  // Коммуникации: стойка ОСТАЁТСЯ на позиции (не становится door/window),
+  // но режется на кусок под коммуникацией (всегда) и, если есть запас,
+  // кусок над ней (см. commHasTop выше).
+  function commSplit(pos: number): { belowLen: number; aboveLen: number; id: string } | null {
+    for (const c of activeCommunications) {
+      if (pos > c.pos && pos < c.pos + c.width) {
+        const belowLen = c.bottom
+        const aboveLen = commHasTop(c) ? (heightAt(pos) - c.top) : 0
+        return { belowLen, aboveLen, id: c.id }
+      }
+    }
+    return null
+  }
+
   let studTotal = 0
   let aboveStuds = 0
   let hangers = 0
@@ -94,10 +120,21 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
 
   for (const pos of countablePositions) {
     const above = aboveHeight(pos)
-    const sh = above !== null ? above : heightAt(pos)
-    const kind = above !== null ? 'middle' : edgeKind(pos)
-    studTotal += studLen(sh, kind)
-    if (above !== null) aboveStuds++
+    const comm = above === null ? commSplit(pos) : null
+
+    let sh: number // высота для hangers/extenders (C623) — общая по позиции
+    if (above !== null) {
+      sh = above
+      studTotal += studLen(sh, 'middle')
+      aboveStuds++
+    } else if (comm !== null) {
+      sh = comm.belowLen + comm.aboveLen
+      studTotal += studLen(comm.belowLen, 'middle') + (comm.aboveLen > 0 ? studLen(comm.aboveLen, 'middle') : 0)
+      aboveStuds++
+    } else {
+      sh = heightAt(pos)
+      studTotal += studLen(sh, edgeKind(pos))
+    }
 
     if (isC623) {
       hangers += Math.ceil(sh / hangerStep)
@@ -155,6 +192,15 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     pnPcs.push({ length: len, role: 'lintel', label: `Перемычка ${len}мм`, mustBeWhole: true })
   }
 
+  // Перемычки коммуникаций — нижняя всегда, верхняя если запас > 400мм
+  for (const c of activeCommunications) {
+    const len = c.width + 400
+    pnPcs.push({ length: len, role: 'lintel', label: `Перемычка под коммуникацией ${len}мм`, mustBeWhole: true })
+    if (commHasTop(c)) {
+      pnPcs.push({ length: len, role: 'lintel', label: `Перемычка над коммуникацией ${len}мм`, mustBeWhole: true })
+    }
+  }
+
   // ПС (С625/С626) или ПП 60×27 (С623): стойки
   const studPcs: Piece[] = []
 
@@ -171,6 +217,16 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
       const o = activeOpenings.find(o => pos > o.pos && pos < o.pos + o.width)
       if (o && o.sillHeight > 0) {
         studPcs.push({ length: o.sillHeight, role: 'stud_part', label: `Под подоконником ${o.sillHeight}мм`, mustBeWhole: false })
+      }
+    } else if (commSplit(pos) !== null) {
+      // Стойка в зоне коммуникации — остаётся на позиции, режется на кусок
+      // под коммуникацией (всегда) и, если есть запас, кусок над ней.
+      const c = commSplit(pos)!
+      if (c.belowLen > 0) {
+        studPcs.push({ length: c.belowLen, role: 'stud_part', label: `Под коммуникацией ${c.belowLen}мм`, mustBeWhole: false })
+      }
+      if (c.aboveLen > 0) {
+        studPcs.push({ length: c.aboveLen, role: 'stud_part', label: `Над коммуникацией ${c.aboveLen}мм`, mustBeWhole: false })
       }
     } else if (sh <= STUD_LENGTH) {
       // Высота вписывается в один профиль — один кусок
@@ -221,6 +277,7 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
   const studInfos: StudInfo[] = positions.map((pos, idx) => {
     const insideOpening = activeOpenings.find(o => pos > o.pos && pos < o.pos + o.width)
     const onOpeningEdge = activeOpenings.find(o => pos === o.pos || pos === o.pos + o.width)
+    const insideCommunication = !insideOpening ? activeCommunications.find(c => pos > c.pos && pos < c.pos + c.width) : undefined
     const kind: StudKind = insideOpening
       ? (insideOpening.type === 'door' ? 'door' : 'window')
       : (pos === 0 || pos === l) ? edgeKind(pos) : 'middle'
@@ -233,8 +290,9 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
       kind,
       height: heightAt(pos),
       orientation,
-      isAbove: !!insideOpening,
+      isAbove: !!insideOpening || !!insideCommunication,
       openingId: insideOpening?.id ?? onOpeningEdge?.id ?? null,
+      communicationId: insideCommunication?.id ?? null,
     }
   })
 
@@ -248,6 +306,9 @@ export function calcLining(input: LiningInput, positions: number[]): LiningResul
     input.profileType === 'ps50' ? 500 : input.profileType === 'ps75' ? 750 : 1000,
     plywoodInserts,
     positions,
+    activeCommunications,
+    ceilingProfile,
+    floorProfile,
   )
 
   return {

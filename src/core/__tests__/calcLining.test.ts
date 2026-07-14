@@ -15,6 +15,7 @@ const base: LiningInput = {
   hangerStep: 1000,
   abutment: 'both',
   openings: [],
+  communications: [],
   layer1: DEFAULT_BOARD_SPEC,
   layer2: DEFAULT_BOARD_SPEC,
   plywoodInserts: [],

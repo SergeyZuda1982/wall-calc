@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
-import type { LiningInput, LiningResult, Opening, EdgeProfile, PlywoodInsert, BoardSheetResult, BoardLayerLayout } from './types'
+import type { LiningInput, LiningResult, Opening, Communication, EdgeProfile, PlywoodInsert, BoardSheetResult, BoardLayerLayout } from './types'
 import { DEFAULT_BOARD_SPEC, boardLabel } from './types'
 import { calcSheetLayout } from './core/calcSheetLayout'
 import SheetLayoutCanvas from './components/SheetLayoutCanvas'
@@ -41,6 +41,7 @@ const DEFAULT_INPUT: LiningInput = {
   hangerStep: 1000,
   abutment: 'both',
   openings: [],
+  communications: [],
   layer1: DEFAULT_BOARD_SPEC,
   layer2: DEFAULT_BOARD_SPEC,
   plywoodInserts: [],
@@ -81,6 +82,19 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
 
   function removeOpening(id: string) {
     setForm(prev => ({ ...prev, openings: prev.openings.filter(o => o.id !== id) }))
+  }
+
+  function addCommunication() {
+    const c: Communication = { id: newLid(), pos: 0, width: 0, bottom: 1200, top: 1800 }
+    setForm(prev => ({ ...prev, communications: [...prev.communications, c] }))
+  }
+
+  function updateCommunication(id: string, patch: Partial<Communication>) {
+    setForm(prev => ({ ...prev, communications: prev.communications.map(c => c.id === id ? { ...c, ...patch } : c) }))
+  }
+
+  function removeCommunication(id: string) {
+    setForm(prev => ({ ...prev, communications: prev.communications.filter(c => c.id !== id) }))
   }
 
   const isC623 = form.liningType === 'c623'
@@ -364,6 +378,46 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
           </div>
           )
         })}
+      </div>
+
+      {/* ─── Коммуникации (транзитные) ─── */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#444' }}>Коммуникации (транзитные)</span>
+          <button onClick={addCommunication}
+            style={{ padding: '4px 12px', fontSize: 12, cursor: 'pointer', background: '#fff8e8', border: '1px solid #d9c48a', borderRadius: 4 }}>+ Коммуникация</button>
+        </div>
+        <p style={{ margin: '0 0 8px', fontSize: 11, color: '#888' }}>
+          Лоток/труба сквозь стену: стойка на этой позиции не убирается, режется перемычкой снизу (всегда) и сверху (если запас до ПН &gt;400мм).
+        </p>
+        {form.communications.length === 0 && <p style={{ margin: 0, fontSize: 12, color: '#999' }}>Нет коммуникаций</p>}
+        {form.communications.map((c, idx) => (
+          <div key={c.id} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end',
+            marginBottom: 8, padding: '8px 10px', background: '#fffaf0',
+            border: '1px solid #d9c48a', borderRadius: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#666', minWidth: 60, paddingBottom: 6 }}>
+              🛠 Комм. {idx + 1}
+            </span>
+            <div style={{ flex: 1, minWidth: 110 }}>
+              <label style={{ fontSize: 11, color: '#666' }}>Начало (мм)</label><br />
+              <input type="number" value={c.pos || ''} onChange={e => updateCommunication(c.id, { pos: Number(e.target.value) })} style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 110 }}>
+              <label style={{ fontSize: 11, color: '#666' }}>Ширина (мм)</label><br />
+              <input type="number" value={c.width || ''} onChange={e => updateCommunication(c.id, { width: Number(e.target.value) })} style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 110 }}>
+              <label style={{ fontSize: 11, color: '#666' }}>Низ от пола (мм)</label><br />
+              <input type="number" value={c.bottom || ''} onChange={e => updateCommunication(c.id, { bottom: Number(e.target.value) })} style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 110 }}>
+              <label style={{ fontSize: 11, color: '#666' }}>Верх от пола (мм)</label><br />
+              <input type="number" value={c.top || ''} onChange={e => updateCommunication(c.id, { top: Number(e.target.value) })} style={{ width: '100%', padding: '5px 6px', fontSize: 13 }} />
+            </div>
+            <button onClick={() => removeCommunication(c.id)}
+              style={{ padding: '5px 8px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4, marginBottom: 1 }}>🗑</button>
+          </div>
+        ))}
       </div>
 
       <div style={{ marginBottom: 16 }}>

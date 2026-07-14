@@ -105,6 +105,7 @@ export function planLineToWallInput(line: PlanLine, attachments?: LineAttachment
     step,
     firstStud: step, // калька: позиции стоек на линии плана не хранятся (как в planLineToSurfaceInput)
     openings: mapOpenings(line),
+    communications: [],
     layer1: line.spec.layer1 ?? DEFAULT_BOARD_SPEC,
     layer2: line.spec.layer2 ?? DEFAULT_BOARD_SPEC,
     plywoodInserts: [],

@@ -32,7 +32,7 @@ export interface UseWallCalcReturn {
 
 export function useWallCalc(): UseWallCalcReturn {
   const [positions, setPositions] = useState<number[]>([])
-  const [snap, setSnap] = useState<DrawingSnap>({ l: 0, h: 0, openings: [], ceilingProfile: [], floorProfile: [] })
+  const [snap, setSnap] = useState<DrawingSnap>({ l: 0, h: 0, openings: [], communications: [], ceilingProfile: [], floorProfile: [] })
   const [result, setResult] = useState<CalcResult | null>(null)
   const [heightWarning, setHeightWarning] = useState<string | null>(null)
   const [currentFirstStud, setCurrentFirstStud] = useState(0)
@@ -70,6 +70,8 @@ export function useWallCalc(): UseWallCalcReturn {
       layer1Ref.current ?? DEFAULT_BOARD_SPEC,
       layer2Ref.current ?? DEFAULT_BOARD_SPEC,
       plywoodRef.current,
+      2,
+      currentSnap.communications,
     )
     setResult(res)
   }
@@ -112,7 +114,7 @@ export function useWallCalc(): UseWallCalcReturn {
     }
 
     const { positions: studs, phase } = buildPositions(l, s, firstStud, openings)
-    const newSnap: DrawingSnap = { l, h, openings, ceilingProfile, floorProfile }
+    const newSnap: DrawingSnap = { l, h, openings, communications: input.communications ?? [], ceilingProfile, floorProfile }
 
     phaseRef.current = phase
     gridShiftRef.current = 0
