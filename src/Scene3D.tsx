@@ -35,6 +35,9 @@ import { formatDistanceM } from './core/formatDistance'
 import { lineProgressColor, lineProgressSummary, wallGklVisual3D } from './core/lineProgress'
 import { finishSidesOf } from './core/finishResolver'
 import { getWallTexture, tintOverTexture } from './textures3D'
+import { resolveWallProfileType } from './core/planLineToWallInput'
+import { resolveLiningProfileType } from './core/planLineToLiningInput'
+import { wallProfileGeometryM, STUD_FLANGE_MM, TRACK_FLANGE_MM } from './components/wallProfileGeometry'
 
 const TYPE_COLOR_3D: Record<PlanLineType, string> = {
   wall_new:      '#e57373',
@@ -51,11 +54,35 @@ const COLUMN_COLOR = '#9aa5ad'
 const CONCRETE_DEFAULT_TILE_M = 2
 
 // ─── Каркас/обшивка ГКЛ-стены (Этап 2 "реалистичные материалы", 10-11.07.2026) ─
-const FRAME_PROFILE_W_M = 0.05     // ширина полки профиля (схематично, ПС50/75/100 визуально не отличаем)
-const FRAME_TRACK_H_M = 0.05       // высота направляющей (верх/низ)
+// 14.07.2026: реальные размеры лицевой полки ПС/ПН (см. wallProfileGeometry.ts,
+// STUD_FLANGE_MM/TRACK_FLANGE_MM — то же значение, константы здесь просто для
+// удобства позиционирования группы без импорта в размерности "полка/2").
+const FRAME_PROFILE_W_M = STUD_FLANGE_MM / 1000   // полка стойки (ПС) — 50мм
+const FRAME_TRACK_H_M = TRACK_FLANGE_MM / 1000    // полка направляющей (ПН) — 40мм, короче стойки
 const FRAME_PROFILE_COLOR = '#8a9199'
 const GKL_SHEET_THICKNESS_M = 0.0125 // стандартный лист 12.5мм
 const GKL_SHEET_COLOR = '#d9d4c5'
+
+/**
+ * Глубина профиля (мм, в толщу стены) по подтипу линии — 14.07.2026, для
+ * реального сечения (wallProfileGeometry.ts) вместо схематичной box.size.sz*0.9.
+ * wall_new -> resolveWallProfileType (ps50/75/100 -> 50/75/100мм). wall_lining
+ * -> resolveLiningProfileType (тот же справочник значений ProfileType, см.
+ * planLineToLiningInput.ts — включая С623/frame_pn28, там подставляется
+ * дефолт 'ps75' просто чтобы было валидное значение, физически это другая
+ * система (обрешётка на кляймерах), но для схематичной 3D-глубины сойдёт —
+ * тот же порядок допущения, что уже был в комментарии wallStudPositionsMm).
+ * Для неподдержанных подтипов (ps125/double и т.п.) или линий без подтипа —
+ * null, вызывающая сторона откатывается на прежнюю оценку по box.size.sz.
+ */
+function wallProfileDepthMm(line: PlanLine | undefined): number | null {
+  if (!line) return null
+  const profileType = line.type === 'wall_lining'
+    ? resolveLiningProfileType(line.spec?.subtype)
+    : resolveWallProfileType(line.spec?.subtype)
+  if (!profileType) return null
+  return { ps50: 50, ps75: 75, ps100: 100 }[profileType]
+}
 
 /**
  * Стена в 3D — коробка three.js. Клик по стене (10.07.2026, выбор стены в
@@ -115,6 +142,24 @@ function WallMesh({ box, line, opacity = 1, selected = false, measuring = false,
       .map(p => (p - fromMm) / 1000 - box.size.sx / 2)
   }, [showFrame, line, box.alongFromM, box.alongToM, box.size.sx])
 
+  // 14.07.2026: реальное сечение ПС/ПН (см. wallProfileGeometry.ts) вместо
+  // прямоугольных boxGeometry — глубина по подтипу профиля, если известен
+  // (wallProfileDepthMm), иначе прежняя приближённая оценка по box.size.sz.
+  // Геометрия одна на все стойки сегмента / обе направляющие (позиция —
+  // отдельно у каждого <mesh>), а не по штуке — дешевле для GC.
+  const depthMm = useMemo(
+    () => wallProfileDepthMm(line) ?? box.size.sz * 1000 * 0.9,
+    [line, box.size.sz],
+  )
+  const trackGeo = useMemo(
+    () => (showFrame ? wallProfileGeometryM(box.size.sx * 1000, depthMm, TRACK_FLANGE_MM, 'x') : null),
+    [showFrame, box.size.sx, depthMm],
+  )
+  const studGeo = useMemo(
+    () => (showFrame ? wallProfileGeometryM((box.size.sy - 2 * FRAME_TRACK_H_M) * 1000, depthMm, STUD_FLANGE_MM, 'y') : null),
+    [showFrame, box.size.sy, depthMm],
+  )
+
   function handleClick(e: ThreeEvent<MouseEvent>) {
     if (measuring || !onSelect) return
     e.stopPropagation()
@@ -145,19 +190,17 @@ function WallMesh({ box, line, opacity = 1, selected = false, measuring = false,
           />
         </mesh>
       )}
-      {showFrame && (
+      {showFrame && trackGeo && studGeo && (
         <>
           {/* верхняя/нижняя направляющая */}
           {[1, -1].map(sign => (
-            <mesh key={`track-${sign}`} position={[0, sign * (box.size.sy / 2 - FRAME_TRACK_H_M / 2), 0]} castShadow receiveShadow>
-              <boxGeometry args={[box.size.sx, FRAME_TRACK_H_M, box.size.sz * 0.9]} />
+            <mesh key={`track-${sign}`} geometry={trackGeo} position={[0, sign * (box.size.sy / 2 - FRAME_TRACK_H_M / 2), 0]} castShadow receiveShadow>
               <meshStandardMaterial color={FRAME_PROFILE_COLOR} roughness={0.4} metalness={0.5} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
             </mesh>
           ))}
           {/* торцевые + рядовые стойки (торцевые — на реальной границе сегмента, всегда) */}
           {[-(box.size.sx / 2 - FRAME_PROFILE_W_M / 2), ...studLocalXs, box.size.sx / 2 - FRAME_PROFILE_W_M / 2].map((x, i) => (
-            <mesh key={`stud-${i}`} position={[x, 0, 0]} castShadow receiveShadow>
-              <boxGeometry args={[FRAME_PROFILE_W_M, box.size.sy - 2 * FRAME_TRACK_H_M, box.size.sz * 0.9]} />
+            <mesh key={`stud-${i}`} geometry={studGeo} position={[x, 0, 0]} castShadow receiveShadow>
               <meshStandardMaterial color={FRAME_PROFILE_COLOR} roughness={0.4} metalness={0.5} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
             </mesh>
           ))}
