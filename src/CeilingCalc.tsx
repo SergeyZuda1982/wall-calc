@@ -19,6 +19,7 @@ import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { useProjectStore } from './store/useProjectStore'
 import type { Point2D } from './core/geometry2d'
 import { polygonSides } from './core/geometry2d'
+import CeilingCalc3DPreview from './components/CeilingCalc3DPreview'
 import type { CeilingSeedZone } from './store/useCeilingSeedStore'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
@@ -111,6 +112,11 @@ export default function CeilingCalc() {
   const [shiftMainMm, setShiftMainMm]       = useState(0)   // сдвиг основных ПП по X
   const [shiftBearingMm, setShiftBearingMm] = useState(0)   // сдвиг несущих ПП по Y
   const [result, setResult] = useState<CeilingCalcResult | null>(null)
+  // НОВОЕ (13.07.2026, по прямому запросу пользователя): переключатель
+  // 2D/3D холста — раньше результат расчёта, введённый вручную (без
+  // "засева" с плана), был виден только в 2D CeilingCanvas, в 3D никак не
+  // отражался (см. шапку CeilingCalc3DPreview.tsx).
+  const [previewMode, setPreviewMode] = useState<'2d' | '3d'>('2d')
   const canvasRef = useRef<HTMLDivElement>(null)
   const [canvasW, setCanvasW] = useState(600)
   const [seedBanner, setSeedBanner] = useState<{ label: string; holesCount: number; zoneCount: number } | null>(null)
@@ -674,6 +680,18 @@ export default function CeilingCalc() {
 
             {/* Холст */}
             <div style={{ background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, padding: 12 }}>
+              {hasRoom && (
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                  <button onClick={() => setPreviewMode('2d')} style={{
+                    padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                    background: previewMode === '2d' ? C.accent : C.bg, color: previewMode === '2d' ? '#fff' : C.muted,
+                  }}>Схема (2D)</button>
+                  <button onClick={() => setPreviewMode('3d')} style={{
+                    padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                    background: previewMode === '3d' ? C.accent : C.bg, color: previewMode === '3d' ? '#fff' : C.muted,
+                  }}>3D</button>
+                </div>
+              )}
               <div ref={canvasRef}>
                 {!hasRoom ? (
                   seedZones ? (
@@ -692,6 +710,16 @@ export default function CeilingCalc() {
                       <div style={{ fontSize: 15, fontWeight: 500 }}>Введите размеры помещения</div>
                     </div>
                   )
+                ) : previewMode === '3d' ? (
+                  <CeilingCalc3DPreview
+                    lengthMm={form.roomLengthMm}
+                    widthMm={form.roomWidthMm}
+                    ceilingType={form.type}
+                    stepB={frameParamsUi.stepB}
+                    stepC={form.stepC}
+                    stepA={frameParamsUi.stepA}
+                    bearingAlongLength={form.bearingAlongLength}
+                  />
                 ) : (
                   <CeilingCanvas
                     form={form}
