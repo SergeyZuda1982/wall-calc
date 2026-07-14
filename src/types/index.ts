@@ -137,6 +137,22 @@ export interface Opening {
   sillHeight: number
 }
 
+// ─── Транзитные коммуникации (лоток/труба сквозь стену, 14.07.2026) ─────────
+// Рядовая стойка, попадающая в диапазон [pos, pos+width], НЕ убирается и не
+// заменяется торцевыми стойками (в отличие от Opening) — она остаётся на
+// своей позиции, но режется по высоте нижней перемычкой на отметке bottom.
+// Верхняя перемычка + продолжение стойки до верхнего ПН — только если запас
+// (верхний ПН − top) больше COMM_HEADROOM_MIN.
+export interface Communication {
+  id: string
+  pos: number     // смещение от начала стены, мм
+  width: number   // ширина коммуникации вдоль стены, мм
+  bottom: number  // высота низа коммуникации от пола, мм
+  top: number     // высота верха коммуникации от пола, мм
+}
+
+export const COMM_HEADROOM_MIN = 400
+
 // ─── Перегородка ────────────────────────────────────────────────────────────
 
 export type WallType = 'c111' | 'c112'
@@ -172,6 +188,7 @@ export interface StudInfo {
   orientation: StudOrientation
   isAbove: boolean
   openingId: string | null
+  communicationId: string | null
   height: number // локальная высота стойки (потолок−пол) в точке pos, мм
 }
 
@@ -185,6 +202,7 @@ export interface WallInput {
   step: number
   firstStud: number
   openings: Opening[]
+  communications: Communication[]
   customOverlap?: number | null
   // Если заданы (≥2 точек) — переопределяют плоское height переменной геометрией
   // (мансардный скос, ломаная линия, ступени пола). Если не заданы — стена плоская,
@@ -218,6 +236,7 @@ export interface DrawingSnap {
   l: number
   h: number
   openings: Opening[]
+  communications: Communication[]
   ceilingProfile: EdgeProfile
   floorProfile: EdgeProfile
 }
@@ -238,6 +257,7 @@ export interface LiningInput {
   hangerStep: number
   abutment: AbutmentType
   openings: Opening[]
+  communications: Communication[]
   ceilingProfile?: EdgeProfile
   floorProfile?: EdgeProfile
   layer1: BoardSpec

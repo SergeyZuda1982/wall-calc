@@ -13,9 +13,10 @@
  * — Не-Кнауф TN/MN/XTN: +20% (отображается в UI, не в этом модуле).
  */
 
-import type { StudInfo, Opening, PlywoodInsert, ScrewResult, BoardSpec } from '../types'
-import { screwCode } from '../types'
+import type { StudInfo, Opening, Communication, PlywoodInsert, ScrewResult, BoardSpec, EdgeProfile } from '../types'
+import { screwCode, COMM_HEADROOM_MIN } from '../types'
 import { middleStudPieceCount } from './calcStudMaterial'
+import { studHeightAt } from './profileGeometry'
 
 const SCREW_STEP = 250 // мм
 
@@ -30,9 +31,9 @@ function spliceCount(
   si: StudInfo,
   overlap: number,
 ): number {
-  const { kind, height, isAbove, openingId } = si
+  const { kind, height, isAbove, openingId, communicationId } = si
 
-  if (isAbove && openingId) return 0
+  if (isAbove && (openingId || communicationId)) return 0
   const h = height
 
   if (kind === 'wall') return 0
@@ -67,6 +68,10 @@ function spliceCount(
  * @param overlap        — нахлёст стоек (мм), нужен для подсчёта LN
  * @param plywoodInserts — закладные из фанеры
  * @param studPositions  — позиции стоек в мм (для расчёта саморезов по дереву)
+ * @param communications — транзитные коммуникации (14.07.2026)
+ * @param ceilingProfile/floorProfile — нужны только чтобы решить, есть ли
+ *   верхняя перемычка коммуникации (запас > COMM_HEADROOM_MIN); без них
+ *   запас считается неограниченным (верхняя перемычка есть всегда).
  */
 export function calcScrews(
   studInfos: StudInfo[],
@@ -78,8 +83,19 @@ export function calcScrews(
   overlap: number,
   plywoodInserts: PlywoodInsert[],
   studPositions: number[],
+  communications: Communication[] = [],
+  ceilingProfile?: EdgeProfile,
+  floorProfile?: EdgeProfile,
 ): ScrewResult {
   const activeOpenings = openings.filter(o => o.width > 0)
+  const activeCommunications = communications.filter(c => c.width > 0)
+
+  function commHasTop(c: Communication): boolean {
+    const headroom = (ceilingProfile && floorProfile)
+      ? studHeightAt(c.pos, ceilingProfile, floorProfile) - c.top
+      : Infinity
+    return headroom > COMM_HEADROOM_MIN
+  }
 
   // ─── LN 11 — клопы на перехлёсты ─────────────────────────────────────────
   let totalSplices = 0
@@ -93,7 +109,7 @@ export function calcScrews(
   let count35 = 0
 
   for (const si of studInfos) {
-    const { isAbove, openingId, height } = si
+    const { isAbove, openingId, communicationId, height } = si
 
     if (isAbove && openingId) {
       // Стойки внутри проёма: два куска — над проёмом и под подоконником
@@ -101,6 +117,17 @@ export function calcScrews(
       if (!o) continue
       const aboveH = height - o.height - o.sillHeight
       const belowH = o.sillHeight
+      const h = aboveH + belowH
+      if (h <= 0) continue
+      count25 += screwsByHeight(h) * sides
+      if (gklLayers === 2) count35 += screwsByHeight(h) * sides
+    } else if (isAbove && communicationId) {
+      // Стойка в зоне коммуникации: кусок под коммуникацией всегда, кусок
+      // над ней — только если есть верхняя перемычка (запас > 400мм)
+      const c = activeCommunications.find(x => x.id === communicationId)
+      if (!c) continue
+      const belowH = c.bottom
+      const aboveH = commHasTop(c) ? (height - c.top) : 0
       const h = aboveH + belowH
       if (h <= 0) continue
       count25 += screwsByHeight(h) * sides
@@ -125,6 +152,15 @@ export function calcScrews(
       count25 += n * 2 * sides
       if (gklLayers === 2) count35 += n * 2 * sides
     }
+  }
+
+  // ─── TN/MN/XTN — к перемычкам коммуникаций ───────────────────────────────
+  // Нижняя перемычка — всегда, верхняя — только если она есть (commHasTop).
+  for (const c of activeCommunications) {
+    const n = Math.ceil(c.width / SCREW_STEP)
+    const multiplier = commHasTop(c) ? 2 : 1
+    count25 += n * multiplier * sides
+    if (gklLayers === 2) count35 += n * multiplier * sides
   }
 
   // ─── Саморезы по дереву — фанерные закладные ─────────────────────────────

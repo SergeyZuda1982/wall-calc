@@ -13,7 +13,8 @@
  */
 
 import { splitFreeStud } from './calcStudMaterial'
-import { profilePathLength } from './profileGeometry'
+import { profilePathLength, studHeightAt } from './profileGeometry'
+import { COMM_HEADROOM_MIN } from '../types'
 
 export const BAR_LENGTH = 3000 // мм
 
@@ -106,6 +107,7 @@ export function pnPieces(
   openings: { type: 'door' | 'window' | 'opening'; pos: number; width: number; sillHeight: number }[],
   ceilingProfile?: { x: number; y: number }[],
   floorProfile?: { x: number; y: number }[],
+  communications: { pos: number; width: number; top: number }[] = [],
 ): Piece[] {
   const pieces: Piece[] = []
   const activeOpenings = openings.filter(o => o.width > 0)
@@ -163,6 +165,20 @@ export function pnPieces(
     pieces.push({ length: len, role: 'lintel', label: `Перемычка ${len}мм`, mustBeWhole: true })
   }
 
+  // ─── Перемычки коммуникаций: нижняя всегда, верхняя — если запас > 400мм ─
+  // (см. КОНСПЕКТ 14.07.2026). Без профилей (тесты плоской стены без ската)
+  // запас считаем неограниченным — верхняя перемычка ставится всегда.
+  for (const c of communications.filter(x => x.width > 0)) {
+    const len = c.width + 400
+    pieces.push({ length: len, role: 'lintel', label: `Перемычка под коммуникацией ${len}мм`, mustBeWhole: true })
+    const headroom = (ceilingProfile && floorProfile)
+      ? studHeightAt(c.pos, ceilingProfile, floorProfile) - c.top
+      : Infinity
+    if (headroom > COMM_HEADROOM_MIN) {
+      pieces.push({ length: len, role: 'lintel', label: `Перемычка над коммуникацией ${len}мм`, mustBeWhole: true })
+    }
+  }
+
   return pieces
 }
 
@@ -182,10 +198,11 @@ export function pnPieces(
  *         отдельный соединительный кусок НА КАЖДЫЙ стык (см. splitFreeStud).
  */
 export function psPieces(
-  studInfos: { kind: string; isAbove: boolean; openingId: string | null; orientation: string; height?: number }[],
+  studInfos: { kind: string; isAbove: boolean; openingId: string | null; communicationId?: string | null; orientation: string; height?: number }[],
   h: number,
   overlap: number,
-  openings: { id: string; height: number; sillHeight: number }[]
+  openings: { id: string; height: number; sillHeight: number }[],
+  communications: { id: string; bottom: number; top: number }[] = [],
 ): Piece[] {
   const pieces: Piece[] = []
   const step = BAR_LENGTH - overlap  // чистый прирост высоты на кусок (middle)
@@ -201,6 +218,18 @@ export function psPieces(
       const belowLen = o.sillHeight
       if (aboveLen > 0) pieces.push({ length: aboveLen, role: 'stud_part', label: `Над проёмом ${aboveLen}мм`, mustBeWhole: false })
       if (belowLen > 0) pieces.push({ length: belowLen, role: 'stud_part', label: `Под подоконником ${belowLen}мм`, mustBeWhole: false })
+
+    } else if (stud.isAbove && stud.communicationId) {
+      // Стойка попадает в зону коммуникации, но НЕ убирается (в отличие от
+      // проёма) — режется нижней перемычкой на отметке bottom, и, если есть
+      // запас > 400мм над коммуникацией, ещё и верхней на отметке top.
+      const c = communications.find(x => x.id === stud.communicationId)
+      if (!c) continue
+      const belowLen = c.bottom
+      const headroom = studH - c.top
+      const aboveLen = headroom > COMM_HEADROOM_MIN ? (studH - c.top) : 0
+      if (belowLen > 0) pieces.push({ length: belowLen, role: 'stud_part', label: `Под коммуникацией ${belowLen}мм`, mustBeWhole: false })
+      if (aboveLen > 0) pieces.push({ length: aboveLen, role: 'stud_part', label: `Над коммуникацией ${aboveLen}мм`, mustBeWhole: false })
 
     } else if (studH <= BAR_LENGTH) {
       // Любая стойка вписывается в один профиль
