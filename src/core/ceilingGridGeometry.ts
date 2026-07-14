@@ -308,3 +308,47 @@ export function clipCeilingGridToPolygon(grid: CeilingGridResult, polygonLocalMm
     hangerPoints: filterPoints(grid.hangerPoints),
   }
 }
+
+/** Один прямоугольник листа ГКЛ в раскрое (см. calcCeilingSheetRects), мм,
+ *  локальные координаты (0,0 — угол помещения, та же система, что и у
+ *  сегментов сетки/roomPoints выше). */
+export interface CeilingSheetRect {
+  x: number
+  z: number
+  w: number
+  d: number
+  /** Обрезан по краю помещения (у стены/угла) — не целый лист. */
+  isCut: boolean
+}
+
+/**
+ * Раскрой листов ГКЛ простым тайлингом от угла (0,0) — тот же алгоритм,
+ * что раньше был только инлайн в CeilingCanvas (2D-схема, шаг 4 "Зашить
+ * ГКЛ", CeilingCalc.tsx). Вынесен сюда единой чистой функцией (13.07.2026,
+ * репорт пользователя со скриншотами 2D vs 3D — раскрой не совпадал,
+ * потому что в 3D-превью использовалась совсем другая, чисто иллюстративная
+ * геометрия минваты/фрагмента ГКЛ из CeilingGridMesh, а не настоящий
+ * раскрой) — теперь и 2D (CeilingCanvas), и 3D (CeilingCalc3DPreview)
+ * вызывают ЭТУ функцию, раскрой не может разъехаться между ними.
+ *
+ * Листы кладутся рядами вдоль X (длина листа sheetL), ряды идут вдоль Z
+ * с шагом sheetW (ширина листа) — упрощение без учёта стыковки вразбежку
+ * (для картинки раскроя это не нужно, только для сметы офcutов/расхода).
+ */
+export function calcCeilingSheetRects(lengthMm: number, widthMm: number, sheetL: number, sheetW: number): CeilingSheetRect[] {
+  const rects: CeilingSheetRect[] = []
+  if (lengthMm <= 0 || widthMm <= 0 || sheetL <= 0 || sheetW <= 0) return rects
+  let z = 0
+  while (z < widthMm) {
+    const d = Math.min(sheetW, widthMm - z)
+    let x = 0
+    while (x < lengthMm) {
+      const w = Math.min(sheetL, lengthMm - x)
+      const isCut = d < sheetW || w < sheetL
+      if (w > 0) rects.push({ x, z, w, d, isCut })
+      x += sheetL
+    }
+    z += sheetW
+  }
+  return rects
+}
