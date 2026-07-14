@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, type CeilingGridResult } from '../ceilingGridGeometry'
+import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, calcCeilingSheetRects, type CeilingGridResult } from '../ceilingGridGeometry'
 import type { Point2D } from '../geometry2d'
 
 describe('calcCeilingGrid', () => {
@@ -260,5 +260,39 @@ describe('clipCeilingGridToPolygon', () => {
       mainSegments: [], crabPoints: [], hangerPoints: [],
     }
     expect(clipCeilingGridToPolygon(grid, [])).toEqual(grid)
+  })
+})
+
+describe('calcCeilingSheetRects', () => {
+  it('целое число листов без обрезков — все целые, сетка 2x2 для комнаты 2400x2400 и листа 1200x1200', () => {
+    const rects = calcCeilingSheetRects(2400, 2400, 1200, 1200)
+    expect(rects.length).toBe(4)
+    expect(rects.every(r => !r.isCut)).toBe(true)
+    expect(rects.every(r => r.w === 1200 && r.d === 1200)).toBe(true)
+  })
+
+  it('обрезки по правому и нижнему краю помечены isCut, размеры укорочены точно по остатку', () => {
+    // комната 3000x2000, лист 1200x1200: по X — 1200,1200,600(рез); по Z — 1200,800(рез)
+    const rects = calcCeilingSheetRects(3000, 2000, 1200, 1200)
+    const byRow = (z: number) => rects.filter(r => r.z === z)
+    const row0 = byRow(0)
+    expect(row0.map(r => r.w)).toEqual([1200, 1200, 600])
+    expect(row0.map(r => r.isCut)).toEqual([false, false, true])
+    const row1 = byRow(1200)
+    expect(row1.every(r => r.d === 800 && r.isCut)).toBe(true)
+  })
+
+  it('вырожденные входные размеры (0 или отрицательные) — пустой результат, без исключений', () => {
+    expect(calcCeilingSheetRects(0, 2000, 1200, 1200)).toEqual([])
+    expect(calcCeilingSheetRects(2000, 0, 1200, 1200)).toEqual([])
+    expect(calcCeilingSheetRects(2000, 2000, 0, 1200)).toEqual([])
+    expect(calcCeilingSheetRects(-100, 2000, 1200, 1200)).toEqual([])
+  })
+
+  it('сумма площадей листов равна площади помещения (без нахлёстов/пробелов)', () => {
+    const lengthMm = 4370, widthMm = 3120, sheetL = 1200, sheetW = 2500
+    const rects = calcCeilingSheetRects(lengthMm, widthMm, sheetL, sheetW)
+    const totalArea = rects.reduce((sum, r) => sum + r.w * r.d, 0)
+    expect(totalArea).toBeCloseTo(lengthMm * widthMm, 3)
   })
 })

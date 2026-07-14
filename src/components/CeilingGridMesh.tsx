@@ -54,6 +54,21 @@ import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, DEFAULT
 import { calcMinThicknessScale } from '../core/minScreenThickness'
 import { mmToM } from '../core/planTo3D'
 
+/**
+ * Высота (Y), на которой физически висит зашивка ГКЛ — низ несущего
+ * профиля минус половина его высоты минус половина толщины листа. Было
+ * инлайн-константой внутри CeilingGridMesh (см. ниже), вынесено сюда,
+ * чтобы CeilingCalc3DPreview.tsx мог разместить свой раскрой листов на
+ * ТОЙ ЖЕ высоте, не дублируя "магические числа" (13.07.2026).
+ */
+export function calcGklLevelM(ceilingM: number, ceilingType: 'p112' | 'p113'): number {
+  const dropToMainM = 0.12
+  const mainY = ceilingM - dropToMainM
+  const bearingY = ceilingType === 'p113' ? mainY : mainY - mmToM(27) - 0.003
+  return bearingY - mmToM(27 / 2 + 12.5 / 2)
+}
+
+
 // ─── Минимальная видимая толщина тонких элементов (см. KONSPEKT, идея №1 из
 // списка "3D-вид на объекте", 09.07.2026) ───────────────────────────────────
 // Профиль ПП (60×27мм) и стержень подвеса (Ø4мм) при взгляде на помещение
@@ -372,7 +387,7 @@ export default function CeilingGridMesh({
   const dropToMainM = 0.12   // типичный вылет прямого подвеса, для показа
   const mainY = ceilingM - dropToMainM
   const bearingY = ceilingType === 'p113' ? mainY : mainY - mmToM(27) - 0.003
-  const gklY = bearingY - mmToM(27 / 2 + 12.5 / 2)
+  const gklY = calcGklLevelM(ceilingM, ceilingType)
   const woolY = mainY - mmToM(20)
 
   const ppShape = useMemo(() => ppProfileShape(), [])

@@ -28,9 +28,13 @@ import { Suspense, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
-import CeilingGridMesh from './CeilingGridMesh'
+import CeilingGridMesh, { calcGklLevelM } from './CeilingGridMesh'
+import CeilingEntityMesh from './CeilingEntityMesh'
+import type { CeilingPolygon3D } from '../core/planTo3D'
 import { mmToM } from '../core/planTo3D'
+import { calcCeilingSheetRects } from '../core/ceilingGridGeometry'
 import type { CeilingType } from '../data/ceilingData'
+import type { CeilingSheetLayout } from '../core/calcCeiling'
 
 export interface CeilingCalc3DPreviewProps {
   lengthMm: number
@@ -40,10 +44,21 @@ export interface CeilingCalc3DPreviewProps {
   stepC?: number
   stepA?: number
   bearingAlongLength?: boolean
+  /** Раскрой листов ГКЛ (шаг 4 калькулятора) — та же calcCeilingSheetRects,
+   *  что и в 2D CeilingCanvas (см. её шапку, 13.07.2026) — раньше здесь
+   *  вместо реального раскроя рисовалась общая иллюстративная минвата из
+   *  CeilingGridMesh (для настоящих комнат на плане это уместно, а для
+   *  сравнения с 2D-схемой — вводило в заблуждение, репорт пользователя со
+   *  скриншотами). Не задан/шаг < 4 → листы не рисуются вовсе (как и в 2D).
+   */
+  sheetLayout?: CeilingSheetLayout | null
 }
 
 const SLAB_THICKNESS_M = 0.2
 const SLAB_COLOR = '#c9c3b6'
+const SHEET_COLOR = '#90caf9'
+const SHEET_CUT_COLOR = '#ffb74d'
+const SHEET_GAP_M = 0.004 // тонкий видимый шов между листами
 
 function SlabPlate({ lengthM, widthM }: { lengthM: number; widthM: number }) {
   const geo = useMemo(() => new THREE.BoxGeometry(lengthM, SLAB_THICKNESS_M, widthM), [lengthM, widthM])
@@ -53,8 +68,38 @@ function SlabPlate({ lengthM, widthM }: { lengthM: number; widthM: number }) {
   )
 }
 
+/** Раскрой листов ГКЛ, зашитых снизу каркаса — целые/резаные, тот же
+ *  тайлинг и та же раскраска (синий/оранжевый), что и в 2D CeilingCanvas. */
+function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, yM }: {
+  lengthMm: number; widthMm: number; sheetLayout: CeilingSheetLayout; yM: number
+}) {
+  const rects = useMemo(
+    () => calcCeilingSheetRects(lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW),
+    [lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW],
+  )
+  return (
+    <group>
+      {rects.map((r, i) => {
+        const wM = mmToM(r.w) - SHEET_GAP_M
+        const dM = mmToM(r.d) - SHEET_GAP_M
+        if (wM <= 0 || dM <= 0) return null
+        return (
+          <mesh
+            key={i}
+            position={[mmToM(r.x) + wM / 2, yM, mmToM(r.z) + dM / 2]}
+            castShadow receiveShadow
+          >
+            <boxGeometry args={[wM, 0.0125, dM]} />
+            <meshStandardMaterial color={r.isCut ? SHEET_CUT_COLOR : SHEET_COLOR} roughness={0.85} />
+          </mesh>
+        )
+      })}
+    </group>
+  )
+}
+
 export default function CeilingCalc3DPreview({
-  lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength,
+  lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength, sheetLayout,
 }: CeilingCalc3DPreviewProps) {
   const lengthM = mmToM(lengthMm)
   const widthM = mmToM(widthMm)
@@ -83,6 +128,16 @@ export default function CeilingCalc3DPreview({
               stepA={stepA}
               bearingAlongLength={bearingAlongLength}
               ceilingType={ceilingType === 'p113' ? 'p113' : 'p112'}
+              showWool={false}
+              showGkl={false}
+            />
+          )}
+          {hasDetailedGrid && sheetLayout && (
+            <SheetLayoutMesh
+              lengthMm={lengthMm}
+              widthMm={widthMm}
+              sheetLayout={sheetLayout}
+              yM={calcGklLevelM(0, ceilingType === 'p113' ? 'p113' : 'p112')}
             />
           )}
           {!hasDetailedGrid && (
@@ -97,6 +152,67 @@ export default function CeilingCalc3DPreview({
           )}
         </Suspense>
         <OrbitControls target={[lengthM / 2, -0.3, widthM / 2]} makeDefault />
+      </Canvas>
+    </div>
+  )
+}
+
+
+/**
+ * Тот же 3D-переключатель, что и CeilingCalc3DPreview выше, но для
+ * СЛОЖНОГО контура (много углов) — засеян с реального обведённого Ceiling
+ * на плане, а не введён прямоугольником L×W. 13.07.2026, по прямому
+ * запросу пользователя: раньше такой контур не показывался в 3D прямо в
+ * калькуляторе вообще — переключатель был скрыт (виден только при
+ * hasRoom, а у полигона roomLengthMm/roomWidthMm пустые).
+ *
+ * Переиспользует CeilingEntityMesh НАПРЯМУЮ (тот же компонент, что рисует
+ * этот же контур в основной 3D-сцене Scene3D.tsx) — не копия/дублирование
+ * геометрии: подрезка по реальным углам, раскрой ГКЛ по контуру
+ * (calcPolygonP112Frame/calcPolygonP113Frame + calcPolygonSheetLayout)
+ * гарантированно те же, что и в проекте, одним источником истины.
+ * CeilingEntityMesh ничего не знает про Scene3D/стены — ему достаточно
+ * объекта формы CeilingPolygon3D, который здесь собирается "на лету" из
+ * текущего состояния формы калькулятора (ceiling.tsx строит такой же для
+ * автосинхронизации с реальным Ceiling — см. её код, тот же список полей).
+ */
+export interface CeilingCalcPolygon3DPreviewProps {
+  ceiling: CeilingPolygon3D
+}
+
+export function CeilingCalcPolygon3DPreview({ ceiling }: CeilingCalcPolygon3DPreviewProps) {
+  const bbox = useMemo(() => {
+    const xs = ceiling.outerM.map(p => p.x)
+    const zs = ceiling.outerM.map(p => p.z)
+    return {
+      minX: Math.min(...xs), maxX: Math.max(...xs),
+      minZ: Math.min(...zs), maxZ: Math.max(...zs),
+    }
+  }, [ceiling.outerM])
+  const cx = (bbox.minX + bbox.maxX) / 2
+  const cz = (bbox.minZ + bbox.maxZ) / 2
+  const maxDim = Math.max(bbox.maxX - bbox.minX, bbox.maxZ - bbox.minZ, 1)
+  const hasDetailedGrid = ceiling.ceilingSpec?.type === 'p112' || ceiling.ceilingSpec?.type === 'p113'
+
+  return (
+    <div style={{ height: 460, borderRadius: 10, overflow: 'hidden', position: 'relative', background: '#eef0f4' }}>
+      <Canvas shadows camera={{ position: [cx + maxDim * 1.1, maxDim * 1.1, cz + maxDim * 1.4], fov: 45 }}>
+        <ambientLight intensity={0.6} />
+        <directionalLight position={[cx + maxDim, maxDim * 1.5, cz + maxDim]} intensity={1} castShadow />
+        <Suspense fallback={null}>
+          <CeilingEntityMesh ceiling={ceiling} ceilingM={0} showGrid />
+          {!hasDetailedGrid && (
+            <Html position={[cx, -0.3, cz]} center style={{ pointerEvents: 'none' }}>
+              <div style={{
+                background: 'rgba(255,255,255,0.9)', padding: '4px 10px', borderRadius: 6,
+                fontSize: 12, color: '#666', whiteSpace: 'nowrap',
+              }}>
+                Детальный 3D-каркас для этого типа потолка ещё не реализован — показана плита
+              </div>
+            </Html>
+          )}
+        </Suspense>
+        <OrbitControls target={[cx, -0.3, cz]} makeDefault />
       </Canvas>
     </div>
   )
