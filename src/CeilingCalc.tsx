@@ -11,6 +11,7 @@ import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, P113_HANGE
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep, CeilingLoadClass } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult, CeilingPolygonInput } from './core/calcCeiling'
+import { calcCeilingSheetRects } from './core/ceilingGridGeometry'
 import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } from './core/calcP112Frame'
 import type { PolygonP112FrameResult } from './core/calcPolygonP112Frame'
 import { toWorld } from './core/calcPolygonP112Frame'
@@ -719,6 +720,7 @@ export default function CeilingCalc() {
                     stepC={form.stepC}
                     stepA={frameParamsUi.stepA}
                     bearingAlongLength={form.bearingAlongLength}
+                    sheetLayout={step === 4 ? (result?.sheetLayout ?? null) : null}
                   />
                 ) : (
                   <CeilingCanvas
@@ -1161,19 +1163,14 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // сейчас учитывается только в смете (calcCeiling), не в картинке.
 
   // ── Листы ГКЛ (шаг 4) ──
+  // Раскрой вынесен в общую функцию calcCeilingSheetRects (ceilingGridGeometry.ts,
+  // 13.07.2026) — используется и здесь, и в 3D-превью (CeilingCalc3DPreview.tsx),
+  // чтобы раскрой не мог разъехаться между 2D и 3D (репорт пользователя со
+  // скриншотами: раньше в 3D была совсем другая, иллюстративная геометрия).
   const sheets: { x: number; y: number; w: number; h: number; isCut: boolean }[] = []
   if (step === 4 && layout) {
-    let sy = 0
-    while (sy < W_room) {
-      const rh = Math.min(layout.sheetW, W_room - sy)
-      let sx = 0
-      while (sx < L) {
-        const cw = Math.min(layout.sheetL, L - sx)
-        const isCut = rh < layout.sheetW || cw < layout.sheetL
-        if (cw > 0) sheets.push({ x: sx * scale, y: sy * scale, w: cw * scale, h: rh * scale, isCut })
-        sx += layout.sheetL
-      }
-      sy += layout.sheetW
+    for (const r of calcCeilingSheetRects(L, W_room, layout.sheetL, layout.sheetW)) {
+      sheets.push({ x: r.x * scale, y: r.z * scale, w: r.w * scale, h: r.d * scale, isCut: r.isCut })
     }
   }
 

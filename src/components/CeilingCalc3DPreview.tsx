@@ -28,9 +28,11 @@ import { Suspense, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
-import CeilingGridMesh from './CeilingGridMesh'
+import CeilingGridMesh, { calcGklLevelM } from './CeilingGridMesh'
 import { mmToM } from '../core/planTo3D'
+import { calcCeilingSheetRects } from '../core/ceilingGridGeometry'
 import type { CeilingType } from '../data/ceilingData'
+import type { CeilingSheetLayout } from '../core/calcCeiling'
 
 export interface CeilingCalc3DPreviewProps {
   lengthMm: number
@@ -40,10 +42,21 @@ export interface CeilingCalc3DPreviewProps {
   stepC?: number
   stepA?: number
   bearingAlongLength?: boolean
+  /** Раскрой листов ГКЛ (шаг 4 калькулятора) — та же calcCeilingSheetRects,
+   *  что и в 2D CeilingCanvas (см. её шапку, 13.07.2026) — раньше здесь
+   *  вместо реального раскроя рисовалась общая иллюстративная минвата из
+   *  CeilingGridMesh (для настоящих комнат на плане это уместно, а для
+   *  сравнения с 2D-схемой — вводило в заблуждение, репорт пользователя со
+   *  скриншотами). Не задан/шаг < 4 → листы не рисуются вовсе (как и в 2D).
+   */
+  sheetLayout?: CeilingSheetLayout | null
 }
 
 const SLAB_THICKNESS_M = 0.2
 const SLAB_COLOR = '#c9c3b6'
+const SHEET_COLOR = '#90caf9'
+const SHEET_CUT_COLOR = '#ffb74d'
+const SHEET_GAP_M = 0.004 // тонкий видимый шов между листами
 
 function SlabPlate({ lengthM, widthM }: { lengthM: number; widthM: number }) {
   const geo = useMemo(() => new THREE.BoxGeometry(lengthM, SLAB_THICKNESS_M, widthM), [lengthM, widthM])
@@ -53,8 +66,38 @@ function SlabPlate({ lengthM, widthM }: { lengthM: number; widthM: number }) {
   )
 }
 
+/** Раскрой листов ГКЛ, зашитых снизу каркаса — целые/резаные, тот же
+ *  тайлинг и та же раскраска (синий/оранжевый), что и в 2D CeilingCanvas. */
+function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, yM }: {
+  lengthMm: number; widthMm: number; sheetLayout: CeilingSheetLayout; yM: number
+}) {
+  const rects = useMemo(
+    () => calcCeilingSheetRects(lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW),
+    [lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW],
+  )
+  return (
+    <group>
+      {rects.map((r, i) => {
+        const wM = mmToM(r.w) - SHEET_GAP_M
+        const dM = mmToM(r.d) - SHEET_GAP_M
+        if (wM <= 0 || dM <= 0) return null
+        return (
+          <mesh
+            key={i}
+            position={[mmToM(r.x) + wM / 2, yM, mmToM(r.z) + dM / 2]}
+            castShadow receiveShadow
+          >
+            <boxGeometry args={[wM, 0.0125, dM]} />
+            <meshStandardMaterial color={r.isCut ? SHEET_CUT_COLOR : SHEET_COLOR} roughness={0.85} />
+          </mesh>
+        )
+      })}
+    </group>
+  )
+}
+
 export default function CeilingCalc3DPreview({
-  lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength,
+  lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength, sheetLayout,
 }: CeilingCalc3DPreviewProps) {
   const lengthM = mmToM(lengthMm)
   const widthM = mmToM(widthMm)
@@ -83,6 +126,16 @@ export default function CeilingCalc3DPreview({
               stepA={stepA}
               bearingAlongLength={bearingAlongLength}
               ceilingType={ceilingType === 'p113' ? 'p113' : 'p112'}
+              showWool={false}
+              showGkl={false}
+            />
+          )}
+          {hasDetailedGrid && sheetLayout && (
+            <SheetLayoutMesh
+              lengthMm={lengthMm}
+              widthMm={widthMm}
+              sheetLayout={sheetLayout}
+              yM={calcGklLevelM(0, ceilingType === 'p113' ? 'p113' : 'p112')}
             />
           )}
           {!hasDetailedGrid && (
@@ -101,3 +154,4 @@ export default function CeilingCalc3DPreview({
     </div>
   )
 }
+
