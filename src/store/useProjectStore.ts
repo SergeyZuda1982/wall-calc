@@ -84,6 +84,29 @@ export interface ProjectStore {
   setSelectedEntity: (entity: SelectedEntity | null) => void
 
   /**
+   * Отмена/повтор действий на плане активного этажа (14.07.2026).
+   * Стек снимков `FloorPlan` ДО каждого изменения (undoStack) и стек
+   * "отменённых" снимков для повтора (redoStack) — оба живут только в
+   * памяти сессии (НЕ входят в partialize, см. ниже), сбрасываются при
+   * переключении проекта/этажа (см. syncActive) — история чужого этажа
+   * не имеет смысла после перехода на другой.
+   *
+   * Все действия, которые правят план (addPlanLine/updatePlanLine/
+   * addRoundColumn/... — всё, что идёт через updateActiveFloorPlan),
+   * автоматически пишут сюда чекпоинт — отдельно помечать каждое
+   * действие как "отменяемое" не нужно, это уже единая точка входа.
+   * Соседние по времени изменения (набор цифр в поле, перетаскивание
+   * мышью) схлопываются в ОДИН чекпоинт (см. UNDO_COALESCE_MS у
+   * updateActiveFloorPlan) — иначе Undo пришлось бы жать по разу на
+   * каждый нажатый символ при вводе числа.
+   */
+  undoStack: FloorPlan[]
+  redoStack: FloorPlan[]
+  undo: () => void
+  redo: () => void
+
+
+  /**
    * Ошибка последнего сохранения на диск (см. safeLocalStorage выше).
    * null — сохранение прошло успешно (или ещё не было ошибок).
    * Непустая строка — данные живут только в памяти, диск переполнен.
@@ -229,6 +252,12 @@ function syncActive(projects: ProjectEntry[], activeProjectId: string | null) {
     activeLevelId: activeLevel?.id ?? null,
     floorPlan: activeLevel?.floorPlan ?? { ...DEFAULT_FLOOR_PLAN, lines: [] },
     customWorkStageTemplates: p?.customWorkStageTemplates ?? [], // fallback: старые сохранённые проекты без этого поля
+    // История Undo/Redo (14.07.2026) привязана к конкретному floorPlan
+    // конкретного этажа — при переключении объекта/этажа (единственное
+    // место, где вызывается syncActive) старая история относится уже
+    // к другому плану и не имеет смысла применять её здесь: сбрасываем.
+    undoStack: [],
+    redoStack: [],
   }
 }
 
@@ -256,12 +285,10 @@ function syncActive(projects: ProjectEntry[], activeProjectId: string | null) {
  * именно за `levels` через useEffect) — правками этой функции чинится
  * заодно и это, отдельно доказывать не пришлось.
  */
-function updateActiveFloorPlan(
-  s: { projects: ProjectEntry[]; activeProjectId: string | null; floorPlan: FloorPlan },
-  updater: (fp: FloorPlan) => FloorPlan,
+function applyFloorPlanToProjects(
+  s: { projects: ProjectEntry[]; activeProjectId: string | null },
+  floorPlan: FloorPlan,
 ) {
-  const prevFloorPlan = s.floorPlan ?? DEFAULT_FLOOR_PLAN
-  const floorPlan = updater(prevFloorPlan)
   const projects = s.projects.map(p => {
     if (p.id !== s.activeProjectId) return p
     const activeLevel = getActiveLevel(p)
@@ -281,6 +308,55 @@ function updateActiveFloorPlan(
   return activeProject
     ? { floorPlan, projects, levels: activeProject.levels }
     : { floorPlan, projects }
+}
+
+/**
+ * Сколько снимков плана держим в истории Undo/Redo (14.07.2026). Снимок —
+ * это весь `FloorPlan` активного этажа (лёгкие числа/строки, без base64
+ * подложек — те лежат отдельно в IndexedDB, см. bgIndexedDb.ts), так что
+ * 50 штук — недорого по памяти, но с запасом на реальную сессию правок.
+ */
+const UNDO_HISTORY_LIMIT = 50
+
+/**
+ * Окно "склейки" соседних изменений в один чекпоинт истории (мс). Без
+ * этого набор "900" в поле проёма посимвольно (900 → сначала 9, потом 90,
+ * потом 900) или перетаскивание конца стены мышью (десятки промежуточных
+ * updatePlanLine на каждый кадр) создавали бы по чекпоинту на каждое
+ * промежуточное состояние — Undo пришлось бы жать многократно, чтобы
+ * откатить одно осмысленное действие пользователя. Чекпоинт пишется только
+ * если с прошлой записи прошло больше этого окна — то есть на НАЧАЛО
+ * серии правок, а не на каждую из них. Пауза дольше 600мс (например,
+ * пользователь закончил печатать и кликнул в другое место) — начинается
+ * новая серия, следующий чекпоинт снова пишется.
+ */
+const UNDO_COALESCE_MS = 600
+
+/**
+ * Метка времени последнего чекпоинта — намеренно ВНЕ стора (модульная
+ * переменная, не часть persist/set), это чисто служебная деталь механизма
+ * склейки, не данные проекта и не то, что должно триггерить ре-рендеры.
+ */
+let lastUndoCheckpointAt = 0
+
+function updateActiveFloorPlan(
+  s: { projects: ProjectEntry[]; activeProjectId: string | null; floorPlan: FloorPlan; undoStack: FloorPlan[] },
+  updater: (fp: FloorPlan) => FloorPlan,
+) {
+  const prevFloorPlan = s.floorPlan ?? DEFAULT_FLOOR_PLAN
+  const floorPlan = updater(prevFloorPlan)
+  const base = applyFloorPlanToProjects(s, floorPlan)
+  const now = Date.now()
+  const isNewCheckpoint = now - lastUndoCheckpointAt > UNDO_COALESCE_MS
+  lastUndoCheckpointAt = now
+  const undoStack = isNewCheckpoint
+    ? [...s.undoStack, prevFloorPlan].slice(-UNDO_HISTORY_LIMIT)
+    : s.undoStack
+  // Любое новое действие обнуляет "повтор" — стандартное поведение
+  // Undo/Redo везде (Word, Photoshop и т.д.): как только пользователь
+  // сделал что-то новое вместо повтора отменённого, старый "будущий" путь
+  // больше не имеет смысла.
+  return { ...base, undoStack, redoStack: [] }
 }
 
 /**
@@ -404,6 +480,32 @@ export const useProjectStore = create<ProjectStore>()(
       activeLiningId: null,
       selectedEntity: null,
       setSelectedEntity: (entity) => set({ selectedEntity: entity }),
+      undoStack: [],
+      redoStack: [],
+      undo: () => {
+        set(s => {
+          if (s.undoStack.length === 0) return s
+          const target = s.undoStack[s.undoStack.length - 1]
+          lastUndoCheckpointAt = 0 // след. правка после Undo — новый чекпоинт, не склейка со старым
+          return {
+            ...applyFloorPlanToProjects(s, target),
+            undoStack: s.undoStack.slice(0, -1),
+            redoStack: [...s.redoStack, s.floorPlan].slice(-UNDO_HISTORY_LIMIT),
+          }
+        })
+      },
+      redo: () => {
+        set(s => {
+          if (s.redoStack.length === 0) return s
+          const target = s.redoStack[s.redoStack.length - 1]
+          lastUndoCheckpointAt = 0
+          return {
+            ...applyFloorPlanToProjects(s, target),
+            redoStack: s.redoStack.slice(0, -1),
+            undoStack: [...s.undoStack, s.floorPlan].slice(-UNDO_HISTORY_LIMIT),
+          }
+        })
+      },
       customWorkStageTemplates: [],
       saveError: null,
       clearSaveError: () => set({ saveError: null }),
