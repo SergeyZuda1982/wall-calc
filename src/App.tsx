@@ -162,6 +162,14 @@ function fmtCut(totalMm: number, bars: number, wasteMm: number): React.ReactNode
 export default function App() {
   const [form, setForm] = useState<WallInput>(DEFAULT_INPUT)
   const [shiftInput, setShiftInput] = useState('100')
+
+  // Произвольный проём по двум кликам на плане (14.07.2026): 1-й клик — начало,
+  // 2-й — конец, после чего модалка спрашивает высоту от пола и высоту проёма.
+  const [openingClickMode, setOpeningClickMode] = useState(false)
+  const [openingClickStart, setOpeningClickStart] = useState<number | null>(null)
+  const [openingClickModal, setOpeningClickModal] = useState<{ pos: number; width: number } | null>(null)
+  const [openingClickSill, setOpeningClickSill] = useState('0')
+  const [openingClickHeight, setOpeningClickHeight] = useState('2100')
   const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling' | '3d'>('wall')
 
   // Плита ("карандаш") на плане отправлена в расчёт потолка — переключаемся
@@ -321,6 +329,39 @@ export default function App() {
 
   function removeCommunication(id: string) {
     setForm(prev => ({ ...prev, communications: prev.communications.filter(c => c.id !== id) }))
+  }
+
+  // ─── Произвольный проём по клику ────────────────────────────────────────
+
+  function handleOpeningClick(xpx: number) {
+    if (!openingClickMode || !form.length) return
+    const sc = (CANVAS_W - PAD * 2) / form.length
+    const mm = Math.round((xpx - PAD) / sc / 10) * 10
+    if (mm <= 0 || mm >= form.length) return
+
+    if (openingClickStart === null) {
+      setOpeningClickStart(mm)
+    } else {
+      const pos = Math.min(openingClickStart, mm)
+      const width = Math.abs(mm - openingClickStart)
+      setOpeningClickStart(null)
+      setOpeningClickMode(false)
+      if (width > 0) setOpeningClickModal({ pos, width })
+    }
+  }
+
+  function confirmOpeningClickModal() {
+    if (!openingClickModal) return
+    const o: Opening = {
+      id: newOpeningId(),
+      type: 'opening',
+      pos: openingClickModal.pos,
+      width: openingClickModal.width,
+      height: Number(openingClickHeight) || 0,
+      sillHeight: Number(openingClickSill) || 0,
+    }
+    setForm(prev => ({ ...prev, openings: [...prev.openings, o] }))
+    setOpeningClickModal(null)
   }
 
   // ─── Перегородки: прочее ──────────────────────────────────────────────────
@@ -507,6 +548,36 @@ export default function App() {
       )}
 
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+
+      {openingClickModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{ background: '#fff', borderRadius: 8, padding: 20, width: 280 }}>
+            <h3 style={{ margin: '0 0 4px', fontSize: 15 }}>Новый проём</h3>
+            <p style={{ margin: '0 0 14px', fontSize: 12, color: '#777' }}>
+              Позиция {openingClickModal.pos}мм, ширина {openingClickModal.width}мм
+            </p>
+            <label style={{ fontSize: 12, color: '#555' }}>Высота от пола (низ проёма), мм</label>
+            <input type="number" value={openingClickSill} onChange={e => setOpeningClickSill(e.target.value)}
+              style={{ width: '100%', padding: '6px 8px', fontSize: 14, marginTop: 4, marginBottom: 12, boxSizing: 'border-box' }} />
+            <label style={{ fontSize: 12, color: '#555' }}>Высота проёма (Н), мм</label>
+            <input type="number" value={openingClickHeight} onChange={e => setOpeningClickHeight(e.target.value)}
+              style={{ width: '100%', padding: '6px 8px', fontSize: 14, marginTop: 4, marginBottom: 16, boxSizing: 'border-box' }} />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setOpeningClickModal(null)}
+                style={{ padding: '6px 14px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #ccc', borderRadius: 4 }}>
+                Отмена
+              </button>
+              <button onClick={confirmOpeningClickModal}
+                style={{ padding: '6px 14px', fontSize: 13, cursor: 'pointer', background: '#2a7', border: '1px solid #196', color: '#fff', borderRadius: 4 }}>
+                Добавить проём
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {migrationNotice && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px',
@@ -823,7 +894,18 @@ export default function App() {
               style={{ padding: '4px 12px', fontSize: 12, cursor: 'pointer', background: '#f5f5f5', border: '1px solid #ccc', borderRadius: 4 }}>
               + Проём
             </button>
+            <button onClick={() => { setOpeningClickMode(m => !m); setOpeningClickStart(null) }}
+              style={{ padding: '4px 12px', fontSize: 12, cursor: 'pointer',
+                background: openingClickMode ? '#ffe8a8' : '#fff', border: '1px solid #c9a94a', borderRadius: 4,
+                color: openingClickMode ? '#754' : '#333' }}>
+              {openingClickMode
+                ? (openingClickStart === null ? '📍 Кликните начало проёма…' : '📍 Кликните конец проёма…')
+                : '📍 Указать проём кликами'}
+            </button>
           </div>
+          <p style={{ margin: '0 0 8px', fontSize: 11, color: '#888' }}>
+            Ширина неизвестна, известна только высота? Нажмите «Указать проём кликами», затем кликните начало и конец проёма на плане ниже — ширина посчитается сама, останется задать высоту.
+          </p>
 
           {form.openings.length === 0 && (
             <p style={{ margin: 0, fontSize: 12, color: '#999' }}>Нет проёмов — нажмите кнопку для добавления</p>
@@ -1062,8 +1144,14 @@ export default function App() {
                 ref={node => { if (node) node.container().style.touchAction = 'pan-y' }}>
                 <Layer>
                   <Rect x={0} y={0} width={CANVAS_W} height={canvasH} fill="#f8f8f8"
-                    onDblClick={e => { const stage = e.target.getStage(); const pos = stage?.getPointerPosition(); if (pos) addStud(pos.x) }}
+                    onClick={e => { if (openingClickMode) { const stage = e.target.getStage(); const pos = stage?.getPointerPosition(); if (pos) handleOpeningClick(pos.x) } }}
+                    onDblClick={e => { if (openingClickMode) return; const stage = e.target.getStage(); const pos = stage?.getPointerPosition(); if (pos) addStud(pos.x) }}
                     onTouchEnd={e => { const touch = e.evt.changedTouches[0]; if (touch) handleBgTouchEnd(touch.clientX - (e.target.getStage()?.container().getBoundingClientRect().left ?? 0)) }} />
+
+                  {openingClickMode && openingClickStart !== null && (
+                    <Line points={[tx(openingClickStart), TOP_PAD, tx(openingClickStart), canvasH - BOT_PAD]}
+                      stroke="#c9a94a" strokeWidth={2} dash={[6, 4]} />
+                  )}
 
                   {/* Размерные стрелки */}
                   <Arrow points={[tx(0), 14, tx(l), 14]} stroke="#555" fill="#555" strokeWidth={1} pointerLength={6} pointerWidth={4} />
