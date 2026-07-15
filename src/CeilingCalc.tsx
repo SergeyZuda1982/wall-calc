@@ -16,6 +16,7 @@ import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } 
 import type { PolygonP112FrameResult } from './core/calcPolygonP112Frame'
 import { toWorld } from './core/calcPolygonP112Frame'
 import type { PolygonP113FrameResult } from './core/calcPolygonP113Frame'
+import type { PolygonSheetLayoutResult } from './core/calcPolygonSheetLayout'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { useProjectStore } from './store/useProjectStore'
 import type { Point2D } from './core/geometry2d'
@@ -757,6 +758,9 @@ export default function CeilingCalc() {
                     perimeterM={form.perimeterM}
                     startWall={startWall}
                     polygonFrame={result?.polygonFrame ?? null}
+                    polygonSheetLayout={result?.polygonSheetLayout ?? null}
+                    step={step}
+                    ceilingType={form.type}
                   />
                 ) : (
                   <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -769,7 +773,7 @@ export default function CeilingCalc() {
             </div>
 
             {/* Легенда */}
-            {hasRoom && (
+            {(hasRoom || hasPolygon) && (
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', padding: '6px 2px' }}>
                 {form.type === 'p113' && <LegItem color={C.pn} label="ПН 28×27 (периметр)" />}
                 {step >= 2 && <LegItem color={C.ppMain} label="Осн. ПП 60×27" />}
@@ -796,6 +800,26 @@ export default function CeilingCalc() {
                     ↺ Листы повёрнуты — длинная сторона вдоль ширины помещения
                   </div>
                 )}
+              </div>
+            )}
+            {step === 4 && hasPolygon && result?.polygonSheetLayout && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <StatCard label="Всего листов" value={result.polygonSheetLayout.totalSheetsNeeded} unit="шт" />
+                <StatCard label="Целых" value={result.polygonSheetLayout.fullSheets} unit="шт" color={C.success} />
+                <StatCard label="Резаных" value={result.polygonSheetLayout.cutSheets} unit="шт" color={C.warning} />
+                {result.polygonSheetLayout.rotated && (
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '0 12px',
+                    background: '#fffbeb', border: `1px solid #fcd34d`, borderRadius: 8,
+                    fontSize: 12, color: '#92400e' }}>
+                    ↺ Листы повёрнуты — длинная сторона вдоль стены начала раскладки
+                  </div>
+                )}
+              </div>
+            )}
+            {step === 4 && hasPolygon && form.type !== 'p112' && !result?.polygonSheetLayout && (
+              <div style={{ padding: '8px 12px', background: '#fffbeb', border: `1px solid #fcd34d`,
+                borderRadius: 8, fontSize: 12, color: '#92400e' }}>
+                Раскрой ГКЛ для контура с плана пока считается только для типа П112.
               </div>
             )}
 
@@ -873,13 +897,16 @@ const ZONE_COLORS = ['#2563eb', '#c9a68a', '#16a34a', '#dc2626', '#9333ea', '#08
  * произвольного полигона — отдельная нерешённая задача (пункт 6), это
  * превью её не делает, только показывает форму(ы).
  */
-function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall, polygonFrame }: {
+function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall, polygonFrame, polygonSheetLayout, step, ceilingType }: {
   zones: CeilingSeedZone[]
   canvasW: number
   areaSqm: number
   perimeterM: number
   startWall?: { zoneIndex: number; sideIndex: number } | null
   polygonFrame?: PolygonP112FrameResult | PolygonP113FrameResult | null
+  polygonSheetLayout?: PolygonSheetLayoutResult | null
+  step: number
+  ceilingType: string
 }) {
   const PAD = 32
   const STAGE_H = 300
@@ -1009,18 +1036,58 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
               </Group>
             )
           })}
+          {polygonFrame && step === 4 && polygonSheetLayout && (() => {
+            const angleDeg = Math.atan2(polygonFrame.frame.uy, polygonFrame.frame.ux) * 180 / Math.PI
+            return (
+              <Group>
+                {polygonSheetLayout.layer1.pieces.map((pc, pi) => {
+                  const corner = toStage(toWorld({ x: pc.u1, y: pc.v1 }, polygonFrame.frame))
+                  const wPx = (pc.u2 - pc.u1) * scale
+                  const hPx = (pc.v2 - pc.v1) * scale
+                  const isCut = pc.kind !== 'full'
+                  return (
+                    <Rect key={`sh${pi}`} x={corner.x} y={corner.y} width={wPx} height={hPx}
+                      rotation={angleDeg}
+                      fill={isCut ? C.sheetCutFill : C.sheetFill}
+                      stroke={isCut ? C.sheetCutBorder : C.sheetBorder} strokeWidth={1} />
+                  )
+                })}
+              </Group>
+            )
+          })()}
           {polygonFrame && (
             <Group>
-              {polygonFrame.mainRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
+              {step >= 2 && polygonFrame.mainRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
                 const wa = toStage(toWorld({ x: a, y: row.pos }, polygonFrame.frame))
                 const wb = toStage(toWorld({ x: b, y: row.pos }, polygonFrame.frame))
                 return <Line key={`m-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.accent} strokeWidth={1} opacity={0.6} />
               }))}
-              {polygonFrame.bearingRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
+              {step >= 3 && polygonFrame.bearingRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
                 const wa = toStage(toWorld({ x: row.pos, y: a }, polygonFrame.frame))
                 const wb = toStage(toWorld({ x: row.pos, y: b }, polygonFrame.frame))
                 return <Line key={`b-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.text} strokeWidth={1} opacity={0.4} dash={[4, 3]} />
               }))}
+              {step >= 2 && polygonFrame.hangerPoints.map((p, i) => {
+                const s = toStage(toWorld(p, polygonFrame.frame))
+                return (
+                  <Group key={`hg${i}`} x={s.x} y={s.y}>
+                    <Rect x={-5} y={-4} width={10} height={8}
+                      fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1.5} cornerRadius={1} />
+                    <Line points={[0, -4, 0, -10]} stroke={C.hanger} strokeWidth={1} />
+                  </Group>
+                )
+              })}
+              {step >= 3 && polygonFrame.crabPoints.map((p, i) => {
+                const s = toStage(toWorld(p, polygonFrame.frame))
+                const col = ceilingType === 'p113' ? C.crab1lvl : C.crab
+                return (
+                  <Group key={`cr${i}`} x={s.x} y={s.y}>
+                    <Rect x={-4} y={-4} width={8} height={8} fill={col} opacity={0.9} cornerRadius={1} />
+                    <Line points={[-6, 0, 6, 0]} stroke={col} strokeWidth={1} />
+                    <Line points={[0, -6, 0, 6]} stroke={col} strokeWidth={1} />
+                  </Group>
+                )
+              })}
             </Group>
           )}
         </Layer>

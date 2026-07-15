@@ -434,7 +434,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
   const polygonSheetLayout = (type === 'p112' && polygonInput)
     ? calcPolygonSheetLayout(
         polygonInput.outerMm, polygonInput.holesMm, polygonInput.startSide, sheetLengthFromSpec(spec),
-        1, undefined, undefined, [], bearingStepMm,
+        layers, undefined, undefined, [], bearingStepMm,
       )
     : null
   const sheetLayout = polygonInput ? null : calcCeilingSheetLayout(spec)
