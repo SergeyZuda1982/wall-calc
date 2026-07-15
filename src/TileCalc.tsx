@@ -15,7 +15,7 @@
  */
 
 import { useMemo, useState } from 'react'
-import type { TileInput, TileSurfaceMode, TileLayoutMode } from './types'
+import type { TileInput, TileSurfaceMode, TileLayoutMode, TileAxisAlign } from './types'
 import { calcTile } from './core/calcTile'
 
 const C = {
@@ -41,6 +41,8 @@ const DEFAULT_INPUT: TileInput = {
   tileThicknessMm: 8,
   seamMm: 2,
   layoutMode: 'grid',
+  horizontalAlign: 'center',
+  verticalAlign: 'center',
   offsetRowPercent: 50,
   wastePercent: 10,
   areaPerBoxM2: 1.44,
@@ -142,6 +144,43 @@ export default function TileCalc() {
               onChange={v => patch({ offsetRowPercent: v })} />
           </div>
         )}
+
+        {/* Выравнивание (15.07.2026) — по замечанию с реального объекта:
+            раньше подрезка всегда доставалась одному краю целиком. Теперь
+            выбор явный: прижать к краю или центрировать (подрезка поровну
+            по обеим сторонам — так обычно и делает нормальный плиточник). */}
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 6 }}>Выравнивание по горизонтали</div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          {([['start', 'Целые слева'], ['center', '↔ Центр'], ['end', 'Целые справа']] as [TileAxisAlign, string][]).map(([mode, label]) => (
+            <button key={mode} onClick={() => patch({ horizontalAlign: mode })}
+              style={{
+                flex: 1, padding: '6px 6px', fontSize: 11.5, borderRadius: 6, cursor: 'pointer',
+                border: input.horizontalAlign === mode ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
+                background: input.horizontalAlign === mode ? C.accentLight : '#fff',
+                color: input.horizontalAlign === mode ? C.accent : C.text,
+                fontWeight: input.horizontalAlign === mode ? 600 : 400,
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 6 }}>
+          Выравнивание по вертикали ({input.surfaceMode === 'floor' ? 'вдоль ширины' : 'по высоте'})
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+          {([['start', 'Целые сверху'], ['center', '↔ Центр'], ['end', 'Целые снизу']] as [TileAxisAlign, string][]).map(([mode, label]) => (
+            <button key={mode} onClick={() => patch({ verticalAlign: mode })}
+              style={{
+                flex: 1, padding: '6px 6px', fontSize: 11.5, borderRadius: 6, cursor: 'pointer',
+                border: input.verticalAlign === mode ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
+                background: input.verticalAlign === mode ? C.accentLight : '#fff',
+                color: input.verticalAlign === mode ? C.accent : C.text,
+                fontWeight: input.verticalAlign === mode ? 600 : 400,
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
 
         <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 6 }}>Материалы</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>

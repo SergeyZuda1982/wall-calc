@@ -13,7 +13,7 @@
  * количества плитки/коробок эта раскладка не определяет (см. выше).
  */
 
-import type { TileInput, TileLayoutResult, TilePiece, TileResult } from '../types'
+import type { TileInput, TileLayoutResult, TilePiece, TileResult, TileAxisAlign } from '../types'
 
 /**
  * Раскрой одной оси (ряд по X или колонка по Y): цепочка плиток шагом
@@ -26,6 +26,26 @@ import type { TileInput, TileLayoutResult, TilePiece, TileResult } from '../type
  * корректно обрезается через left=max(x,0) — часть плитки за пределами
  * поверхности просто не попадает в итоговый кусок (это и есть подрезка
  * слева, обычная вещь в раскладке "кирпичиком").
+ */
+/**
+ * Раскрой одной оси (ряд по X или колонка по Y): цепочка плиток шагом
+ * tileMm+seamMm, с необязательным сдвигом начала (startOffsetMm — для
+ * "кирпичика", сдвиг чётных рядов, а также для align='end'). Кусок на
+ * любом краю обрезается по границе поверхности [0, totalMm] — если после
+ * обрезки его размер меньше tileMm, это подрезка (isCut).
+ *
+ * Отрицательный x (первая плитка "заезжает" за левый край при сдвиге)
+ * корректно обрезается через left=max(x,0) — часть плитки за пределами
+ * поверхности просто не попадает в итоговый кусок (это и есть подрезка
+ * слева, обычная вещь в раскладке "кирпичиком" или align='end').
+ *
+ * ⚠️ Этот "периодический разворот от одной фазы" годится для align
+ * 'start'/'end' (подрезка целиком на одном крае) и для СДВИНУТЫХ рядов
+ * "кирпичика" (там симметрия и не нужна — сдвиг специально её ломает).
+ * Для align='center' (подрезка ПОРОВНУ на обоих краях одновременно) один
+ * глобальный сдвиг фазы этого не гарантирует — там отдельная явная
+ * функция centeredAxisPieces() ниже, строящая оба края одинаковыми по
+ * построению, а не подбором фазы.
  */
 function generateAxisPieces(
   totalMm: number,
@@ -48,23 +68,109 @@ function generateAxisPieces(
   return out
 }
 
-export function calcTileLayout(input: TileInput): TileLayoutResult {
-  const { lengthMm, heightMm, tileWidthMm, tileHeightMm, seamMm, layoutMode, offsetRowPercent } = input
+/**
+ * Симметричная раскладка (align='center') — целые плитки в середине,
+ * ОДИНАКОВЫЙ обрезок на обоих краях (построением, а не подбором — см.
+ * комментарий выше). Сначала проверяем "идеальный" случай (размер
+ * поверхности кратен плитке с учётом швов) — тогда обрезки нет вообще,
+ * целые плитки от края до края. Иначе — считаем максимум целых плиток n,
+ * при котором обрезка edgeW с КАЖДОЙ стороны (с учётом шва к соседней
+ * целой плитке!) ещё неотрицательна, и строим [обрезок, n плиток, тот же
+ * обрезок].
+ */
+function centeredAxisPieces(totalMm: number, tileMm: number, seamMm: number): { pos: number; size: number }[] {
+  if (totalMm <= 0 || tileMm <= 0) return []
+  const step = tileMm + seamMm
 
-  const rowsAxis = generateAxisPieces(heightMm, tileHeightMm, seamMm, 0)
+  const nFlush = Math.round((totalMm + seamMm) / step)
+  if (nFlush > 0) {
+    const flushWidth = nFlush * tileMm + (nFlush - 1) * seamMm
+    if (Math.abs(flushWidth - totalMm) < 1e-6) {
+      const out: { pos: number; size: number }[] = []
+      let x = 0
+      for (let i = 0; i < nFlush; i++) { out.push({ pos: x, size: tileMm }); x += step }
+      return out
+    }
+  }
+
+  const n = Math.max(0, Math.floor((totalMm - seamMm) / step))
+  const usedMiddle = n * tileMm + (n + 1) * seamMm
+  const edgeW = Math.max(0, (totalMm - usedMiddle) / 2)
+
+  const out: { pos: number; size: number }[] = []
+  let x = 0
+  if (edgeW > 1e-6) { out.push({ pos: 0, size: edgeW }); x = edgeW + seamMm }
+  for (let i = 0; i < n; i++) { out.push({ pos: x, size: tileMm }); x += step }
+  if (edgeW > 1e-6) out.push({ pos: x, size: edgeW })
+  return out
+}
+
+/**
+ * "Фаза" раскладки для align='start'/'end'/'center' — условная позиция,
+ * где начиналась бы бесконечная периодическая сетка плиток, если её
+ * продолжить. Нужна ТОЛЬКО чтобы сдвинутые ряды "кирпичика" продолжали
+ * тот же ритм, что и опорный (несдвинутый) ряд — сами сдвинутые ряды уже
+ * не обязаны быть симметричными (см. комментарий у generateAxisPieces).
+ */
+function referencePhaseMm(totalMm: number, tileMm: number, seamMm: number, align: TileAxisAlign): number {
+  if (tileMm <= 0) return 0
+  const step = tileMm + seamMm
+  if (align === 'start') return 0
+  if (align === 'end') {
+    const rem = ((totalMm - tileMm) % step + step) % step
+    return rem
+  }
+  // 'center'
+  const nFlush = Math.round((totalMm + seamMm) / step)
+  if (nFlush > 0) {
+    const flushWidth = nFlush * tileMm + (nFlush - 1) * seamMm
+    if (Math.abs(flushWidth - totalMm) < 1e-6) return 0
+  }
+  const n = Math.max(0, Math.floor((totalMm - seamMm) / step))
+  const usedMiddle = n * tileMm + (n + 1) * seamMm
+  const edgeW = Math.max(0, (totalMm - usedMiddle) / 2)
+  return edgeW > 1e-6 ? edgeW + seamMm : 0
+}
+
+/** Переводит "фазу" (референсную позицию первой целой плитки) в
+ *  startOffsetMm для generateAxisPieces — тот подаёт x=-startOffsetMm и
+ *  требует x<=0, чтобы развёртка гарантированно накрыла всю поверхность. */
+function phaseToStartOffset(phaseMm: number, step: number): number {
+  if (step <= 0) return 0
+  const reduced = ((phaseMm % step) + step) % step
+  return step - reduced
+}
+
+/** Раскладка одной оси (ряда по X либо, для вертикали, колонки по Y) с
+ *  учётом выбранного выравнивания. shiftMm — дополнительный сдвиг фазы
+ *  сверх align (используется только для рядов "кирпичика" по X). */
+function axisPieces(
+  totalMm: number, tileMm: number, seamMm: number, align: TileAxisAlign, shiftMm = 0,
+): { pos: number; size: number }[] {
+  if (align === 'center' && Math.abs(shiftMm) < 1e-6) return centeredAxisPieces(totalMm, tileMm, seamMm)
+  const phase = referencePhaseMm(totalMm, tileMm, seamMm, align) + shiftMm
+  const step = tileMm + seamMm
+  return generateAxisPieces(totalMm, tileMm, seamMm, phaseToStartOffset(phase, step))
+}
+
+export function calcTileLayout(input: TileInput): TileLayoutResult {
+  const {
+    lengthMm, heightMm, tileWidthMm, tileHeightMm, seamMm, layoutMode, offsetRowPercent,
+    horizontalAlign, verticalAlign,
+  } = input
+
+  const rowsAxis = axisPieces(heightMm, tileHeightMm, seamMm, verticalAlign)
   const pieces: TilePiece[] = []
 
   rowsAxis.forEach((rowAxis, rowIdx) => {
     // Сдвиг чётных (по факту — каждого второго, начиная со 2-го, rowIdx===1,3,5...)
-    // рядов в режиме "кирпичик". Модуль по tileWidthMm — чтобы даже при
-    // offsetRowPercent>100 (не должно приходить из формы, но не должно и
-    // ломать раскладку) сдвиг оставался в пределах одной плитки.
-    const rawOffset = layoutMode === 'brick' && rowIdx % 2 === 1
+    // рядов в режиме "кирпичик" — сверх выбранного horizontalAlign, а не
+    // вместо него (иначе центровка/прижатие терялись бы в кирпичике).
+    const shiftMm = layoutMode === 'brick' && rowIdx % 2 === 1
       ? (tileWidthMm * offsetRowPercent) / 100
       : 0
-    const rowOffsetMm = tileWidthMm > 0 ? ((rawOffset % tileWidthMm) + tileWidthMm) % tileWidthMm : 0
 
-    const colsAxis = generateAxisPieces(lengthMm, tileWidthMm, seamMm, rowOffsetMm)
+    const colsAxis = axisPieces(lengthMm, tileWidthMm, seamMm, horizontalAlign, shiftMm)
     colsAxis.forEach((colAxis, colIdx) => {
       const isCut = colAxis.size < tileWidthMm - 1e-6 || rowAxis.size < tileHeightMm - 1e-6
       pieces.push({

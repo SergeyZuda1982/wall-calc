@@ -12,6 +12,8 @@ function baseInput(overrides: Partial<TileInput> = {}): TileInput {
     tileThicknessMm: 8,
     seamMm: 2,
     layoutMode: 'grid',
+    horizontalAlign: 'start',
+    verticalAlign: 'start',
     offsetRowPercent: 50,
     wastePercent: 10,
     areaPerBoxM2: 1.44,
@@ -82,6 +84,86 @@ describe('calcTileLayout — раскладка "кирпичиком" (brick)',
     const gridLayout = calcTileLayout(gridInput)
     const brickLayout = calcTileLayout(brickInput)
     expect(brickLayout.pieces.length).toBe(gridLayout.pieces.length)
+  })
+})
+
+describe('calcTileLayout — выравнивание "center" (по замечанию пользователя: подрезка должна быть симметричной с обеих сторон, а не вся на одном краю)', () => {
+  it('центрирование по горизонтали: одинаковая подрезка на обоих краях, целые плитки в середине', () => {
+    // Подбираем длину стены так, чтобы 4 целые плитки заведомо НЕ влезали
+    // (иначе центровка справедливо предпочтёт больше целых плиток и
+    // меньшую подрезку по краям — это правильно, не баг): длина чуть
+    // больше 3 плиток + минимальные швы, но меньше порога для 4-й плитки.
+    // 3 целых + 2 шва между ними = 1804. Берём 2704 (запас на подрезку
+    // по 450мм с каждой стороны + 2 крайних шва) — и меньше, чем нужно
+    // для 4-й целой плитки (порог для n=4 см. коммент ниже).
+    const input = baseInput({
+      lengthMm: 2400, heightMm: 1000, tileWidthMm: 600, tileHeightMm: 1000,
+      seamMm: 2, horizontalAlign: 'center', verticalAlign: 'start',
+    })
+    const layout = calcTileLayout(input)
+    const row0 = layout.pieces.filter(p => p.row === 0).sort((a, b) => a.x - b.x)
+    // n=3: usedMiddle=3*600+4*2=1808, edgeW=(2400-1808)/2=296 (>0, валидно)
+    // n=4 потребовал бы usedMiddle=4*600+5*2=2410 > 2400 — не влезает,
+    // значит алгоритм обязан остановиться на n=3, что и проверяем.
+    expect(row0.length).toBe(5) // обрезок + 3 целых + обрезок
+    expect(row0[0].isCut).toBe(true)
+    expect(row0[row0.length - 1].isCut).toBe(true)
+    expect(row0[0].w).toBeCloseTo(296, 0)
+    // Обрезки СИММЕТРИЧНЫ — именно то, чего не хватало в старой раскладке
+    expect(row0[0].w).toBeCloseTo(row0[row0.length - 1].w, 6)
+    expect(row0.slice(1, -1).every(p => !p.isCut)).toBe(true)
+  })
+
+  it('идеальное попадание (кратный размер) в режиме center — подрезки нет вообще', () => {
+    const input = baseInput({
+      lengthMm: 1202, heightMm: 1000, tileWidthMm: 600, tileHeightMm: 1000,
+      seamMm: 2, horizontalAlign: 'center', verticalAlign: 'start',
+    })
+    const layout = calcTileLayout(input)
+    const row0 = layout.pieces.filter(p => p.row === 0)
+    expect(row0.length).toBe(2)
+    expect(row0.every(p => !p.isCut)).toBe(true)
+  })
+
+  it('центрирование по вертикали работает независимо от горизонтали (подрезка не обязана быть внизу)', () => {
+    const input = baseInput({
+      lengthMm: 1000, heightMm: 2400, tileWidthMm: 1000, tileHeightMm: 600,
+      seamMm: 2, horizontalAlign: 'start', verticalAlign: 'center',
+    })
+    const layout = calcTileLayout(input)
+    const col0 = layout.pieces.filter(p => p.col === 0).sort((a, b) => a.y - b.y)
+    expect(col0[0].isCut).toBe(true)
+    expect(col0[col0.length - 1].isCut).toBe(true)
+    expect(col0[0].h).toBeCloseTo(col0[col0.length - 1].h, 6)
+    expect(col0[0].h).toBeCloseTo(296, 0)
+  })
+
+  it('align="end" — целые плитки прижаты к правому краю, подрезка вся у левого (зеркально старому поведению)', () => {
+    const input = baseInput({
+      lengthMm: 1000, heightMm: 1000, tileWidthMm: 600, tileHeightMm: 600, seamMm: 2,
+      horizontalAlign: 'end', verticalAlign: 'start',
+    })
+    const layout = calcTileLayout(input)
+    const row0 = layout.pieces.filter(p => p.row === 0).sort((a, b) => a.x - b.x)
+    // Последний кусок в ряду должен доходить строго до правого края и быть целым
+    const last = row0[row0.length - 1]
+    expect(last.x + last.w).toBeCloseTo(1000, 0)
+    expect(last.isCut).toBe(false)
+    // Первый (левый) кусок — подрезка
+    expect(row0[0].isCut).toBe(true)
+  })
+
+  it('брикчик поверх центровки: опорный (несдвинутый) ряд остаётся симметричным, сдвинутый — со своей подрезкой', () => {
+    const input = baseInput({
+      lengthMm: 2704, heightMm: 2000, tileWidthMm: 600, tileHeightMm: 600,
+      seamMm: 2, layoutMode: 'brick', offsetRowPercent: 50,
+      horizontalAlign: 'center', verticalAlign: 'start',
+    })
+    const layout = calcTileLayout(input)
+    const row0 = layout.pieces.filter(p => p.row === 0).sort((a, b) => a.x - b.x)
+    expect(row0[0].w).toBeCloseTo(row0[row0.length - 1].w, 6) // опорный ряд всё ещё симметричен
+    const row1 = layout.pieces.filter(p => p.row === 1)
+    expect(row1.length).toBeGreaterThan(0) // сдвинутый ряд посчитан и не пуст
   })
 })
 
