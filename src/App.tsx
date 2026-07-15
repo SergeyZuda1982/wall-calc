@@ -20,6 +20,7 @@ import LiningCalc from './LiningCalc'
 import FloorPlan from './FloorPlan'
 import Scene3D from './Scene3D'
 import CeilingCalc from './CeilingCalc'
+import TileCalc from './TileCalc'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
@@ -170,7 +171,7 @@ export default function App() {
   const [openingClickModal, setOpeningClickModal] = useState<{ pos: number; width: number } | null>(null)
   const [openingClickSill, setOpeningClickSill] = useState('0')
   const [openingClickHeight, setOpeningClickHeight] = useState('2100')
-  const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling' | '3d'>('wall')
+  const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling' | 'tile' | '3d'>('wall')
 
   // Плита ("карандаш") на плане отправлена в расчёт потолка — переключаемся
   // на вкладку сразу, не заставляя искать её руками (сам расчёт CeilingCalc
@@ -754,7 +755,7 @@ export default function App() {
       {/* ─── Вкладки ─── */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid #dde',
         overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        {([['wall', 'Перегородки'], ['lining', 'Облицовка стен'], ['ceiling', '🏠 Потолки'], ['plan', '🗺 План'], ['3d', '🧊 3D']] as const).map(([tab, label]) => (
+        {([['wall', 'Перегородки'], ['lining', 'Облицовка стен'], ['ceiling', '🏠 Потолки'], ['tile', '🀟 Плитка'], ['plan', '🗺 План'], ['3d', '🧊 3D']] as const).map(([tab, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={{
             padding: '10px clamp(10px, 3vw, 24px)', fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap',
             border: 'none', borderBottom: activeTab === tab ? '2px solid #3a7bd5' : '2px solid transparent',
@@ -766,6 +767,7 @@ export default function App() {
 
       {activeTab === 'lining' && <LiningCalc canvasW={CANVAS_W} />}
       {activeTab === 'ceiling' && <CeilingCalc />}
+      {activeTab === 'tile' && <TileCalc />}
 
       {activeTab === 'plan' && (
         <div style={{ margin: '0 -24px', height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
