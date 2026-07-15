@@ -981,3 +981,75 @@ export interface Room {
    */
   ceilingSpec?: CeilingSpec
 }
+
+// ─── Калькулятор плитки (15.07.2026) ──────────────────────────────────────
+// По аналогии с калькуляторами ГКЛ (LiningCalc/CeilingCalc) — но материал
+// принципиально другой (штучный, не листовой), поэтому отдельные типы, а
+// не переиспользование BoardSpec/BoardPiece. Пока только ручной ввод
+// размеров поверхности (без засева с плана) — см. TileCalc.tsx.
+
+/** Пол — прямоугольная площадь (длина×ширина). Стены/облицовка — вертикальная
+ *  поверхность (длина×высота). Геометрически расчёт раскладки идентичен
+ *  (прямоугольник L×H), различаются только подписи полей в форме и, в
+ *  будущем, типовые допущения (проёмы у стен, приямки/трапы у пола). */
+export type TileSurfaceMode = 'floor' | 'wall'
+
+/** 'grid' — швы сплошными линиями (обычная раскладка). 'brick' — каждый
+ *  второй ряд сдвинут на offsetRowPercent от ширины плитки (перевязка,
+ *  частый выбор для прямоугольной плитky/кирпичика). */
+export type TileLayoutMode = 'grid' | 'brick'
+
+export interface TileInput {
+  surfaceMode: TileSurfaceMode
+  /** Длина поверхности, мм (по горизонтали в раскладке) */
+  lengthMm: number
+  /** Ширина (пол) или высота (стена) поверхности, мм (по вертикали в раскладке) */
+  heightMm: number
+  tileWidthMm: number
+  tileHeightMm: number
+  tileThicknessMm: number
+  seamMm: number
+  layoutMode: TileLayoutMode
+  /** Сдвиг чётных рядов в % от ширины плитки (только layoutMode==='brick'), обычно 50 */
+  offsetRowPercent: number
+  /** Запас на подрезку/бой, % от площади (типично 10) */
+  wastePercent: number
+  /** Площадь плитки в одной упаковке, м² (печатается на коробке) */
+  areaPerBoxM2: number
+  /** Расход клея, кг на м² (по гребёнке шпателя — вводится вручную, т.к.
+   *  зависит от конкретного клея и размера зубца гребёнки) */
+  adhesiveKgPerM2: number
+  /** Плотность затирки, г/см³ (обычно 1.6 для цементной, 1.8-1.9 для эпоксидной) */
+  groutDensityGCm3: number
+}
+
+/** Один прямоугольник в раскладке — целая плитка или обрезок у края */
+export interface TilePiece {
+  x: number
+  y: number
+  w: number
+  h: number
+  /** Целая плитка (кроилась только "в размер" ряда/колонки без остатка) */
+  isCut: boolean
+  row: number
+  col: number
+}
+
+export interface TileLayoutResult {
+  pieces: TilePiece[]
+  rows: number
+  cols: number
+  /** Уникальные размеры подрезки для памятки монтажнику ("на объекте отрезать N кусков WхH") */
+  cutSizes: { widthMm: number; heightMm: number; count: number }[]
+}
+
+export interface TileResult {
+  layout: TileLayoutResult
+  areaM2: number                 // чистая площадь поверхности
+  areaWithWasteM2: number        // с учётом wastePercent
+  tilesWholeEquivalent: number   // итог в штуках целых плиток (обрезки округляются вверх поштучно)
+  boxesCount: number
+  adhesiveKg: number
+  groutKg: number
+}
+
