@@ -135,18 +135,38 @@ function useMinThicknessScale(
 // pp6027_lm) — не выдуманы отдельно для 3D.
 
 export function ppProfileShape(width = 60, height = 27, t = 0.6, lip = 5): THREE.Shape {
+  // 14.07.2026: сечение перевёрнуто относительно версии до этой правки —
+  // раньше широкая полка (куда крепится ГКЛ) оказывалась у y=h (физически
+  // выше подвеса/краба, "полкой вверх"), а открытый верх канала (концы двух
+  // "ножек", которыми профиль заходит в паз краба/зажим подвеса) — у y=0
+  // (физически ниже, "рёбрами вниз"). По факту наоборот: полка должна быть
+  // внизу (лицом в комнату, к ней крепится ГКЛ), открытый верх — вверху
+  // (к плите, там подвес/краб). См. фото от пользователя, 14.07.2026 —
+  // сверено визуально с реальным профилем ПП60×27. Малые "лапки" (параметр
+  // lip) физически расположены на ТОЙ ЖЕ кромке, что и широкая полка (это
+  // отбортовка/усиление кромки полки, не отдельная деталь у открытого
+  // верха) — поэтому они переехали вместе с полкой, тоже к y=0.
+  //
+  // Точки — зеркальное отражение (y' = height - y) прежней версии, но ещё и
+  // в ОБРАТНОМ порядке обхода: одно только отражение развернуло бы контур в
+  // другую сторону (CW↔CCW) и перевернуло бы нормали экструзии (профиль стал
+  // бы тёмным/невидимым с обычного ракурса) — двойная правка (отражение +
+  // разворот порядка) возвращает то же направление обхода, что было раньше,
+  // сохраняя корректную ориентацию нормалей. Зафиксировано тестом
+  // (CeilingGridMesh.profileShape.test.ts, "сохраняет то же направление
+  // обхода") — без него эту деталь легко испортить незаметно.
   const s = new THREE.Shape()
   const w = width, h = height
-  s.moveTo(-lip, h)
-  s.lineTo(0, h)
-  s.lineTo(0, t)
-  s.lineTo(t, t)
-  s.lineTo(t, h - t)
+  s.moveTo(w + lip, 0)
+  s.lineTo(w, 0)
+  s.lineTo(w, h - t)
   s.lineTo(w - t, h - t)
   s.lineTo(w - t, t)
-  s.lineTo(w, t)
-  s.lineTo(w, h)
-  s.lineTo(w + lip, h)
+  s.lineTo(t, t)
+  s.lineTo(t, h - t)
+  s.lineTo(0, h - t)
+  s.lineTo(0, 0)
+  s.lineTo(-lip, 0)
   s.closePath()
   return s
 }
@@ -277,6 +297,92 @@ export function Hanger({ x, y, z, dropM, onClick }: {
       </mesh>
       <HangerRod dropM={dropM} />
       <mesh geometry={clampGeo} material={crabMat} castShadow />
+    </group>
+  )
+}
+
+// ─── Подвес прямой перфорированный (П113) — плоская лента ──────────────────
+// 14.07.2026: по фото от пользователя — для П113 подвес рисуется не как
+// стержень+пластина+зажим (Hanger выше, используется для П112), а как
+// настоящий "прямой подвес": плоская перфорированная металлическая лента с
+// петлёй-крюком наверху (крепится к плите анкером/дюбелем через петлю) и
+// рядами круглых отверстий по всей длине — регулировка длины загибом ленты и
+// саморезом в нужное отверстие, крепление к профилю тем же способом, без
+// отдельного зажима/краба (в отличие от П112, где нужен отдельный краб-зажим
+// на конце подвеса).
+//
+// Перфорация — не отдельная геометрия (дорого по полигонам на каждый
+// подвес), а canvas-текстура с РЕАЛЬНОЙ прозрачностью в дырках (alphaTest,
+// не имитация цветом) — тот же приём, что и fibrousTexture() для минваты
+// выше, только с прозрачностью вместо цветового шума.
+
+let cachedHangerStripTexture: THREE.CanvasTexture | null = null
+function hangerStripTexture(): THREE.CanvasTexture {
+  if (cachedHangerStripTexture) return cachedHangerStripTexture
+  const c = document.createElement('canvas')
+  c.width = 64
+  c.height = 512
+  const ctx = c.getContext('2d')!
+  ctx.fillStyle = '#c9ced3'
+  ctx.fillRect(0, 0, c.width, c.height)
+  // лёгкий шум металла (прокатной поверхности)
+  for (let i = 0; i < 500; i++) {
+    ctx.fillStyle = `rgba(150,155,160,${0.05 + Math.random() * 0.12})`
+    ctx.fillRect(Math.random() * c.width, Math.random() * c.height, 1, 1)
+  }
+  // ряды круглых отверстий в шахматном порядке — вырезаны по-настоящему
+  // (destination-out => alpha=0), не просто закрашены другим цветом.
+  ctx.globalCompositeOperation = 'destination-out'
+  const rows = 24, r = 5.5
+  const rowStepPx = c.height / rows
+  for (let row = 0; row < rows; row++) {
+    const y = rowStepPx * (row + 0.5)
+    const xOff = (row % 2) * (c.width / 4)
+    for (const xBase of [c.width * 0.28, c.width * 0.72]) {
+      ctx.beginPath()
+      ctx.arc(xBase + xOff - c.width / 8, y, r, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+  ctx.globalCompositeOperation = 'source-over'
+  cachedHangerStripTexture = new THREE.CanvasTexture(c)
+  cachedHangerStripTexture.wrapS = THREE.ClampToEdgeWrapping
+  cachedHangerStripTexture.wrapT = THREE.RepeatWrapping
+  return cachedHangerStripTexture
+}
+
+const HANGER_STRIP_WIDTH_M = 0.03 // ширина ленты прямого подвеса (~30мм по каталогу)
+
+/** Подвес прямой перфорированный (П113) — петля-крюк у плиты + плоская
+ *  перфорированная лента до основного профиля, без отдельного зажима. */
+export function HangerStripP113({ x, y, z, dropM, onClick }: {
+  x: number; y: number; z: number; dropM: number
+  onClick?: (e: ThreeEvent<MouseEvent>) => void
+}) {
+  const hookGeo = useMemo(() => {
+    // Петля-крюк у самой плиты — короткий загиб ленты, которым подвес
+    // цепляется/крепится к анкеру/дюбелю в плите.
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0.009, 0.007, 0),
+      new THREE.Vector3(0.013, -0.003, 0),
+      new THREE.Vector3(0.004, -0.012, 0),
+      new THREE.Vector3(0, -0.016, 0),
+    ])
+    return new THREE.TubeGeometry(curve, 16, 0.0016, 6, false)
+  }, [])
+  const tex = useMemo(() => hangerStripTexture(), [])
+  const stripMat = useMemo(() => new THREE.MeshStandardMaterial({
+    map: tex, color: '#c9ced3', metalness: 0.55, roughness: 0.55,
+    transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
+  }), [tex])
+
+  return (
+    <group position={[x, y, z]} onClick={onClick}>
+      <mesh geometry={hookGeo} material={crabMat} castShadow />
+      <mesh position={[0, -dropM / 2, 0]} material={stripMat} castShadow>
+        <planeGeometry args={[HANGER_STRIP_WIDTH_M, dropM]} />
+      </mesh>
     </group>
   )
 }
@@ -451,12 +557,15 @@ export default function CeilingGridMesh({
         )
       })}
 
-      {/* подвесы вдоль основного профиля */}
+      {/* подвесы вдоль основного профиля — П113: перфорированная лента (по
+          фото), П112: стержень+пластина+зажим (см. Hanger/HangerStripP113
+          выше, 14.07.2026) */}
       {grid.hangerPoints.map((p, i) => {
         const hx = bbox.minX + p.x / 1000, hz = bbox.minZ + p.z / 1000
         const hy = ceilingM - dropToMainM / 2
+        const HangerComp = ceilingType === 'p113' ? HangerStripP113 : Hanger
         return (
-          <Hanger
+          <HangerComp
             key={`hanger-${i}`}
             x={hx}
             y={ceilingM}

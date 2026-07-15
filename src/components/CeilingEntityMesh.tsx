@@ -47,7 +47,7 @@ import { calcPolygonP113Frame, type PolygonP113FrameResult } from '../core/calcP
 import { calcPolygonSheetLayout, type PolygonSheetLayoutResult, type PolygonSheetPiece } from '../core/calcPolygonSheetLayout'
 import { boardSpecFromCeilingSpec } from '../core/calcProjectSheetLayout'
 import {
-  ppProfileShape, extrudeProfileM, ThinProfileMesh, crabGeometry, Hanger, metalMat, crabMat,
+  ppProfileShape, extrudeProfileM, ThinProfileMesh, crabGeometry, Hanger, HangerStripP113, metalMat, crabMat,
 } from './CeilingGridMesh'
 
 const PLATE_COLOR = '#e9e4d8'
@@ -209,7 +209,11 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
 
           {frame!.hangerPoints.map((p, i) => {
             const [x, z] = toWorldM(p)
-            return <Hanger key={`h-${i}`} x={x} y={ceilingM} z={z} dropM={dropToMainM} />
+            // 14.07.2026: П113 — перфорированная лента по фото (см.
+            // HangerStripP113 в CeilingGridMesh.tsx), П112 — прежний
+            // стержень+пластина+зажим (Hanger).
+            const HangerComp = isP113 ? HangerStripP113 : Hanger
+            return <HangerComp key={`h-${i}`} x={x} y={ceilingM} z={z} dropM={dropToMainM} />
           })}
         </>
       )}
