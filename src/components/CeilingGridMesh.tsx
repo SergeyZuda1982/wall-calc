@@ -301,15 +301,23 @@ export function Hanger({ x, y, z, dropM, onClick }: {
   )
 }
 
-// ─── Подвес прямой перфорированный (П113) — плоская лента ──────────────────
+// ─── Подвес прямой перфорированный (П113) — П-образная скоба ───────────────
 // 14.07.2026: по фото от пользователя — для П113 подвес рисуется не как
 // стержень+пластина+зажим (Hanger выше, используется для П112), а как
-// настоящий "прямой подвес": плоская перфорированная металлическая лента с
-// петлёй-крюком наверху (крепится к плите анкером/дюбелем через петлю) и
-// рядами круглых отверстий по всей длине — регулировка длины загибом ленты и
-// саморезом в нужное отверстие, крепление к профилю тем же способом, без
-// отдельного зажима/краба (в отличие от П112, где нужен отдельный краб-зажим
-// на конце подвеса).
+// настоящий "прямой подвес" с перфорированной лентой.
+// 15.07.2026, ИСПРАВЛЕНИЕ по новым фото: первая версия (петля-крюк наверху +
+// одна лента по центру до профиля) была неверна — пользователь прислал фото
+// реальной детали целиком. Это заводская П-образная скоба, ОДНА деталь, а
+// НЕ лента, сложенная монтажником: плоская пластина наверху (2 круглых
+// отверстия под дюбель-гвозди по краям + 1 овальная прорезь посередине,
+// крепится к плите) переходит в ДВЕ перфорированные "ножки", которые
+// обхватывают профиль ПП60×27 СНАРУЖИ с двух сторон (не одна лента по
+// центру профиля) — на фото видно ещё и саморез через профиль в ножку,
+// геометрически не показываем (не читается в масштабе сцены). Круглые
+// отверстия под дюбели/овальную прорезь на пластине тоже не моделируем
+// отдельной геометрией/текстурой — плата маленькая, разница на 3D-масштабе
+// сцены не читается, а перфорация ножек (главный визуальный маркер детали)
+// сохранена через ту же canvas-текстуру, что и раньше.
 //
 // Перфорация — не отдельная геометрия (дорого по полигонам на каждый
 // подвес), а canvas-текстура с РЕАЛЬНОЙ прозрачностью в дырках (alphaTest,
@@ -351,38 +359,55 @@ function hangerStripTexture(): THREE.CanvasTexture {
   return cachedHangerStripTexture
 }
 
-const HANGER_STRIP_WIDTH_M = 0.03 // ширина ленты прямого подвеса (~30мм по каталогу)
+const HANGER_STRIP_WIDTH_M = 0.03 // ширина одной "ножки" скобы (~30мм по каталогу)
+// Половина ширины профиля ПП60×27 (см. ppProfileShape(width=60) — дефолт
+// там же), ножки охватывают профиль СНАРУЖИ по этой границе.
+const HANGER_PROFILE_HALF_WIDTH_M = 0.03
+// Расстояние от центра профиля до центра каждой ножки: внутренний край
+// ножки — точно на грани профиля, ножка добавляет свою полуширину наружу.
+const HANGER_LEG_OFFSET_M = HANGER_PROFILE_HALF_WIDTH_M + HANGER_STRIP_WIDTH_M / 2
+const HANGER_PLATE_WIDTH_M = 2 * HANGER_LEG_OFFSET_M // пластина соединяет обе ножки поверху
 
-/** Подвес прямой перфорированный (П113) — петля-крюк у плиты + плоская
- *  перфорированная лента до основного профиля, без отдельного зажима. */
-export function HangerStripP113({ x, y, z, dropM, onClick }: {
-  x: number; y: number; z: number; dropM: number
+/** Подвес прямой перфорированный (П113) — П-образная скоба: пластина у
+ *  плиты + две перфорированные ножки, обхватывающие основной профиль с
+ *  двух сторон (см. фото от пользователя, 15.07.2026).
+ *  rotationY ДОЛЖЕН совпадать с углом поворота основного профиля в этой
+ *  точке (тот же `alongX`/`angle`, что передаётся в ThinProfileMesh для
+ *  main-сегмента) — иначе ножки лягут вдоль профиля, а не поперёк него. */
+export function HangerStripP113({ x, y, z, dropM, rotationY = 0, onClick }: {
+  x: number; y: number; z: number; dropM: number; rotationY?: number
   onClick?: (e: ThreeEvent<MouseEvent>) => void
 }) {
-  const hookGeo = useMemo(() => {
-    // Петля-крюк у самой плиты — короткий загиб ленты, которым подвес
-    // цепляется/крепится к анкеру/дюбелю в плите.
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(0.009, 0.007, 0),
-      new THREE.Vector3(0.013, -0.003, 0),
-      new THREE.Vector3(0.004, -0.012, 0),
-      new THREE.Vector3(0, -0.016, 0),
-    ])
-    return new THREE.TubeGeometry(curve, 16, 0.0016, 6, false)
-  }, [])
   const tex = useMemo(() => hangerStripTexture(), [])
   const stripMat = useMemo(() => new THREE.MeshStandardMaterial({
     map: tex, color: '#c9ced3', metalness: 0.55, roughness: 0.55,
     transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
   }), [tex])
+  const plateMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#c9ced3', metalness: 0.55, roughness: 0.5, side: THREE.DoubleSide,
+  }), [])
 
   return (
-    <group position={[x, y, z]} onClick={onClick}>
-      <mesh geometry={hookGeo} material={crabMat} castShadow />
-      <mesh position={[0, -dropM / 2, 0]} material={stripMat} castShadow>
-        <planeGeometry args={[HANGER_STRIP_WIDTH_M, dropM]} />
+    <group position={[x, y, z]} rotation={[0, rotationY, 0]} onClick={onClick}>
+      {/* верхняя пластина — крепится к плите дюбель-гвоздями (2 отверстия
+          по краям + овальная прорезь посередине на реальной детали, не
+          моделируем — см. комментарий выше про масштаб сцены) */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} material={plateMat} castShadow>
+        <planeGeometry args={[HANGER_PLATE_WIDTH_M, HANGER_STRIP_WIDTH_M]} />
       </mesh>
+      {/* две перфорированные ножки — обхватывают профиль с двух сторон
+          СНАРУЖИ, а не одна лента по центру, как в первой версии */}
+      {[-1, 1].map((side) => (
+        <mesh
+          key={side}
+          position={[side * HANGER_LEG_OFFSET_M, -dropM / 2, 0]}
+          rotation={[0, Math.PI / 2, 0]}
+          material={stripMat}
+          castShadow
+        >
+          <planeGeometry args={[HANGER_STRIP_WIDTH_M, dropM]} />
+        </mesh>
+      ))}
     </group>
   )
 }
@@ -563,15 +588,26 @@ export default function CeilingGridMesh({
       {grid.hangerPoints.map((p, i) => {
         const hx = bbox.minX + p.x / 1000, hz = bbox.minZ + p.z / 1000
         const hy = ceilingM - dropToMainM / 2
-        const HangerComp = ceilingType === 'p113' ? HangerStripP113 : Hanger
+        const click = focusableClick(new THREE.Vector3(hx, hy, hz))
+        if (ceilingType === 'p113') {
+          // тот же alongX, что и у ThinProfileMesh main-сегментов выше —
+          // main-профиль у П113 идёт в одном направлении по всей сетке
+          // (mainAlongLength === bearingAlongLength, см. calcCeilingGridP113).
+          const rotationY = bearingAlongLength ? Math.PI / 2 : 0
+          return (
+            <HangerStripP113
+              key={`hanger-${i}`}
+              x={hx} y={ceilingM} z={hz} dropM={dropToMainM}
+              rotationY={rotationY}
+              onClick={click}
+            />
+          )
+        }
         return (
-          <HangerComp
+          <Hanger
             key={`hanger-${i}`}
-            x={hx}
-            y={ceilingM}
-            z={hz}
-            dropM={dropToMainM}
-            onClick={focusableClick(new THREE.Vector3(hx, hy, hz))}
+            x={hx} y={ceilingM} z={hz} dropM={dropToMainM}
+            onClick={click}
           />
         )
       })}

@@ -209,11 +209,25 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
 
           {frame!.hangerPoints.map((p, i) => {
             const [x, z] = toWorldM(p)
-            // 14.07.2026: П113 — перфорированная лента по фото (см.
+            // 14.07.2026: П113 — П-образная скоба по фото (см.
             // HangerStripP113 в CeilingGridMesh.tsx), П112 — прежний
             // стержень+пластина+зажим (Hanger).
-            const HangerComp = isP113 ? HangerStripP113 : Hanger
-            return <HangerComp key={`h-${i}`} x={x} y={ceilingM} z={z} dropM={dropToMainM} />
+            // 15.07.2026: у контура (в отличие от bbox-пути в
+            // CeilingGridMesh.tsx) main-профиль может идти под ПРОИЗВОЛЬНЫМ
+            // углом (frame.frame — общий для всей сетки), не только 0/90° —
+            // тот же угол, что и у ThinProfileMesh main-сегментов выше
+            // (`angle = Math.atan2(x2-x1, z2-z1)`), выведен напрямую из
+            // орта U рамки без пересчёта по двум точкам.
+            if (isP113) {
+              const rotationY = Math.atan2(frame!.frame.ux, frame!.frame.uy)
+              return (
+                <HangerStripP113
+                  key={`h-${i}`} x={x} y={ceilingM} z={z} dropM={dropToMainM}
+                  rotationY={rotationY}
+                />
+              )
+            }
+            return <Hanger key={`h-${i}`} x={x} y={ceilingM} z={z} dropM={dropToMainM} />
           })}
         </>
       )}
