@@ -376,6 +376,17 @@ describe('calcCeiling — с polygonInput (пункт 6, контур произ
     expect(fallback.warnings.some(w => w.includes('среднему расходу'))).toBe(true)
     expect(fallback.polygonFrame).toBeNull()
   })
+
+  it('РЕГРЕСС 15.07.2026: layers=2 учитывается в раскрое по контуру (было — всегда 1 слой, gklLayers жёстко захардкожен)', () => {
+    const specL1 = { ...spec, layers: 1 as const }
+    const specL2 = { ...spec, layers: 2 as const }
+    const resL1 = calcCeiling(specL1, { outerMm: outer, holesMm: [], startSide })
+    const resL2 = calcCeiling(specL2, { outerMm: outer, holesMm: [], startSide })
+    expect(resL1.polygonSheetLayout?.layer2).toBeNull()
+    expect(resL2.polygonSheetLayout?.layer2).not.toBeNull()
+    // Второй слой той же площади — примерно вдвое больше листов нужно
+    expect(resL2.polygonSheetLayout!.totalSheetsNeeded).toBeGreaterThan(resL1.polygonSheetLayout!.totalSheetsNeeded)
+  })
 })
 
 describe('calcCeiling — с polygonInput, П113 (13.07.2026, calcPolygonP113Frame подключён)', () => {
