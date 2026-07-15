@@ -887,6 +887,20 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
   const availH = STAGE_H - PAD * 2
 
   const validZones = zones.filter(z => z.outerMm.length >= 3)
+
+  // ── Зум и панорама (тот же принцип, что и в прямоугольном калькуляторе,
+  //    но через нативный transform Konva-слоя — координаты toStage всегда
+  //    считаются при zoom=1, масштабирует их сам Layer) ──
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan]   = useState({ x: 0, y: 0 })
+  const isPanning       = useRef(false)
+  const lastMid         = useRef({ x: 0, y: 0 })
+  const stageRef        = useRef<any>(null)
+
+  // Сброс зума при смене обведённого контура
+  const boundsKey = validZones.map(z => z.outerMm.map(p => `${p.x},${p.y}`).join(';')).join('|')
+  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [boundsKey])
+
   if (validZones.length === 0) return null
 
   const allPts = validZones.flatMap(z => z.outerMm)
@@ -907,10 +921,62 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
     return s
   }
 
+  // Зум колёсиком — к точке курсора
+  function handleWheel(e: any) {
+    e.evt.preventDefault()
+    const stage = stageRef.current
+    if (!stage) return
+    const pointer = stage.getPointerPosition()
+    if (!pointer) return
+    const oldZoom = zoom
+    const mousePointTo = { x: (pointer.x - pan.x) / oldZoom, y: (pointer.y - pan.y) / oldZoom }
+    const dir = e.evt.deltaY > 0 ? -1 : 1
+    const factor = 1 + dir * 0.12
+    const newZoom = Math.min(10, Math.max(0.5, oldZoom * factor))
+    setZoom(newZoom)
+    setPan({ x: pointer.x - mousePointTo.x * newZoom, y: pointer.y - mousePointTo.y * newZoom })
+  }
+  // Средняя кнопка — панорамирование
+  function handleMouseDown(e: any) {
+    if (e.evt.button === 1) {
+      e.evt.preventDefault()
+      isPanning.current = true
+      lastMid.current   = { x: e.evt.clientX, y: e.evt.clientY }
+    }
+  }
+  function handleMouseMove(e: any) {
+    if (!isPanning.current) return
+    const dx = e.evt.clientX - lastMid.current.x
+    const dy = e.evt.clientY - lastMid.current.y
+    lastMid.current = { x: e.evt.clientX, y: e.evt.clientY }
+    setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }))
+  }
+  function handleMouseUp(e: any) {
+    if (e.evt.button === 1) isPanning.current = false
+  }
+
   return (
-    <div>
-      <Stage width={canvasW} height={STAGE_H}>
-        <Layer>
+    <div style={{ position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 4, right: 8, fontSize: 11,
+        color: C.muted, pointerEvents: 'none', zIndex: 1 }}>
+        🖱 колёсико — зум · зажать колёсико — двигать
+        {zoom !== 1 && (
+          <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }) }}
+            style={{ marginLeft: 8, fontSize: 11, padding: '1px 6px',
+              border: `1px solid ${C.border}`, borderRadius: 4,
+              background: C.bg, cursor: 'pointer', color: C.accent,
+              pointerEvents: 'all' }}>
+            сброс
+          </button>
+        )}
+      </div>
+      <Stage ref={stageRef} width={canvasW} height={STAGE_H}
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        style={{ cursor: isPanning.current ? 'grabbing' : 'default' }}>
+        <Layer x={pan.x} y={pan.y} scaleX={zoom} scaleY={zoom}>
           {validZones.map((zone, zi) => {
             const color = ZONE_COLORS[zi % ZONE_COLORS.length]
             const c = centroid(zone.outerMm)
