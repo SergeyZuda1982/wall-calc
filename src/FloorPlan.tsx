@@ -337,6 +337,7 @@ export default function FloorPlan() {
     addMepRoute, removeMepRoute, setMepBackground, updateMepBackground,
     customWorkStageTemplates, addCustomWorkStageTemplate,
     selectedEntity, setSelectedEntity,
+    undoStack, redoStack, undo, redo,
   } = useProjectStore()
 
   const allWorkStageTemplates: WorkStageTemplate[] = useMemo(
@@ -1763,6 +1764,20 @@ export default function FloorPlan() {
   }
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Отмена/повтор (14.07.2026) — Ctrl+Z / Ctrl+Shift+Z (Cmd на Mac).
+    // Проверяем именно 'z' в нижнем регистре через toLowerCase — раскладка
+    // и Shift не должны мешать распознаванию сочетания. Игнорируем, если
+    // фокус сейчас в текстовом поле/textarea (там должен работать родной
+    // undo браузера для текста, а не откат всего плана) — на плане же сам
+    // контейнер получает фокус (tabIndex=0), так что обычный клик по
+    // холсту и последующий Ctrl+Z работает как ожидается.
+    const targetTag = (e.target as HTMLElement)?.tagName
+    const isTextInput = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT'
+    if (!isTextInput && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault()
+      if (e.shiftKey) redo(); else undo()
+      return
+    }
     if (e.key === 'Escape') {
       if (mode === 'erase') {
         setEraseIds([])
@@ -1805,7 +1820,7 @@ export default function FloorPlan() {
       }
     }
     if (e.key === 'Shift') setOrthoMode(true)
-  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter, mepRoutePts, activeDiscipline, mepDrawElevationMm, mepDrawDiameterMm, mepDrawWidthMm, mepDrawHeightSectionMm, addMepRoute, mepRoutes, selectedOpening])
+  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter, mepRoutePts, activeDiscipline, mepDrawElevationMm, mepDrawDiameterMm, mepDrawWidthMm, mepDrawHeightSectionMm, addMepRoute, mepRoutes, selectedOpening, undo, redo])
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Shift') setOrthoMode(false)
@@ -3384,6 +3399,21 @@ export default function FloorPlan() {
             padding: '8px 12px', background: '#fff',
             borderBottom: '1px solid #e0e4ee', flexWrap: 'wrap',
           }}>
+            {/* Отмена/повтор (14.07.2026) — видимые кнопки, не только Ctrl+Z,
+                потому что на телефоне (Сергей часто работает с объекта)
+                клавиатурного сочетания просто нет. disabled, когда стек
+                пуст — чтобы не давать жать в никуда. */}
+            <button onClick={() => undo()} disabled={undoStack.length === 0}
+              title="Отменить последнее действие (Ctrl+Z)"
+              style={toolBtnStyle(false, undoStack.length === 0)}>
+              ↩ Отменить
+            </button>
+            <button onClick={() => redo()} disabled={redoStack.length === 0}
+              title="Повторить отменённое действие (Ctrl+Shift+Z)"
+              style={toolBtnStyle(false, redoStack.length === 0)}>
+              ↪ Повторить
+            </button>
+
             {/* Прямой угол */}
             <button onClick={() => {
               setOrthoMode(o => !o)
