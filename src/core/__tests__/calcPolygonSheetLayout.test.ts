@@ -204,4 +204,53 @@ describe('calcPolygonSheetLayout — детальная раскладка (12.0
   })
 })
 
+describe('calcPolygonSheetLayout — выемка режет полосу ЧАСТИЧНО по толщине (15.07.2026, репорт пользователя со скриншотами: раскрой в 3D "летал" за пределы контура)', () => {
+  // Узкий (1200мм — ровно одна полоса) вогнутый контур: выемка на длине
+  // 2500-4000мм срезает ширину с 1200 до 700мм, НЕ по всей толщине полосы.
+  // Единственная скан-линия по центру полосы (x=600, что < 700 — выемки не
+  // видит) раньше считала эту выемку не существующей: кусок листа 2500-5000
+  // получал ширину 1200 на всей своей длине, хотя реально контур в диапазоне
+  // 2500-4000 шириной только 700 — лист "торчал" за контур на 500×1500мм.
+  const notch: Point2D[] = [
+    { x: 0, y: 0 }, { x: 1200, y: 0 }, { x: 1200, y: 2500 },
+    { x: 700, y: 2500 }, { x: 700, y: 4000 }, { x: 1200, y: 4000 },
+    { x: 1200, y: 6000 }, { x: 0, y: 6000 },
+  ]
+  const startSide = { start: notch[0], end: notch[1] }
+
+  // Площадь контура (формула шнурования) — эталон для сверки с суммой
+  // площадей кусков раскроя.
+  function shoelaceArea(poly: Point2D[]): number {
+    let s = 0
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i]
+      const b = poly[(i + 1) % poly.length]
+      s += a.x * b.y - b.x * a.y
+    }
+    return Math.abs(s) / 2
+  }
+
+  it('суммарная площадь кусков раскроя равна площади контура (не больше — куски не вылезают за выемку)', () => {
+    const r = calcPolygonSheetLayout(notch, [], startSide, 2500)!
+    const piecesArea = r.layer1.pieces.reduce((s, p) => s + (p.u2 - p.u1) * (p.v2 - p.v1), 0)
+    expect(piecesArea).toBeCloseTo(shoelaceArea(notch), 0)
+  })
+
+  it('ни один кусок не шире фактического контура в своём диапазоне длины (никакой кусок не толще 700мм на участке 2500-4000)', () => {
+    const r = calcPolygonSheetLayout(notch, [], startSide, 2500)!
+    for (const p of r.layer1.pieces) {
+      // Кусок, который целиком лежит в диапазоне длины выемки (2500..4000
+      // по оси, вдоль которой считается контур — после возможного transpose
+      // при rotated это может быть u или v; проверяем обе оси на всякий
+      // случай, т.к. тест должен быть устойчив к выбору ориентации).
+      const lo = Math.min(p.u1, p.u2, p.v1, p.v2)
+      const overlapsNotchU = p.u1 >= 2500 - 1e-6 && p.u2 <= 4000 + 1e-6
+      const overlapsNotchV = p.v1 >= 2500 - 1e-6 && p.v2 <= 4000 + 1e-6
+      if (overlapsNotchU) expect(p.v2 - p.v1).toBeLessThanOrEqual(700 + 1e-6)
+      if (overlapsNotchV) expect(p.u2 - p.u1).toBeLessThanOrEqual(700 + 1e-6)
+      expect(lo).toBeGreaterThanOrEqual(-1e-6)
+    }
+  })
+})
+
 

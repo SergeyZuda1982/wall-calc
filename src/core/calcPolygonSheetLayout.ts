@@ -166,6 +166,73 @@ function bandBoundaries(vMin: number, vMax: number, bandW: number, phaseMm: numb
   return [...pts].sort((a, b) => a - b)
 }
 
+const WIDTH_CUT_EPS_MM = 0.5
+
+/**
+ * 15.07.2026: пользователь прислал скриншоты сложного (много углов, острый
+ * "клин" + отдельные пристройки) контура потолка — 3D-раскрой ГКЛ был явно
+ * неверным, листы торчали за пределы контура/висели в стороне ("шматки").
+ * Причина: единственная скан-линия ПО ЦЕНТРУ полосы (см. заголовок файла,
+ * "осознанное упрощение") даёт верную ширину покрытия только там, где эта
+ * ширина не меняется вдоль длины полосы. Если вогнутая выемка срезает
+ * полосу лишь ЧАСТИЧНО по толщине (не всю 1200мм, а кусок) — центральная
+ * скан-линия эту выемку может вообще не увидеть (если проходит мимо неё),
+ * и тогда ВЕСЬ найденный по центру отрезок длины получает ширину cw
+ * (толщину всей полосы), даже там, где контур на самом деле уже.
+ *
+ * Фикс — та же идея, что уже применяется для несущего профиля П113
+ * (calcPolygonP113Frame.ts, splitSegmentAtCuts): между двумя соседними
+ * вершинами контура ширина покрытия полосы не может измениться (граница
+ * контура локально прямолинейна) — значит критические длины, где стоит
+ * ПЕРЕПРОВЕРИТЬ ширину, это x-координаты вершин контура, чья y ("v",
+ * поперёк полосы) строго ВНУТРИ текущей полосы [v1,v2]. Между ними каждый
+ * кусок листа дополнительно режется (bandCriticalXs + splitAtCriticalXs),
+ * и для каждого под-куска ширина покрытия пересчитывается ЗАНОВО по
+ * скан-линии через ЕГО СОБСТВЕННУЮ середину длины (widthRangesAtX), а не
+ * унаследована от центра всей полосы. Для прямоугольных/простых контуров
+ * (без вершин внутри полосы) критических точек нет — поведение не
+ * меняется, старые тесты не затронуты.
+ */
+function bandCriticalXs(loops: Point2D[][], v1: number, v2: number): number[] {
+  const xs: number[] = []
+  for (const loop of loops) {
+    for (const p of loop) {
+      if (p.y > v1 + WIDTH_CUT_EPS_MM && p.y < v2 - WIDTH_CUT_EPS_MM) xs.push(p.x)
+    }
+  }
+  return [...new Set(xs)].sort((a, b) => a - b)
+}
+
+/** Режет [a,b] в критических точках xs, СТРОГО внутри (a,b) (допуск
+ *  WIDTH_CUT_EPS_MM) — тот же принцип, что splitSegmentAtCuts в
+ *  calcPolygonP113Frame.ts (не импортируется оттуда напрямую — здесь своя,
+ *  локальная копия того же простого приёма, чтобы не тянуть в этот файл
+ *  весь модуль каркаса ради одной функции). */
+function splitAtCriticalXs(a: number, b: number, xs: number[]): [number, number][] {
+  const inner = xs.filter(x => x > a + WIDTH_CUT_EPS_MM && x < b - WIDTH_CUT_EPS_MM).sort((p, q) => p - q)
+  const pts = [a, ...inner, b]
+  const out: [number, number][] = []
+  for (let i = 0; i + 1 < pts.length; i++) out.push([pts[i], pts[i + 1]])
+  return out
+}
+
+/** Реальные v-диапазоны покрытия полосы [v1,v2] на конкретной длине x —
+ *  скан-линия ЧЕРЕЗ ЭТУ ТОЧКУ длины (а не через центр полосы, как раньше),
+ *  пересечённая с границами полосы. Может вернуть несколько кусков (полоса
+ *  задевает контур несколько раз, например у самого края невыпуклой формы)
+ *  или ни одного (контур в этой точке длины полосу не задевает вовсе —
+ *  материал здесь не нужен). */
+function widthRangesAtX(loops: Point2D[][], x: number, v1: number, v2: number): [number, number][] {
+  const segs = insideSegments(loops, x, 'x')
+  const out: [number, number][] = []
+  for (const [lo, hi] of segs) {
+    const ov1 = Math.max(lo, v1)
+    const ov2 = Math.min(hi, v2)
+    if (ov2 - ov1 > WIDTH_CUT_EPS_MM) out.push([ov1, ov2])
+  }
+  return out
+}
+
 // ─── Детальный раскрой одного слоя (реальные куски + пул) ──────────────────
 
 function calcLayerDetailed(
@@ -217,41 +284,57 @@ function calcLayerDetailed(
       vOffset = ((bandIndex + (layer === 2 ? 2 : 0)) % 4 + 4) % 4 * (sheetL / 4)
     }
 
+    const criticalXs = bandCriticalXs(loopsLocal, v1, v2)
+
     for (const [a, b] of segs) {
       const runLen = b - a
       if (runLen <= 0) continue
       const joints = zoneJoints(0, runLen, sheetL, vOffset)
 
       for (let k = 0; k < joints.length - 1; k++) {
-        const u1 = a + joints[k]
-        const u2 = a + joints[k + 1]
-        const ph = u2 - u1
-        if (ph <= 0) continue
+        const rawU1 = a + joints[k]
+        const rawU2 = a + joints[k + 1]
+        if (rawU2 - rawU1 <= 0) continue
 
-        const fromPool = takeFromPool(sharedPool, cw, ph)
-        let source: PolygonSheetPiece['source']
-        if (fromPool) {
-          source = 'offcut'
-          if (fromPool.h - ph >= 200) sharedPool.push({ w: fromPool.w, h: fromPool.h - ph, used: false })
-          if (fromPool.w - cw >= 200) sharedPool.push({ w: fromPool.w - cw, h: ph, used: false })
-        } else {
-          source = 'new_sheet'
-          sheetsNeeded++
-          sheetMm2 += SHEET_W * sheetL
-          if (SHEET_W - cw >= 200) sharedPool.push({ w: SHEET_W - cw, h: sheetL, used: false })
-          if (sheetL - ph >= 200) sharedPool.push({ w: cw, h: sheetL - ph, used: false })
+        // Доп. разрез по критическим длинам (см. bandCriticalXs выше) —
+        // на прямых контурах без вершин внутри полосы criticalXs пуст,
+        // splitAtCriticalXs вернёт исходный [rawU1, rawU2] без изменений.
+        for (const [u1, u2] of splitAtCriticalXs(rawU1, rawU2, criticalXs)) {
+          const ph = u2 - u1
+          if (ph <= 0) continue
+          const xm = (u1 + u2) / 2
+          const ranges = widthRangesAtX(loopsLocal, xm, v1, v2)
+
+          for (const [pv1, pv2] of ranges) {
+            const pcw = pv2 - pv1
+            if (pcw <= 0) continue
+
+            const fromPool = takeFromPool(sharedPool, pcw, ph)
+            let source: PolygonSheetPiece['source']
+            if (fromPool) {
+              source = 'offcut'
+              if (fromPool.h - ph >= 200) sharedPool.push({ w: fromPool.w, h: fromPool.h - ph, used: false })
+              if (fromPool.w - pcw >= 200) sharedPool.push({ w: fromPool.w - pcw, h: ph, used: false })
+            } else {
+              source = 'new_sheet'
+              sheetsNeeded++
+              sheetMm2 += SHEET_W * sheetL
+              if (SHEET_W - pcw >= 200) sharedPool.push({ w: SHEET_W - pcw, h: sheetL, used: false })
+              if (sheetL - ph >= 200) sharedPool.push({ w: pcw, h: sheetL - ph, used: false })
+            }
+
+            const lengthCut = ph < sheetL
+            const widthCut = pcw < SHEET_W
+            const kind: PolygonSheetPiece['kind'] =
+              lengthCut && widthCut ? 'both_cut'
+              : widthCut ? 'width_cut'
+              : lengthCut ? 'length_cut'
+              : 'full'
+
+            pieces.push({ u1, u2, v1: pv1, v2: pv2, kind, source })
+            usedMm2 += pcw * ph
+          }
         }
-
-        const lengthCut = ph < sheetL
-        const widthCut = cw < SHEET_W
-        const kind: PolygonSheetPiece['kind'] =
-          lengthCut && widthCut ? 'both_cut'
-          : widthCut ? 'width_cut'
-          : lengthCut ? 'length_cut'
-          : 'full'
-
-        pieces.push({ u1, u2, v1, v2, kind, source })
-        usedMm2 += cw * ph
       }
     }
   }
