@@ -332,16 +332,36 @@ export interface CeilingSheetRect {
  * вызывают ЭТУ функцию, раскрой не может разъехаться между ними.
  *
  * Листы кладутся рядами вдоль X (длина листа sheetL), ряды идут вдоль Z
- * с шагом sheetW (ширина листа) — упрощение без учёта стыковки вразбежку
- * (для картинки раскроя это не нужно, только для сметы офcutов/расхода).
+ * с шагом sheetW (ширина листа).
+ *
+ * ─── 15.07.2026: разбежка торцевых швов между соседними рядами ─────────────
+ * Пользователь указал на баг: все ряды раньше начинались от x=0 "по
+ * линейке" — торцевые швы всех рядов совпадали по одной линии. Так делать
+ * нельзя (п.8.16 Кнауф — разбег швов между соседними рядами обязателен, не
+ * менее 400мм). Теперь каждый следующий ряд (кроме первого — он всегда от
+ * стены/угла, offset=0) начинается с "стартового" куска шириной, кратной
+ * STAGGER_STEP_MM (500мм) — 500, 1000, 1500, 2000... по кругу до sheetL, —
+ * чтобы шов между 1-м и 2-м листом ряда не совпадал со швом соседнего ряда.
+ * Если в ряду всего один лист на всю длину (lengthMm ≤ sheetL — шва внутри
+ * ряда просто нет), разбежка не нужна и не делается.
  */
+const STAGGER_STEP_MM = 500
+
 export function calcCeilingSheetRects(lengthMm: number, widthMm: number, sheetL: number, sheetW: number): CeilingSheetRect[] {
   const rects: CeilingSheetRect[] = []
   if (lengthMm <= 0 || widthMm <= 0 || sheetL <= 0 || sheetW <= 0) return rects
   let z = 0
+  let rowIndex = 0
   while (z < widthMm) {
     const d = Math.min(sheetW, widthMm - z)
+    const offset = lengthMm > sheetL ? (rowIndex * STAGGER_STEP_MM) % sheetL : 0
+
     let x = 0
+    if (offset > 0) {
+      const wFirst = Math.min(offset, lengthMm)
+      rects.push({ x, z, w: wFirst, d, isCut: true })
+      x += wFirst
+    }
     while (x < lengthMm) {
       const w = Math.min(sheetL, lengthMm - x)
       const isCut = d < sheetW || w < sheetL
@@ -349,6 +369,7 @@ export function calcCeilingSheetRects(lengthMm: number, widthMm: number, sheetL:
       x += sheetL
     }
     z += sheetW
+    rowIndex++
   }
   return rects
 }

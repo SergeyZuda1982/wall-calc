@@ -264,9 +264,11 @@ describe('clipCeilingGridToPolygon', () => {
 })
 
 describe('calcCeilingSheetRects', () => {
-  it('целое число листов без обрезков — все целые, сетка 2x2 для комнаты 2400x2400 и листа 1200x1200', () => {
-    const rects = calcCeilingSheetRects(2400, 2400, 1200, 1200)
-    expect(rects.length).toBe(4)
+  it('длина ряда равна длине листа — шва внутри ряда нет, разбежка не нужна, все листы целые (2x2, 1200x2400 / лист 1200x1200)', () => {
+    // lengthMm === sheetL: в каждом ряду всего один лист на всю длину —
+    // разбежка невозможна и не нужна (см. заголовок calcCeilingSheetRects).
+    const rects = calcCeilingSheetRects(1200, 2400, 1200, 1200)
+    expect(rects.length).toBe(2)
     expect(rects.every(r => !r.isCut)).toBe(true)
     expect(rects.every(r => r.w === 1200 && r.d === 1200)).toBe(true)
   })
@@ -294,5 +296,59 @@ describe('calcCeilingSheetRects', () => {
     const rects = calcCeilingSheetRects(lengthMm, widthMm, sheetL, sheetW)
     const totalArea = rects.reduce((sum, r) => sum + r.w * r.d, 0)
     expect(totalArea).toBeCloseTo(lengthMm * widthMm, 3)
+  })
+
+  describe('разбежка торцевых швов между рядами (15.07.2026, репорт пользователя: "все листы в ряд")', () => {
+    it('первый ряд от угла без смещения (x=0), второй — со смещением 500мм, не 2500', () => {
+      // потолок 5000×2500, лист 2500×1200 — по X два листа на ряд (шов
+      // ровно посередине, на x=2500), по Z два ряда.
+      const rects = calcCeilingSheetRects(5000, 2500, 2500, 1200)
+      const row0 = rects.filter(r => r.z === 0).sort((a, b) => a.x - b.x)
+      const row1 = rects.filter(r => r.z === 1200).sort((a, b) => a.x - b.x)
+
+      expect(row0[0].x).toBe(0)
+      expect(row0[0].w).toBe(2500) // первый лист ряда — целый, от стены
+
+      // Второй ряд начинается со стартового (обрезанного) куска шириной
+      // 500мм — не 0 (иначе шов совпал бы с 1-м рядом) и не 2500 (иначе
+      // это был бы целый лист без разбежки вовсе).
+      expect(row1[0].x).toBe(0)
+      expect(row1[0].w).toBe(500)
+      expect(row1[0].isCut).toBe(true)
+      expect([500, 1000, 1500, 2000]).toContain(row1[0].w)
+    })
+
+    it('каждый следующий ряд смещается ещё на 500мм (кроме циклического повтора через sheetL/500 рядов)', () => {
+      const rects = calcCeilingSheetRects(10000, 7200, 2500, 1200)
+      const rows = [...new Set(rects.map(r => r.z))].sort((a, b) => a - b)
+      const starters = rows.map(z => {
+        const first = rects.filter(r => r.z === z).sort((a, b) => a.x - b.x)[0]
+        return first.x === 0 ? first.w : 0
+      })
+      // Ряды 0..4 (2500/500=5 рядов до цикла): 2500(целый,offset0), 500, 1000, 1500, 2000
+      expect(starters[0]).toBe(2500)
+      expect(starters[1]).toBe(500)
+      expect(starters[2]).toBe(1000)
+      expect(starters[3]).toBe(1500)
+      expect(starters[4]).toBe(2000)
+      // 5-й ряд (index 5) — цикл замкнулся, снова offset=0
+      expect(starters[5]).toBe(2500)
+    })
+
+    it('если длина ряда равна длине листа — офсета нет ни в одном ряду (шва внутри ряда нет)', () => {
+      const rects = calcCeilingSheetRects(2500, 6000, 2500, 1200)
+      for (const r of rects) {
+        expect(r.x).toBe(0)
+        expect(r.w).toBe(2500)
+        expect(r.isCut).toBe(false)
+      }
+    })
+
+    it('сумма площадей не меняется из-за разбежки (по-прежнему без нахлёстов/пробелов)', () => {
+      const lengthMm = 5000, widthMm = 2500, sheetL = 2500, sheetW = 1200
+      const rects = calcCeilingSheetRects(lengthMm, widthMm, sheetL, sheetW)
+      const totalArea = rects.reduce((sum, r) => sum + r.w * r.d, 0)
+      expect(totalArea).toBeCloseTo(lengthMm * widthMm, 3)
+    })
   })
 })
