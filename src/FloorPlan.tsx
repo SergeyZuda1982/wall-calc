@@ -89,6 +89,21 @@ function dist(x1: number, y1: number, x2: number, y2: number) {
 function lineLengthMm(x1: number, y1: number, x2: number, y2: number, s: number) {
   return Math.round(dist(x1, y1, x2, y2) * s)
 }
+/** Пересчитывает x2/y2 так, чтобы прямая линия (x1,y1)-(x2,y2) получила
+ *  ровно newLengthPx длины, сохраняя направление и x1/y1 неподвижными —
+ *  для числового ввода точной длины стены (снап мышью не всегда может
+ *  попасть в нужное число — см. КОНСПЕКТ, запрос от 15.07.2026). Только
+ *  для прямых линий (sagittaMm не задан у вызывающего кода) — у дуги
+ *  lengthMm это длина ДУГИ, а не хорды, растягивать x2/y2 напрямую было
+ *  бы неверно, поэтому числовой ввод для дуг в UI не показывается.
+ */
+function resizeLineEndTo(x1: number, y1: number, x2: number, y2: number, newLengthPx: number): { x2: number; y2: number } | null {
+  const dx = x2 - x1, dy = y2 - y1
+  const curLen = Math.sqrt(dx * dx + dy * dy)
+  if (curLen < 1e-6) return null // вырожденная линия — направление неизвестно, менять нечего
+  const ux = dx / curLen, uy = dy / curLen
+  return { x2: x1 + ux * newLengthPx, y2: y1 + uy * newLengthPx }
+}
 /** Площадь сечения круглой колонны, м² — для инспектора */
 function rectAreaM2Circle(diameterMm: number): number {
   const rM = diameterMm / 1000 / 2
@@ -4725,7 +4740,22 @@ export default function FloorPlan() {
                           {LINE_LABELS_SHORT[l.type]}
                           {l.spec?.material && <span style={{ color: '#888', marginLeft: 4 }}>({l.spec.material}{l.spec.subtype ? ` ${l.spec.subtype}` : ''})</span>}
                         </td>
-                        <td style={tdS}>{fmtLen(l.lengthMm)}</td>
+                        <td style={tdS}>
+                          {l.sagittaMm ? fmtLen(l.lengthMm) : (
+                            <>
+                              <input type="number" value={Math.round(l.lengthMm)}
+                                onClick={e => e.stopPropagation()}
+                                onChange={e => {
+                                  const v = parseFloat(e.target.value)
+                                  if (!(v > 0)) return
+                                  const resized = resizeLineEndTo(l.x1, l.y1, l.x2, l.y2, v / scaleMmPx)
+                                  if (!resized) return
+                                  updatePlanLine(l.id, { x2: resized.x2, y2: resized.y2, lengthMm: v })
+                                }}
+                                style={{ width: 64, fontSize: 11, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
+                            </>
+                          )}
+                        </td>
                         <td style={tdS}>
                           <input type="number" value={l.heightMm ?? 3000}
                             onClick={e => e.stopPropagation()}
@@ -5324,7 +5354,20 @@ export default function FloorPlan() {
                     Параметры для расчёта
                   </div>
                   <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
-                    Длина: <b>{fmtLen(inspectorLine.lengthMm)}</b>
+                    Длина: {inspectorLine.sagittaMm ? (
+                      <b>{fmtLen(inspectorLine.lengthMm)}</b>
+                    ) : (
+                      <input type="number" value={Math.round(inspectorLine.lengthMm)}
+                        onChange={e => {
+                          const v = parseFloat(e.target.value)
+                          if (!(v > 0)) return
+                          const resized = resizeLineEndTo(inspectorLine.x1, inspectorLine.y1, inspectorLine.x2, inspectorLine.y2, v / scaleMmPx)
+                          if (!resized) return
+                          updatePlanLine(inspectorLine.id, { x2: resized.x2, y2: resized.y2, lengthMm: v })
+                        }}
+                        style={{ width: 70, fontSize: 12, padding: '3px 6px', borderRadius: 4, border: '1px solid #dde' }} />
+                    )}
+                    {' '}мм
                     {inspectorLine.sagittaMm ? <span style={{ color: '#888' }}> (длина дуги)</span> : null}
                   </div>
                   {(() => {
