@@ -807,9 +807,9 @@ export default function CeilingCalc() {
             )}
             {step === 4 && hasPolygon && result?.polygonSheetLayout && (
               <div style={{ display: 'flex', gap: 8 }}>
-                <StatCard label="Всего листов" value={result.polygonSheetLayout.totalSheetsNeeded} unit="шт" />
-                <StatCard label="Целых" value={result.polygonSheetLayout.fullSheets} unit="шт" color={C.success} />
-                <StatCard label="Резаных" value={result.polygonSheetLayout.cutSheets} unit="шт" color={C.warning} />
+                <StatCard label="Купить листов" value={result.polygonSheetLayout.totalSheetsNeeded} unit="шт" />
+                <StatCard label="Кусков целых" value={result.polygonSheetLayout.fullSheets} unit="шт" color={C.success} />
+                <StatCard label="Кусков резаных" value={result.polygonSheetLayout.cutSheets} unit="шт" color={C.warning} />
                 {result.polygonSheetLayout.rotated && (
                   <div style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '0 12px',
                     background: '#fffbeb', border: `1px solid #fcd34d`, borderRadius: 8,
@@ -817,6 +817,12 @@ export default function CeilingCalc() {
                     ↺ Листы повёрнуты — длинная сторона вдоль стены начала раскладки
                   </div>
                 )}
+              </div>
+            )}
+            {step === 4 && hasPolygon && result?.polygonSheetLayout && (
+              <div style={{ fontSize: 11, color: C.muted, padding: '0 2px' }}>
+                «Кусков» может быть больше, чем листов купить — один физический лист иногда делится на
+                несколько кусков на чертеже (вырез/уступ контура режет его пополам).
               </div>
             )}
             {step === 4 && hasPolygon && form.type !== 'p112' && !result?.polygonSheetLayout && (
