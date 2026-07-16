@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, calcCeilingSheetRects, type CeilingGridResult } from '../ceilingGridGeometry'
 import type { Point2D } from '../geometry2d'
+import { calcP112FrameGeometry } from '../calcP112Frame'
+import { calcP113FrameGeometry } from '../calcP113Frame'
 
 describe('calcCeilingGrid', () => {
   it('несущий профиль идёт вдоль length при bearingAlongLength=true, расставлен по width', () => {
@@ -350,5 +352,63 @@ describe('calcCeilingSheetRects', () => {
       const totalArea = rects.reduce((sum, r) => sum + r.w * r.d, 0)
       expect(totalArea).toBeCloseTo(lengthMm * widthMm, 3)
     })
+  })
+})
+
+// 16.07.2026: раньше calcCeilingGrid/calcCeilingGridP113 всегда считали позиции
+// рядов как mode='user' (шаг от стены = самому шагу), даже если реальная
+// спецификация — layoutMode='knauf' (официальные отступы от стены). Из-за
+// этого число рядов в 3D (мастер калькулятора и основная 3D-сцена) не
+// совпадало с 2D-схемой калькулятора и со сметой для layoutMode='knauf'
+// (репорт пользователя со скриншотами: 4 основных/7 несущих в 2D против
+// 2/5 в 3D для одной и той же комнаты). Эти тесты фиксируют, что при
+// одинаковых входных параметрах (включая layoutMode/wallOffset) сетка для
+// 3D даёт РОВНО то же число рядов, что и "официальная" функция сметы —
+// единственный способ гарантировать, что 2D/3D/смета не разъедутся снова.
+describe('calcCeilingGrid/calcCeilingGridP113 — согласованность со сметой при layoutMode=knauf', () => {
+  it('П112: число несущих/основных рядов совпадает с calcP112FrameGeometry (knauf)', () => {
+    const lengthMm = 3850, widthMm = 2900, stepB = 500, stepC = 950
+    const bearingAlongLength = true
+    const est = calcP112FrameGeometry(lengthMm, widthMm, stepC, stepB, 40, bearingAlongLength, 'knauf')
+    const grid = calcCeilingGrid({
+      lengthMm, widthMm, stepB, stepC, bearingAlongLength, layoutMode: 'knauf',
+    })
+    expect(grid.bearingSegments.length).toBe(est.bearingCount)
+    expect(grid.mainSegments.length).toBe(est.mainCount)
+  })
+
+  it('П112: БЕЗ layoutMode (дефолт user) даёт МЕНЬШЕ/ДРУГОЕ число рядов, чем knauf — подтверждает, что раньше 3D путал режимы', () => {
+    const lengthMm = 3850, widthMm = 2900, stepB = 500, stepC = 950
+    const bearingAlongLength = true
+    const gridKnauf = calcCeilingGrid({
+      lengthMm, widthMm, stepB, stepC, bearingAlongLength, layoutMode: 'knauf',
+    })
+    const gridUser = calcCeilingGrid({
+      lengthMm, widthMm, stepB, stepC, bearingAlongLength,
+    })
+    // Не самоцель "меньше", а просто фиксация того, что режимы дают РАЗНОЕ
+    // число рядов на этом наборе входов — иначе тест выше был бы бессмысленным.
+    expect(gridUser.bearingSegments.length).not.toBe(gridKnauf.bearingSegments.length)
+  })
+
+  it('П113: число основных/несущих рядов совпадает с calcP113FrameGeometry (knauf)', () => {
+    const lengthMm = 3850, widthMm = 2900, stepB = 500, stepC = 950
+    const mainAlongLength = true
+    const est = calcP113FrameGeometry(lengthMm, widthMm, stepC, stepB, 40, mainAlongLength, 'knauf')
+    const grid = calcCeilingGridP113({
+      lengthMm, widthMm, stepB, stepC, mainAlongLength, layoutMode: 'knauf',
+    })
+    expect(grid.mainSegments.length).toBe(est.mainCount)
+    // grid.bearingSegments — КУСКИ (несущий режется вставками между рядами
+    // основного, см. calcCeilingGridP113), не то же самое, что bearingRowCount
+    // (число РЯДОВ) — сравниваем с est.bearingTotalPieces (rowCount × segmentsPerRow).
+    expect(grid.bearingSegments.length).toBe(est.bearingTotalPieces)
+  })
+
+  it('без layoutMode поведение НЕ меняется (обратная совместимость со старыми вызовами)', () => {
+    const lengthMm = 4000, widthMm = 2800, stepB = 900, stepC = 600
+    const withoutMode = calcCeilingGrid({ lengthMm, widthMm, stepB, stepC, bearingAlongLength: true })
+    const withUserMode = calcCeilingGrid({ lengthMm, widthMm, stepB, stepC, bearingAlongLength: true, layoutMode: 'user' })
+    expect(withoutMode).toEqual(withUserMode)
   })
 })

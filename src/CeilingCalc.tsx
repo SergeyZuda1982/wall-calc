@@ -731,6 +731,9 @@ export default function CeilingCalc() {
                     stepC={form.stepC}
                     stepA={frameParamsUi.stepA}
                     bearingAlongLength={form.bearingAlongLength}
+                    layoutMode={layoutModeUi}
+                    wallOffsetMainMm={frameParamsUi.wallOffsetMainMm}
+                    wallOffsetBearingMm={frameParamsUi.wallOffsetBearingMm}
                     sheetLayout={step === 4 ? (result?.sheetLayout ?? null) : null}
                   />
                 ) : hasRoom ? (

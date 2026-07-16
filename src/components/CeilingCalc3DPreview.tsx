@@ -35,6 +35,7 @@ import { mmToM } from '../core/planTo3D'
 import { calcCeilingSheetRects } from '../core/ceilingGridGeometry'
 import type { CeilingType } from '../data/ceilingData'
 import type { CeilingSheetLayout } from '../core/calcCeiling'
+import type { FrameLayoutMode } from '../core/calcP112Frame'
 
 export interface CeilingCalc3DPreviewProps {
   lengthMm: number
@@ -44,6 +45,13 @@ export interface CeilingCalc3DPreviewProps {
   stepC?: number
   stepA?: number
   bearingAlongLength?: boolean
+  /** 16.07.2026: см. CeilingGridMeshProps.layoutMode — ОБЯЗАТЕЛЬНО передавать
+   *  реальный form.layoutMode калькулятора, иначе для layoutMode='knauf'
+   *  число рядов в 3D-превью разойдётся с 2D-схемой того же калькулятора
+   *  (репорт пользователя со скриншотами 2D/3D). Не задан -> 'user'. */
+  layoutMode?: FrameLayoutMode
+  wallOffsetMainMm?: number
+  wallOffsetBearingMm?: number
   /** Раскрой листов ГКЛ (шаг 4 калькулятора) — та же calcCeilingSheetRects,
    *  что и в 2D CeilingCanvas (см. её шапку, 13.07.2026) — раньше здесь
    *  вместо реального раскроя рисовалась общая иллюстративная минвата из
@@ -99,7 +107,8 @@ function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, yM }: {
 }
 
 export default function CeilingCalc3DPreview({
-  lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength, sheetLayout,
+  lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength,
+  layoutMode, wallOffsetMainMm, wallOffsetBearingMm, sheetLayout,
 }: CeilingCalc3DPreviewProps) {
   const lengthM = mmToM(lengthMm)
   const widthM = mmToM(widthMm)
@@ -128,6 +137,9 @@ export default function CeilingCalc3DPreview({
               stepA={stepA}
               bearingAlongLength={bearingAlongLength}
               ceilingType={ceilingType === 'p113' ? 'p113' : 'p112'}
+              layoutMode={layoutMode}
+              wallOffsetMainMm={wallOffsetMainMm}
+              wallOffsetBearingMm={wallOffsetBearingMm}
               showWool={false}
               showGkl={false}
             />

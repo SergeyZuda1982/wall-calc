@@ -51,6 +51,7 @@ import { useMemo, useRef, type RefObject } from 'react'
 import * as THREE from 'three'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH } from '../core/ceilingGridGeometry'
+import type { FrameLayoutMode } from '../core/calcP112Frame'
 import { calcMinThicknessScale } from '../core/minScreenThickness'
 import { mmToM } from '../core/planTo3D'
 
@@ -447,6 +448,17 @@ export interface CeilingGridMeshProps {
    */
   onFocusElement?: (localTarget: THREE.Vector3, localDistance: number) => void
   measuring?: boolean
+  /** 16.07.2026: режим раскладки (см. calcP112FrameGeometry/calcFrameRowPositions)
+   *  — ОБЯЗАТЕЛЬНО передавать из реальной спецификации (ceilingSpec.layoutMode),
+   *  иначе для layoutMode='knauf' число рядов в 3D разойдётся со сметой и
+   *  2D-схемой (calcCeilingGrid раньше молча считал как mode='user', репорт
+   *  пользователя со скриншотами 2D/3D одной и той же комнаты). Не задан ->
+   *  'user' (прежнее поведение). */
+  layoutMode?: FrameLayoutMode
+  /** Отступ основного/несущего профиля от стены, мм — как у
+   *  calcP112FrameGeometry (extra.wallOffsetMainMm/wallOffsetBearingMm). */
+  wallOffsetMainMm?: number
+  wallOffsetBearingMm?: number
 }
 
 /** Фиксированная дистанция фокуса для мелких узлов каркаса (метры, локальные
@@ -466,7 +478,7 @@ const ELEMENT_FOCUS_DISTANCE_M = 1.0
 export default function CeilingGridMesh({
   roomPoints, ceilingM, stepB = DEFAULT_GRID_STEP_B, stepC = DEFAULT_GRID_STEP_C, stepA,
   bearingAlongLength = DEFAULT_BEARING_ALONG_LENGTH, ceilingType = 'p112', showWool = true, showGkl = true,
-  onFocusElement, measuring = false,
+  onFocusElement, measuring = false, layoutMode = 'user', wallOffsetMainMm, wallOffsetBearingMm,
 }: CeilingGridMeshProps) {
   // См. WallMesh (Scene3D.tsx) — тот же паттерн: пока активно измерение,
   // клик не перехватывается фокусом, просто ничего не делаем и даём событию
@@ -490,8 +502,14 @@ export default function CeilingGridMesh({
     const lengthMm = (bbox.maxX - bbox.minX) * 1000
     const widthMm = (bbox.maxZ - bbox.minZ) * 1000
     const rawGrid = ceilingType === 'p113'
-      ? calcCeilingGridP113({ lengthMm, widthMm, stepB, stepC, mainAlongLength: bearingAlongLength, stepA })
-      : calcCeilingGrid({ lengthMm, widthMm, stepB, stepC, bearingAlongLength, stepA })
+      ? calcCeilingGridP113({
+          lengthMm, widthMm, stepB, stepC, mainAlongLength: bearingAlongLength, stepA,
+          layoutMode, wallOffsetMainMm, wallOffsetBearingMm,
+        })
+      : calcCeilingGrid({
+          lengthMm, widthMm, stepB, stepC, bearingAlongLength, stepA,
+          layoutMode, wallOffsetMainMm, wallOffsetBearingMm,
+        })
     // 13.07.2026: rawGrid построен по bbox (см. calcCeilingGrid) — торчит
     // за пределы фактического контура, если комната непрямоугольная или
     // просто повёрнута относительно мировых осей (тогда и AABB шире самой
@@ -503,7 +521,7 @@ export default function CeilingGridMesh({
       y: (p.z - bbox.minZ) * 1000,
     }))
     return clipCeilingGridToPolygon(rawGrid, polygonLocalMm)
-  }, [bbox, stepB, stepC, bearingAlongLength, stepA, ceilingType, roomPoints])
+  }, [bbox, stepB, stepC, bearingAlongLength, stepA, ceilingType, roomPoints, layoutMode, wallOffsetMainMm, wallOffsetBearingMm])
 
   // Вертикальная раскладка уровней относительно низа плиты (ceilingM), вниз:
   // 12.07.2026, ИСПРАВЛЕНИЕ: подвес крепится к ОСНОВНОМУ профилю (верхний

@@ -32,9 +32,21 @@
  * ceilingData.ts) — используются дефолты (см. DEFAULT_* ниже). Это влияет
  * только на 3D-показ, не на смету — CeilingCalc.tsx считает по своим
  * значениям из формы, независимо от того, что нарисовано в 3D.
+ *
+ * 16.07.2026, ИСПРАВЛЕНИЕ: раньше calcCeilingGrid/calcCeilingGridP113
+ * вызывали calcFrameRowPositions БЕЗ layoutMode/wallOffsetMm — то есть
+ * ВСЕГДА как mode='user' с шагом от стены = самому шагу, даже если
+ * реальная спецификация помещения — layoutMode='knauf' (официальные
+ * отступы от стены, см. calcP112FrameGeometry/calcP113FrameGeometry).
+ * Результат — количество рядов в 3D могло не совпадать со сметой И с 2D
+ * CeilingCanvas (тот считает через ту же frameParams, что и смета) —
+ * репорт пользователя со скриншотами 2D (4 основных/7 несущих) против 3D
+ * (2/5) для одного и того же помещения. Теперь layoutMode/wallOffsetMainMm/
+ * wallOffsetBearingMm — опциональные поля входа, при отсутствии (старые
+ * вызовы) поведение не меняется (mode='user', дефолтный отступ = шагу).
  */
 
-import { calcFrameRowPositions, snapHangerPositionsToAxis } from './calcP112Frame'
+import { calcFrameRowPositions, snapHangerPositionsToAxis, type FrameLayoutMode } from './calcP112Frame'
 import type { CeilingStep } from '../data/ceilingData'
 import { insideSegments, pointInPolygon, type Point2D } from './geometry2d'
 
@@ -58,6 +70,20 @@ export interface CeilingGridInput {
    *  профиля (см. snapHangerPositionsToAxis), это лишь ограничение "не реже
    *  чем". Не задан -> = stepB (та же практика, что и в calcP112Frame). */
   stepA?: number
+  /** 16.07.2026: режим раскладки — та же семантика, что у calcFrameRowPositions/
+   *  calcP112FrameGeometry. Не задан -> 'user' (прежнее поведение, дефолтный
+   *  отступ от стены = шагу). ВАЖНО передавать это поле из реальной
+   *  спецификации помещения (ceilingSpec.layoutMode), иначе число рядов в
+   *  3D разойдётся со сметой/2D-схемой для layoutMode='knauf' (см. шапку
+   *  файла). */
+  layoutMode?: FrameLayoutMode
+  /** Отступ основного профиля от стены, мм — как у calcP112FrameGeometry
+   *  (extra.wallOffsetMainMm). Не задан -> дефолт по layoutMode (см.
+   *  calcFrameRowPositions). */
+  wallOffsetMainMm?: number
+  /** Отступ несущего профиля от стены, мм — как у calcP112FrameGeometry
+   *  (extra.wallOffsetBearingMm). */
+  wallOffsetBearingMm?: number
 }
 
 /** Отрезок профиля в локальных координатах помещения (мм), 0..lengthMm/widthMm по обеим осям. */
@@ -91,14 +117,24 @@ export interface CeilingGridResult {
  * стороне (CeilingGridMesh), т.к. там же известны сдвиг и масштаб помещения.
  */
 export function calcCeilingGrid(input: CeilingGridInput): CeilingGridResult {
-  const { lengthMm, widthMm, stepB, stepC, bearingAlongLength, stepA } = input
+  const {
+    lengthMm, widthMm, stepB, stepC, bearingAlongLength, stepA,
+    layoutMode = 'user', wallOffsetMainMm, wallOffsetBearingMm,
+  } = input
   // A — пролёт, вдоль которого идёт (своей длиной) несущий профиль
   // B — пролёт, поперёк которого несущий профиль расставлен с шагом stepB
   const A = bearingAlongLength ? lengthMm : widthMm
   const B = bearingAlongLength ? widthMm : lengthMm
 
-  const bearingPositions = calcFrameRowPositions(B, stepB)
-  const mainPositions = calcFrameRowPositions(A, stepC)
+  // 16.07.2026: opts (mode/wallOffsetMm/profileKind) — ТЕ ЖЕ, что и в
+  // calcP112FrameGeometry (смета), иначе позиции рядов (и их количество)
+  // расходятся между 3D и сметой/2D для layoutMode='knauf' (см. шапку файла).
+  const bearingPositions = calcFrameRowPositions(
+    B, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm, profileKind: 'bearing' },
+  )
+  const mainPositions = calcFrameRowPositions(
+    A, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm, profileKind: 'main' },
+  )
   // 12.07.2026, ИСПРАВЛЕНИЕ: подвес физически крепится к ОСНОВНОМУ профилю,
   // не к несущему (см. calcP112Frame.ts, шапка файла, — подтверждено
   // официальными чертежами КНАУФ П112.1 и П113.1). Раньше здесь снэпались
@@ -170,6 +206,13 @@ export interface CeilingGridP113Input {
   mainAlongLength: boolean
   /** макс. допустимое расстояние между подвесами (шаг "a") — как у П112. */
   stepA?: number
+  /** 16.07.2026: см. то же поле у CeilingGridInput выше (calcCeilingGrid) —
+   *  режим раскладки, не задан -> 'user'. */
+  layoutMode?: FrameLayoutMode
+  /** Отступ основного профиля от стены, мм — как у calcP113FrameGeometry. */
+  wallOffsetMainMm?: number
+  /** Отступ несущего профиля от стены, мм — как у calcP113FrameGeometry. */
+  wallOffsetBearingMm?: number
 }
 
 /**
@@ -183,14 +226,25 @@ export interface CeilingGridP113Input {
  * с координатами для отрисовки, а не только длины).
  */
 export function calcCeilingGridP113(input: CeilingGridP113Input): CeilingGridResult {
-  const { lengthMm, widthMm, stepB, stepC, mainAlongLength, stepA } = input
+  const {
+    lengthMm, widthMm, stepB, stepC, mainAlongLength, stepA,
+    layoutMode = 'user', wallOffsetMainMm, wallOffsetBearingMm,
+  } = input
   // A — пролёт, вдоль которого идёт (своей длиной) основной профиль
   // B — пролёт, поперёк которого основной профиль расставлен с шагом stepC
   const A = mainAlongLength ? lengthMm : widthMm
   const B = mainAlongLength ? widthMm : lengthMm
 
-  const mainPositions = calcFrameRowPositions(B, stepC)
-  const bearingPositions = calcFrameRowPositions(A, stepB)
+  // 16.07.2026: opts — ТЕ ЖЕ, что и в calcP113FrameGeometry (смета), см.
+  // комментарий в calcCeilingGrid выше. Без profileKind — как и в
+  // calcP113FrameGeometry (роли профилей у П113 обратные, оба вызова
+  // используют дефолтный 'main' внутри calcFrameRowPositions).
+  const mainPositions = calcFrameRowPositions(
+    B, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm },
+  )
+  const bearingPositions = calcFrameRowPositions(
+    A, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm },
+  )
   // Подвес — на основном профиле, снэп по позициям несущего (см. calcP113Frame.ts).
   const hangerOffsets = snapHangerPositionsToAxis(bearingPositions, stepA ?? stepB)
 

@@ -861,6 +861,9 @@ function LevelGroup({
             stepA={frameParams?.stepA}
             bearingAlongLength={spec?.bearingAlongLength}
             ceilingType={spec?.type === 'p113' ? 'p113' : 'p112'}
+            layoutMode={spec?.layoutMode ?? 'user'}
+            wallOffsetMainMm={frameParams?.wallOffsetMainMm}
+            wallOffsetBearingMm={frameParams?.wallOffsetBearingMm}
             onFocusElement={onFocusElement}
             measuring={measuring}
           />
