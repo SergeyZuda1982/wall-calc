@@ -250,6 +250,19 @@ function SheetLayers({ sheetLayout, toWorldM, topY, opacity }: {
   )
 }
 
+/**
+ * Угол поворота меша (Three.js rotation.y, радианы) такой, что после
+ * поворота локальная ось X меша совпадает по направлению с мировым
+ * вектором (dx, dz) (в плоскости X-Z, "план сверху").
+ *
+ * Матрица поворота THREE.js вокруг Y на угол θ переводит локальную точку
+ * (1,0,0) в мировую (cosθ, -sinθ) — ПОЭТОМУ здесь atan2(-dz, dx), а не
+ * atan2(dx, dz) (последнее было багом до 16.07.2026 — см. регресс-тест).
+ */
+export function yRotationForDirection(dx: number, dz: number): number {
+  return Math.atan2(-dz, dx)
+}
+
 function SheetPieceMesh({ piece, toWorldM, centerY, thicknessM, opacity }: {
   piece: PolygonSheetPiece
   toWorldM: (p: Point2D) => [number, number]
@@ -261,7 +274,12 @@ function SheetPieceMesh({ piece, toWorldM, centerY, thicknessM, opacity }: {
   const vC = (piece.v1 + piece.v2) / 2
   const [xa, za] = toWorldM({ x: piece.u1, y: vC })
   const [xb, zb] = toWorldM({ x: piece.u2, y: vC })
-  const angle = Math.atan2(xb - xa, zb - za)
+  // 16.07.2026: РЕГРЕСС — старая формула atan2(xb-xa, zb-za) разворачивала
+  // каждый лист на 90° от направления оси U каркаса (см. yRotationForDirection
+  // выше), поэтому ширина листа "уезжала" в сторону глубины полосы и торчала
+  // за пределы каркаса (репорт пользователя со скриншотами 3D, хотя сам
+  // расчёт кусков — calcPolygonSheetLayout — верный, проверено отдельно).
+  const angle = yRotationForDirection(xb - xa, zb - za)
   const [xc, zc] = toWorldM({ x: uC, y: vC })
 
   const widthM = Math.max(0.02, (piece.u2 - piece.u1 - SHEET_GAP_MM) / 1000)
