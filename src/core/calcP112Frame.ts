@@ -431,6 +431,12 @@ export interface ResolvedFrameParams {
   warning?: string
 }
 
+/** Дефолт шага подвесов a в режиме 'user' (15.07.2026), когда пользователь
+ *  явно не задал stepA — подтверждено пользователем как типичная практика
+ *  объекта для П112 и П113 (не привязан к stepC/таблице, в отличие от
+ *  'knauf' — там шаг подвесов всегда по официальной таблице). */
+export const DEFAULT_USER_HANGER_STEP_MM = 800
+
 /**
  * Единая точка правды для параметров каркаса — используется и сметой
  * (calcCeiling.ts), и превью-канвасом (CeilingCalc.tsx), чтобы они не могли
@@ -438,16 +444,27 @@ export interface ResolvedFrameParams {
  * силами параллельно со сметой).
  *
  * mode='user': stepB — явно заданный пользователем или из старой таблицы
- * P112_HANGER_STEP (обратная совместимость); stepA = stepB (та же практика).
+ * P112_HANGER_STEP/P113_HANGER_STEP (обратная совместимость), иначе резервный
+ * дефолт 1000/950. stepA — НЕЗАВИСИМО от stepB: явно заданный пользователем
+ * (userStepA) или DEFAULT_USER_HANGER_STEP_MM (800мм).
+ * [15.07.2026: раньше stepA молча приравнивался к stepB — пользователь
+ * подтвердил на реальном объекте (П113, c=400, монтаж «вдоль» — ГКЛ ложится
+ * прямо на основной профиль, несущий/подвесы — независимые расстояния,
+ * несущий вообще может стоять только у стыков листов), что это разные,
+ * свободно выбираемые величины. См. CeilingSpec.stepA, ceilingData.ts.]
  *
  * mode='knauf': stepB — жёстко по направлению монтажа (400/500), stepA — по
  * официальной таблице (resolveKnaufHangerStep), отступ от стены ≤100мм для
- * обоих профилей.
+ * обоих профилей. userStepA здесь НЕ читается (официальная таблица, не
+ * свободный выбор).
  */
 export function resolveFrameParams(opts: {
   stepC: number
   layoutMode: FrameLayoutMode
   userStepB?: number
+  /** НОВОЕ (15.07.2026) — шаг подвесов, независимый от userStepB.
+   *  Используется только в mode='user'. */
+  userStepA?: number
   mountDirection?: CeilingMountDirection
   loadClass?: CeilingLoadClass
   /** П112/П113 — своя таблица дефолтного шага b в 'user'-режиме. Не задан
@@ -468,7 +485,8 @@ export function resolveFrameParams(opts: {
   const table = opts.ceilingType === 'p113' ? P113_HANGER_STEP : P112_HANGER_STEP
   const fallback = opts.ceilingType === 'p113' ? 950 : 1000
   const stepB = opts.userStepB ?? (table[opts.stepC as CeilingStep] ?? fallback)
-  return { stepB, stepA: stepB }
+  const stepA = opts.userStepA ?? DEFAULT_USER_HANGER_STEP_MM
+  return { stepB, stepA }
 }
 
 export interface P112FrameGeometry {

@@ -847,7 +847,7 @@ function LevelGroup({
         const spec = room.ceilingSpec
         const frameParams = spec
           ? resolveFrameParams({
-              stepC: spec.stepC, layoutMode: spec.layoutMode ?? 'user', userStepB: spec.stepB,
+              stepC: spec.stepC, layoutMode: spec.layoutMode ?? 'user', userStepB: spec.stepB, userStepA: spec.stepA,
               mountDirection: spec.mountDirection, loadClass: spec.loadClass, ceilingType: spec.type === 'p113' ? 'p113' : 'p112',
             })
           : null
