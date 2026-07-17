@@ -160,7 +160,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
     if (hasPolygonGeometry) {
       const layoutMode = full.layoutMode ?? 'user'
       const frameParams = resolveFrameParams({
-        stepC, layoutMode, userStepB: full.stepB, mountDirection: full.mountDirection, loadClass: full.loadClass,
+        stepC, layoutMode, userStepB: full.stepB, userStepA: full.stepA, mountDirection: full.mountDirection, loadClass: full.loadClass,
       })
       if (frameParams.warning) warnings.push(frameParams.warning)
       polygonFrame = calcPolygonP112Frame(
@@ -191,7 +191,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       // короткие вставки, соединитель одноуровневый), геометрия — по контуру.
       const layoutMode = full.layoutMode ?? 'user'
       const frameParams = resolveFrameParams({
-        stepC, layoutMode, userStepB: full.stepB, mountDirection: full.mountDirection,
+        stepC, layoutMode, userStepB: full.stepB, userStepA: full.stepA, mountDirection: full.mountDirection,
         loadClass: full.loadClass, ceilingType: 'p113',
       })
       if (frameParams.warning) warnings.push(frameParams.warning)
@@ -221,7 +221,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       const layoutMode = full.layoutMode ?? 'user'
       const bearingAlongLength = full.bearingAlongLength ?? true
       const frameParams = resolveFrameParams({
-        stepC, layoutMode, userStepB: full.stepB, mountDirection: full.mountDirection, loadClass: full.loadClass,
+        stepC, layoutMode, userStepB: full.stepB, userStepA: full.stepA, mountDirection: full.mountDirection, loadClass: full.loadClass,
       })
       if (frameParams.warning) warnings.push(frameParams.warning)
       const geo = calcP112FrameGeometry(
@@ -256,7 +256,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       const layoutMode = full.layoutMode ?? 'user'
       const mainAlongLength = full.bearingAlongLength ?? true
       const frameParams = resolveFrameParams({
-        stepC, layoutMode, userStepB: full.stepB, mountDirection: full.mountDirection,
+        stepC, layoutMode, userStepB: full.stepB, userStepA: full.stepA, mountDirection: full.mountDirection,
         loadClass: full.loadClass, ceilingType: 'p113',
       })
       if (frameParams.warning) warnings.push(frameParams.warning)
