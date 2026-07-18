@@ -3,6 +3,7 @@ import { calcPolygonP113Frame, toLocal } from '../calcPolygonP113Frame'
 import { calcP113FrameGeometry } from '../calcP113Frame'
 import type { Point2D } from '../geometry2d'
 import { pointInPolygon } from '../geometry2d'
+import { MAIN_PROFILE_WIDTH_MM } from '../../data/ceilingData'
 
 const rect = (L: number, W: number): Point2D[] => [
   { x: 0, y: 0 }, { x: L, y: 0 }, { x: L, y: W }, { x: 0, y: W },
@@ -46,11 +47,22 @@ describe('calcPolygonP113Frame — прямоугольник совпадает
     }
   })
 
-  it('сумма длин вставок несущего профиля в одном ряду = полному пролёту (V)', () => {
+  it('сумма длин вставок несущего профиля в одном ряду = пролёту (V) минус ширина основного профиля × число рядов основного (стык торцом в грань)', () => {
     const L = 6000, W = 4000
     const outer = rect(L, W)
     const startSide = { start: outer[0], end: outer[1] }
     const poly = calcPolygonP113Frame(outer, [], startSide, 1000, 500, 80, 'user')
+    const expectedRowLen = W - poly.mainRows.length * MAIN_PROFILE_WIDTH_MM
+    for (const row of poly.bearingRows) {
+      expect(row.lengthMm).toBeCloseTo(expectedRowLen, 6)
+    }
+  })
+
+  it('mainProfileWidthMm=0 (extra) — старое поведение без вычета, сумма вставок = полному пролёту (V)', () => {
+    const L = 6000, W = 4000
+    const outer = rect(L, W)
+    const startSide = { start: outer[0], end: outer[1] }
+    const poly = calcPolygonP113Frame(outer, [], startSide, 1000, 500, 80, 'user', { mainProfileWidthMm: 0 })
     for (const row of poly.bearingRows) {
       expect(row.lengthMm).toBeCloseTo(W, 6)
     }

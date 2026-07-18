@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { calcP113FrameGeometry } from '../calcP113Frame'
 import { KNAUF_WALL_OFFSET_MM } from '../calcP112Frame'
+import { MAIN_PROFILE_WIDTH_MM } from '../../data/ceilingData'
 
 describe('calcP113FrameGeometry — базовая геометрия', () => {
   it('основной профиль сплошной на весь пролёт A', () => {
@@ -23,16 +24,41 @@ describe('calcP113FrameGeometry — базовая геометрия', () => {
     expect(geo.bearingSegmentLengthsMm.length).toBe(geo.bearingSegmentsPerRow)
   })
 
-  it('сумма длин вставок несущего профиля в одном ряду = полный пролёт B', () => {
+  it('сумма длин вставок несущего профиля в одном ряду = B минус ширина основного профиля × mainCount (стык торцом в грань, не внахлёст)', () => {
     const geo = calcP113FrameGeometry(4000, 3000, 600, 500, 50, true)
     const B = 3000 // mainAlongLength=true -> B = roomWidthMm
     const sum = geo.bearingSegmentLengthsMm.reduce((a, b) => a + b, 0)
-    expect(sum).toBeCloseTo(B)
+    expect(sum).toBeCloseTo(B - geo.mainCount * MAIN_PROFILE_WIDTH_MM)
   })
 
-  it('bearingTotalLm не зависит от разбивки на куски — равен bearingRowCount * B / 1000', () => {
+  it('вычет ширины основного профиля: внутренняя вставка короче шага c на полную ширину, крайняя у стены — на половину', () => {
+    // 3000/600 -> 4 внутренних ряда основного (без учёта wall offset в user-режиме,
+    // проверяем сам факт вычета, а не точные позиции — те же тестируются отдельно)
     const geo = calcP113FrameGeometry(4000, 3000, 600, 500, 50, true)
-    expect(geo.bearingTotalLm).toBeCloseTo((geo.bearingRowCount * 3000) / 1000)
+    expect(geo.mainCount).toBeGreaterThan(1)
+    // Внутренние вставки (между двумя соседними рядами основного) короче межосевого
+    // расстояния на полную ширину
+    for (let i = 1; i < geo.mainCount; i++) {
+      const axisGap = geo.mainPositions[i] - geo.mainPositions[i - 1]
+      expect(geo.bearingSegmentLengthsMm[i]).toBeCloseTo(axisGap - MAIN_PROFILE_WIDTH_MM)
+    }
+    // Крайняя у первой стены — от 0 до первого ряда основного, минус половина ширины
+    expect(geo.bearingSegmentLengthsMm[0]).toBeCloseTo(geo.mainPositions[0] - MAIN_PROFILE_WIDTH_MM / 2)
+    // Крайняя у противоположной стены — минус половина ширины
+    const last = geo.bearingSegmentLengthsMm[geo.bearingSegmentLengthsMm.length - 1]
+    expect(last).toBeCloseTo(3000 - geo.mainPositions[geo.mainPositions.length - 1] - MAIN_PROFILE_WIDTH_MM / 2)
+  })
+
+  it('mainProfileWidthMm=0 (extra) — старое поведение без вычета, сумма вставок = полный пролёт B', () => {
+    const geo = calcP113FrameGeometry(4000, 3000, 600, 500, 50, true, 'user', { mainProfileWidthMm: 0 })
+    const sum = geo.bearingSegmentLengthsMm.reduce((a, b) => a + b, 0)
+    expect(sum).toBeCloseTo(3000)
+  })
+
+  it('bearingTotalLm учитывает вычет ширины — равен bearingRowCount * (B - mainCount * MAIN_PROFILE_WIDTH_MM) / 1000', () => {
+    const geo = calcP113FrameGeometry(4000, 3000, 600, 500, 50, true)
+    const expectedRowLen = 3000 - geo.mainCount * MAIN_PROFILE_WIDTH_MM
+    expect(geo.bearingTotalLm).toBeCloseTo((geo.bearingRowCount * expectedRowLen) / 1000)
   })
 
   it('bearingTotalPieces = bearingRowCount * bearingSegmentsPerRow', () => {

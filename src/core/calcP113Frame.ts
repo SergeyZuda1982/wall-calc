@@ -16,8 +16,14 @@
  *     режется КОРОТКИМИ ВСТАВКАМИ между соседними рядами основного профиля
  *     (не идёт сплошным через все пересечения — по чертежу видно, что
  *     каждая вставка помещается ровно в один пролёт между двумя рядами
- *     основного). На него ложится ГКЛ. Шаг между рядами несущего — b,
- *     ЖЁСТКО задан направлением монтажа листов (500мм поперечный / 400мм
+ *     основного). Стык — ТОРЦОМ В ГРАНЬ основного профиля (одноуровневый
+ *     краб, не внахлёст, подтверждено фото пользователя 18.07.2026) —
+ *     поэтому физическая длина вставки короче межосевого расстояния на
+ *     ширину основного профиля (MAIN_PROFILE_WIDTH_MM, см.
+ *     bearingSegmentLengthsMm ниже: внутренние вставки короче на полную
+ *     ширину, крайние у стен — на половину). На него ложится ГКЛ. Шаг
+ *     между рядами несущего — b, ЖЁСТКО задан направлением монтажа листов
+ *     (500мм поперечный / 400мм
  *     продольный), как и в П112 (см. KNAUF_BEARING_STEP_BY_MOUNT).
  *   В П112 было наоборот: несущий — сплошной верхний уровень с подвесами,
  *     основной — сплошной нижний уровень. У П113 такого разделения по
@@ -49,6 +55,7 @@
  */
 
 import type { CeilingLoadClass, CeilingMountDirection } from '../data/ceilingData'
+import { MAIN_PROFILE_WIDTH_MM } from '../data/ceilingData'
 import {
   calcFrameRowPositions,
   snapHangerPositionsToAxis,
@@ -82,8 +89,11 @@ export interface P113FrameGeometry {
   /** Число вставок несущего профиля в одном ряду (= mainCount + 1 —
    *  пролётов между рядами основного профиля, включая крайние у стен). */
   bearingSegmentsPerRow: number
-  /** Длины отдельных вставок несущего профиля в одном ряду, мм (крайние —
-   *  от стены до первого/последнего ряда основного, обычно короче шага c). */
+  /** Длины отдельных вставок несущего профиля в одном ряду, мм. Всегда
+   *  короче межосевого расстояния до соседних рядов основного профиля —
+   *  вычтена его ширина (стык торцом в грань, см. MAIN_PROFILE_WIDTH_MM):
+   *  внутренние вставки короче на полную ширину, крайние у стен — на
+   *  половину (другой конец упирается в периметральный профиль). */
   bearingSegmentLengthsMm: number[]
   /** Общее число физических кусков несущего профиля. */
   bearingTotalPieces: number
@@ -111,7 +121,14 @@ export function calcP113FrameGeometry(
   slabGapMm: number,
   mainAlongLength: boolean,
   layoutMode: FrameLayoutMode = 'user',
-  extra: { stepA?: number; wallOffsetMainMm?: number; wallOffsetBearingMm?: number } = {},
+  extra: {
+    stepA?: number
+    wallOffsetMainMm?: number
+    wallOffsetBearingMm?: number
+    /** Ширина основного профиля, мм — см. MAIN_PROFILE_WIDTH_MM. Вычитается
+     *  из длин вставок несущего профиля (стык торцом в грань, не внахлёст). */
+    mainProfileWidthMm?: number
+  } = {},
 ): P113FrameGeometry {
   // A — пролёт вдоль которого идёт (своей длиной) основной профиль
   // B — пролёт поперёк которого основной профиль расставлен с шагом stepC
@@ -139,19 +156,28 @@ export function calcP113FrameGeometry(
   )
   const bearingRowCount = bearingPositions.length
 
+  // Несущий стыкуется с основным профилем ТОРЦОМ В ГРАНЬ (одноуровневый
+  // краб, фото пользователя 18.07.2026), а не внахлёст поверх — поэтому
+  // физическая длина вставки короче межосевого расстояния на ширину
+  // основного профиля. Внутренние вставки (оба конца упираются в основной
+  // профиль) короче на ПОЛНУЮ ширину; крайние у стен (только один конец
+  // упирается в основной, другой — в периметральный профиль у стены,
+  // туда ничего не вычитаем) — короче на ПОЛОВИНУ ширины.
+  const mainProfileWidthMm = extra.mainProfileWidthMm ?? MAIN_PROFILE_WIDTH_MM
   const bearingSegmentLengthsMm: number[] = []
   let prev = 0
-  for (const pos of mainPositions) {
-    bearingSegmentLengthsMm.push(pos - prev)
+  mainPositions.forEach((pos, i) => {
+    const cut = i === 0 ? mainProfileWidthMm / 2 : mainProfileWidthMm
+    bearingSegmentLengthsMm.push(Math.max(0, pos - prev - cut))
     prev = pos
-  }
-  bearingSegmentLengthsMm.push(B - prev)
+  })
+  const lastCut = mainPositions.length > 0 ? mainProfileWidthMm / 2 : 0
+  bearingSegmentLengthsMm.push(Math.max(0, B - prev - lastCut))
   const bearingSegmentsPerRow = bearingSegmentLengthsMm.length // = mainCount + 1
 
   const bearingTotalPieces = bearingRowCount * bearingSegmentsPerRow
-  // Сумма длин вставок в одном ряду всегда равна полному пролёту B,
-  // независимо от того, на сколько кусков он порезан (без учёта запила).
-  const bearingTotalLm = (bearingRowCount * B) / 1000
+  const bearingRowLengthMm = bearingSegmentLengthsMm.reduce((sum, len) => sum + len, 0)
+  const bearingTotalLm = (bearingRowCount * bearingRowLengthMm) / 1000
 
   // Подвесы — на основном профиле, снэпаются к позициям несущего профиля
   // (там же соединитель, узел жёсткий) — см. предупреждение в шапке файла.
