@@ -347,6 +347,28 @@ export default function CeilingCalc() {
 
   const hasRoom = form.roomLengthMm > 0 && form.roomWidthMm > 0
 
+  // РЕГРЕСС 16.07.2026 (репорт пользователя): поля «Нестандартная форма —
+  // вручную» (areaSqm/perimeterM) раньше можно было очистить в 0 независимо
+  // от заполненных Длины/Ширины, и ничто не пересчитывало их обратно, пока
+  // пользователь не трогал сами поля Длины/Ширины — площадь «зависала» в
+  // 0.00. Поля теперь блокируются при hasRoom (см. ниже по разметке), но
+  // это самовосстановление также чинит уже испорченное состояние (напр. из
+  // localStorage от старой версии) при каждой загрузке — без него человеку
+  // пришлось бы заново набирать Длину/Ширину, чтобы триггернуть пересчёт.
+  useEffect(() => {
+    if (!hasRoom) return
+    const area = Math.round(form.roomLengthMm * form.roomWidthMm / 1e6 * 100) / 100
+    const perim = Math.round((form.roomLengthMm + form.roomWidthMm) * 2 / 1000 * 100) / 100
+    if (form.areaSqm !== area || form.perimeterM !== perim) {
+      setForm(prev => {
+        const n = { ...prev, areaSqm: area, perimeterM: perim }
+        setResult(runCalc(n))
+        return n
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasRoom, form.roomLengthMm, form.roomWidthMm, form.areaSqm, form.perimeterM])
+
   // НОВОЕ (13.07.2026, по прямому запросу пользователя): 3D-превью также
   // для СЛОЖНОГО контура (много углов), засеянного с реального Ceiling на
   // плане — та же гейт-логика, что и у buildPolygonInput()/автосинхронизации
@@ -481,20 +503,26 @@ export default function CeilingCalc() {
               <div>Периметр: <b>{form.perimeterM.toFixed(2)} м</b></div>
             </div>
           )}
-          <div style={{ marginTop: 8, fontSize: 11, color: C.muted }}>Нестандартная форма — вручную:</div>
+          <div style={{ marginTop: 8, fontSize: 11, color: C.muted }}>
+            Нестандартная форма — вручную{hasRoom ? ' (заблокировано, пока заданы Длина/Ширина выше — очистите их, чтобы ввести площадь/периметр вручную)' : ''}:
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
             <div>
               <label style={lbl}>Площадь, м²</label>
-              <input style={inp} type="number" min={0} step={0.1}
+              <input style={{ ...inp, ...(hasRoom ? { opacity: 0.5, cursor: 'not-allowed', background: C.bg } : {}) }}
+                type="number" min={0} step={0.1} disabled={hasRoom}
                 value={form.areaSqm || ''} onChange={e => {
+                  if (hasRoom) return
                   const v = +e.target.value
                   setForm(prev => { const n = { ...prev, areaSqm: v }; if (v > 0) setResult(runCalc(n)); return n })
                 }} />
             </div>
             <div>
               <label style={lbl}>Периметр, м</label>
-              <input style={inp} type="number" min={0} step={0.1}
+              <input style={{ ...inp, ...(hasRoom ? { opacity: 0.5, cursor: 'not-allowed', background: C.bg } : {}) }}
+                type="number" min={0} step={0.1} disabled={hasRoom}
                 value={form.perimeterM || ''} onChange={e => {
+                  if (hasRoom) return
                   const v = +e.target.value
                   setForm(prev => { const n = { ...prev, perimeterM: v }; if (n.areaSqm > 0) setResult(runCalc(n)); return n })
                 }} />
