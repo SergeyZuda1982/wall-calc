@@ -180,6 +180,7 @@ export default function CeilingCalc() {
           type: savedSpec.type,
           stepC: savedSpec.stepC,
           stepB: savedSpec.stepB,
+          stepA: savedSpec.stepA,
           layoutMode: savedSpec.layoutMode,
           bearingAlongLength: savedSpec.bearingAlongLength,
           mountDirection: savedSpec.mountDirection,
@@ -232,6 +233,7 @@ export default function CeilingCalc() {
       areaSqm: form.areaSqm,
       perimeterM: form.perimeterM,
       stepB: form.stepB,
+      stepA: form.stepA,
       bearingAlongLength: form.bearingAlongLength,
       layoutMode: form.layoutMode,
       mountDirection: form.mountDirection,
@@ -242,7 +244,7 @@ export default function CeilingCalc() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     seedRoomId, form.type, form.layers, form.material, form.thickness, form.stepC,
-    form.areaSqm, form.perimeterM, form.stepB, form.bearingAlongLength,
+    form.areaSqm, form.perimeterM, form.stepB, form.stepA, form.bearingAlongLength,
     form.layoutMode, form.mountDirection, form.loadClass,
   ])
 
@@ -268,6 +270,7 @@ export default function CeilingCalc() {
       areaSqm: form.areaSqm,
       perimeterM: form.perimeterM,
       stepB: form.stepB,
+      stepA: form.stepA,
       bearingAlongLength: form.bearingAlongLength,
       layoutMode: form.layoutMode,
       mountDirection: form.mountDirection,
@@ -279,7 +282,7 @@ export default function CeilingCalc() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     seedCeilingId, seedZones, startWall, form.type, form.layers, form.material, form.thickness, form.stepC,
-    form.areaSqm, form.perimeterM, form.stepB, form.bearingAlongLength,
+    form.areaSqm, form.perimeterM, form.stepB, form.stepA, form.bearingAlongLength,
     form.layoutMode, form.mountDirection, form.loadClass, form.slabGapMm,
   ])
 
@@ -364,7 +367,7 @@ export default function CeilingCalc() {
         outerMm: polygonInputForPreview.outerMm,
         ceilingSpec: {
           type: form.type, layers: form.layers, material: form.material, thickness: form.thickness,
-          stepC: form.stepC, areaSqm: form.areaSqm, perimeterM: form.perimeterM, stepB: form.stepB,
+          stepC: form.stepC, areaSqm: form.areaSqm, perimeterM: form.perimeterM, stepB: form.stepB, stepA: form.stepA,
           bearingAlongLength: form.bearingAlongLength, layoutMode: form.layoutMode,
           mountDirection: form.mountDirection, loadClass: form.loadClass, slabGapMm: form.slabGapMm,
         },
@@ -374,7 +377,7 @@ export default function CeilingCalc() {
 
   const layoutModeUi = form.layoutMode ?? 'user'
   const frameParamsUi = resolveFrameParams({
-    stepC: form.stepC, layoutMode: layoutModeUi, userStepB: form.stepB,
+    stepC: form.stepC, layoutMode: layoutModeUi, userStepB: form.stepB, userStepA: form.stepA,
     mountDirection: form.mountDirection, loadClass: form.loadClass,
     ceilingType: form.type === 'p113' ? 'p113' : 'p112',
   })
@@ -618,11 +621,23 @@ export default function CeilingCalc() {
                 )}
               </>
             ) : (
-              <div style={{ marginBottom: 8 }}>
-                <label style={lbl}>Шаг несущего (b), мм</label>
-                <input style={inp} type="number" min={0} step={50}
-                  placeholder={String((form.type === 'p113' ? P113_HANGER_STEP : P112_HANGER_STEP)[form.stepC] ?? (form.type === 'p113' ? 950 : 1000))}
-                  value={form.stepB ?? ''} onChange={e => setField('stepB', +e.target.value || undefined)} />
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={lbl}>Шаг несущего (b), мм</label>
+                  <input style={inp} type="number" min={0} step={50}
+                    placeholder={String((form.type === 'p113' ? P113_HANGER_STEP : P112_HANGER_STEP)[form.stepC] ?? (form.type === 'p113' ? 950 : 1000))}
+                    value={form.stepB ?? ''} onChange={e => setField('stepB', +e.target.value || undefined)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  {/* 15.07.2026: раньше шаг подвесов молча = шагу несущего
+                      (stepB), отдельного поля не было — см. CeilingSpec.stepA,
+                      ceilingData.ts. Дефолт 800мм — DEFAULT_USER_HANGER_STEP_MM,
+                      подтверждено пользователем как типичная практика. */}
+                  <label style={lbl}>Шаг подвесов (a), мм</label>
+                  <input style={inp} type="number" min={0} step={50}
+                    placeholder="800"
+                    value={form.stepA ?? ''} onChange={e => setField('stepA', +e.target.value || undefined)} />
+                </div>
               </div>
             )}
 
@@ -1280,7 +1295,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // использует смета (calcCeiling.ts), чтобы превью не могло разойтись
   // с реальным расчётом материала (см. calcP112Frame.ts).
   const frameParams = resolveFrameParams({
-    stepC, layoutMode, userStepB: form.stepB,
+    stepC, layoutMode, userStepB: form.stepB, userStepA: form.stepA,
     mountDirection: form.mountDirection, loadClass: form.loadClass,
     // 10.07.2026: П112/П113 — своя таблица дефолтного шага b в 'user'-режиме
     // (раньше здесь всегда молча брался П112-вариант, даже для П113).

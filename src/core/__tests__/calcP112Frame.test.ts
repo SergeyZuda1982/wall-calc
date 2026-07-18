@@ -12,6 +12,7 @@ import {
   KNAUF_WALL_OFFSET_MAIN_MM,
   KNAUF_WALL_OFFSET_BEARING_MM,
 } from '../calcP112Frame'
+import { CEILING_STEP_OPTIONS } from '../../data/ceilingData'
 
 describe('calcFrameRowPositions', () => {
   it('первый ряд на расстоянии одного шага от стены, не 0 и не пол-шага', () => {
@@ -336,17 +337,24 @@ describe('resolveKnaufHangerStep', () => {
 })
 
 describe('resolveFrameParams', () => {
-  it("mode='user' без userStepB — берёт дефолт из старой таблицы P112_HANGER_STEP, stepA = stepB", () => {
+  it("mode='user' без userStepB/userStepA — stepB из старой таблицы P112_HANGER_STEP, stepA = DEFAULT_USER_HANGER_STEP_MM (800), НЕЗАВИСИМО от stepB (15.07.2026 — раньше stepA=stepB)", () => {
     const r = resolveFrameParams({ stepC: 600, layoutMode: 'user' })
-    expect(r.stepA).toBe(r.stepB)
+    expect(r.stepA).toBe(800)
+    expect(r.stepB).not.toBe(r.stepA) // P112_HANGER_STEP[600] = 1150 ≠ 800 — подтверждает независимость
     expect(r.wallOffsetMainMm).toBeUndefined()
     expect(r.wallOffsetBearingMm).toBeUndefined()
   })
 
-  it("mode='user' с userStepB — переопределяет дефолт, stepA всё равно = stepB", () => {
+  it("mode='user' с userStepB — переопределяет stepB, stepA остаётся дефолтом 800 (НЕ следует за stepB)", () => {
     const r = resolveFrameParams({ stepC: 600, layoutMode: 'user', userStepB: 1234 })
     expect(r.stepB).toBe(1234)
-    expect(r.stepA).toBe(1234)
+    expect(r.stepA).toBe(800)
+  })
+
+  it("mode='user' с userStepA — переопределяет шаг подвесов независимо от stepB (15.07.2026, репорт пользователя: разные шаги для несущего и подвесов)", () => {
+    const r = resolveFrameParams({ stepC: 600, layoutMode: 'user', userStepB: 500, userStepA: 2000 })
+    expect(r.stepB).toBe(500)
+    expect(r.stepA).toBe(2000)
   })
 
   it("mode='knauf' поперечный монтаж — stepB=500, stepA из таблицы, разные отступы для основного (150) и несущего (100)", () => {
@@ -475,5 +483,23 @@ describe('resolveFrameParams — ceilingType (10.07.2026, поддержка П1
   it("ceilingType='p113' с userStepB — пользовательское значение в приоритете", () => {
     const r = resolveFrameParams({ stepC: 600, layoutMode: 'user', ceilingType: 'p113', userStepB: 777 })
     expect(r.stepB).toBe(777)
+  })
+
+  it("15.07.2026: П113, c=400 (новый допустимый шаг основного профиля, реальный объект пользователя) — несущий (b) и подвесы (a) задаются пользователем полностью независимо друг от друга", () => {
+    // Со слов пользователя: основной профиль c=400, ГКЛ ложится прямо на
+    // него (0-400-800-1200мм от стены), несущий — только вставки у стыков
+    // листов (произвольный шаг, выбирает пользователь), подвесы — отдельно,
+    // тоже произвольный шаг (у него было 800 как типичная практика).
+    const r = resolveFrameParams({
+      stepC: 400, layoutMode: 'user', ceilingType: 'p113',
+      userStepB: 2500, userStepA: 800,
+    })
+    expect(r.stepB).toBe(2500)
+    expect(r.stepA).toBe(800)
+  })
+
+  it('15.07.2026: 400мм добавлен в допустимые шаги основного профиля (реальный объект пользователя, П113)', () => {
+    expect(CEILING_STEP_OPTIONS).toContain(400)
+    expect(CEILING_STEP_OPTIONS[0]).toBe(400) // первый по возрастанию
   })
 })
