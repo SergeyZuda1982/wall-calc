@@ -30,7 +30,7 @@
 import type { Point2D } from './geometry2d'
 import { insideSegments, pointInPolygon } from './geometry2d'
 import type { CeilingLoadClass, CeilingMountDirection } from '../data/ceilingData'
-import { KNAUF_WALL_OFFSET_MAIN_MM, KNAUF_WALL_OFFSET_BEARING_MM } from '../data/ceilingData'
+import { KNAUF_WALL_OFFSET_MAIN_MM, KNAUF_WALL_OFFSET_BEARING_MM, MAIN_PROFILE_WIDTH_MM } from '../data/ceilingData'
 import {
   calcFrameRowPositionsSigned, snapHangerPositionsToAxis, resolveHangerKind,
   STANDARD_BAR_LENGTH_MM, type FrameLayoutMode, type HangerKind,
@@ -75,14 +75,28 @@ const CUT_EPS_MM = 0.5
 
 /** Режет отрезок [a,b] на куски в точках cuts, которые СТРОГО внутри (a,b)
  *  (с допуском CUT_EPS_MM) — точки на границе или вне отрезка игнорируются.
- *  Всегда возвращает хотя бы один кусок (сам [a,b], если резать не пришлось). */
-function splitSegmentAtCuts(a: number, b: number, cuts: number[]): [number, number][] {
+ *  Всегда возвращает хотя бы один кусок (сам [a,b], если резать не пришлось).
+ *
+ *  `profileWidthMm` — ширина основного профиля (MAIN_PROFILE_WIDTH_MM):
+ *  несущий стыкуется с ним ТОРЦОМ В ГРАНЬ, а не внахлёст (см. шапку файла,
+ *  фото пользователя 18.07.2026), поэтому у каждого внутреннего cut-а оба
+ *  соседних куска отступают внутрь на profileWidthMm/2 (в сумме теряют
+ *  полную ширину на стык). Концы a/b исходного отрезка — это ГРАНИЦА
+ *  КОНТУРА (стена/выемка), а не стык с основным профилем, поэтому там
+ *  ничего не вычитается — ровно та же логика, что и у крайних вставок в
+ *  прямоугольном calcP113FrameGeometry. */
+function splitSegmentAtCuts(a: number, b: number, cuts: number[], profileWidthMm = 0): [number, number][] {
   const inner = cuts
     .filter(c => c > a + CUT_EPS_MM && c < b - CUT_EPS_MM)
     .sort((x, y) => x - y)
   const points = [a, ...inner, b]
+  const half = profileWidthMm / 2
   const segs: [number, number][] = []
-  for (let i = 0; i + 1 < points.length; i++) segs.push([points[i], points[i + 1]])
+  for (let i = 0; i + 1 < points.length; i++) {
+    const start = i > 0 ? points[i] + half : points[i]
+    const end = i + 1 < points.length - 1 ? points[i + 1] - half : points[i + 1]
+    segs.push([start, Math.max(start, end)])
+  }
   return segs
 }
 
@@ -92,6 +106,8 @@ export interface CalcPolygonP113FrameOpts {
   wallOffsetBearingMm?: number
   loadClass?: CeilingLoadClass
   mountDirection?: CeilingMountDirection
+  /** Ширина основного профиля, мм — см. MAIN_PROFILE_WIDTH_MM в ceilingData.ts. */
+  mainProfileWidthMm?: number
 }
 
 /**
@@ -145,6 +161,7 @@ export function calcPolygonP113Frame(
   const wallOffsetMainMm = extra.wallOffsetMainMm ?? defaultWallOffsetMain
   const wallOffsetBearingMm = extra.wallOffsetBearingMm ?? defaultWallOffsetBearing
   const stepA = extra.stepA ?? stepB
+  const mainProfileWidthMm = extra.mainProfileWidthMm ?? MAIN_PROFILE_WIDTH_MM
 
   // ── Основной профиль: сплошной, ряды на фиксированных V, вдоль U ────────
   // (точно как mainRows в calcPolygonP112Frame.ts — контур режет ряд только
@@ -161,7 +178,7 @@ export function calcPolygonP113Frame(
   const bearingUPositions = calcFrameRowPositionsSigned(uMin, uMax, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm, profileKind: 'bearing' })
   const bearingRows: PolygonFrameRow[] = bearingUPositions.map(u => {
     const rawSegments = insideSegments(loopsLocal, u, 'x')
-    const segments = rawSegments.flatMap(([a, b]) => splitSegmentAtCuts(a, b, mainVPositions))
+    const segments = rawSegments.flatMap(([a, b]) => splitSegmentAtCuts(a, b, mainVPositions, mainProfileWidthMm))
     const lengthMm = segments.reduce((s, [a, b]) => s + (b - a), 0)
     return { pos: u, segments, lengthMm }
   })
