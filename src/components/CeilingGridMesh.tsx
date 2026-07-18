@@ -8,7 +8,9 @@
  * что и в реальной смете). Здесь — только сборка three.js-мешей поверх этой
  * раскладки: сечения профилей строятся как THREE.Shape + ExtrudeGeometry
  * (реальный контур сечения даёт узнаваемость, не bevel/текстура), крабы —
- * крестовая пластина, подвесы — стержень+пластина+зажим, минвата — box с
+ * крестовая пластина с отогнутыми лапками по краям лучей (см. crabGeometry,
+ * правка 18.07.2026 по фото реальной детали), подвесы — стержень+пластина+
+ * зажим, минвата — box с
  * шумом по вершинам верхней грани + процедурная fibrous-текстура на canvas,
  * ГКЛ — прямоугольник с фаской УК по кромке.
  *
@@ -49,6 +51,7 @@
 
 import { useMemo, useRef, type RefObject } from 'react'
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH } from '../core/ceilingGridGeometry'
 import type { FrameLayoutMode } from '../core/calcP112Frame'
@@ -250,16 +253,51 @@ function fibrousTexture(): THREE.CanvasTexture {
   return cachedWoolTexture
 }
 
-// ─── Краб (соединитель одноуровневый) — крестовая пластина ─────────────────
+// ─── Краб (соединитель одноуровневый) — крестовая пластина с лапками ───────
+// 18.07.2026: по фото от пользователя (реальный краб) — плоская крестовина
+// была неполной: на реальной детали по краю каждого из 4 лучей есть
+// ОТОГНУТАЯ ВНИЗ лапка (защёлкивается на полку профиля с двух сторон), а не
+// просто плоский контур, как рисовалось раньше. Добавлены 4 лапки — тонкие
+// прямоугольные "флажки", отогнутые на 90° от плоскости пластины вниз (в ту
+// же сторону, что и толщина экструзии), по одной на конец каждого луча,
+// шириной вдоль луча = ширине самого луча (не отдельная деталь).
+// Пока без прорези/паза на лапке — как и у остальной геометрии крепежа в
+// этом файле (см. HangerStripP113 выше), для распознаваемости в масштабе
+// сцены достаточно силуэта, паз не читается на таком размере.
 
-export function crabGeometry(sizeMm = 22, thickMm = 1.4): THREE.BufferGeometry {
+function crabLegBoxMm(axis: 'x' | 'y', sign: 1 | -1, armHalfWidthMm: number, tipMm: number, legDropMm: number, plateThickMm: number): THREE.BufferGeometry {
+  const legThicknessMm = 1.4 // толщина металла лапки, как у пластины
+  const w = axis === 'y' ? 2 * armHalfWidthMm : legThicknessMm
+  const h = axis === 'x' ? 2 * armHalfWidthMm : legThicknessMm
+  const geo = new THREE.BoxGeometry(w, h, legDropMm)
+  const posX = axis === 'x' ? sign * tipMm : 0
+  const posY = axis === 'y' ? sign * tipMm : 0
+  geo.translate(posX, posY, plateThickMm + legDropMm / 2)
+  return geo
+}
+
+export function crabGeometry(sizeMm = 22, thickMm = 1.4, legDropMm = 8): THREE.BufferGeometry {
   const s = new THREE.Shape()
   const a = sizeMm, b = sizeMm * 0.28
   s.moveTo(-b, -a); s.lineTo(b, -a); s.lineTo(b, -b); s.lineTo(a, -b)
   s.lineTo(a, b); s.lineTo(b, b); s.lineTo(b, a); s.lineTo(-b, a)
   s.lineTo(-b, b); s.lineTo(-a, b); s.lineTo(-a, -b); s.lineTo(-b, -b)
   s.closePath()
-  const geo = new THREE.ExtrudeGeometry(s, { depth: thickMm, bevelEnabled: false, curveSegments: 1 })
+  const toNonIndexedIfNeeded = (g: THREE.BufferGeometry) => (g.index ? g.toNonIndexed() : g)
+  const plate = toNonIndexedIfNeeded(new THREE.ExtrudeGeometry(s, { depth: thickMm, bevelEnabled: false, curveSegments: 1 }))
+
+  // 4 лапки, по одной на конец каждого луча.
+  const legs = [
+    crabLegBoxMm('y', -1, b, a, legDropMm, thickMm), // нижний луч
+    crabLegBoxMm('y', 1, b, a, legDropMm, thickMm),  // верхний луч
+    crabLegBoxMm('x', -1, b, a, legDropMm, thickMm), // левый луч
+    crabLegBoxMm('x', 1, b, a, legDropMm, thickMm),  // правый луч
+  ].map(toNonIndexedIfNeeded)
+
+  // mergeGeometries требует единый набор атрибутов И одинаковое наличие
+  // индекса у всех геометрий разом — ExtrudeGeometry и BoxGeometry по
+  // умолчанию расходятся, поэтому обе стороны приведены к non-indexed выше.
+  const geo = mergeGeometries([plate, ...legs], false) ?? plate
   geo.rotateX(Math.PI / 2)
   geo.scale(0.001, 0.001, 0.001)
   return geo
