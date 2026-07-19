@@ -413,9 +413,16 @@ function calcLayer(
         let source: BoardPiece['source']
         if (fromPool) {
           source = 'offcut'
-          // Кладём остатки обратно в пул
-          if (fromPool.h - ph >= MIN_OFFCUT_SIDE_MM) pool.push({ w: fromPool.w, h: fromPool.h - ph, used: false })
-          if (fromPool.w - cw >= MIN_OFFCUT_SIDE_MM) pool.push({ w: fromPool.w - cw, h: ph, used: false })
+          // Кладём остатки обратно в пул. ph/cw могут быть нецелыми (высота
+          // work-зоны при уклоне интерполируется линейно) — округляем перед
+          // сохранением в пул, иначе в панели остатков вылезают дробные мм
+          // (баг замечен 19.07.2026, не регрессия PR #26/#27, существовал
+          // раньше). round(), а не floor/ceil — тот же принцип, что и у
+          // diagonalWasteOffcut() ниже, для единообразия размеров пула.
+          const remH = Math.round(fromPool.h - ph)
+          const remW = Math.round(fromPool.w - cw)
+          if (remH >= MIN_OFFCUT_SIDE_MM) pool.push({ w: Math.round(fromPool.w), h: remH, used: false })
+          if (remW >= MIN_OFFCUT_SIDE_MM) pool.push({ w: remW, h: Math.round(ph), used: false })
         } else {
           // Открываем новый лист
           source = 'new_sheet'
@@ -423,9 +430,10 @@ function calcLayer(
           sheetMm2 += SHEET_W * SL
 
           // Боковой обрезок
-          if (SHEET_W - cw >= MIN_OFFCUT_SIDE_MM) pool.push({ w: SHEET_W - cw, h: SL, used: false })
-          // Высотный обрезок
-          if (SL - ph >= MIN_OFFCUT_SIDE_MM) pool.push({ w: cw, h: SL - ph, used: false })
+          if (SHEET_W - cw >= MIN_OFFCUT_SIDE_MM) pool.push({ w: Math.round(SHEET_W - cw), h: SL, used: false })
+          // Высотный обрезок (округление — см. комментарий выше)
+          const remSL = Math.round(SL - ph)
+          if (remSL >= MIN_OFFCUT_SIDE_MM) pool.push({ w: Math.round(cw), h: remSL, used: false })
         }
 
         const widthCut  = cw < SHEET_W
