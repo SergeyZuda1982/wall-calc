@@ -1726,7 +1726,11 @@ export default function App() {
                                   : area > 80000  ? '#42a5f5'
                                   : '#ff9800'
                                 return (
-                                  <div key={idx} title={`${Math.round(o.w)}×${Math.round(o.h)}мм — ${(area/1e6).toFixed(3)} м²`}
+                                  <div key={idx} title={
+                                    o.polygon
+                                      ? `${Math.round(o.w)}×${Math.round(o.h)}мм (вписанный прямоугольник) — из отхода косого среза, ${(area/1e6).toFixed(3)} м²`
+                                      : `${Math.round(o.w)}×${Math.round(o.h)}мм — ${(area/1e6).toFixed(3)} м²`
+                                  }
                                     style={{
                                       width: dw, height: dh,
                                       background: bg, borderRadius: 3, opacity: 0.85,
@@ -1735,6 +1739,7 @@ export default function App() {
                                       fontSize: Math.max(9, Math.min(11, dw / 6)),
                                       color: '#fff', fontWeight: 600, lineHeight: 1.2,
                                       cursor: 'default', flexShrink: 0,
+                                      border: o.polygon ? '1.5px dashed #fff' : undefined,
                                     }}>
                                     <span>{o.w}</span>
                                     <span>×</span>

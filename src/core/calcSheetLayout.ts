@@ -23,6 +23,15 @@
  *   этому многоугольнику, а не по ограничивающему прямоугольнику.
  *   Сам физический рез по месту всё равно делает монтажник — программа
  *   лишь верно показывает, где он проходит, и не завышает расход листа.
+ * — Точные высоты у левого/правого вертикального края куска (то, что
+ *   реально меряется для разметки реза) — в `BoardPiece.edgeHeightLeftMm`/
+ *   `edgeHeightRightMm`, отдельно от геометрии polygon (18.07.2026).
+ * — Отход, срезанный по уклону (треугольник выше линии, в пределах
+ *   заготовки), кладётся в общий пул обрезков (`BoardOffcut.polygon` —
+ *   реальная форма треугольника; w/h — консервативно вписанный в него
+ *   прямоугольник, половина катетов — половина площади треугольника,
+ *   безопасно для дальнейшего переиспользования как обычного прямоугольного
+ *   обрезка без сложной упаковки многоугольников) (18.07.2026).
  */
 
 import type {
@@ -230,12 +239,50 @@ function avoidThinWedge(ys: number[], hL: number, hR: number, SL: number, minWed
   return result
 }
 
-// ─── Жадный пул обрезков ─────────────────────────────────────────────────────
+/**
+ * Отход от косого среза одного куска (kind='diagonal_cut'): часть заготовки
+ * ВЫШЕ наклонной линии, внутри прямоугольника [x1,x2]×[py,py+ph] — то, что
+ * монтажник физически отрезает и откладывает. В данной геометрии (py+ph
+ * всегда ≤ max(hL,hR) — колонка не выше уклона по построению work-зон)
+ * эта фигура ВСЕГДА треугольник: один вертикальный катет у короткой стороны
+ * колонки (там, где линия ниже верха куска), другой — горизонтальный катет
+ * до точки, где линия ровно совпадает с верхом куска.
+ *
+ * Для пула остатков возвращается КОНСЕРВАТИВНО вписанный прямоугольник —
+ * классический для прямоугольного треугольника результат: угол в прямом
+ * угле треугольника, стороны — половина каждого катета (даёт половину
+ * площади треугольника; не максимальна по теории, но простая, безопасная
+ * и не требует более сложного алгоритма упаковки для дальнейшего переиспользования
+ * как обычного прямоугольного обрезка). Реальная форма (весь треугольник)
+ * сохраняется отдельно в polygon — для показа пользователю "с геометрией".
+ */
+function diagonalWasteOffcut(
+  x1: number, x2: number, py: number, ph: number, hL: number, hR: number,
+): { w: number; h: number; polygon: { x: number; y: number }[] } | null {
+  const top = py + ph
+  const tall = Math.max(hL, hR)
+  const short = Math.min(hL, hR)
+  const wasteHeight = top - short
+  const span = tall - short
+  if (wasteHeight <= 0 || span <= 0) return null // реза нет или не наклонная колонка
+
+  const cw = x2 - x1
+  const wasteWidth = cw * wasteHeight / span
+  const shortIsLeft = hL <= hR
+  const xShort = shortIsLeft ? x1 : x2
+  const xCross = shortIsLeft ? x1 + wasteWidth : x2 - wasteWidth
+
+  const polygon = shortIsLeft
+    ? [{ x: xShort, y: short }, { x: xShort, y: top }, { x: xCross, y: top }]
+    : [{ x: xCross, y: top }, { x: xShort, y: top }, { x: xShort, y: short }]
+
+  return { w: Math.round(wasteWidth / 2), h: Math.round(wasteHeight / 2), polygon }
+}
 // 12.07.2026: экспортированы — переиспользуются в calcPolygonSheetLayout.ts
 // (раскрой ГКЛ потолка), чтобы обрезки одной конструкции объекта реально
 // перетекали в другую (стена → облицовка → потолок) через один и тот же пул.
 
-export interface PoolItem { w: number; h: number; used: boolean }
+export interface PoolItem { w: number; h: number; used: boolean; polygon?: { x: number; y: number }[] }
 
 export function takeFromPool(pool: PoolItem[], needW: number, needH: number): PoolItem | null {
   for (const item of pool) {
@@ -364,6 +411,8 @@ function calcLayer(
         // всего куска на всём его протяжении — обрезка вернёт исходный
         // прямоугольник без изменений, реза тут по факту нет.
         let polygon: BoardPiece['polygon']
+        let edgeHeightLeftMm: number | undefined
+        let edgeHeightRightMm: number | undefined
         let pieceAreaMm2 = cw * ph
         if (isSlopedColumn && py + ph > Math.min(hL, hR)) {
           const clipped = clipRectBySlopedTop(x1, x2, py, py + ph, hL, hR)
@@ -373,10 +422,25 @@ function calcLayer(
             kind = 'diagonal_cut'
             polygon = clipped.map(pt => ({ x: pt.x, y: pt.y }))
             pieceAreaMm2 = clippedArea
+            // Точные высоты у левого/правого края куска — то, что монтажник
+            // реально мерит для разметки реза (см. doc-комментарий поля).
+            edgeHeightLeftMm  = Math.round(Math.max(0, Math.min(ph, hL - py)))
+            edgeHeightRightMm = Math.round(Math.max(0, Math.min(ph, hR - py)))
+
+            // Отход от косого среза — в общий пул, с сохранённой геометрией
+            // (если хоть в каком-то виде пригоден — не меньше 200мм по стороне
+            // вписанного прямоугольника, тот же порог, что и у обычных обрезков).
+            const waste = diagonalWasteOffcut(x1, x2, py, ph, hL, hR)
+            if (waste && waste.w >= 200 && waste.h >= 200) {
+              pool.push({ w: waste.w, h: waste.h, used: false, polygon: waste.polygon })
+            }
           }
         }
 
-        pieces.push({ x: x1, y: py, w: cw, h: ph, kind, source, polygon })
+        pieces.push({
+          x: x1, y: py, w: cw, h: ph, kind, source, polygon,
+          edgeHeightLeftMm, edgeHeightRightMm,
+        })
         usedMm2 += pieceAreaMm2
       }
     }
@@ -387,7 +451,7 @@ function calcLayer(
   // Неиспользованные обрезки → usableOffcuts
   const usableOffcuts: BoardOffcut[] = pool
     .filter(p => !p.used && p.w >= 200 && p.h >= 200)
-    .map(p => ({ w: p.w, h: p.h, spec }))
+    .map(p => ({ w: p.w, h: p.h, spec, polygon: p.polygon }))
 
   const offcutMm2    = usableOffcuts.reduce((s, o) => s + o.w * o.h, 0)
   const wastePercent = sheetMm2 > 0
@@ -459,6 +523,6 @@ export function calcSheetLayout(
     totalSheetAreaM2,
     totalOffcutAreaM2,
     totalWastePercent,
-    finalOffcuts: finalOffcuts.map(p => ({ w: p.w, h: p.h, spec: layer1Spec })),
+    finalOffcuts: finalOffcuts.map(p => ({ w: p.w, h: p.h, spec: layer1Spec, polygon: p.polygon })),
   }
 }

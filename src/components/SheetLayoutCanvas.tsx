@@ -208,6 +208,28 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW, first
                         align="center"
                       />
                     )}
+                    {/* Точные высоты кромок у краёв косого реза — то, что
+                        реально мерит монтажник при разметке (18.07.2026) */}
+                    {p.edgeHeightLeftMm != null && ph > 14 && (
+                      <Text
+                        x={px - 3} y={py + ph - 12}
+                        width={34}
+                        text={`${fmtMm(p.edgeHeightLeftMm)}`}
+                        fontSize={8}
+                        fill="#fff"
+                        align="left"
+                      />
+                    )}
+                    {p.edgeHeightRightMm != null && ph > 14 && (
+                      <Text
+                        x={px + pw - 31} y={py + ph - 12}
+                        width={34}
+                        text={`${fmtMm(p.edgeHeightRightMm)}`}
+                        fontSize={8}
+                        fill="#fff"
+                        align="right"
+                      />
+                    )}
                   </React.Fragment>
                 )
               }

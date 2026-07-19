@@ -219,3 +219,79 @@ describe('calcSheetLayout — минимальный клин у обрыва у
     }
   })
 })
+
+describe('calcSheetLayout — точные высоты кромок и отход косого среза в пуле остатков (18.07.2026)', () => {
+  const slopedCeiling = [
+    { x: 0, y: 2500 },
+    { x: 2000, y: 2500 },
+    { x: 4000, y: 3500 },
+  ]
+  const flatFloor = flatProfile(4000, 0)
+
+  it('diagonal_cut кусок содержит edgeHeightLeftMm/edgeHeightRightMm, совпадающие с высотой линии уклона на его краях', () => {
+    const result = calcSheetLayout(
+      4000, slopedCeiling, flatFloor,
+      4000, 4000, 1, [], spec, spec, 1,
+    )
+    const diag = result.layer1.columns.flatMap(c => c.pieces).find(p => p.kind === 'diagonal_cut')
+    expect(diag).toBeDefined()
+    expect(diag!.edgeHeightLeftMm).toBeDefined()
+    expect(diag!.edgeHeightRightMm).toBeDefined()
+    expect(diag!.edgeHeightLeftMm!).toBeLessThanOrEqual(diag!.h)
+    expect(diag!.edgeHeightRightMm!).toBeLessThanOrEqual(diag!.h)
+    // Правая кромка (у x=4000, самая высокая точка уклона) всегда выше
+    // либо равна левой — уклон растёт слева направо в этой фикстуре
+    expect(diag!.edgeHeightRightMm!).toBeGreaterThanOrEqual(diag!.edgeHeightLeftMm!)
+  })
+
+  it('обычный (не diagonal_cut) кусок не имеет edgeHeightLeftMm/edgeHeightRightMm', () => {
+    const result = calcSheetLayout(
+      3000, flatProfile(3000, 2500), flatProfile(3000, 0),
+      600, 600, 1, [], spec, spec, 1,
+    )
+    const anyPiece = result.layer1.columns.flatMap(c => c.pieces).find(p => p.kind !== 'opening_void')
+    expect(anyPiece).toBeDefined()
+    expect(anyPiece!.edgeHeightLeftMm).toBeUndefined()
+    expect(anyPiece!.edgeHeightRightMm).toBeUndefined()
+  })
+
+  it('отход от косого среза попадает в пул остатков с polygon (треугольник), если крупнее порога 200мм', () => {
+    const result = calcSheetLayout(
+      4000, slopedCeiling, flatFloor,
+      4000, 4000, 1, [], spec, spec, 1,
+    )
+    const diagWaste = result.finalOffcuts.filter(o => o.polygon)
+    expect(diagWaste.length).toBeGreaterThan(0)
+    for (const o of diagWaste) {
+      expect(o.polygon!.length).toBe(3) // всегда треугольник (см. doc calcSheetLayout.ts)
+      expect(o.w).toBeGreaterThanOrEqual(200)
+      expect(o.h).toBeGreaterThanOrEqual(200)
+    }
+  })
+
+  it('вписанный прямоугольник отхода (w×h) не превышает площадь самого треугольника отхода', () => {
+    const result = calcSheetLayout(
+      4000, slopedCeiling, flatFloor,
+      4000, 4000, 1, [], spec, spec, 1,
+    )
+    const diagWaste = result.finalOffcuts.find(o => o.polygon)
+    expect(diagWaste).toBeDefined()
+    const pts = diagWaste!.polygon!
+    let s = 0
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length]
+      s += a.x * b.y - b.x * a.y
+    }
+    const triangleArea = Math.abs(s) / 2
+    const inscribedArea = diagWaste!.w * diagWaste!.h
+    expect(inscribedArea).toBeLessThanOrEqual(triangleArea)
+  })
+
+  it('без уклона (плоская стена) пул остатков не содержит элементов с polygon', () => {
+    const result = calcSheetLayout(
+      3000, flatProfile(3000, 2500), flatProfile(3000, 0),
+      600, 600, 1, [], spec, spec, 1,
+    )
+    expect(result.finalOffcuts.some(o => o.polygon)).toBe(false)
+  })
+})
