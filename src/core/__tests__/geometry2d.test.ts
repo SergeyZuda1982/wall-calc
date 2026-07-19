@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clipRectBySlopedTop, polygonArea, polygonPerimeter, polygonSides, insideSegments, pointInPolygon, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from '../geometry2d'
+import { clipRectBySlopedTop, polygonArea, polygonPerimeter, polygonSides, insideSegments, pointInPolygon, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick, unionOfTwoQuads, type Point2D } from '../geometry2d'
 
 describe('polygonArea', () => {
   it('площадь прямоугольника', () => {
@@ -382,5 +382,182 @@ describe('openingOffsetFromClick', () => {
 
   it('вырожденная линия (нулевой длины в px) — null, не делится на 0', () => {
     expect(openingOffsetFromClick(100, 100, 100, 100, 5000, 100, 100, 900)).toBeNull()
+  })
+})
+
+describe('unionOfTwoQuads — объединение двух выпуклых многоугольников (см. KONSPEKT.md 13.07.2026)', () => {
+  /**
+   * Независимый эталон для сверки площади: Sutherland-Hodgman clip выпуклого
+   * subject по выпуклому clipPoly — даёт площадь ПЕРЕСЕЧЕНИЯ. Затем проверяем
+   * area(A) + area(B) - area(A∩B) === area(union) — это не зависит от
+   * внутренней механики unionOfTwoQuads (отдельная реализация), поэтому
+   * ловит содержательные ошибки топологии, а не просто "функция что-то вернула".
+   */
+  function ccwFor(poly: Point2D[]): Point2D[] {
+    let sum = 0
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length]
+      sum += a.x * b.y - b.x * a.y
+    }
+    return sum < 0 ? [...poly].reverse() : poly
+  }
+  function intersectionArea(A: Point2D[], B: Point2D[]): number {
+    let output = ccwFor(A)
+    const clip = ccwFor(B)
+    for (let i = 0; i < clip.length; i++) {
+      const a = clip[i], b = clip[(i + 1) % clip.length]
+      const input = output
+      output = []
+      if (input.length === 0) break
+      const side = (p: Point2D) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
+      for (let j = 0; j < input.length; j++) {
+        const cur = input[j], prev = input[(j + input.length - 1) % input.length]
+        const curIn = side(cur) >= 0, prevIn = side(prev) >= 0
+        if (curIn) {
+          if (!prevIn) {
+            const t = side(prev) / (side(prev) - side(cur))
+            output.push({ x: prev.x + t * (cur.x - prev.x), y: prev.y + t * (cur.y - prev.y) })
+          }
+          output.push(cur)
+        } else if (prevIn) {
+          const t = side(prev) / (side(prev) - side(cur))
+          output.push({ x: prev.x + t * (cur.x - prev.x), y: prev.y + t * (cur.y - prev.y) })
+        }
+      }
+    }
+    return polygonArea(output)
+  }
+  function expectAreaConserved(A: Point2D[], B: Point2D[], union: Point2D[]) {
+    const expected = polygonArea(A) + polygonArea(B) - intersectionArea(A, B)
+    expect(polygonArea(union)).toBeCloseTo(expected, 3)
+  }
+  function selfIntersects(poly: Point2D[]): boolean {
+    const cross = (o: Point2D, p: Point2D, q: Point2D) => (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x)
+    const segCross = (a1: Point2D, a2: Point2D, b1: Point2D, b2: Point2D) => {
+      const d1 = cross(b1, b2, a1), d2 = cross(b1, b2, a2), d3 = cross(a1, a2, b1), d4 = cross(a1, a2, b2)
+      return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+    }
+    for (let i = 0; i < poly.length; i++) {
+      for (let j = i + 1; j < poly.length; j++) {
+        if (Math.abs(i - j) <= 1 || (i === 0 && j === poly.length - 1)) continue
+        if (segCross(poly[i], poly[(i + 1) % poly.length], poly[j], poly[(j + 1) % poly.length])) return true
+      }
+    }
+    return false
+  }
+  /** Прямоугольник w×h с центром (cx,cy), повёрнутый на angleDeg. */
+  function rectAt(cx: number, cy: number, w: number, h: number, angleDeg: number): Point2D[] {
+    const a = angleDeg * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a), hw = w / 2, hh = h / 2
+    return [{ x: -hw, y: -hh }, { x: hw, y: -hh }, { x: hw, y: hh }, { x: -hw, y: hh }]
+      .map(p => ({ x: cx + p.x * cos - p.y * sin, y: cy + p.x * sin + p.y * cos }))
+  }
+  /** Прямоугольник стены по оси (x1,y1)-(x2,y2) и полутолщине — то же соглашение
+   *  точек (p1p,p2p,p2m,p1m), что и в wallJoin.ts (инициализация JoinedWall). */
+  function wallQuad(x1: number, y1: number, x2: number, y2: number, halfPx: number): Point2D[] {
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len
+    const nx = -uy * halfPx, ny = ux * halfPx
+    return [{ x: x1 + nx, y: y1 + ny }, { x: x2 + nx, y: y2 + ny }, { x: x2 - nx, y: y2 - ny }, { x: x1 - nx, y: y1 - ny }]
+  }
+
+  it('простое перекрытие под углом (2 пересечения границ) — площадь и отсутствие самопересечения', () => {
+    const A = rectAt(0, 0, 10, 10, 0)
+    const B = rectAt(6, 6, 10, 10, 20)
+    const union = unionOfTwoQuads(A, B)
+    expect(union).not.toBeNull()
+    expect(selfIntersects(union!)).toBe(false)
+    expectAreaConserved(A, B, union!)
+  })
+
+  it('"плюс" — 2 прямоугольника крест-накрест (4 пересечения границ) — точная площадь', () => {
+    const A: Point2D[] = [{ x: -10, y: -3 }, { x: 10, y: -3 }, { x: 10, y: 3 }, { x: -10, y: 3 }]
+    const B: Point2D[] = [{ x: -3, y: -10 }, { x: 3, y: -10 }, { x: 3, y: 10 }, { x: -3, y: 10 }]
+    const union = unionOfTwoQuads(A, B)
+    expect(union).not.toBeNull()
+    expect(union).toHaveLength(12) // крест — 12-угольник
+    expect(selfIntersects(union!)).toBe(false)
+    // 20×6 + 6×20 − 6×6 (центральный квадрат учтён дважды)
+    expect(polygonArea(union!)).toBeCloseTo(120 + 120 - 36, 6)
+  })
+
+  it('не пересекаются вовсе — null (вызывающий код откатывается на fallback)', () => {
+    const A = rectAt(0, 0, 4, 4, 0)
+    const B = rectAt(100, 100, 4, 4, 0)
+    expect(unionOfTwoQuads(A, B)).toBeNull()
+  })
+
+  it('один многоугольник целиком внутри другого — null (см. ограничения в JSDoc)', () => {
+    const A = rectAt(0, 0, 20, 20, 0)
+    const B = rectAt(0, 0, 4, 4, 10)
+    expect(unionOfTwoQuads(A, B)).toBeNull()
+  })
+
+  it('порядок обхода на входе (по/против часовой) не влияет на результат', () => {
+    const A = rectAt(0, 0, 10, 10, 0)
+    const B = rectAt(6, 6, 10, 10, 20)
+    const union1 = unionOfTwoQuads(A, B)!
+    const union2 = unionOfTwoQuads([...A].reverse(), [...B].reverse())!
+    expect(polygonArea(union2)).toBeCloseTo(polygonArea(union1), 6)
+  })
+
+  describe('реальный узел с объекта (KONSPEKT.md 13.07.2026, C-1/C-2, 123.49°, block/250 + block/125)', () => {
+    // Те же координаты, что и в wallJoin.test.ts, "computeWallJoins — реальный узел
+    // с объекта" — стены строятся ПОЛНОСТЬЮ (не обрезанные под стык), как того
+    // требует unionOfTwoQuads: "два необрезанных прямоугольника стен как есть".
+    const A = wallQuad(12748, 9413, 11187, 9413, 15.16)  // C-1, широкая (250мм)
+    const B = wallQuad(10115, 11034, 11187, 9413, 7.58)  // C-2, узкая (125мм)
+
+    it('не самопересекается и сохраняет площадь (сверка с независимым Sutherland-Hodgman intersection)', () => {
+      const union = unionOfTwoQuads(A, B)
+      expect(union).not.toBeNull()
+      expect(selfIntersects(union!)).toBe(false)
+      expectAreaConserved(A, B, union!)
+    })
+
+    it('толстая стена (A) у узла остаётся НЕТРОНУТОЙ — оба её натуральных угла присутствуют как есть', () => {
+      // Главный вывод сессии: "клин" нужен только тонкой стене, толстая не уступает.
+      const union = unionOfTwoQuads(A, B)!
+      const [Ap1p, Ap2p, Ap2m, Ap1m] = A
+      const has = (p: Point2D) => union.some(u => Math.hypot(u.x - p.x, u.y - p.y) < 1e-6)
+      expect(has(Ap2p)).toBe(true)
+      expect(has(Ap2m)).toBe(true)
+      // дальние (не относящиеся к этому стыку) углы A тоже целы — их обрезка не касается
+      expect(has(Ap1p)).toBe(true)
+      expect(has(Ap1m)).toBe(true)
+    })
+
+    it('натуральный угол B со стороны face+ (который "торчит" внутрь толстой стены A) — исключён из контура объединения', () => {
+      // Именно этот угол в прошлой сессии давал диагональный артефакт "флажок".
+      const union = unionOfTwoQuads(A, B)!
+      const Bp2pNatural = B[1] // face+ natural, (11193.32, 9417.18) — см. KONSPEKT.md 13.07.2026
+      const has = (p: Point2D) => union.some(u => Math.hypot(u.x - p.x, u.y - p.y) < 1e-6)
+      expect(has(Bp2pNatural)).toBe(false)
+      expect(pointInPolygon(Bp2pNatural, [A])).toBe(true) // подтверждение причины: он внутри A
+    })
+
+    it('натуральный угол B со стороны face- (не мешает толстой стене) — сохраняется как есть в контуре', () => {
+      const union = unionOfTwoQuads(A, B)!
+      const Bp2mNatural = B[2] // face- natural, (11180.68, 9408.82)
+      const has = (p: Point2D) => union.some(u => Math.hypot(u.x - p.x, u.y - p.y) < 1e-6)
+      expect(has(Bp2mNatural)).toBe(true)
+    })
+
+    it('контур содержит узловую точку J (ось A и ось B встречаются в одной точке — общая вершина граней-торцов A и B)', () => {
+      const union = unionOfTwoQuads(A, B)!
+      const J = { x: 11187, y: 9413 }
+      const has = (p: Point2D) => union.some(u => Math.hypot(u.x - p.x, u.y - p.y) < 1e-6)
+      expect(has(J)).toBe(true)
+    })
+
+    it('регресс: РАВНАЯ толщина при том же угле — узкая стена B тоже остаётся простым 4-угольником (не нужен 5-й вершина-клин), контур — 8 точек', () => {
+      // Проверка из "плана на следующую сессию": на равных толщинах ожидаем
+      // поведение без дополнительной вершины (клин появляется только из-за
+      // РАЗНИЦЫ толщин — см. "Главный вывод сессии" в KONSPEKT.md 13.07.2026).
+      const Beq = wallQuad(10115, 11034, 11187, 9413, 15.16) // та же толщина, что и A
+      const union = unionOfTwoQuads(A, Beq)
+      expect(union).not.toBeNull()
+      expect(union).toHaveLength(8) // ровно 2 новых угла у стыка (по одному на сторону), без лишнего клина
+      expect(selfIntersects(union!)).toBe(false)
+      expectAreaConserved(A, Beq, union!)
+    })
   })
 })

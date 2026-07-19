@@ -337,6 +337,180 @@ export function infiniteLineIntersection(
 }
 
 /**
+ * Пересечение двух ОТРЕЗКОВ (не бесконечных прямых, см. infiniteLineIntersection
+ * для той версии). Возвращает точку и параметры t вдоль каждого отрезка
+ * (0=начало, 1=конец), только если пересечение лежит В ПРЕДЕЛАХ обоих
+ * отрезков (с небольшим допуском EPS на касание у самого края).
+ * null — если отрезки параллельны/коллинеарны (общий случай, коллинеарное
+ * перекрытие намеренно не обрабатывается — см. ограничение unionOfTwoQuads)
+ * или пересечение вне хотя бы одного из отрезков.
+ */
+function segmentIntersection(
+  a1: Point2D, a2: Point2D, b1: Point2D, b2: Point2D,
+): { point: Point2D; t: number; u: number } | null {
+  const d1x = a2.x - a1.x, d1y = a2.y - a1.y
+  const d2x = b2.x - b1.x, d2y = b2.y - b1.y
+  const denom = d1x * d2y - d1y * d2x
+  if (Math.abs(denom) < 1e-9) return null
+  const t = ((b1.x - a1.x) * d2y - (b1.y - a1.y) * d2x) / denom
+  const u = ((b1.x - a1.x) * d1y - (b1.y - a1.y) * d1x) / denom
+  const EPS = 1e-7
+  if (t < -EPS || t > 1 + EPS || u < -EPS || u > 1 + EPS) return null
+  return { point: { x: a1.x + t * d1x, y: a1.y + t * d1y }, t: Math.min(1, Math.max(0, t)), u: Math.min(1, Math.max(0, u)) }
+}
+
+/** Знаковая площадь (без Math.abs) — знак даёт направление обхода:
+ *  >0 — против часовой (в математических координатах, Y вверх; при Y вниз
+ *  на экране это визуально "по часовой", но для внутренней алгебры важен
+ *  только сам факт согласованности знака, не визуальное направление). */
+function signedArea(points: Point2D[]): number {
+  let sum = 0
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length]
+    sum += a.x * b.y - b.x * a.y
+  }
+  return sum / 2
+}
+
+/** Многоугольник в порядке обхода "против часовой" (по знаку площади) —
+ *  внутренний помощник unionOfTwoQuads, чтобы обе фигуры были в едином
+ *  соглашении об обходе перед сборкой контура объединения. */
+function toCCW(points: Point2D[]): Point2D[] {
+  return signedArea(points) < 0 ? [...points].reverse() : points
+}
+
+/**
+ * Объединение (union) двух выпуклых многоугольников (в частности, двух
+ * прямоугольников стены — face+/face- по всей длине, БЕЗ обрезки под
+ * стык) — внешний контур их объединения, без произвольно проведённых
+ * отрезков: каждое ребро результата лежит либо на настоящей грани A,
+ * либо на настоящей грани B. См. KONSPEKT.md 13.07.2026 — правильная
+ * замена симметричного митра (applyL) для L-стыков стен разной толщины:
+ * текущий митр (пересечение face+/face+ и face-/face-) корректен только
+ * при равной толщине, при разной — даёт "флажок" (см. конспект). Union
+ * не требует знания, какая сторона интерьер/экстерьер — попутно снимает
+ * и этот вопрос для данной задачи.
+ *
+ * Реализация — общий алгоритм (аналог Вейлера-Азертона для объединения
+ * двух простых многоугольников): находит все точки пересечения границ,
+ * вставляет их как доп. вершины в обе фигуры, классифицирует получившиеся
+ * рёбра-фрагменты по принадлежности "снаружи другой фигуры" (через уже
+ * существующий pointInPolygon — чёт-нечётное правило), и обходит только
+ * внешние фрагменты, переключаясь между A и B в точках пересечения.
+ * Работает не только для строго выпуклых A/B, но выпуклость входа —
+ * гарантия того, что результат для двух прямоугольников стен ожидаемо
+ * "простой" (без множественных несвязных контуров).
+ *
+ * Ограничения (см. KONSPEKT.md "Открытые вопросы" — на будущее, не
+ * блокирует основной кейс L-стыков под ненулевым углом):
+ * — коллинеарное перекрытие рёбер (края A и B лежат на одной прямой на
+ *   каком-то участке) не обрабатывается как особый случай — такое рёбро
+ *   просто не даёт пересечения (denom≈0 в segmentIntersection), что для
+ *   двух стен под РЕАЛЬНЫМ углом (не 0° и не 180°, для которых L-стык
+ *   вообще не имеет смысла) не должно возникать;
+ * — если границы A и B не пересекаются вовсе (фигуры физически не
+ *   соприкасаются) или одна целиком внутри другой — возвращает null,
+ *   вызывающий код (applyL) должен предусмотреть откат на старый
+ *   симметричный митр как fallback.
+ *
+ * @returns упорядоченный (против часовой) контур объединения, 4 и более
+ *   точек, либо null в вырожденных случаях (см. ограничения выше).
+ */
+export function unionOfTwoQuads(quadA: Point2D[], quadB: Point2D[]): Point2D[] | null {
+  if (quadA.length < 3 || quadB.length < 3) return null
+  const A = toCCW(quadA)
+  const B = toCCW(quadB)
+
+  // ── шаг 1: все точки пересечения границ A и B ──────────────────────────
+  interface Cross { id: number; point: Point2D; edgeA: number; tA: number; edgeB: number; tB: number }
+  const rawCrossings: Cross[] = []
+  for (let i = 0; i < A.length; i++) {
+    const a1 = A[i], a2 = A[(i + 1) % A.length]
+    for (let j = 0; j < B.length; j++) {
+      const b1 = B[j], b2 = B[(j + 1) % B.length]
+      const hit = segmentIntersection(a1, a2, b1, b2)
+      if (hit) rawCrossings.push({ id: -1, point: hit.point, edgeA: i, tA: hit.t, edgeB: j, tB: hit.u })
+    }
+  }
+  if (rawCrossings.length === 0) return null // не соприкасаются — нет объединения-полигона, откат на fallback
+
+  // Дедупликация почти совпадающих точек (напр. пересечение ровно в вершине,
+  // засчитанное с двух смежных рёбер) — сливаем в одну с общим id.
+  const DEDUP_EPS2 = 1e-4
+  const crossings: Cross[] = []
+  for (const c of rawCrossings) {
+    const dup = crossings.find(k => d2p(k.point, c.point) < DEDUP_EPS2)
+    if (dup) continue
+    crossings.push({ ...c, id: crossings.length })
+  }
+
+  // ── шаг 2: augmented-контуры — исходные вершины + точки пересечения ────
+  interface AugVertex { key: string; pt: Point2D }
+  function buildAugmented(poly: Point2D[], polyTag: 'A' | 'B'): AugVertex[] {
+    const byEdge = new Map<number, Cross[]>()
+    for (const c of crossings) {
+      const edge = polyTag === 'A' ? c.edgeA : c.edgeB
+      if (!byEdge.has(edge)) byEdge.set(edge, [])
+      byEdge.get(edge)!.push(c)
+    }
+    const out: AugVertex[] = []
+    for (let i = 0; i < poly.length; i++) {
+      out.push({ key: `${polyTag}${i}`, pt: poly[i] })
+      const cs = (byEdge.get(i) ?? []).slice().sort((x, y) => {
+        const tx = polyTag === 'A' ? x.tA : x.tB
+        const ty = polyTag === 'A' ? y.tA : y.tB
+        return tx - ty
+      })
+      for (const c of cs) out.push({ key: `C${c.id}`, pt: c.point })
+    }
+    return out
+  }
+  const augA = buildAugmented(A, 'A')
+  const augB = buildAugmented(B, 'B')
+
+  // ── шаг 3: классификация фрагментов — снаружи ДРУГОЙ фигуры ли фрагмент ─
+  function outsideFragments(aug: AugVertex[], other: Point2D[]): [AugVertex, AugVertex][] {
+    const out: [AugVertex, AugVertex][] = []
+    for (let i = 0; i < aug.length; i++) {
+      const p = aug[i], q = aug[(i + 1) % aug.length]
+      if (p.key === q.key) continue // вырожденный (нулевой) фрагмент — пропуск
+      const mid = { x: (p.pt.x + q.pt.x) / 2, y: (p.pt.y + q.pt.y) / 2 }
+      if (!pointInPolygon(mid, [other])) out.push([p, q])
+    }
+    return out
+  }
+  const fragsA = outsideFragments(augA, B)
+  const fragsB = outsideFragments(augB, A)
+  const allFrags = [...fragsA, ...fragsB]
+  if (allFrags.length === 0) return null // одна фигура целиком внутри другой (или наоборот) — откат на fallback
+
+  // ── шаг 4: обход — next[key] = следующая вершина по внешнему контуру ───
+  const next = new Map<string, AugVertex>()
+  for (const [p, q] of allFrags) next.set(p.key, q)
+
+  const startKey = allFrags[0][0].key
+  const contour: Point2D[] = []
+  let curKey = startKey
+  const seen = new Set<string>()
+  for (let guard = 0; guard < allFrags.length + 1; guard++) {
+    if (seen.has(curKey)) break
+    seen.add(curKey)
+    const cur = next.get(curKey)
+    if (!cur) return null // разрыв контура (не должно происходить при корректной топологии) — fallback
+    contour.push(cur.pt)
+    curKey = cur.key
+    if (curKey === startKey) break
+  }
+  if (contour.length < 3 || curKey !== startKey) return null // контур не замкнулся — fallback
+
+  return contour
+}
+
+function d2p(a: Point2D, b: Point2D): number {
+  return (a.x - b.x) ** 2 + (a.y - b.y) ** 2
+}
+
+/**
  * Инструмент "Проём" (клик по стене на плане, см. FloorPlan.tsx,
  * placeOpeningOnLine) — офсет проёма считается ВСЕГДА от точки (x1,y1)
  * линии в данных (PlanOpening.offsetMm), но линия могла быть начерчена
