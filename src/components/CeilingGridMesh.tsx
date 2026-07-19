@@ -60,8 +60,8 @@ import { useMemo, useRef, type RefObject } from 'react'
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH } from '../core/ceilingGridGeometry'
-import type { FrameLayoutMode } from '../core/calcP112Frame'
+import { calcCeilingGrid, calcCeilingGridP113, clipCeilingGridToPolygon, splitSegmentByBarLength, DEFAULT_GRID_STEP_B, DEFAULT_GRID_STEP_C, DEFAULT_BEARING_ALONG_LENGTH, type CeilingGridSegment } from '../core/ceilingGridGeometry'
+import { STANDARD_BAR_LENGTH_MM, type FrameLayoutMode } from '../core/calcP112Frame'
 import { calcMinThicknessScale } from '../core/minScreenThickness'
 import { mmToM } from '../core/planTo3D'
 
@@ -479,7 +479,24 @@ export function Hanger({ x, y, z, dropM, onClick }: {
   )
 }
 
-// ─── Подвес прямой перфорированный (П113) — П-образная скоба ───────────────
+// ─── Удлинитель профиля ПП60×27 (КНАУФ-удлинитель профилей) ────────────────
+// 19.07.2026: пункт 4 списка сверки крепежа потолка. Первая версия плана
+// (снаружи, крупнее сечения) была неверна — пользователь прислал офиц. фото
+// с сайта knauf.ru и уточнил: деталь вставляется ВНУТРЬ канала двух
+// соединяемых профилей (в месте, где обычного бара 3000мм не хватает на всю
+// длину сегмента), а не надевается снаружи. Сечение — тот же "шляпный"
+// профиль (ppProfileShape), что и у самого ПП60×27, просто чуть меньше по
+// габаритам, чтобы заходить внутрь канала. Длина ~150мм — справочник
+// материалов (data/ceilingData.ts, extender_pp) хранит только цену за
+// штуку, не длину детали, это ориентировочное значение по типовым деталям
+// на рынке, не измерено по фото (масштаб на фото КНАУФ не был указан).
+export const EXTENDER_LENGTH_MM = 150
+
+export function profileExtenderGeometry(lengthMm = EXTENDER_LENGTH_MM): THREE.BufferGeometry {
+  const shape = ppProfileShape(58, 25, 0.6, 4)
+  return extrudeProfileM(shape, lengthMm)
+}
+
 // 14.07.2026: по фото от пользователя — для П113 подвес рисуется не как
 // стержень+пластина+зажим (Hanger выше, используется для П112), а как
 // настоящий "прямой подвес" с перфорированной лентой.
@@ -720,47 +737,68 @@ export default function CeilingGridMesh({
 
   if (!bbox || !grid) return null
 
+  // 19.07.2026: рендер одной линии профиля (несущей или основной) с разбивкой
+  // на куски по STANDARD_BAR_LENGTH_MM и удлинителями в стыках — см.
+  // splitSegmentByBarLength (ceilingGridGeometry.ts, чистая математика) и
+  // profileExtenderGeometry выше. Общая функция для bearingSegments и
+  // mainSegments — раньше был один map с одним ThinProfileMesh на весь
+  // сегмент, теперь сегмент может дать несколько кусков + мешей удлинителя.
+  function renderProfileRun(segments: CeilingGridSegment[], y: number, keyPrefix: string) {
+    return segments.flatMap((seg, i) => {
+      const { pieces, joints } = splitSegmentByBarLength(seg, STANDARD_BAR_LENGTH_MM)
+      const alongX = Math.abs(seg.z1 - seg.z2) < 1e-6
+      const rotation: [number, number, number] = alongX ? [0, Math.PI / 2, 0] : [0, 0, 0]
+      const segLenMm = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1)
+      const ux = segLenMm > 0 ? (seg.x2 - seg.x1) / segLenMm : 0
+      const uz = segLenMm > 0 ? (seg.z2 - seg.z1) / segLenMm : 0
+
+      const pieceMeshes = pieces.map((piece, j) => {
+        const lengthMm = Math.hypot(piece.x2 - piece.x1, piece.z2 - piece.z1)
+        const geo = extrudeProfileM(ppShape, lengthMm)
+        const midX = bbox!.minX + (piece.x1 + piece.x2) / 2 / 1000
+        const midZ = bbox!.minZ + (piece.z1 + piece.z2) / 2 / 1000
+        return (
+          <ThinProfileMesh
+            key={`${keyPrefix}-${i}-${j}`}
+            geometry={geo}
+            material={metalMat}
+            position={[bbox!.minX + piece.x1 / 1000, y, bbox!.minZ + piece.z1 / 1000]}
+            rotation={rotation}
+            actualLocalHeightM={0.027}
+            onClick={focusableClick(new THREE.Vector3(midX, y, midZ))}
+          />
+        )
+      })
+
+      // удлинитель центрируется на шве — сдвиг назад по направлению
+      // сегмента на половину длины удлинителя (входит в оба соседних куска)
+      const extenderMeshes = joints.map((joint, j) => {
+        const startX = joint.x - ux * (EXTENDER_LENGTH_MM / 2)
+        const startZ = joint.z - uz * (EXTENDER_LENGTH_MM / 2)
+        return (
+          <mesh
+            key={`${keyPrefix}-ext-${i}-${j}`}
+            geometry={profileExtenderGeometry(EXTENDER_LENGTH_MM)}
+            material={metalMat}
+            position={[bbox!.minX + startX / 1000, y, bbox!.minZ + startZ / 1000]}
+            rotation={rotation}
+            castShadow
+          />
+        )
+      })
+
+      return [...pieceMeshes, ...extenderMeshes]
+    })
+  }
+
   return (
     <group>
       {/* несущий профиль */}
-      {grid.bearingSegments.map((seg, i) => {
-        const lengthMm = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1)
-        const geo = extrudeProfileM(ppShape, lengthMm)
-        const alongX = Math.abs(seg.z1 - seg.z2) < 1e-6
-        const midX = bbox.minX + (seg.x1 + seg.x2) / 2 / 1000
-        const midZ = bbox.minZ + (seg.z1 + seg.z2) / 2 / 1000
-        return (
-          <ThinProfileMesh
-            key={`bearing-${i}`}
-            geometry={geo}
-            material={metalMat}
-            position={[bbox.minX + seg.x1 / 1000, bearingY, bbox.minZ + seg.z1 / 1000]}
-            rotation={alongX ? [0, Math.PI / 2, 0] : [0, 0, 0]}
-            actualLocalHeightM={0.027}
-            onClick={focusableClick(new THREE.Vector3(midX, bearingY, midZ))}
-          />
-        )
-      })}
+      {renderProfileRun(grid.bearingSegments, bearingY, 'bearing')}
 
       {/* основной профиль (перпендикулярно несущему) */}
-      {grid.mainSegments.map((seg, i) => {
-        const lengthMm = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1)
-        const geo = extrudeProfileM(ppShape, lengthMm)
-        const alongX = Math.abs(seg.z1 - seg.z2) < 1e-6
-        const midX = bbox.minX + (seg.x1 + seg.x2) / 2 / 1000
-        const midZ = bbox.minZ + (seg.z1 + seg.z2) / 2 / 1000
-        return (
-          <ThinProfileMesh
-            key={`main-${i}`}
-            geometry={geo}
-            material={metalMat}
-            position={[bbox.minX + seg.x1 / 1000, mainY, bbox.minZ + seg.z1 / 1000]}
-            rotation={alongX ? [0, Math.PI / 2, 0] : [0, 0, 0]}
-            actualLocalHeightM={0.027}
-            onClick={focusableClick(new THREE.Vector3(midX, mainY, midZ))}
-          />
-        )
-      })}
+      {renderProfileRun(grid.mainSegments, mainY, 'main')}
+
 
       {/* соединители на пересечениях: П113 — один уровень, реальный
           одноуровневый краб (crabGeometry, плоская крестовина с лапками),

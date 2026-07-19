@@ -94,6 +94,51 @@ export interface CeilingGridSegment {
   z2: number
 }
 
+/** Результат разбиения одного сегмента на куски барной длины + точки стыков. */
+export interface CeilingGridSplicedRun {
+  /** куски профиля между стыками, в исходном направлении (x1,z1) -> (x2,z2) сегмента */
+  pieces: CeilingGridSegment[]
+  /** точки стыков (центр шва между соседними кусками) — сюда ставится удлинитель */
+  joints: CeilingGridPoint[]
+}
+
+/**
+ * Режет один сегмент профиля на куски не длиннее barLengthMm — 19.07.2026,
+ * пункт 4 списка сверки крепежа потолка (удлинитель ПП60×27, см.
+ * profileExtenderGeometry в CeilingGridMesh.tsx). Та же логика счёта, что
+ * уже используется в смете (calcP112Frame.ts/calcP113Frame.ts,
+ * STANDARD_BAR_LENGTH_MM, ceil(length/barLengthMm)-1 удлинителей) — чтобы
+ * число стыков в 3D совпадало со сметой, не считалось заново по-другому.
+ *
+ * Правило раскроя подтверждено пользователем: полные бары от начала
+ * сегмента (x1,z1), остаток — короткий кусок в конце (не деление длины
+ * поровну на N кусков). Сегменты короче барной длины возвращаются одним
+ * куском без стыков.
+ */
+export function splitSegmentByBarLength(seg: CeilingGridSegment, barLengthMm: number): CeilingGridSplicedRun {
+  const lengthMm = Math.hypot(seg.x2 - seg.x1, seg.z2 - seg.z1)
+  if (lengthMm <= barLengthMm + 1e-6) {
+    return { pieces: [seg], joints: [] }
+  }
+  const piecesCount = Math.ceil(lengthMm / barLengthMm)
+  const ux = (seg.x2 - seg.x1) / lengthMm
+  const uz = (seg.z2 - seg.z1) / lengthMm
+  const pieces: CeilingGridSegment[] = []
+  const joints: CeilingGridPoint[] = []
+  let offset = 0
+  for (let i = 0; i < piecesCount; i++) {
+    const pieceLen = Math.min(barLengthMm, lengthMm - offset)
+    const x1 = seg.x1 + ux * offset
+    const z1 = seg.z1 + uz * offset
+    const x2 = seg.x1 + ux * (offset + pieceLen)
+    const z2 = seg.z1 + uz * (offset + pieceLen)
+    pieces.push({ x1, z1, x2, z2 })
+    offset += pieceLen
+    if (i < piecesCount - 1) joints.push({ x: x2, z: z2 })
+  }
+  return { pieces, joints }
+}
+
 export interface CeilingGridPoint {
   x: number
   z: number
