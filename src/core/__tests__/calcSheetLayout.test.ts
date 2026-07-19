@@ -218,6 +218,17 @@ describe('calcSheetLayout — минимальный клин у обрыва у
       }
     }
   })
+  it('регрессия: на реальном уклоне (3600→2000, стандартные 1200мм колонки) отходы косого среза РЕАЛЬНО попадают в пул (было 0 из-за слишком строгого вписанного прямоугольника — 19.07.2026)', () => {
+    const result = calcSheetLayout(
+      wallL, ceiling, floor, 600, 600, 1, [], spec, spec, 1,
+    )
+    const diagOffcuts = result.finalOffcuts.filter(o => o.polygon)
+    expect(diagOffcuts.length).toBeGreaterThan(0)
+    for (const o of diagOffcuts) {
+      expect(o.w).toBeGreaterThanOrEqual(200)
+      expect(o.h).toBeGreaterThanOrEqual(200)
+    }
+  })
 })
 
 describe('calcSheetLayout — точные высоты кромок и отход косого среза в пуле остатков (18.07.2026)', () => {
