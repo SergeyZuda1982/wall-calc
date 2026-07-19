@@ -306,3 +306,33 @@ describe('calcSheetLayout — точные высоты кромок и отхо
     expect(result.finalOffcuts.some(o => o.polygon)).toBe(false)
   })
 })
+
+describe('calcSheetLayout — пул остатков не содержит дробных мм (регрессия 19.07.2026)', () => {
+  // Точка излома уклона (2100) не кратна шагу стоек (600), поэтому граница
+  // work-зоны внутри наклонного участка вычисляется линейной интерполяцией
+  // и получается нецелой (например 2601.31...мм) — это и раньше было верно
+  // (реальная высота стены в этой точке действительно дробная). Баг был не
+  // в этом, а в том, что при возврате остатка в пул (fromPool.h - ph,
+  // SL - ph и т.п.) дробность геометрии протекала в размеры пула остатков,
+  // которые монтажник видит и должен отмерить рулеткой — там нужны целые мм.
+  // Найдено пользователем на реальном объекте (обычные, не диагональные,
+  // остатки показывали "304.220779..." мм), не регрессия PR #26/#27.
+  const slopedCeiling = [
+    { x: 0, y: 2500 },
+    { x: 2100, y: 2500 },
+    { x: 4000, y: 3500 },
+  ]
+  const flatFloor = flatProfile(4000, 0)
+
+  it('все w/h в finalOffcuts — целые мм', () => {
+    const result = calcSheetLayout(
+      4000, slopedCeiling, flatFloor,
+      600, 600, 1, [], spec, spec, 1,
+    )
+    expect(result.finalOffcuts.length).toBeGreaterThan(0)
+    for (const o of result.finalOffcuts) {
+      expect(Number.isInteger(o.w)).toBe(true)
+      expect(Number.isInteger(o.h)).toBe(true)
+    }
+  })
+})

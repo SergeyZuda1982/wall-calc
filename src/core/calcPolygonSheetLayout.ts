@@ -313,14 +313,21 @@ function calcLayerDetailed(
             let source: PolygonSheetPiece['source']
             if (fromPool) {
               source = 'offcut'
-              if (fromPool.h - ph >= 200) sharedPool.push({ w: fromPool.w, h: fromPool.h - ph, used: false })
-              if (fromPool.w - pcw >= 200) sharedPool.push({ w: fromPool.w - pcw, h: ph, used: false })
+              // Округляем перед сохранением в пул — pcw/ph из контурной
+              // геометрии могут быть нецелыми, иначе дробные мм в панели
+              // остатков (тот же фикс, что и в calcSheetLayout.ts;
+              // пул общий между стеной и потолком). 19.07.2026.
+              const remH = Math.round(fromPool.h - ph)
+              const remW = Math.round(fromPool.w - pcw)
+              if (remH >= 200) sharedPool.push({ w: Math.round(fromPool.w), h: remH, used: false })
+              if (remW >= 200) sharedPool.push({ w: remW, h: Math.round(ph), used: false })
             } else {
               source = 'new_sheet'
               sheetsNeeded++
               sheetMm2 += SHEET_W * sheetL
-              if (SHEET_W - pcw >= 200) sharedPool.push({ w: SHEET_W - pcw, h: sheetL, used: false })
-              if (sheetL - ph >= 200) sharedPool.push({ w: pcw, h: sheetL - ph, used: false })
+              if (SHEET_W - pcw >= 200) sharedPool.push({ w: Math.round(SHEET_W - pcw), h: sheetL, used: false })
+              const remSL = Math.round(sheetL - ph)
+              if (remSL >= 200) sharedPool.push({ w: Math.round(pcw), h: remSL, used: false })
             }
 
             const lengthCut = ph < sheetL

@@ -253,4 +253,25 @@ describe('calcPolygonSheetLayout — выемка режет полосу ЧАС
   })
 })
 
+describe('calcPolygonSheetLayout — пул остатков не содержит дробных мм (регрессия 19.07.2026)', () => {
+  // Скошенный контур (не прямоугольник) — ширина полос между рядами разбивки
+  // получается нецелой (например 937.5мм). Дробность самой геометрии
+  // ожидаема, баг был в том, что она протекала в размеры сохранённых в пул
+  // остатков (finalOffcuts) — там нужны целые мм, монтажник мерит рулеткой.
+  // Тот же фикс, что и в calcSheetLayout.ts (стена), пул общий между
+  // конструкциями объекта.
+  it('все w/h в finalOffcuts — целые мм', () => {
+    const outer = [
+      { x: 0, y: 0 }, { x: 5000, y: 0 }, { x: 5000, y: 2100 }, { x: 0, y: 3700 },
+    ]
+    const startSide = { start: outer[0], end: outer[1] }
+    const r = calcPolygonSheetLayout(outer, [], startSide, 2500)!
+    expect(r.finalOffcuts.length).toBeGreaterThan(0)
+    for (const o of r.finalOffcuts) {
+      expect(Number.isInteger(o.w)).toBe(true)
+      expect(Number.isInteger(o.h)).toBe(true)
+    }
+  })
+})
+
 
