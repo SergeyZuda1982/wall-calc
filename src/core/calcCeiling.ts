@@ -472,9 +472,25 @@ function calcLayoutVariant(axisL: number, axisW: number, sheetL: number, sheetW:
 }
 
 /**
- * Раскрой листов потолка с автовыбором ориентации.
- * Считаем оба варианта (лист вдоль длины / вдоль ширины) и берём лучший:
- * меньше листов → меньше отходов → удобнее монтаж.
+ * Раскрой листов потолка для прямоугольного помещения (простой калькулятор,
+ * без контура с плана).
+ *
+ * 16.07.2026, ИСПРАВЛЕНИЕ (репорт пользователя): раньше ориентация листа
+ * выбиралась АВТОМАТИЧЕСКИ по минимуму отходов (см. removed "Вариант А/Б —
+ * считаем оба, берём лучший"), СОВЕРШЕННО НЕ ГЛЯДЯ на то, куда физически
+ * идёт несущий профиль (bearingAlongLength). Это неверно: лист крепится
+ * саморезами именно к несущему профилю, длинная сторона листа ДОЛЖНА идти
+ * ВДОЛЬ несущего (та же ось, вдоль которой несущий физически тянется в
+ * calcCeilingGrid) — иначе саморезы просто не попадают в профиль по всей
+ * длине шва. Свободный поворот "как выгоднее по материалу" физически
+ * невозможен на монтаже. Пользователь сравнил 2D-схему калькулятора (лист
+ * поперёк основного, неверно) с потолком из плана (calcPolygonSheetLayout —
+ * там ориентация ЖЁСТКО завязана на направление монтажа, а не гуляет ради
+ * экономии) — на плане листы легли верно.
+ *
+ * Теперь ориентация детерминирована ОДНИМ И ТЕМ ЖЕ bearingAlongLength, что
+ * и у сетки каркаса (calcCeilingGrid) — длинная сторона листа ВСЕГДА идёт
+ * вдоль несущего профиля, что бы это ни стоило по отходам материала.
  */
 export function calcCeilingSheetLayout(spec: CeilingSpec): CeilingSheetLayout | null {
   const full = spec as CeilingSpecFull
@@ -488,16 +504,15 @@ export function calcCeilingSheetLayout(spec: CeilingSpec): CeilingSheetLayout | 
   const stepA = getHangerStep(spec.type, stepC)
   const stepB = STEP_B
 
-  // Вариант А: длинная сторона листа вдоль длины помещения (X)
-  const varA = calcLayoutVariant(roomLengthMm, roomWidthMm, sheetL, sheetW)
-  // Вариант Б: длинная сторона листа вдоль ширины помещения (Y → X на холсте)
-  const varB = calcLayoutVariant(roomWidthMm, roomLengthMm, sheetL, sheetW)
+  // Несущий профиль вдоль length (bearingAlongLength, дефолт true — та же
+  // семантика и тот же дефолт, что у calcCeilingGrid/CeilingCanvas) — лист
+  // кладём длинной стороной вдоль ТОЙ ЖЕ оси, никакого выбора "по отходам".
+  const bearingAlongLength = full.bearingAlongLength ?? true
+  const useRotated = !bearingAlongLength
 
-  // Выбираем лучший: сначала по кол-ву листов, при равенстве — по отходам
-  const useRotated = varB.totalSheets < varA.totalSheets ||
-    (varB.totalSheets === varA.totalSheets && varB.wasteArea < varA.wasteArea)
-
-  const best = useRotated ? varB : varA
+  const best = useRotated
+    ? calcLayoutVariant(roomWidthMm, roomLengthMm, sheetL, sheetW)
+    : calcLayoutVariant(roomLengthMm, roomWidthMm, sheetL, sheetW)
 
   // Если лист повёрнут — на холсте длинная сторона идёт вдоль Y (ширины),
   // поэтому меняем местами axisL/axisW для правильного рендера

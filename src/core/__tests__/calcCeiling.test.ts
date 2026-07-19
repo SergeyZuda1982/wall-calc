@@ -286,17 +286,18 @@ describe('calcCeilingSheetLayout — раскрой 5000×4000мм', () => {
   })
 })
 
-describe('calcCeilingSheetLayout — раскрой 2500×2400мм (автоориентация → 2 целых)', () => {
+describe('calcCeilingSheetLayout — раскрой 2500×2400мм (несущий вдоль length по дефолту, длина листа тоже по length)', () => {
   const spec: CeilingSpecFull = { ...BASE, roomLengthMm: 2500, roomWidthMm: 2400,
     sheetLengthMm: 2500, areaSqm: 6, perimeterM: 9.8 }
   const res = calcCeiling(spec)
   const layout = res.sheetLayout!
 
-  // Оба варианта:
-  // Вариант А (длина 2500 по X): ceil(2500/2500)=1 кол × ceil(2400/1200)=2 ряда = 2 листа, 0 резаных
-  // Вариант Б (ширина 2400 по X): ceil(2400/2500)=1 кол × ceil(2500/1200)=3 ряда = 3 листа, 1 резаный
-  // → выбираем Вариант А: 2 листа, не повёрнут
-  it('totalSheets = 2 (автовыбор лучшей ориентации)', () => {
+  // bearingAlongLength не задан -> дефолт true -> лист вдоль length (2500 по X),
+  // НЕ по выбору "что выгоднее" (см. блок ниже 2400×2500 — там при тех же
+  // размерах но переставленных местами лист по-прежнему НЕ поворачивается,
+  // потому что это определяется bearingAlongLength, а не отходами):
+  // ceil(2500/2500)=1 кол × ceil(2400/1200)=2 ряда = 2 листа, 0 резаных
+  it('totalSheets = 2', () => {
     expect(layout.totalSheets).toBe(2)
   })
 
@@ -313,30 +314,44 @@ describe('calcCeilingSheetLayout — раскрой 2500×2400мм (автоор
   })
 })
 
-describe('calcCeilingSheetLayout — раскрой 2400×2500мм (автоориентация разворачивает лист)', () => {
-  // Те же размеры но переставлены местами
+describe('calcCeilingSheetLayout — раскрой 2400×2500мм (16.07.2026: ориентация детерминирована bearingAlongLength, НЕ выбирается по экономии)', () => {
+  // Те же размеры но переставлены местами. bearingAlongLength не задан ->
+  // дефолт true (несущий вдоль length) -> лист НЕ поворачивается, даже если
+  // поворот сэкономил бы лист (см. calcCeilingSheetLayout, репорт
+  // пользователя — свободный поворот "как выгоднее" был физически неверен:
+  // саморезы должны попадать в несущий профиль по всей длине шва).
   const spec: CeilingSpecFull = { ...BASE, roomLengthMm: 2400, roomWidthMm: 2500,
     sheetLengthMm: 2500, areaSqm: 6, perimeterM: 9.8 }
   const res = calcCeiling(spec)
   const layout = res.sheetLayout!
 
-  // Вариант А (длина 2400 по X): ceil(2400/2500)=1 кол × ceil(2500/1200)=3 ряда = 3 листа
-  // Вариант Б (ширина 2500 по X): ceil(2500/2500)=1 кол × ceil(2400/1200)=2 ряда = 2 листа ✓
-  // → выбираем Вариант Б: повёрнут
-  it('totalSheets = 2 (автоповорот экономит лист)', () => {
-    expect(layout.totalSheets).toBe(2)
+  // Длина листа вдоль roomLengthMm=2400 (НЕ повёрнут, несмотря на то что
+  // поворот дал бы 2 листа вместо 3 — экономия отходов больше не критерий):
+  // ceil(2400/2500)=1 кол × ceil(2500/1200)=3 ряда = 3 листа, 0 целых, 3 резаных
+  it('totalSheets = 3 (не 2 — поворот ради экономии больше не выбирается)', () => {
+    expect(layout.totalSheets).toBe(3)
   })
 
-  it('fullSheets = 2', () => {
-    expect(layout.fullSheets).toBe(2)
+  it('fullSheets = 0', () => {
+    expect(layout.fullSheets).toBe(0)
   })
 
-  it('cutSheets = 0', () => {
-    expect(layout.cutSheets).toBe(0)
+  it('cutSheets = 3', () => {
+    expect(layout.cutSheets).toBe(3)
   })
 
-  it('rotated = true (повёрнут для экономии)', () => {
-    expect(layout.rotated).toBe(true)
+  it('rotated = false (несущий вдоль length по дефолту — лист тоже вдоль length)', () => {
+    expect(layout.rotated).toBeFalsy()
+  })
+
+  it('bearingAlongLength=false — лист поворачивается вслед за несущим профилем (вдоль width)', () => {
+    const rotatedSpec: CeilingSpecFull = { ...spec, bearingAlongLength: false }
+    const rotatedLayout = calcCeiling(rotatedSpec).sheetLayout!
+    // Теперь длина листа вдоль roomWidthMm=2500 (совпадает со старым
+    // "Вариант Б"): ceil(2500/2500)=1 кол × ceil(2400/1200)=2 ряда = 2 листа, 0 резаных
+    expect(rotatedLayout.rotated).toBe(true)
+    expect(rotatedLayout.totalSheets).toBe(2)
+    expect(rotatedLayout.cutSheets).toBe(0)
   })
 })
 
