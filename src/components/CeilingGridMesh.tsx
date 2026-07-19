@@ -24,7 +24,12 @@
  * уровня) — отдельная twoLevelConnectorGeometry() (19.07.2026, по фото
  * реальной детали: гнутая скоба, не крестовина) — до этой правки П112 тоже
  * ошибочно рисовался crabGeometry() посередине между уровнями, см. историю
- * коммитов при необходимости.
+ * коммитов при необходимости. Подвес прямой (Hanger, П112) — с 19.07.2026
+ * тоже по фото реальной детали: крюк-петля (hangerHookGeometry) + стержень
+ * + зажим-струбцина с зубчатыми лапками (hangerClampGeometry) и отдельным
+ * рычагом-эксцентриком (hangerLeverGeometry, свой тёмный материал
+ * hangerLeverMat) — раньше зажим рисовался гнутой трубкой без струбцины и
+ * рычага, см. историю коммитов.
  *
  * v1: без picking/интерактива (см. общий план "интерактивный 3D" в
  * KONSPEKT.md) — чисто визуальный слой поверх плоской плиты потолка,
@@ -212,6 +217,10 @@ export function ThinProfileMesh({
 export const metalMat = new THREE.MeshStandardMaterial({ color: '#b7bcc2', metalness: 0.75, roughness: 0.42 })
 export const crabMat = new THREE.MeshStandardMaterial({ color: '#9aa4ad', metalness: 0.6, roughness: 0.5 })
 const gklMat = new THREE.MeshStandardMaterial({ color: '#e9e4d8', roughness: 0.92, metalness: 0 })
+// 19.07.2026: рычаг-защёлка анкерного подвеса на фото — тёмный (воронёный/
+// окрашенный) эксцентрик, заметно темнее оцинкованных пластин/крабов —
+// отдельный материал для узнаваемости в 3D, см. hangerLeverGeometry ниже.
+export const hangerLeverMat = new THREE.MeshStandardMaterial({ color: '#2e2e30', metalness: 0.35, roughness: 0.55 })
 
 // ─── Минвата: box с шумом по вершинам верха + процедурная текстура ─────────
 
@@ -369,28 +378,103 @@ function HangerRod({ dropM }: { dropM: number }) {
   )
 }
 
-/** Подвес прямой: пластина у плиты + стержень + гнутый зажим (упрощённая форма). */
+// ─── Анкерный подвес (прямой, П112) — крюк-петля + стержень + зажим-струбцина
+// с рычагом-защёлкой ──────────────────────────────────────────────────────
+// 19.07.2026: по фото от пользователя — деталь целиком гнётся из одного
+// прутка на одном конце (крюк-петля наверху, входит в анкер/шпильку в
+// плите), а зажим внизу — НЕ гнутая трубка (было раньше, см. историю
+// коммитов), а отдельный узел из трёх элементов: плоская пластина сверху
+// профиля ПП, две зубчатые боковые лапки-струбцины по бокам профиля и
+// отдельный поворотный рычаг-эксцентрик (кулачок), который при повороте
+// заклинивает зажим на профиле. На фото рычаг темнее оцинкованного металла
+// (см. hangerLeverMat выше) и закреплён на отдельной оси — здесь
+// зафиксирован в положении "защёлкнуто" (не анимируется).
+
+let cachedHangerHookGeo: THREE.BufferGeometry | null = null
+/** Крюк-петля наверху стержня — гнутый пруток с плоским скруглённым носиком, цепляется за анкер в плите. */
+export function hangerHookGeometry(): THREE.BufferGeometry {
+  if (cachedHangerHookGeo) return cachedHangerHookGeo
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0.006, 0),
+    new THREE.Vector3(0.007, 0.011, 0),
+    new THREE.Vector3(0.013, 0.008, 0),
+    new THREE.Vector3(0.012, 0.001, 0),
+    new THREE.Vector3(0.008, -0.001, 0),
+  ])
+  cachedHangerHookGeo = new THREE.TubeGeometry(curve, 16, 0.002, 6, false)
+  return cachedHangerHookGeo
+}
+
+/**
+ * Зажим — пластина сверху профиля + 2 зубчатые боковые лапки-струбцины (без
+ * рычага, тот отдельным мешем). Не кэшируется (в отличие от
+ * hangerHookGeometry без параметров) — принимает аргументы, кэш по одному
+ * значению вернул бы устаревшую геометрию при других параметрах.
+ */
+export function hangerClampGeometry(profileWidthMm = 60, profileHeightMm = 27, thickMm = 1.4, toothCount = 3): THREE.BufferGeometry {
+  const toNonIndexedIfNeeded = (g: THREE.BufferGeometry) => (g.index ? g.toNonIndexed() : g)
+  const depthMm = 20
+  const halfWidth = profileWidthMm / 2
+  const toothMm = 3.5
+  const toothThickMm = 1.4
+
+  // пластина сверху — ложится на верхнюю полку профиля
+  const topPlate = new THREE.BoxGeometry(profileWidthMm + 2 * thickMm, thickMm, depthMm)
+  topPlate.translate(0, -thickMm / 2, 0)
+
+  const parts: THREE.BufferGeometry[] = [topPlate]
+  for (const sign of [-1, 1] as const) {
+    // основная боковая лапка — вдоль наружной грани профиля
+    const leg = new THREE.BoxGeometry(thickMm, profileHeightMm, depthMm)
+    leg.translate(sign * (halfWidth + thickMm / 2), -profileHeightMm / 2 - thickMm, 0)
+    parts.push(leg)
+
+    // зубцы — короткие выступы внутрь по высоте лапки (зубчатый край на
+    // фото — реальная деталь охватывает профиль зубчатым краем, не гладким)
+    for (let i = 0; i < toothCount; i++) {
+      const ty = -thickMm - ((i + 0.5) / toothCount) * profileHeightMm
+      const tooth = new THREE.BoxGeometry(toothMm, toothThickMm, depthMm * 0.6)
+      tooth.translate(sign * (halfWidth - toothMm / 2), ty, 0)
+      parts.push(tooth)
+    }
+  }
+
+  const geo = mergeGeometries(parts.map(toNonIndexedIfNeeded), false) ?? topPlate
+  geo.scale(0.001, 0.001, 0.001)
+  return geo
+}
+
+/** Рычаг-эксцентрик зажима — плоская лопатка с осью поворота на одном конце (см. hangerLeverMat). Не кэшируется — см. hangerClampGeometry. */
+export function hangerLeverGeometry(profileWidthMm = 60): THREE.BufferGeometry {
+  const lengthMm = profileWidthMm * 0.55
+  const geo = new THREE.BoxGeometry(lengthMm, 2, 7)
+  geo.translate(-lengthMm / 2, 0, 0) // пивот на одном конце — ось поворота рычага
+  geo.scale(0.001, 0.001, 0.001)
+  return geo
+}
+
+/** Подвес прямой (анкерный, П112): крюк-петля у плиты + стержень + зажим-струбцина с рычагом-защёлкой на профиле. */
 export function Hanger({ x, y, z, dropM, onClick }: {
   x: number; y: number; z: number; dropM: number
   onClick?: (e: ThreeEvent<MouseEvent>) => void
 }) {
-  const clampGeo = useMemo(() => {
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(0, -dropM, 0),
-      new THREE.Vector3(0.01, -dropM - 0.006, 0),
-      new THREE.Vector3(0.01, -dropM - 0.014, 0),
-      new THREE.Vector3(-0.002, -dropM - 0.018, 0),
-    ])
-    return new THREE.TubeGeometry(curve, 12, 0.002, 6, false)
-  }, [dropM])
-
   return (
     <group position={[x, y, z]} onClick={onClick}>
-      <mesh material={crabMat} castShadow>
-        <boxGeometry args={[0.024, 0.0015, 0.024]} />
-      </mesh>
+      <mesh geometry={hangerHookGeometry()} material={crabMat} castShadow />
       <HangerRod dropM={dropM} />
-      <mesh geometry={clampGeo} material={crabMat} castShadow />
+      <group position={[0, -dropM, 0]}>
+        <mesh geometry={hangerClampGeometry()} material={crabMat} castShadow />
+        {/* рычаг-защёлка — зафиксирован в положении "защёлкнуто" (повёрнут к
+            профилю), пивот у стержня, лопатка уходит наружу вбок */}
+        <mesh
+          geometry={hangerLeverGeometry()}
+          material={hangerLeverMat}
+          position={[0.004, -0.006, 0]}
+          rotation={[0, 0, -0.6]}
+          castShadow
+        />
+      </group>
     </group>
   )
 }
