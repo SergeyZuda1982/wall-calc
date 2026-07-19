@@ -19,10 +19,12 @@
  * (двухуровневая П112 vs одноуровневая П113 — разница только в том, как
  * заполнен bearingSegments, интерфейс результата один и тот же), и mainY/
  * bearingY схлопываются в один уровень (см. комментарий у их вычисления
- * ниже). Крабы для П113 рисуются той же геометрией crabGeometry(), что и
- * двухуровневый краб П112 — визуально это упрощение (реальный одноуровневый
- * соединитель другой формы), но для узнаваемости в 3D-схеме этого достаточно
- * на первом шаге; отдельная геометрия — при желании, не критично.
+ * ниже). Крабы для П113 (один уровень) рисуются crabGeometry() — плоская
+ * крестовина с лапками, реальный одноуровневый соединитель. Для П112 (два
+ * уровня) — отдельная twoLevelConnectorGeometry() (19.07.2026, по фото
+ * реальной детали: гнутая скоба, не крестовина) — до этой правки П112 тоже
+ * ошибочно рисовался crabGeometry() посередине между уровнями, см. историю
+ * коммитов при необходимости.
  *
  * v1: без picking/интерактива (см. общий план "интерактивный 3D" в
  * KONSPEKT.md) — чисто визуальный слой поверх плоской плиты потолка,
@@ -299,6 +301,59 @@ export function crabGeometry(sizeMm = 22, thickMm = 1.4, legDropMm = 8): THREE.B
   // умолчанию расходятся, поэтому обе стороны приведены к non-indexed выше.
   const geo = mergeGeometries([plate, ...legs], false) ?? plate
   geo.rotateX(Math.PI / 2)
+  geo.scale(0.001, 0.001, 0.001)
+  return geo
+}
+
+// ─── Двухуровневый соединитель (П112, main↔bearing на разных уровнях) ──────
+// 19.07.2026: по фото от пользователя — деталь СОВСЕМ другой формы, чем
+// одноуровневый краб (crabGeometry выше): не плоская крестовина, а гнутая
+// скоба. Верхняя пластина цепляется за основной (верхний) профиль, от неё
+// вниз идут два крюка-"лапы" по бокам, которые на уровне несущего (нижнего)
+// профиля загибаются внутрь и обхватывают его снизу. Раньше на этом месте
+// стояла crabGeometry() (см. комментарий в шапке файла) — визуально
+// неверно, это был следующий пункт в списке по фото (конспект 18.07.2026,
+// часть 2, пункт 2).
+//
+// gapMm — вертикальный зазор между основным и несущим профилем; передаётся
+// из места вызова как (mainY - bearingY) в мм, а не жёстко зашит здесь, —
+// чтобы деталь оставалась верной при любых будущих изменениях раскладки
+// уровней (mainY/bearingY считаются в CeilingGridMesh, см. ниже).
+
+export function twoLevelConnectorGeometry(
+  gapMm = 30,
+  spanMm = 16,     // расстояние между двумя лапами (тот же порядок, что и полу-размер краба)
+  plateMm = 20,    // сторона верхней пластины
+  thickMm = 1.4,   // толщина металла, как у краба
+  hookMm = 6,      // длина загиба лапы под несущим профилем
+): THREE.BufferGeometry {
+  const toNonIndexedIfNeeded = (g: THREE.BufferGeometry) => (g.index ? g.toNonIndexed() : g)
+  const depthMm = plateMm * 0.5
+  const halfSpan = spanMm / 2
+
+  // верхняя пластина — цепляется за основной (верхний) профиль
+  const topPlate = new THREE.BoxGeometry(plateMm, thickMm, plateMm)
+  topPlate.translate(0, -thickMm / 2, 0)
+
+  const legsAndHooks: THREE.BufferGeometry[] = [topPlate]
+  for (const sign of [-1, 1] as const) {
+    // вертикальная "лапа" — от пластины вниз через весь зазор до уровня
+    // несущего профиля
+    const leg = new THREE.BoxGeometry(thickMm, gapMm, depthMm)
+    leg.translate(sign * halfSpan, -gapMm / 2 - thickMm / 2, 0)
+    legsAndHooks.push(leg)
+
+    // загиб-крюк на конце лапы, обхватывающий несущий профиль снизу —
+    // отгибается ВНУТРЬ (к центру детали), а не наружу, как лапки
+    // одноуровневого краба выше
+    const hook = new THREE.BoxGeometry(hookMm, thickMm, depthMm)
+    hook.translate(sign * (halfSpan - hookMm / 2), -(gapMm + thickMm / 2), 0)
+    legsAndHooks.push(hook)
+  }
+
+  // тот же приём, что и в crabGeometry: BoxGeometry не индексирована по
+  // умолчанию, но приводим явно на случай будущих правок этой функции
+  const geo = mergeGeometries(legsAndHooks.map(toNonIndexedIfNeeded), false) ?? topPlate
   geo.scale(0.001, 0.001, 0.001)
   return geo
 }
@@ -623,17 +678,34 @@ export default function CeilingGridMesh({
         )
       })}
 
-      {/* крабы на пересечениях */}
+      {/* соединители на пересечениях: П113 — один уровень, реальный
+          одноуровневый краб (crabGeometry, плоская крестовина с лапками),
+          П112 — два уровня, реальная гнутая скоба (twoLevelConnectorGeometry,
+          19.07.2026, см. комментарий над функцией) */}
       {grid.crabPoints.map((p, i) => {
-        const cx = bbox.minX + p.x / 1000, cy = (bearingY + mainY) / 2, cz = bbox.minZ + p.z / 1000
+        const cx = bbox.minX + p.x / 1000, cz = bbox.minZ + p.z / 1000
+        if (ceilingType === 'p113') {
+          const cy = (bearingY + mainY) / 2
+          return (
+            <mesh
+              key={`crab-${i}`}
+              geometry={crabGeometry()}
+              material={crabMat}
+              position={[cx, cy, cz]}
+              castShadow
+              onClick={focusableClick(new THREE.Vector3(cx, cy, cz))}
+            />
+          )
+        }
+        const gapMm = (mainY - bearingY) * 1000
         return (
           <mesh
             key={`crab-${i}`}
-            geometry={crabGeometry()}
+            geometry={twoLevelConnectorGeometry(gapMm)}
             material={crabMat}
-            position={[cx, cy, cz]}
+            position={[cx, mainY, cz]}
             castShadow
-            onClick={focusableClick(new THREE.Vector3(cx, cy, cz))}
+            onClick={focusableClick(new THREE.Vector3(cx, mainY, cz))}
           />
         )
       })}
