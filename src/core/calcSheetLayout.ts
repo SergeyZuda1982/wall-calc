@@ -184,6 +184,12 @@ export function zoneJoints(z1: number, z2: number, SL: number, vOffset: number):
  */
 const TARGET_WEDGE_MM = 300
 
+/** Минимальный размер стороны обрезка, чтобы считаться пригодным для пула
+ *  (иначе это уже не переиспользуемый кусок, а обрезь). Использовалась и
+ *  раньше как литерал 200 в нескольких местах — вынесена в константу
+ *  18.07.2026 вместе с добавлением отходов косого среза в пул. */
+const MIN_OFFCUT_SIDE_MM = 200
+
 /**
  * Сдвигает ОДНУ границу в списке `ys` (если она есть), которая оказалась
  * слишком близко к точке обрыва уклона (min(hL, hR)) — из-за этого верхний
@@ -248,13 +254,21 @@ function avoidThinWedge(ys: number[], hL: number, hR: number, SL: number, minWed
  * колонки (там, где линия ниже верха куска), другой — горизонтальный катет
  * до точки, где линия ровно совпадает с верхом куска.
  *
- * Для пула остатков возвращается КОНСЕРВАТИВНО вписанный прямоугольник —
- * классический для прямоугольного треугольника результат: угол в прямом
- * угле треугольника, стороны — половина каждого катета (даёт половину
- * площади треугольника; не максимальна по теории, но простая, безопасная
- * и не требует более сложного алгоритма упаковки для дальнейшего переиспользования
- * как обычного прямоугольного обрезка). Реальная форма (весь треугольник)
- * сохраняется отдельно в polygon — для показа пользователю "с геометрией".
+ * Для пула остатков возвращается вписанный прямоугольник. Первая версия
+ * (18.07.2026, до правки) брала классический "максимум по площади" —
+ * прямоугольник с углом в прямом угле треугольника и сторонами в половину
+ * каждого катета. На практике при типичных уклонах (TARGET_WEDGE_MM=300)
+ * это почти всегда давало ОДНУ из сторон < MIN_OFFCUT_SIDE_MM (порог пула)
+ * — обрезок молча выбрасывался, пул оставался пустым (баг замечен
+ * пользователем — "не видно косых кусков ГКЛ" — 19.07.2026).
+ *
+ * Сейчас вместо максимума площади ищем прямоугольник, где ОБЕ стороны
+ * проходят порог: фиксируем одну сторону РОВНО на MIN_OFFCUT_SIDE_MM
+ * (минимум, при котором обрезок вообще пригоден), вторую берём
+ * максимально возможной при этом ограничении — считаем оба варианта
+ * (узкий-высокий / широкий-низкий) и берём тот, что даёт больше площади.
+ * Если даже так ни одна сторона не набирает порог — треугольник реально
+ * слишком мал, отход не сохраняем (как и раньше).
  */
 function diagonalWasteOffcut(
   x1: number, x2: number, py: number, ph: number, hL: number, hR: number,
@@ -276,7 +290,24 @@ function diagonalWasteOffcut(
     ? [{ x: xShort, y: short }, { x: xShort, y: top }, { x: xCross, y: top }]
     : [{ x: xCross, y: top }, { x: xShort, y: top }, { x: xShort, y: short }]
 
-  return { w: Math.round(wasteWidth / 2), h: Math.round(wasteHeight / 2), polygon }
+  const MIN = MIN_OFFCUT_SIDE_MM
+  // Вариант "широкий-низкий": высота = MIN, ширина — максимум при этом
+  const wideW = wasteWidth * (1 - MIN / wasteHeight)
+  const wideValid = wasteHeight >= MIN && wideW >= MIN
+  // Вариант "узкий-высокий": ширина = MIN, высота — максимум при этом
+  const tallH = wasteHeight * (1 - MIN / wasteWidth)
+  const tallValid = wasteWidth >= MIN && tallH >= MIN
+
+  let w: number, h: number
+  if (wideValid && (!tallValid || wideW * MIN >= MIN * tallH)) {
+    w = wideW; h = MIN
+  } else if (tallValid) {
+    w = MIN; h = tallH
+  } else {
+    return null // треугольник слишком мал для обоих вариантов
+  }
+
+  return { w: Math.round(w), h: Math.round(h), polygon }
 }
 // 12.07.2026: экспортированы — переиспользуются в calcPolygonSheetLayout.ts
 // (раскрой ГКЛ потолка), чтобы обрезки одной конструкции объекта реально
@@ -383,8 +414,8 @@ function calcLayer(
         if (fromPool) {
           source = 'offcut'
           // Кладём остатки обратно в пул
-          if (fromPool.h - ph >= 200) pool.push({ w: fromPool.w, h: fromPool.h - ph, used: false })
-          if (fromPool.w - cw >= 200) pool.push({ w: fromPool.w - cw, h: ph, used: false })
+          if (fromPool.h - ph >= MIN_OFFCUT_SIDE_MM) pool.push({ w: fromPool.w, h: fromPool.h - ph, used: false })
+          if (fromPool.w - cw >= MIN_OFFCUT_SIDE_MM) pool.push({ w: fromPool.w - cw, h: ph, used: false })
         } else {
           // Открываем новый лист
           source = 'new_sheet'
@@ -392,9 +423,9 @@ function calcLayer(
           sheetMm2 += SHEET_W * SL
 
           // Боковой обрезок
-          if (SHEET_W - cw >= 200) pool.push({ w: SHEET_W - cw, h: SL, used: false })
+          if (SHEET_W - cw >= MIN_OFFCUT_SIDE_MM) pool.push({ w: SHEET_W - cw, h: SL, used: false })
           // Высотный обрезок
-          if (SL - ph >= 200)      pool.push({ w: cw, h: SL - ph, used: false })
+          if (SL - ph >= MIN_OFFCUT_SIDE_MM) pool.push({ w: cw, h: SL - ph, used: false })
         }
 
         const widthCut  = cw < SHEET_W
@@ -431,7 +462,7 @@ function calcLayer(
             // (если хоть в каком-то виде пригоден — не меньше 200мм по стороне
             // вписанного прямоугольника, тот же порог, что и у обычных обрезков).
             const waste = diagonalWasteOffcut(x1, x2, py, ph, hL, hR)
-            if (waste && waste.w >= 200 && waste.h >= 200) {
+            if (waste && waste.w >= MIN_OFFCUT_SIDE_MM && waste.h >= MIN_OFFCUT_SIDE_MM) {
               pool.push({ w: waste.w, h: waste.h, used: false, polygon: waste.polygon })
             }
           }
@@ -450,7 +481,7 @@ function calcLayer(
 
   // Неиспользованные обрезки → usableOffcuts
   const usableOffcuts: BoardOffcut[] = pool
-    .filter(p => !p.used && p.w >= 200 && p.h >= 200)
+    .filter(p => !p.used && p.w >= MIN_OFFCUT_SIDE_MM && p.h >= MIN_OFFCUT_SIDE_MM)
     .map(p => ({ w: p.w, h: p.h, spec, polygon: p.polygon }))
 
   const offcutMm2    = usableOffcuts.reduce((s, o) => s + o.w * o.h, 0)
@@ -507,7 +538,7 @@ export function calcSheetLayout(
   const totalUsedAreaM2   = all.reduce((s, l) => s + l.usedAreaM2,   0)
   const totalSheetAreaM2  = all.reduce((s, l) => s + l.sheetAreaM2,  0)
   // Финальные обрезки — остаток общего пула
-  const finalOffcuts = sharedPool.filter(p => !p.used && p.w >= 200 && p.h >= 200)
+  const finalOffcuts = sharedPool.filter(p => !p.used && p.w >= MIN_OFFCUT_SIDE_MM && p.h >= MIN_OFFCUT_SIDE_MM)
   const totalOffcutAreaM2 = finalOffcuts.reduce((s, p) => s + p.w * p.h, 0) / 1e6
   const totalWastePercent = totalSheetAreaM2 > 0
     ? Math.round((totalSheetAreaM2 - totalUsedAreaM2) / totalSheetAreaM2 * 1000) / 10

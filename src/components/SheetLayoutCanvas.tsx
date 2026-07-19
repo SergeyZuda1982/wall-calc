@@ -10,7 +10,7 @@
  *   offcut-src  — рамка пунктиром        кусок взят из пула обрезков
  */
 
-import { Stage, Layer, Rect, Text, Line, Group } from 'react-konva'
+import { Stage, Layer, Rect, Text, Line, Group, Label, Tag } from 'react-konva'
 import type { BoardLayerLayout, BoardColumn, BoardPiece } from '../types'
 
 interface Props {
@@ -209,26 +209,32 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW, first
                       />
                     )}
                     {/* Точные высоты кромок у краёв косого реза — то, что
-                        реально мерит монтажник при разметке (18.07.2026) */}
+                        реально мерит монтажник при разметке (18.07.2026).
+                        С подложкой (Label/Tag) — иначе у острия клина, где
+                        высота кромки мала, подпись падает ВНЕ закрашенного
+                        треугольника (на белый фон канваса) и белый текст
+                        становится невидим. */}
                     {p.edgeHeightLeftMm != null && ph > 14 && (
-                      <Text
-                        x={px - 3} y={py + ph - 12}
-                        width={34}
-                        text={`${fmtMm(p.edgeHeightLeftMm)}`}
-                        fontSize={8}
-                        fill="#fff"
-                        align="left"
-                      />
+                      <Label x={px} y={py + ph - 15}>
+                        <Tag fill="#333" opacity={0.85} cornerRadius={2} />
+                        <Text
+                          text={`${fmtMm(p.edgeHeightLeftMm)}`}
+                          fontSize={8}
+                          fill="#fff"
+                          padding={2}
+                        />
+                      </Label>
                     )}
                     {p.edgeHeightRightMm != null && ph > 14 && (
-                      <Text
-                        x={px + pw - 31} y={py + ph - 12}
-                        width={34}
-                        text={`${fmtMm(p.edgeHeightRightMm)}`}
-                        fontSize={8}
-                        fill="#fff"
-                        align="right"
-                      />
+                      <Label x={px + pw} y={py + ph - 15} offsetX={28}>
+                        <Tag fill="#333" opacity={0.85} cornerRadius={2} />
+                        <Text
+                          text={`${fmtMm(p.edgeHeightRightMm)}`}
+                          fontSize={8}
+                          fill="#fff"
+                          padding={2}
+                        />
+                      </Label>
                     )}
                   </React.Fragment>
                 )
