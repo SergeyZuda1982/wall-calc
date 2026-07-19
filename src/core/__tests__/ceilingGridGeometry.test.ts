@@ -300,8 +300,8 @@ describe('calcCeilingSheetRects', () => {
     expect(totalArea).toBeCloseTo(lengthMm * widthMm, 3)
   })
 
-  describe('разбежка торцевых швов между рядами (15.07.2026, репорт пользователя: "все листы в ряд")', () => {
-    it('первый ряд от угла без смещения (x=0), второй — со смещением 500мм, не 2500', () => {
+  describe('разбежка торцевых швов между рядами (19.07.2026: снэп на несущий; без bearingPositionsMm — деградация к целям 1000/1500/2000 без снэпа)', () => {
+    it('первый ряд от угла без смещения (x=0), второй — со смещением 1000мм (bearingPositionsMm не передан — берём цель как есть)', () => {
       // потолок 5000×2500, лист 2500×1200 — по X два листа на ряд (шов
       // ровно посередине, на x=2500), по Z два ряда.
       const rects = calcCeilingSheetRects(5000, 2500, 2500, 1200)
@@ -311,30 +311,24 @@ describe('calcCeilingSheetRects', () => {
       expect(row0[0].x).toBe(0)
       expect(row0[0].w).toBe(2500) // первый лист ряда — целый, от стены
 
-      // Второй ряд начинается со стартового (обрезанного) куска шириной
-      // 500мм — не 0 (иначе шов совпал бы с 1-м рядом) и не 2500 (иначе
-      // это был бы целый лист без разбежки вовсе).
+      // Второй ряд начинается со стартового (обрезанного) куска — цель
+      // 1000мм (первая из STAGGER_TARGETS_MM), без несущего для снэпа
+      // используется как есть.
       expect(row1[0].x).toBe(0)
-      expect(row1[0].w).toBe(500)
+      expect(row1[0].w).toBe(1000)
       expect(row1[0].isCut).toBe(true)
-      expect([500, 1000, 1500, 2000]).toContain(row1[0].w)
     })
 
-    it('каждый следующий ряд смещается ещё на 500мм (кроме циклического повтора через sheetL/500 рядов)', () => {
+    it('каждый следующий ряд целится в следующую цель по кругу (1000→1500→2000→1000...)', () => {
       const rects = calcCeilingSheetRects(10000, 7200, 2500, 1200)
       const rows = [...new Set(rects.map(r => r.z))].sort((a, b) => a - b)
       const starters = rows.map(z => {
         const first = rects.filter(r => r.z === z).sort((a, b) => a.x - b.x)[0]
         return first.x === 0 ? first.w : 0
       })
-      // Ряды 0..4 (2500/500=5 рядов до цикла): 2500(целый,offset0), 500, 1000, 1500, 2000
-      expect(starters[0]).toBe(2500)
-      expect(starters[1]).toBe(500)
-      expect(starters[2]).toBe(1000)
-      expect(starters[3]).toBe(1500)
-      expect(starters[4]).toBe(2000)
-      // 5-й ряд (index 5) — цикл замкнулся, снова offset=0
-      expect(starters[5]).toBe(2500)
+      // Ряды 0..5 (6 рядов, 7200/1200): 2500(целый,offset0), затем цикл
+      // 1000,1500,2000 по кругу (период 3, не завязан на sheetL/500 больше)
+      expect(starters).toEqual([2500, 1000, 1500, 2000, 1000, 1500])
     })
 
     it('если длина ряда равна длине листа — офсета нет ни в одном ряду (шва внутри ряда нет)', () => {
@@ -351,6 +345,91 @@ describe('calcCeilingSheetRects', () => {
       const rects = calcCeilingSheetRects(lengthMm, widthMm, sheetL, sheetW)
       const totalArea = rects.reduce((sum, r) => sum + r.w * r.d, 0)
       expect(totalArea).toBeCloseTo(lengthMm * widthMm, 3)
+    })
+  })
+
+  describe('разбежка торцевых швов — снэп на реальный несущий (19.07.2026, репорт пользователя: торец должен садиться на несущий, а не висеть между)', () => {
+    it('стартовая разбежка 2-го ряда снэпается на ближайший несущий к цели 1000мм, а не на саму цель', () => {
+      // несущий на 400,900,1400,1900,2400 (шаг 500) — ближайший к цели
+      // 1000мм это 900.
+      const bearingPositionsMm = [400, 900, 1400, 1900, 2400]
+      const rects = calcCeilingSheetRects(5000, 2500, 2500, 1200, bearingPositionsMm)
+      const row1 = rects.filter(r => r.z === 1200).sort((a, b) => a.x - b.x)
+      expect(row1[0].w).toBe(900)
+      expect(row1[0].isCut).toBe(true)
+    })
+
+    it('внутренний стык внутри ряда (комната длиннее 2 листов) тоже снэпается на несущий, торец не висит в воздухе', () => {
+      // комната 6000мм по оси листа, лист 2500мм — без снэпа 1-й шов был бы
+      // на x=2500, но там несущего нет; несущий на 2400,4900 — 1-й кусок
+      // обрезается под 2400 (ближайший ≤ 2500), 2-й кусок снэпается на 4900
+      // (целый лист 2500), остаток до стены — без снэпа (упирается в стену).
+      const bearingPositionsMm = [2400, 4900]
+      const rects = calcCeilingSheetRects(6000, 1200, 2500, 1200, bearingPositionsMm)
+      const row0 = rects.sort((a, b) => a.x - b.x)
+      expect(row0.map(r => r.x)).toEqual([0, 2400, 4900])
+      expect(row0[0].w).toBe(2400) // не 2500 — обрезан под несущий, а не по максимуму
+      expect(row0[1].w).toBe(2500) // 2400→4900, целый лист, торец точно на несущем
+      expect(row0[2].w).toBe(1100) // 6000-4900=1100, до стены — упирается в стену, снэп не нужен
+    })
+
+    it('если рядом с целью нет ни одного несущего в пределах листа — деградирует к цели без снэпа', () => {
+      // несущий на 5000мм — слишком далеко от sheetL=2500, вне диапазона (0,2500]
+      const rects = calcCeilingSheetRects(5000, 2500, 2500, 1200, [5000])
+      const row1 = rects.filter(r => r.z === 1200).sort((a, b) => a.x - b.x)
+      expect(row1[0].w).toBe(1000) // цель как есть, снэпать не на что
+    })
+
+    it('сумма площадей не меняется от снэпа на несущий (без нахлёстов/пробелов)', () => {
+      const lengthMm = 8000, widthMm = 2500, sheetL = 2500, sheetW = 1200
+      const bearingPositionsMm = [400, 900, 1400, 1900, 2400, 2900, 3400, 3900, 4400, 4900, 5400, 5900, 6400, 6900, 7400]
+      const rects = calcCeilingSheetRects(lengthMm, widthMm, sheetL, sheetW, bearingPositionsMm)
+      const totalArea = rects.reduce((sum, r) => sum + r.w * r.d, 0)
+      expect(totalArea).toBeCloseTo(lengthMm * widthMm, 3)
+    })
+  })
+
+  describe('flipX/flipZ — выбор угла начала раскладки (19.07.2026, запрос пользователя: указать стрелкой, с какой стороны начинать)', () => {
+    it('flipX: первый (целый) лист ряда теперь у ПРАВОЙ стены, а не у левой', () => {
+      const rects = calcCeilingSheetRects(5000, 1200, 2500, 1200, [], { flipX: true })
+      const sorted = rects.sort((a, b) => a.x - b.x)
+      // Без flipX было бы [0,2500] по 2500 каждый (5000%2500=0, оба целые);
+      // с flipX геометрия та же (лист влезает ровно), но порядок/якорь
+      // зеркалится — проверяем на несимметричном случае ниже, тут просто
+      // сумма и границы не съезжают.
+      expect(sorted.map(r => r.x)).toEqual([0, 2500])
+      expect(sorted.every(r => r.w === 2500)).toBe(true)
+    })
+
+    it('flipX на несимметричном раскрое: обрезок теперь у x=0 (левой стены), а не у дальней', () => {
+      // 6000мм / 2500 = 2 целых + 1 резаный (1000мм). Без flip резаный кусок
+      // последний (у дальней стены, x=5000..6000). С flipX=true раскладка
+      // идёт "от правой стены" — резаный кусок оказывается ПЕРВЫМ (у x=0).
+      const plain = calcCeilingSheetRects(6000, 1200, 2500, 1200).sort((a, b) => a.x - b.x)
+      expect(plain.map(r => r.w)).toEqual([2500, 2500, 1000])
+
+      const flipped = calcCeilingSheetRects(6000, 1200, 2500, 1200, [], { flipX: true }).sort((a, b) => a.x - b.x)
+      expect(flipped.map(r => r.w)).toEqual([1000, 2500, 2500])
+    })
+
+    it('flipZ: ряды нумеруются от дальней стены — резаный по ширине ряд теперь у z=0', () => {
+      // 2500мм по Z / 1200 = 3 ряда: 1200, 1200, 100(резаный остаток).
+      const plain = calcCeilingSheetRects(1200, 2500, 2500, 1200)
+      const plainRowAtZ0 = plain.find(r => r.z === 0)!
+      expect(plainRowAtZ0.d).toBe(1200) // первый ряд у плана — целый по ширине
+
+      const flipped = calcCeilingSheetRects(1200, 2500, 2500, 1200, [], { flipZ: true })
+      const flippedRowAtZ0 = flipped.find(r => r.z === 0)!
+      expect(flippedRowAtZ0.d).toBe(100) // резаный (100мм) ряд теперь у z=0
+    })
+
+    it('flip не меняет сумму площадей (без нахлёстов/пробелов)', () => {
+      const lengthMm = 7000, widthMm = 3100, sheetL = 2500, sheetW = 1200
+      for (const opts of [{ flipX: true }, { flipZ: true }, { flipX: true, flipZ: true }]) {
+        const rects = calcCeilingSheetRects(lengthMm, widthMm, sheetL, sheetW, [], opts)
+        const totalArea = rects.reduce((sum, r) => sum + r.w * r.d, 0)
+        expect(totalArea).toBeCloseTo(lengthMm * widthMm, 3)
+      }
     })
   })
 })

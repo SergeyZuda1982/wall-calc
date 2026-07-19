@@ -376,39 +376,125 @@ export interface CeilingSheetRect {
 }
 
 /**
- * Раскрой листов ГКЛ простым тайлингом от угла (0,0) — тот же алгоритм,
- * что раньше был только инлайн в CeilingCanvas (2D-схема, шаг 4 "Зашить
- * ГКЛ", CeilingCalc.tsx). Вынесен сюда единой чистой функцией (13.07.2026,
- * репорт пользователя со скриншотами 2D vs 3D — раскрой не совпадал,
- * потому что в 3D-превью использовалась совсем другая, чисто иллюстративная
- * геометрия минваты/фрагмента ГКЛ из CeilingGridMesh, а не настоящий
- * раскрой) — теперь и 2D (CeilingCanvas), и 3D (CeilingCalc3DPreview)
- * вызывают ЭТУ функцию, раскрой не может разъехаться между ними.
+ * Раскрой листов ГКЛ простым тайлингом от угла — тот же алгоритм, что раньше
+ * был только инлайн в CeilingCanvas (2D-схема, шаг 4 "Зашить ГКЛ",
+ * CeilingCalc.tsx). Вынесен сюда единой чистой функцией (13.07.2026, репорт
+ * пользователя со скриншотами 2D vs 3D — раскрой не совпадал, потому что в
+ * 3D-превью использовалась совсем другая, чисто иллюстративная геометрия
+ * минваты/фрагмента ГКЛ из CeilingGridMesh, а не настоящий раскрой) —
+ * теперь и 2D (CeilingCanvas), и 3D (CeilingCalc3DPreview) вызывают ЭТУ
+ * функцию, раскрой не может разъехаться между ними.
  *
- * Листы кладутся рядами вдоль X (длина листа sheetL), ряды идут вдоль Z
- * с шагом sheetW (ширина листа).
+ * Листы кладутся рядами вдоль X (длина листа sheetL), ряды идут вдоль Z с
+ * шагом sheetW (ширина листа). Вызывающий код (calcCeiling.ts,
+ * calcCeilingSheetLayout) отвечает за то, чтобы X здесь соответствовал
+ * направлению ОСНОВНОГО профиля (см. комментарий там) — эта функция сама
+ * направление не выбирает, только раскладывает вдоль уже готовой оси X.
  *
- * ─── 15.07.2026: разбежка торцевых швов между соседними рядами ─────────────
- * Пользователь указал на баг: все ряды раньше начинались от x=0 "по
- * линейке" — торцевые швы всех рядов совпадали по одной линии. Так делать
- * нельзя (п.8.16 Кнауф — разбег швов между соседними рядами обязателен, не
- * менее 400мм). Теперь каждый следующий ряд (кроме первого — он всегда от
- * стены/угла, offset=0) начинается с "стартового" куска шириной, кратной
- * STAGGER_STEP_MM (500мм) — 500, 1000, 1500, 2000... по кругу до sheetL, —
- * чтобы шов между 1-м и 2-м листом ряда не совпадал со швом соседнего ряда.
- * Если в ряду всего один лист на всю длину (lengthMm ≤ sheetL — шва внутри
- * ряда просто нет), разбежка не нужна и не делается.
+ * ─── 19.07.2026: разбежка торцевых швов — снэп на реальный несущий ────────
+ * Было (15.07.2026): разбежка каждого следующего ряда — стартовый кусок
+ * шириной, кратной 500мм (500,1000,1500...), БЕЗ учёта того, есть ли там
+ * вообще несущий профиль — торец листа мог повиснуть между несущими, без
+ * опоры под саморез. Пользователь указал на реальный объект: торец листа
+ * должен садиться ИМЕННО на несущий профиль (иначе крепить не во что).
+ *
+ * Теперь принимает bearingPositionsMm — реальные позиции несущего профиля
+ * вдоль оси X (та же ось, вдоль которой лежит длинная сторона листа). Швы
+ * (и стартовая разбежка следующего ряда, и КАЖДЫЙ внутренний стык внутри
+ * ряда, если помещение длиннее одного листа) снэпаются на ближайшую такую
+ * позицию — торец листа физически совпадает с несущим. Последний кусок в
+ * ряду (до стены) не снэпается — он и так упирается в стену, снэп не нужен.
+ * Стартовая разбежка каждого следующего ряда целится в одну из
+ * STAGGER_TARGETS_MM (1000/1500/2000мм — не меньше 1000мм, чтобы шов
+ * соседних рядов заведомо не совпадал), но фактическая позиция — ближайший
+ * реальный несущий к этой цели, а не сама цель "по линейке". Если
+ * подходящего несущего в диапазоне нет (пустой bearingPositionsMm или шаг
+ * несущего больше листа) — деградирует к целевому значению без снэпа
+ * (прежнее поведение).
  */
-const STAGGER_STEP_MM = 500
+const STAGGER_TARGETS_MM = [1000, 1500, 2000]
 
-export function calcCeilingSheetRects(lengthMm: number, widthMm: number, sheetL: number, sheetW: number): CeilingSheetRect[] {
+/** Ближайшая позиция несущего к target среди (0, maxAt] — для стартовой
+ *  разбежки следующего ряда (первый кусок ряда, не длиннее листа). */
+function nearestBearingTo(target: number, bearingPositionsMm: number[], maxAt: number): number | null {
+  let best: number | null = null
+  let bestDist = Infinity
+  for (const bp of bearingPositionsMm) {
+    if (bp <= 0 || bp > maxAt) continue
+    const dist = Math.abs(bp - target)
+    if (dist < bestDist) { bestDist = dist; best = bp }
+  }
+  return best
+}
+
+/** Самая дальняя позиция несущего в (minAt, maxAt] — для снэпа внутреннего
+ *  стыка внутри ряда (кладём лист максимально длинным, но торцом на несущий). */
+function largestBearingUpTo(maxAt: number, minAt: number, bearingPositionsMm: number[]): number | null {
+  let best: number | null = null
+  for (const bp of bearingPositionsMm) {
+    if (bp > minAt && bp <= maxAt && (best === null || bp > best)) best = bp
+  }
+  return best
+}
+
+/**
+ * 19.07.2026: выбор угла начала раскладки (репорт пользователя — хочет
+ * указывать стрелкой, с какой стороны/угла помещения начинать раскрой,
+ * как уже реализовано для контура с плана через "стену начала раскладки").
+ * Сам алгоритм всегда считает от (0,0); flipX/flipZ — простое зеркалирование
+ * входа (позиции несущего) и выхода (прямоугольники), без дублирования
+ * логики снэпа под каждый угол отдельно.
+ */
+/**
+ * 19.07.2026: угол помещения ('tl'/'tr'/'bl'/'br', в ЭКРАННЫХ координатах —
+ * X-экрана всегда длина помещения, Y-экрана всегда ширина, см. CeilingCanvas)
+ * → flipX/flipZ для calcCeilingSheetRects, с поправкой на то, что при
+ * rotated=true функция вызывается с переставленными местами length/width
+ * (см. calcCeilingSheetLayout, "длинная сторона листа вдоль width") —
+ * поэтому и flip-флаги для функции нужно переставить местами тоже.
+ */
+export function resolveSheetStartFlips(
+  corner: 'tl' | 'tr' | 'bl' | 'br' | undefined, rotated: boolean,
+): { flipX: boolean; flipZ: boolean } {
+  const screenFlipX = corner === 'tr' || corner === 'br'
+  const screenFlipY = corner === 'bl' || corner === 'br'
+  return rotated
+    ? { flipX: screenFlipY, flipZ: screenFlipX }
+    : { flipX: screenFlipX, flipZ: screenFlipY }
+}
+
+export function calcCeilingSheetRects(
+  lengthMm: number, widthMm: number, sheetL: number, sheetW: number,
+  bearingPositionsMm: number[] = [],
+  opts: { flipX?: boolean; flipZ?: boolean } = {},
+): CeilingSheetRect[] {
+  const { flipX = false, flipZ = false } = opts
+  const bearingLocal = flipX ? bearingPositionsMm.map(bp => lengthMm - bp) : bearingPositionsMm
+  const rects = calcCeilingSheetRectsLocal(lengthMm, widthMm, sheetL, sheetW, bearingLocal)
+  if (!flipX && !flipZ) return rects
+  return rects.map(r => ({
+    x: flipX ? lengthMm - r.x - r.w : r.x,
+    z: flipZ ? widthMm - r.z - r.d : r.z,
+    w: r.w, d: r.d, isCut: r.isCut,
+  }))
+}
+
+function calcCeilingSheetRectsLocal(
+  lengthMm: number, widthMm: number, sheetL: number, sheetW: number,
+  bearingPositionsMm: number[] = [],
+): CeilingSheetRect[] {
   const rects: CeilingSheetRect[] = []
   if (lengthMm <= 0 || widthMm <= 0 || sheetL <= 0 || sheetW <= 0) return rects
   let z = 0
   let rowIndex = 0
   while (z < widthMm) {
     const d = Math.min(sheetW, widthMm - z)
-    const offset = lengthMm > sheetL ? (rowIndex * STAGGER_STEP_MM) % sheetL : 0
+
+    let offset = 0
+    if (lengthMm > sheetL && rowIndex > 0) {
+      const target = STAGGER_TARGETS_MM[(rowIndex - 1) % STAGGER_TARGETS_MM.length]
+      offset = nearestBearingTo(target, bearingPositionsMm, Math.min(sheetL, lengthMm)) ?? target
+    }
 
     let x = 0
     if (offset > 0) {
@@ -417,10 +503,13 @@ export function calcCeilingSheetRects(lengthMm: number, widthMm: number, sheetL:
       x += wFirst
     }
     while (x < lengthMm) {
-      const w = Math.min(sheetL, lengthMm - x)
+      const remaining = lengthMm - x
+      // Последний кусок ряда упирается в стену — снэп на несущий не нужен.
+      const w = remaining <= sheetL ? remaining
+        : (largestBearingUpTo(x + sheetL, x, bearingPositionsMm) ?? (x + sheetL)) - x
       const isCut = d < sheetW || w < sheetL
       if (w > 0) rects.push({ x, z, w, d, isCut })
-      x += sheetL
+      x += w
     }
     z += sheetW
     rowIndex++
