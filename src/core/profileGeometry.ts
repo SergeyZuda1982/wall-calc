@@ -67,21 +67,57 @@ export function interpolateY(profile: EdgeProfile, x: number): number {
   return result
 }
 
+/**
+ * То же самое, но на стыке вертикальной ступени возвращает ЛЕВУЮ часть
+ * (значение ДО перепада), а не правую. Нужна там, где x — это конец
+ * отрезка/колонки (а не начало) и физически важно, что было ИМЕННО ДО
+ * ступени, а не после (например, правая граница участка ГКЛ, упирающегося
+ * в балку/ригель на потолке — высота этого участка должна браться до
+ * скачка, а не после).
+ * Берём ПЕРВЫЙ подходящий сегмент (а не последний, как в interpolateY) —
+ * это и есть сегмент, который заканчивается в x, т.е. левая часть стыка.
+ */
+export function interpolateYLeft(profile: EdgeProfile, x: number): number {
+  if (profile.length === 0) return 0
+  const pts = sortProfile(profile)
+  if (x <= pts[0].x) return pts[0].y
+  if (x >= pts[pts.length - 1].x) return pts[pts.length - 1].y
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1]
+    if (x >= a.x && x <= b.x) {
+      return b.x === a.x ? a.y : a.y + ((x - a.x) / (b.x - a.x)) * (b.y - a.y)
+    }
+  }
+  return pts[pts.length - 1].y
+}
+
 /** Высота стойки в точке x = потолок(x) − пол(x). */
 export function studHeightAt(x: number, ceilingProfile: EdgeProfile, floorProfile: EdgeProfile): number {
   return interpolateY(ceilingProfile, x) - interpolateY(floorProfile, x)
+}
+
+/** Высота стойки в точке x, левая часть ступени — см. interpolateYLeft. */
+export function studHeightAtLeft(x: number, ceilingProfile: EdgeProfile, floorProfile: EdgeProfile): number {
+  return interpolateYLeft(ceilingProfile, x) - interpolateYLeft(floorProfile, x)
 }
 
 /**
  * Максимальная высота стойки по всей стене [0, l].
  * Разница двух кусочно-линейных функций сама кусочно-линейна, поэтому
  * экстремум всегда лежит в одной из точек перегиба любого из профилей.
+ * На вертикальных ступенях проверяем ОБЕ стороны (до и после перепада) —
+ * иначе можно пропустить более высокую сторону ступени.
  */
 export function maxStudHeight(ceilingProfile: EdgeProfile, floorProfile: EdgeProfile, l: number): number {
   const xs = new Set<number>([0, l])
   for (const p of ceilingProfile) if (p.x >= 0 && p.x <= l) xs.add(p.x)
   for (const p of floorProfile) if (p.x >= 0 && p.x <= l) xs.add(p.x)
-  return Math.max(...[...xs].map(x => studHeightAt(x, ceilingProfile, floorProfile)))
+  const heights = [...xs].flatMap(x => [
+    studHeightAt(x, ceilingProfile, floorProfile),
+    studHeightAtLeft(x, ceilingProfile, floorProfile),
+  ])
+  return Math.max(...heights)
 }
 
 /**
@@ -104,7 +140,7 @@ export function integrateHeight(
   for (let i = 0; i < points.length - 1; i++) {
     const x0 = points[i], x1 = points[i + 1]
     const h0 = studHeightAt(x0, ceilingProfile, floorProfile)
-    const h1 = studHeightAt(x1, ceilingProfile, floorProfile)
+    const h1 = studHeightAtLeft(x1, ceilingProfile, floorProfile)
     area += (h0 + h1) / 2 * (x1 - x0)
   }
   return area
