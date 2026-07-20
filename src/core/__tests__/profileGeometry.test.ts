@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   flatProfile, normalizeProfile, sortProfile,
-  interpolateY, studHeightAt, maxStudHeight, integrateHeight, profilePathLength,
+  interpolateY, interpolateYLeft, studHeightAt, studHeightAtLeft,
+  maxStudHeight, integrateHeight, profilePathLength,
 } from '../profileGeometry'
 
 // ─── flatProfile / sortProfile ───────────────────────────────────────────────
@@ -57,6 +58,51 @@ describe('interpolateY', () => {
   })
 })
 
+// ─── interpolateYLeft (фикс 20.07.2026: точки перегиба с одинаковым x без +1мм) ─
+
+describe('interpolateYLeft', () => {
+  // Точки перегиба (потолок/пол) теперь можно задавать напрямую с одинаковым x
+  // (например 2500/3600 затем 2500/3000 для балки), без искусственного сдвига
+  // на +1мм. interpolateYLeft — левая (до перепада) сторона стыка, в отличие
+  // от interpolateY, которая всегда даёт правую (после перепада).
+  const p = [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 300 }, { x: 4000, y: 300 }]
+
+  it('на самом стыке (x=2000) даёт ЛЕВУЮ (до перепада) точку — наоборот от interpolateY', () => {
+    expect(interpolateYLeft(p, 2000)).toBe(0)
+    expect(interpolateY(p, 2000)).toBe(300)
+  })
+
+  it('вне стыка совпадает с interpolateY (нет разницы, если x не на скачке)', () => {
+    expect(interpolateYLeft(p, 1999)).toBeCloseTo(interpolateY(p, 1999))
+    expect(interpolateYLeft(p, 2001)).toBeCloseTo(interpolateY(p, 2001))
+    expect(interpolateYLeft(p, 0)).toBe(interpolateY(p, 0))
+    expect(interpolateYLeft(p, 4000)).toBe(interpolateY(p, 4000))
+  })
+
+  it('без вертикальной ступени (обычный уклон) — тоже совпадает с interpolateY', () => {
+    const slope = [{ x: 0, y: 2400 }, { x: 4000, y: 3200 }]
+    expect(interpolateYLeft(slope, 2000)).toBeCloseTo(interpolateY(slope, 2000))
+  })
+})
+
+describe('studHeightAtLeft', () => {
+  it('балка на потолке (перепад в обе стороны, x одинаковый без +1мм): высота слева от балки — до перепада', () => {
+    // Потолок: 2500 до x=2000, скачком до 2000, снова 2500 после x=2500 —
+    // то есть балка/ригель шириной 500мм с просадкой потолка на 500мм.
+    const ceiling = [
+      { x: 0, y: 2500 }, { x: 2000, y: 2500 },
+      { x: 2000, y: 2000 },
+      { x: 2500, y: 2000 }, { x: 2500, y: 2500 },
+      { x: 4000, y: 2500 },
+    ]
+    const floor = flatProfile(4000, 0)
+    expect(studHeightAtLeft(2000, ceiling, floor)).toBe(2500) // до балки
+    expect(studHeightAt(2000, ceiling, floor)).toBe(2000)     // после балки (правая часть стыка)
+    expect(studHeightAtLeft(2500, ceiling, floor)).toBe(2000) // конец балки, до подъёма
+    expect(studHeightAt(2500, ceiling, floor)).toBe(2500)     // после подъёма
+  })
+})
+
 // ─── studHeightAt ─────────────────────────────────────────────────────────────
 
 describe('studHeightAt', () => {
@@ -97,6 +143,17 @@ describe('maxStudHeight', () => {
     const ceiling = [{ x: 0, y: 2000 }, { x: 4000, y: 3500 }]
     const floor = flatProfile(4000, 0)
     expect(maxStudHeight(ceiling, floor, 4000)).toBe(3500)
+  })
+
+  it('пик ровно в точке перепада (виден только со стороны interpolateYLeft): не теряется', () => {
+    // Потолок поднимается 2000→3500 к x=1000, ровно в x=1000 балка резко
+    // роняет высоту обратно до 2000 (дубль x=1000 без +1мм). Пик 3500
+    // достигается ТОЛЬКО подходя к x=1000 слева по скату — если проверять
+    // высоту в каждой точке профиля только "справа" (interpolateY), пик
+    // будет пропущен (увидим высоту ПОСЛЕ балки, 2000, а не пик).
+    const ceiling = [{ x: 0, y: 2000 }, { x: 1000, y: 3500 }, { x: 1000, y: 2000 }, { x: 2000, y: 2000 }]
+    const floor = flatProfile(2000, 0)
+    expect(maxStudHeight(ceiling, floor, 2000)).toBe(3500)
   })
 })
 

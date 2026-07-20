@@ -435,10 +435,18 @@ export default function App() {
   // Точки полилинии направляющей (потолок или пол) на участке [fromX, toX],
   // с изломами в точках перегиба профиля — поэтому уклон/ступень видны на
   // самой направляющей, а не только в высоте стоек.
-  function railPoints(profile: typeof ceilingProfile, yAt: (pos: number) => number, fromX: number, toX: number): number[] {
-    const xs = new Set<number>([fromX, toX])
-    for (const p of profile) if (p.x > fromX && p.x < toX) xs.add(p.x)
-    return [...xs].sort((a, b) => a - b).flatMap(x => [tx(x), yAt(x)])
+  // ВАЖНО: точки внутри диапазона берём напрямую из profile (со своим y),
+  // а НЕ через interpolateY по набору x — иначе две точки с одинаковым x
+  // (вертикальная ступень, например конец балки/ригеля на потолке) схлопнутся
+  // в одну через Set и вертикаль на чертеже превратится в наклонную линию.
+  // offset — сдвиг в пикселях после масштабирования (например ±4 для рисовки
+  // направляющей чуть внутри контура стены).
+  function railPoints(profile: typeof ceilingProfile, offset: number, fromX: number, toX: number): number[] {
+    const toScreenY = (rawY: number) => TOP_PAD + (refTop - rawY) * scale + offset
+    const raw: Array<{ x: number, y: number }> = [{ x: fromX, y: interpolateY(profile, fromX) }]
+    for (const p of profile) if (p.x > fromX && p.x < toX) raw.push({ x: p.x, y: p.y })
+    raw.push({ x: toX, y: interpolateY(profile, toX) })
+    return raw.flatMap(p => [tx(p.x), toScreenY(p.y)])
   }
 
   function isFixed(pos: number) {
@@ -1208,7 +1216,6 @@ export default function App() {
                     // дверью, а под любым проёмом без подоконника (sillHeight=0) — включая окно
                     // "от пола" (панорамное остекление) и просто проём.
                     const floorLevelOpenings = snapOpenings.filter(o => o.sillHeight === 0 && o.width > 0)
-                    const floorY = (pos: number) => wallBotAt(pos) - 4
                     const rail3D = (pts: number[], key: string) => (
                       <Group key={key}>
                         <Line points={pts} stroke={RAIL_DARK}  strokeWidth={9}   lineCap="round" lineJoin="round" />
@@ -1216,19 +1223,19 @@ export default function App() {
                         <Line points={pts} stroke={RAIL_LIGHT} strokeWidth={2}   lineCap="round" lineJoin="round" />
                       </Group>
                     )
-                    if (floorLevelOpenings.length === 0) return rail3D(railPoints(floorProfile, floorY, 0, l), 'fl_all')
+                    if (floorLevelOpenings.length === 0) return rail3D(railPoints(floorProfile, -4, 0, l), 'fl_all')
                     const segments: React.ReactNode[] = []
                     let cursor = 0
                     for (const o of [...floorLevelOpenings].sort((a, b) => a.pos - b.pos)) {
-                      if (o.pos > cursor) segments.push(rail3D(railPoints(floorProfile, floorY, cursor, o.pos), `fl${o.id}`))
+                      if (o.pos > cursor) segments.push(rail3D(railPoints(floorProfile, -4, cursor, o.pos), `fl${o.id}`))
                       cursor = o.pos + o.width
                     }
-                    if (cursor < l) segments.push(rail3D(railPoints(floorProfile, floorY, cursor, l), 'fl_end'))
+                    if (cursor < l) segments.push(rail3D(railPoints(floorProfile, -4, cursor, l), 'fl_end'))
                     return <>{segments}</>
                   })()}
 
                   {/* Направляющая ПН — потолок (следует профилю потолка) — псевдо-3D */}
-                  {(() => { const pts = railPoints(ceilingProfile, pos => wallTopAt(pos) + 4, 0, l); return (
+                  {(() => { const pts = railPoints(ceilingProfile, 4, 0, l); return (
                     <Group>
                       <Line points={pts} stroke={RAIL_DARK}  strokeWidth={9}   lineCap="round" lineJoin="round" />
                       <Line points={pts} stroke={RAIL_MID}   strokeWidth={5.5} lineCap="round" lineJoin="round" />

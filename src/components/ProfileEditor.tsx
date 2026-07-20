@@ -104,10 +104,10 @@ export default function ProfileEditor({ label, yHint, points, length, baseY, onC
 
   // ─── Ступени (генератор) ────────────────────────────────────────────────
   // Каждая ступень — проступь (горизонтальный отрезок длиной stairsLen) и
-  // подступенок (перепад stairsH). Перепад делаем на x+1мм от конца проступи,
-  // а не на том же x — иначе направляющая на canvas схлопнет точку и вместо
-  // вертикали нарисует наклонную линию (см. railPoints: уникальные x в Set).
-  // Конец предыдущей ступени = начало следующей, как и просили.
+  // подступенок (перепад stairsH), теперь на ТОМ ЖЕ x — движок (railPoints,
+  // interpolateY/interpolateYLeft, calcSheetLayout) корректно поддерживает
+  // две точки перегиба с одинаковым x как вертикальную ступень напрямую,
+  // без сдвига на +1мм. Конец предыдущей ступени = начало следующей.
 
   function generateStairs() {
     const startX = Number(stairsStartX)
@@ -124,7 +124,7 @@ export default function ProfileEditor({ label, yHint, points, length, baseY, onC
       canonicalX += stepLen
       generated.push({ x: Math.round(canonicalX), y: Math.round(curY) })      // конец проступи
       curY += sign * stepH
-      generated.push({ x: Math.round(canonicalX) + 1, y: Math.round(curY) })  // подступенок
+      generated.push({ x: Math.round(canonicalX), y: Math.round(curY) })      // подступенок (тот же x)
     }
     const spanFrom = generated[0].x, spanTo = generated[generated.length - 1].x
     const clamp = (x: number) => Math.min(Math.max(x, 0), length)
@@ -173,7 +173,8 @@ export default function ProfileEditor({ label, yHint, points, length, baseY, onC
         )
       })}
       <p style={{ margin: '4px 0 0', fontSize: 11, color: '#999' }}>
-        Точки сортируются по x при расчёте. Две точки с одинаковым x подряд = вертикальная ступень.
+        Точки сортируются по x при расчёте. Две точки подряд с ОДИНАКОВЫМ x — вертикальный перепад
+        (ступень, балка, ригель): просто повтори то же x с новым y, без сдвига на 1мм.
       </p>
 
       {/* ─── Ступени: генератор цепочки проступь+подступенок ─── */}
