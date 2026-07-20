@@ -30,6 +30,12 @@
  * рычагом-эксцентриком (hangerLeverGeometry, свой тёмный материал
  * hangerLeverMat) — раньше зажим рисовался гнутой трубкой без струбцины и
  * рычага, см. историю коммитов.
+ * 19.07.2026: добавлен нониус-подвес (NoniusHanger) — ОТДЕЛЬНЫЙ тип
+ * подвеса для П112, альтернатива Hanger (по решению пользователя не
+ * заменяет его в сцене). Перфолента + шплинт-фиксатор + крестовый зажим
+ * на профиле, см. комментарий над NoniusHanger ниже. Пока не подключён к
+ * основной сборке сетки (критерий выбора между Hanger и NoniusHanger не
+ * определён) — доступен как экспорт для будущей раскладки.
  *
  * v1: без picking/интерактива (см. общий план "интерактивный 3D" в
  * KONSPEKT.md) — чисто визуальный слой поверх плоской плиты потолка,
@@ -474,6 +480,131 @@ export function Hanger({ x, y, z, dropM, onClick }: {
           rotation={[0, 0, -0.6]}
           castShadow
         />
+      </group>
+    </group>
+  )
+}
+
+// ─── Нониус-подвес (альтернативный тип, П112) — перфолента + шплинт +
+// крестовый зажим ───────────────────────────────────────────────────────
+// 19.07.2026: пункт 5 (последний) списка сверки крепежа потолка по фото.
+// По фото от пользователя — деталь из ТРЁХ частей (в отличие от Hanger
+// выше, который гнётся из одного прутка): верхняя часть — прямая
+// перфорированная лента с загнутым плоским носиком-пластиной наверху
+// (крепится дюбелем к плите); шплинт — гнутая проволочная скоба, вставляется
+// в отверстия ленты и держит нужную высоту (сама "нониусная" регулировка);
+// нижняя часть — крестовый зажим с флажком-ушком сверху (цепляется за
+// ленту), тело зажима садится сверху на профиль ПП60×27. Пользователь
+// уточнил: для 3D-сцены достаточно ЦЕЛОГО (собранного) вида — не нужно
+// моделировать раздельные подвижные части/телескопическую регулировку,
+// как и рычаг Hanger выше зафиксирован в положении "защёлкнуто".
+// Добавлен как ОТДЕЛЬНЫЙ тип подвеса (alternative to Hanger) — по решению
+// пользователя нониус-подвес не заменяет Hanger в сцене, оба варианта
+// сосуществуют; критерий выбора между ними в раскладке П112 не определён,
+// подключится позже (сейчас NoniusHanger не вызывается из основной сборки
+// сетки ниже, доступен как экспорт для будущей раскладки/переключателя).
+
+let cachedNoniusPlateGeo: THREE.BufferGeometry | null = null
+/** Верхняя пластина-носик ленты — крепится дюбелем к плите. Кэшируется (без параметров, фиксированный размер). */
+export function noniusPlateGeometry(): THREE.BufferGeometry {
+  if (cachedNoniusPlateGeo) return cachedNoniusPlateGeo
+  const widthMm = 20, thickMm = 1.2, depthMm = 12
+  const geo = new THREE.BoxGeometry(widthMm, thickMm, depthMm)
+  geo.translate(0, -thickMm / 2, 0)
+  geo.scale(0.001, 0.001, 0.001)
+  cachedNoniusPlateGeo = geo
+  return cachedNoniusPlateGeo
+}
+
+/**
+ * Перфорированная лента (верхняя+нижняя часть в сборе — см. комментарий
+ * выше про "целого"). Длина = провис подвеса (dropM), поэтому НЕ
+ * кэшируется — как и hangerClampGeometry/profileExtenderGeometry, кэш по
+ * одному значению вернул бы устаревшую геометрию при другой длине.
+ */
+export function noniusStripGeometry(lengthMm: number, widthMm = 20, thickMm = 1): THREE.BufferGeometry {
+  const geo = new THREE.BoxGeometry(widthMm, lengthMm, thickMm)
+  geo.translate(0, -lengthMm / 2, 0)
+  geo.scale(0.001, 0.001, 0.001)
+  return geo
+}
+
+let cachedNoniusCotterPinGeo: THREE.BufferGeometry | null = null
+/** Шплинт — гнутая проволочная скоба-фиксатор в отверстиях ленты. Кэшируется (без параметров, форма фиксирована). */
+export function noniusCotterPinGeometry(): THREE.BufferGeometry {
+  if (cachedNoniusCotterPinGeo) return cachedNoniusCotterPinGeo
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-0.007, 0.002, 0),
+    new THREE.Vector3(-0.002, 0.004, 0),
+    new THREE.Vector3(0.004, 0.003, 0),
+    new THREE.Vector3(0.007, -0.001, 0),
+    new THREE.Vector3(0.004, -0.005, 0),
+    new THREE.Vector3(-0.002, -0.006, 0),
+  ])
+  cachedNoniusCotterPinGeo = new THREE.TubeGeometry(curve, 14, 0.0008, 5, false)
+  return cachedNoniusCotterPinGeo
+}
+
+/**
+ * Крестовый зажим на профиле (нижняя часть) — плоское тело сверху профиля +
+ * 2 боковые лапки по бокам (без зубцов — на фото гладкий отгиб, не
+ * зубчатая струбцина hangerClampGeometry выше) + флажок-ушко сверху, к
+ * которому крепится лента. Не кэшируется — принимает параметры профиля,
+ * как и hangerClampGeometry.
+ */
+export function noniusCrossClampGeometry(profileWidthMm = 60, profileHeightMm = 27, thickMm = 1.4): THREE.BufferGeometry {
+  const toNonIndexedIfNeeded = (g: THREE.BufferGeometry) => (g.index ? g.toNonIndexed() : g)
+  const depthMm = 22
+  const halfWidth = profileWidthMm / 2
+
+  // пластина сверху — ложится на верхнюю полку профиля
+  const topPlate = new THREE.BoxGeometry(profileWidthMm + 2 * thickMm, thickMm, depthMm)
+  topPlate.translate(0, -thickMm / 2, 0)
+
+  const parts: THREE.BufferGeometry[] = [topPlate]
+  for (const sign of [-1, 1] as const) {
+    // боковая лапка — гладкий отгиб вдоль наружной грани профиля (без зубцов)
+    const leg = new THREE.BoxGeometry(thickMm, profileHeightMm * 0.5, depthMm)
+    leg.translate(sign * (halfWidth + thickMm / 2), -thickMm - profileHeightMm * 0.25, 0)
+    parts.push(leg)
+  }
+
+  // флажок-ушко сверху пластины, к которому крепится лента (см. фото,
+  // "Нижняя часть" — короткий выступ с отверстием, сдвинут от центра)
+  const flagMm = 9
+  const flag = new THREE.BoxGeometry(flagMm, flagMm, thickMm)
+  flag.translate(-halfWidth * 0.35, thickMm / 2 + flagMm / 2, depthMm / 2 - thickMm / 2)
+  parts.push(flag)
+
+  const geo = mergeGeometries(parts.map(toNonIndexedIfNeeded), false) ?? topPlate
+  geo.scale(0.001, 0.001, 0.001)
+  return geo
+}
+
+/**
+ * Нониус-подвес в сборе (альтернатива Hanger, см. комментарий выше):
+ * пластина у плиты + перфолента + шплинт-фиксатор + крестовый зажим на
+ * профиле. Шплинт зафиксирован на условной высоте регулировки (40% от
+ * dropM от плиты) — как и рычаг Hanger, не анимируется.
+ */
+export function NoniusHanger({ x, y, z, dropM, onClick }: {
+  x: number; y: number; z: number; dropM: number
+  onClick?: (e: ThreeEvent<MouseEvent>) => void
+}) {
+  const dropMm = dropM * 1000
+  const pinDropM = dropM * 0.4
+  return (
+    <group position={[x, y, z]} onClick={onClick}>
+      <mesh geometry={noniusPlateGeometry()} material={crabMat} castShadow />
+      <mesh geometry={noniusStripGeometry(dropMm)} material={crabMat} castShadow />
+      <mesh
+        geometry={noniusCotterPinGeometry()}
+        material={crabMat}
+        position={[0, -pinDropM, 0.0006]}
+        castShadow
+      />
+      <group position={[0, -dropM, 0]}>
+        <mesh geometry={noniusCrossClampGeometry()} material={crabMat} castShadow />
       </group>
     </group>
   )
