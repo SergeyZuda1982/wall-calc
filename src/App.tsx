@@ -422,9 +422,6 @@ export default function App() {
 
   const canvasH = l > 0 ? (refTop - refBottom) * scale + TOP_PAD + BOT_PAD : 300
   const studW = Math.max(profileWidth * scale, 4)
-  // Нахлёст перемычки на стойку проёма (мм на каждую сторону) — совпадает с
-  // lintelTotal в calcLining.ts (o.width + 400 = 200мм нахлёста × 2 стороны).
-  const LINTEL_OVERLAP_MM = 200
   const tx = (mm: number) => PAD + mm * scale
   // Уровень потолка/пола в x=0 — используется как опорный для вертикальной
   // размерной стрелки слева и нескольких decorations, не привязанных к
@@ -1247,17 +1244,18 @@ export default function App() {
                     const color = o.type === 'door' ? '#ddeeff' : o.type === 'window' ? '#ffeedd' : '#eeeeee'
                     const stroke = o.type === 'door' ? '#88aacc' : o.type === 'window' ? '#ccaa88' : '#aaaaaa'
                     // Нахлёст перемычки на стойки проёма — крепится к двум стойкам
-                    // проёма внахлёст, а не свисает в соседний пролёт. LINTEL_OVERLAP_MM
-                    // совпадает с расчётом длины в calcLining.ts (o.width + 400 = по
-                    // 200мм нахлёста с каждой стороны) — раньше здесь был фиксированный
-                    // отступ 10px, не привязанный к масштабу чертежа, из-за чего на
-                    // вытянутых стенах перемычка визуально вылезала за пределы стоек
-                    // проёма в соседний пролёт.
-                    const lintelOverlapPx = LINTEL_OVERLAP_MM * scale
+                    // проёма внахлёст (полка загибается на грань стойки и садится на
+                    // саморезы), а не свисает в соседний пролёт. На плане это значит:
+                    // перемычка доходит ровно до НАРУЖНОЙ грани стоек (studW/2 от их
+                    // центра), не дальше — тут раньше ошибочно стояли 200мм из
+                    // calcLining.ts (lintelTotal = width+400), но те 200мм — это длина
+                    // материала на сам загиб полки (по толщине профиля стойки, не
+                    // видна в этой проекции), а не видимый вылет вдоль стены.
+                    const lintelOverlapPx = studW / 2
                     return (
                       <Group key={`op${o.id}`}>
                         <Rect x={oX} y={oTop} width={oW} height={o.height * scale} fill={color} stroke={stroke} strokeWidth={1} />
-                        {/* Перемычка сверху — нахлёст по 200мм на каждую стойку проёма */}
+                        {/* Перемычка сверху — доходит до наружной грани стоек проёма */}
                         <Rect x={oX - lintelOverlapPx} y={oTop - 6} width={oW + lintelOverlapPx * 2} height={6} fill="#5a7080" />
                         {/* Подоконник — у любого проёма с sillHeight>0 (окно, либо ниша-"проём") */}
                         {o.sillHeight > 0 && (
@@ -1277,11 +1275,11 @@ export default function App() {
                     const cTop = wallBotAt(c.pos) - c.top * scale
                     const cX = tx(c.pos), cW = c.width * scale
                     const hasTop = (h - c.top) > 400
-                    const commLintelOverlapPx = LINTEL_OVERLAP_MM * scale
+                    const commLintelOverlapPx = studW / 2
                     return (
                       <Group key={`comm${c.id}`}>
                         <Rect x={cX} y={cTop} width={cW} height={cBottom - cTop} fill="#ded0a0" stroke="#a8905a" strokeWidth={1} />
-                        {/* Нижняя перемычка — всегда, нахлёст по 200мм на стойки, как и у проёмов */}
+                        {/* Нижняя перемычка — всегда, доходит до наружной грани стоек */}
                         <Rect x={cX - commLintelOverlapPx} y={cBottom - 3} width={cW + commLintelOverlapPx * 2} height={6} fill="#5a7080" />
                         {/* Верхняя перемычка — только если есть запас > 400мм до ПН */}
                         {hasTop && (
