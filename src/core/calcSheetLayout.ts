@@ -38,7 +38,7 @@ import type {
   Opening, BoardSpec, BoardPiece, BoardColumn,
   BoardOffcut, BoardLayerLayout, BoardSheetResult, EdgeProfile,
 } from '../types'
-import { studHeightAt } from './profileGeometry'
+import { studHeightAt, studHeightAtLeft } from './profileGeometry'
 import { clipRectBySlopedTop, polygonArea } from './geometry2d'
 
 const SHEET_W = 1200  // ширина листа всегда 1200 мм
@@ -357,8 +357,13 @@ function calcLayer(
     // Высота стены на краях этой колонки: границы уже разбиты по точкам
     // перегиба профиля, поэтому внутри [x1, x2] высота линейна между
     // hL и hR — это и есть уравнение наклонной линии реза для этой колонки.
+    // hR — ЛЕВАЯ часть возможной вертикальной ступени в x2 (studHeightAtLeft):
+    // колонка занимает [x1, x2), поэтому если x2 — граница ступени (например,
+    // конец потолка перед балкой), высота колонки должна браться ДО перепада,
+    // а не после — иначе колонка ошибочно считается наклонной (hL≠hR) и
+    // получает ненужный косой рез вместо ровного прямоугольного.
     const hL = studHeightAt(x1, ceilingProfile, floorProfile)
-    const hR = studHeightAt(x2, ceilingProfile, floorProfile)
+    const hR = studHeightAtLeft(x2, ceilingProfile, floorProfile)
     const wallH = Math.max(hL, hR)
     const isSlopedColumn = hL !== hR
 

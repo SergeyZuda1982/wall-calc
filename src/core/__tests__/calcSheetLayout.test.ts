@@ -134,6 +134,29 @@ describe('calcSheetLayout — уклон потолка/пола (регресс
   })
 })
 
+describe('calcSheetLayout — вертикальная ступень на потолке (балка/ригель, одинаковый x, регрессия 20.07.2026)', () => {
+  // Раньше точки перегиба со ступенью нужно было задавать со сдвигом x+1мм
+  // (иначе колонка, упирающаяся правым краем ровно в ступень, ошибочно
+  // считалась "наклонной" и получала ненужный диагональный рез). Теперь
+  // ступень можно задавать напрямую — двумя точками с ОДИНАКОВЫМ x.
+  it('колонка, упирающаяся в ступень, остаётся плоской (без diagonal_cut) и берёт высоту ДО перепада', () => {
+    // Потолок: 2500 до x=2000, скачком падает до 2000 (балка), и так до конца стены.
+    const ceiling = [{ x: 0, y: 2500 }, { x: 2000, y: 2500 }, { x: 2000, y: 2000 }, { x: 4000, y: 2000 }]
+    const floor = flatProfile(4000, 0)
+    const result = calcSheetLayout(4000, ceiling, floor, 600, 600, 1, [], spec, spec, 1)
+
+    const hasDiag = result.layer1.columns.some(c => c.pieces.some(p => p.kind === 'diagonal_cut'))
+    expect(hasDiag).toBe(false)
+
+    const leftCol = result.layer1.columns.find(c => c.x2 === 2000)!
+    const rightCol = result.layer1.columns.find(c => c.x1 === 2000)!
+    const topOf = (col: typeof leftCol) =>
+      Math.max(...col.pieces.filter(p => p.kind !== 'opening_void').map(p => p.y + p.h))
+    expect(topOf(leftCol)).toBe(2500)  // до балки — полная высота 2500
+    expect(topOf(rightCol)).toBe(2000) // после балки — просевшая высота 2000
+  })
+})
+
 describe('calcSheetLayout — проёмы всё ещё разбивают колонки корректно (не регрессия)', () => {
   it('края проёма попадают в границы колонок наравне с точками уклона', () => {
     const result = calcSheetLayout(

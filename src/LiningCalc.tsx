@@ -203,11 +203,16 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
 
   // Точки полилинии направляющей (потолок или пол) на участке [fromX, toX],
   // с изломами в точках перегиба профиля — уклон/ступень видны на самой
-  // направляющей, а не только в высоте стоек. Тот же приём, что и в App.tsx.
-  function railPoints(profile: EdgeProfile, yAt: (pos: number) => number, fromX: number, toX: number): number[] {
-    const xs = new Set<number>([fromX, toX])
-    for (const p of profile) if (p.x > fromX && p.x < toX) xs.add(p.x)
-    return [...xs].sort((a, b) => a - b).flatMap(x => [tx(x), yAt(x)])
+  // направляющей, а не только в высоте стоек. Точки внутри диапазона берём
+  // напрямую из profile (со своим y), а не через Set по x — иначе дубли x
+  // (вертикальная ступень) схлопнутся в одну точку и вертикаль пропадёт.
+  // Тот же приём, что и в App.tsx.
+  function railPoints(profile: EdgeProfile, offset: number, fromX: number, toX: number): number[] {
+    const toScreenY = (rawY: number) => TOP_PAD + (refTop - rawY) * scale + offset
+    const raw: Array<{ x: number, y: number }> = [{ x: fromX, y: interpolateY(profile, fromX) }]
+    for (const p of profile) if (p.x > fromX && p.x < toX) raw.push({ x: p.x, y: p.y })
+    raw.push({ x: toX, y: interpolateY(profile, toX) })
+    return raw.flatMap(p => [tx(p.x), toScreenY(p.y)])
   }
 
   // Локальная высота/тип/ориентация КАЖДОЙ стойки — из результата расчёта
@@ -525,9 +530,9 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
                 {/* Полотно облицовки — полигон по двум профилям (потолок сверху, пол снизу) */}
                 <Line
                   points={[
-                    ...railPoints(snapCeilingProfile, wallTopAt, 0, snapL),
+                    ...railPoints(snapCeilingProfile, 0, 0, snapL),
                     ...(() => {
-                      const bottom = railPoints(snapFloorProfile, wallBotAt, 0, snapL)
+                      const bottom = railPoints(snapFloorProfile, 0, 0, snapL)
                       const rev: number[] = []
                       for (let i = bottom.length - 2; i >= 0; i -= 2) rev.push(bottom[i], bottom[i + 1])
                       return rev
@@ -537,8 +542,8 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
 
                 {/* Направляющие — следуют профилю потолка/пола — псевдо-3D (три слоя) */}
                 {[
-                  railPoints(snapCeilingProfile, pos => wallTopAt(pos) + 4, 0, snapL),
-                  railPoints(snapFloorProfile, pos => wallBotAt(pos) - 4, 0, snapL),
+                  railPoints(snapCeilingProfile, 4, 0, snapL),
+                  railPoints(snapFloorProfile, -4, 0, snapL),
                 ].map((pts, i) => (
                   <Group key={`rail${i}`}>
                     <Line points={pts} stroke="#384f60" strokeWidth={9}   lineCap="round" lineJoin="round" />
