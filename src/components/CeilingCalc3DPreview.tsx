@@ -32,7 +32,7 @@ import CeilingGridMesh, { calcGklLevelM } from './CeilingGridMesh'
 import CeilingEntityMesh from './CeilingEntityMesh'
 import type { CeilingPolygon3D } from '../core/planTo3D'
 import { mmToM } from '../core/planTo3D'
-import { calcCeilingSheetRects } from '../core/ceilingGridGeometry'
+import { calcCeilingSheetRects, resolveSheetStartFlips } from '../core/ceilingGridGeometry'
 import type { CeilingType } from '../data/ceilingData'
 import type { CeilingSheetLayout } from '../core/calcCeiling'
 import type { FrameLayoutMode } from '../core/calcP112Frame'
@@ -60,6 +60,12 @@ export interface CeilingCalc3DPreviewProps {
    *  скриншотами). Не задан/шаг < 4 → листы не рисуются вовсе (как и в 2D).
    */
   sheetLayout?: CeilingSheetLayout | null
+  /** 19.07.2026: реальные позиции несущего профиля (те же bearingPosY, что
+   *  и в 2D CeilingCanvas) — для снэпа торцевых швов раскроя на несущий,
+   *  см. calcCeilingSheetRects. Не задан → без снэпа (прежнее поведение). */
+  bearingPositionsMm?: number[]
+  /** 19.07.2026: выбранный угол начала раскладки ГКЛ, см. resolveSheetStartFlips. */
+  sheetStartCorner?: 'tl' | 'tr' | 'bl' | 'br'
 }
 
 const SLAB_THICKNESS_M = 0.2
@@ -77,24 +83,45 @@ function SlabPlate({ lengthM, widthM }: { lengthM: number; widthM: number }) {
 }
 
 /** Раскрой листов ГКЛ, зашитых снизу каркаса — целые/резаные, тот же
- *  тайлинг и та же раскраска (синий/оранжевый), что и в 2D CeilingCanvas. */
-function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, yM }: {
-  lengthMm: number; widthMm: number; sheetLayout: CeilingSheetLayout; yM: number
+ *  тайлинг и та же раскраска (синий/оранжевый), что и в 2D CeilingCanvas.
+ *
+ * 19.07.2026 (репорт пользователя): раньше вызывалось БЕЗ учёта
+ * sheetLayout.rotated — лист всегда шёл вдоль экранного X (длины), даже
+ * когда смета уже считала его повёрнутым вдоль ширины (та же природа бага,
+ * что и в 2D CeilingCanvas — см. её комментарий у calcCeilingSheetRects).
+ * Теперь ось функции и то, какая из осей экрана (X=длина/Z=ширина) ей
+ * соответствует, берутся из sheetLayout.rotated — 3D больше не может
+ * разойтись со сметой/2D-схемой. */
+function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, sheetStartCorner, yM }: {
+  lengthMm: number; widthMm: number; sheetLayout: CeilingSheetLayout
+  bearingPositionsMm?: number[]; sheetStartCorner?: 'tl' | 'tr' | 'bl' | 'br'; yM: number
 }) {
-  const rects = useMemo(
-    () => calcCeilingSheetRects(lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW),
-    [lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW],
-  )
+  const rotated = !!sheetLayout.rotated
+  const rects = useMemo(() => {
+    const sheetAxisL = rotated ? widthMm : lengthMm
+    const sheetAxisW = rotated ? lengthMm : widthMm
+    // См. известное упрощение в 2D CeilingCanvas: несущий на картинке всегда
+    // вдоль длины, поэтому корректный снэп на bearingPositionsMm доступен
+    // только когда rotated=true (ось функции = ширина = та же ось, вдоль
+    // которой считаны bearingPositionsMm).
+    const bearingForSnap = rotated ? (bearingPositionsMm ?? []) : []
+    const { flipX, flipZ } = resolveSheetStartFlips(sheetStartCorner, rotated)
+    return calcCeilingSheetRects(sheetAxisL, sheetAxisW, sheetLayout.sheetL, sheetLayout.sheetW, bearingForSnap, { flipX, flipZ })
+  }, [lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW, rotated, bearingPositionsMm, sheetStartCorner])
   return (
     <group>
       {rects.map((r, i) => {
-        const wM = mmToM(r.w) - SHEET_GAP_M
-        const dM = mmToM(r.d) - SHEET_GAP_M
+        const screenX = rotated ? r.z : r.x
+        const screenZ = rotated ? r.x : r.z
+        const screenW = rotated ? r.d : r.w
+        const screenD = rotated ? r.w : r.d
+        const wM = mmToM(screenW) - SHEET_GAP_M
+        const dM = mmToM(screenD) - SHEET_GAP_M
         if (wM <= 0 || dM <= 0) return null
         return (
           <mesh
             key={i}
-            position={[mmToM(r.x) + wM / 2, yM, mmToM(r.z) + dM / 2]}
+            position={[mmToM(screenX) + wM / 2, yM, mmToM(screenZ) + dM / 2]}
             castShadow receiveShadow
           >
             <boxGeometry args={[wM, 0.0125, dM]} />
@@ -109,6 +136,7 @@ function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, yM }: {
 export default function CeilingCalc3DPreview({
   lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength,
   layoutMode, wallOffsetMainMm, wallOffsetBearingMm, sheetLayout,
+  bearingPositionsMm, sheetStartCorner,
 }: CeilingCalc3DPreviewProps) {
   const lengthM = mmToM(lengthMm)
   const widthM = mmToM(widthMm)
@@ -149,6 +177,8 @@ export default function CeilingCalc3DPreview({
               lengthMm={lengthMm}
               widthMm={widthMm}
               sheetLayout={sheetLayout}
+              bearingPositionsMm={bearingPositionsMm}
+              sheetStartCorner={sheetStartCorner}
               yM={calcGklLevelM(0, ceilingType === 'p113' ? 'p113' : 'p112')}
             />
           )}

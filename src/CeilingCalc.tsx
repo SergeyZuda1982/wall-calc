@@ -11,7 +11,7 @@ import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, P113_HANGE
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep, CeilingLoadClass } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult, CeilingPolygonInput } from './core/calcCeiling'
-import { calcCeilingSheetRects } from './core/ceilingGridGeometry'
+import { calcCeilingSheetRects, resolveSheetStartFlips } from './core/ceilingGridGeometry'
 import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } from './core/calcP112Frame'
 import type { PolygonP112FrameResult } from './core/calcPolygonP112Frame'
 import { toWorld } from './core/calcPolygonP112Frame'
@@ -403,6 +403,13 @@ export default function CeilingCalc() {
     mountDirection: form.mountDirection, loadClass: form.loadClass,
     ceilingType: form.type === 'p113' ? 'p113' : 'p112',
   })
+  // 19.07.2026: реальные позиции несущего профиля — та же формула, что
+  // внутри CeilingCanvas (bearingPosYMm) — нужна здесь тоже, чтобы передать
+  // в 3D-превью для снэпа торцевых швов раскроя ГКЛ на несущий.
+  const bearingPosYMmUi = hasRoom
+    ? calcFrameRowPositions(form.roomWidthMm, frameParamsUi.stepB,
+        { mode: layoutModeUi, wallOffsetMm: frameParamsUi.wallOffsetBearingMm, profileKind: 'bearing' })
+    : []
 
   return (
     <div style={{ display: 'flex', gap: 14, minHeight: 600, background: C.bg, padding: 14 }}>
@@ -778,6 +785,8 @@ export default function CeilingCalc() {
                     wallOffsetMainMm={frameParamsUi.wallOffsetMainMm}
                     wallOffsetBearingMm={frameParamsUi.wallOffsetBearingMm}
                     sheetLayout={step === 4 ? (result?.sheetLayout ?? null) : null}
+                    bearingPositionsMm={bearingPosYMmUi}
+                    sheetStartCorner={form.sheetStartCorner}
                   />
                 ) : hasRoom ? (
                   <CeilingCanvas
@@ -830,6 +839,37 @@ export default function CeilingCalc() {
                   : <LegItem color={C.crab} label="Краб" dot />)}
                 {step >= 4 && <LegItem color={C.sheetBorder} bg={C.sheetFill} label="ГКЛ целый" />}
                 {step >= 4 && <LegItem color={C.sheetCutBorder} bg={C.sheetCutFill} label="ГКЛ резаный" />}
+              </div>
+            )}
+
+            {/* 19.07.2026: угол начала раскладки ГКЛ (запрос пользователя) —
+                только для прямоугольного помещения (hasRoom); для контура с
+                плана есть своя "стена начала раскладки" (startWall выше). */}
+            {step === 4 && hasRoom && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 2px' }}>
+                <span style={{ fontSize: 12, color: C.muted }}>Начать раскладку ГКЛ от угла:</span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 28px)', gridTemplateRows: 'repeat(2, 28px)', gap: 2 }}>
+                  {([
+                    ['tl', '↖'], ['tr', '↗'],
+                    ['bl', '↙'], ['br', '↘'],
+                  ] as const).map(([corner, arrow]) => {
+                    const active = (form.sheetStartCorner ?? 'tl') === corner
+                    return (
+                      <button key={corner}
+                        onClick={() => setField('sheetStartCorner', corner)}
+                        title={`Начать от угла ${arrow}`}
+                        style={{
+                          width: 28, height: 28, borderRadius: 5, cursor: 'pointer',
+                          border: `1px solid ${active ? C.accent : C.border}`,
+                          background: active ? C.accent : C.bg,
+                          color: active ? '#fff' : C.muted,
+                          fontSize: 14, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                        {arrow}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             )}
 
@@ -1385,10 +1425,35 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // 13.07.2026) — используется и здесь, и в 3D-превью (CeilingCalc3DPreview.tsx),
   // чтобы раскрой не мог разъехаться между 2D и 3D (репорт пользователя со
   // скриншотами: раньше в 3D была совсем другая, иллюстративная геометрия).
+  //
+  // 19.07.2026 (репорт пользователя): раньше здесь вызывалось БЕЗ учёта
+  // layout.rotated вовсе (всегда calcCeilingSheetRects(L, W_room,...)) —
+  // лист всегда шёл вдоль экранного X (длины), даже когда смета (layout.rotated)
+  // уже считала его повёрнутым вдоль ширины. Теперь ось функции и то, какая
+  // из осей экрана (X=длина/Y=ширина) ей соответствует, берутся из
+  // layout.rotated — картинка больше не может разойтись со сметой. Заодно:
+  // разбежка торцевых швов снэпается на реальный несущий профиль
+  // (bearingPosY — те же позиции, что рисуются как горизонтальные линии
+  // несущего на канвасе), и учитывается выбранный угол начала раскладки
+  // (form.sheetStartCorner).
   const sheets: { x: number; y: number; w: number; h: number; isCut: boolean }[] = []
   if (step === 4 && layout) {
-    for (const r of calcCeilingSheetRects(L, W_room, layout.sheetL, layout.sheetW)) {
-      sheets.push({ x: r.x * scale, y: r.z * scale, w: r.w * scale, h: r.d * scale, isCut: r.isCut })
+    const rotated = !!layout.rotated
+    const sheetAxisL = rotated ? W_room : L
+    const sheetAxisW = rotated ? L : W_room
+    // bearingPosY — Z-координаты несущего в системе координат экрана (X=длина,
+    // Y=ширина); используем их для снэпа только когда ось функции совпадает
+    // с этой же осью экрана (см. известное упрощение выше — картинка несущего
+    // всегда вдоль длины, поэтому корректный снэп доступен только для
+    // rotated=true, для rotated=false — деградация без снэпа, как раньше).
+    const bearingForSnap = rotated ? bearingPosY : []
+    const { flipX, flipZ } = resolveSheetStartFlips(form.sheetStartCorner, rotated)
+    for (const r of calcCeilingSheetRects(sheetAxisL, sheetAxisW, layout.sheetL, layout.sheetW, bearingForSnap, { flipX, flipZ })) {
+      const screenX = rotated ? r.z : r.x
+      const screenY = rotated ? r.x : r.z
+      const screenW = rotated ? r.d : r.w
+      const screenH = rotated ? r.w : r.d
+      sheets.push({ x: screenX * scale, y: screenY * scale, w: screenW * scale, h: screenH * scale, isCut: r.isCut })
     }
   }
 

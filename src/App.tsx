@@ -422,6 +422,9 @@ export default function App() {
 
   const canvasH = l > 0 ? (refTop - refBottom) * scale + TOP_PAD + BOT_PAD : 300
   const studW = Math.max(profileWidth * scale, 4)
+  // Нахлёст перемычки на стойку проёма (мм на каждую сторону) — совпадает с
+  // lintelTotal в calcLining.ts (o.width + 400 = 200мм нахлёста × 2 стороны).
+  const LINTEL_OVERLAP_MM = 200
   const tx = (mm: number) => PAD + mm * scale
   // Уровень потолка/пола в x=0 — используется как опорный для вертикальной
   // размерной стрелки слева и нескольких decorations, не привязанных к
@@ -1250,11 +1253,19 @@ export default function App() {
                     const oX = tx(o.pos), oW = o.width * scale
                     const color = o.type === 'door' ? '#ddeeff' : o.type === 'window' ? '#ffeedd' : '#eeeeee'
                     const stroke = o.type === 'door' ? '#88aacc' : o.type === 'window' ? '#ccaa88' : '#aaaaaa'
+                    // Нахлёст перемычки на стойки проёма — крепится к двум стойкам
+                    // проёма внахлёст, а не свисает в соседний пролёт. LINTEL_OVERLAP_MM
+                    // совпадает с расчётом длины в calcLining.ts (o.width + 400 = по
+                    // 200мм нахлёста с каждой стороны) — раньше здесь был фиксированный
+                    // отступ 10px, не привязанный к масштабу чертежа, из-за чего на
+                    // вытянутых стенах перемычка визуально вылезала за пределы стоек
+                    // проёма в соседний пролёт.
+                    const lintelOverlapPx = LINTEL_OVERLAP_MM * scale
                     return (
                       <Group key={`op${o.id}`}>
                         <Rect x={oX} y={oTop} width={oW} height={o.height * scale} fill={color} stroke={stroke} strokeWidth={1} />
-                        {/* Перемычка сверху */}
-                        <Rect x={oX - 10} y={oTop - 6} width={oW + 20} height={6} fill="#5a7080" />
+                        {/* Перемычка сверху — нахлёст по 200мм на каждую стойку проёма */}
+                        <Rect x={oX - lintelOverlapPx} y={oTop - 6} width={oW + lintelOverlapPx * 2} height={6} fill="#5a7080" />
                         {/* Подоконник — у любого проёма с sillHeight>0 (окно, либо ниша-"проём") */}
                         {o.sillHeight > 0 && (
                           <Rect x={oX} y={oBottom - 6} width={oW} height={6} fill="#5a7080" />
@@ -1273,14 +1284,15 @@ export default function App() {
                     const cTop = wallBotAt(c.pos) - c.top * scale
                     const cX = tx(c.pos), cW = c.width * scale
                     const hasTop = (h - c.top) > 400
+                    const commLintelOverlapPx = LINTEL_OVERLAP_MM * scale
                     return (
                       <Group key={`comm${c.id}`}>
                         <Rect x={cX} y={cTop} width={cW} height={cBottom - cTop} fill="#ded0a0" stroke="#a8905a" strokeWidth={1} />
-                        {/* Нижняя перемычка — всегда */}
-                        <Rect x={cX - 10} y={cBottom - 3} width={cW + 20} height={6} fill="#5a7080" />
+                        {/* Нижняя перемычка — всегда, нахлёст по 200мм на стойки, как и у проёмов */}
+                        <Rect x={cX - commLintelOverlapPx} y={cBottom - 3} width={cW + commLintelOverlapPx * 2} height={6} fill="#5a7080" />
                         {/* Верхняя перемычка — только если есть запас > 400мм до ПН */}
                         {hasTop && (
-                          <Rect x={cX - 10} y={cTop - 3} width={cW + 20} height={6} fill="#5a7080" />
+                          <Rect x={cX - commLintelOverlapPx} y={cTop - 3} width={cW + commLintelOverlapPx * 2} height={6} fill="#5a7080" />
                         )}
                         <Text x={cX} y={cTop - 18} text={`комм. ${c.bottom}-${c.top}`} fontSize={10} fill="#795" />
                       </Group>
