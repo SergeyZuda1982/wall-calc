@@ -345,7 +345,7 @@ export function infiniteLineIntersection(
  * перекрытие намеренно не обрабатывается — см. ограничение unionOfTwoQuads)
  * или пересечение вне хотя бы одного из отрезков.
  */
-function segmentIntersection(
+export function segmentIntersection(
   a1: Point2D, a2: Point2D, b1: Point2D, b2: Point2D,
 ): { point: Point2D; t: number; u: number } | null {
   const d1x = a2.x - a1.x, d1y = a2.y - a1.y
@@ -508,6 +508,62 @@ export function unionOfTwoQuads(quadA: Point2D[], quadB: Point2D[]): Point2D[] |
 
 function d2p(a: Point2D, b: Point2D): number {
   return (a.x - b.x) ** 2 + (a.y - b.y) ** 2
+}
+
+/**
+ * A2 (KONSPEKT.md 19.07.2026) — локальное извлечение "клина" БЕЗ обхода
+ * полного контура unionOfTwoQuads (тот даёт "бумеранг" — при невалидном
+ * угле обход идёт через ВЕСЬ дальний конец другой стены).
+ *
+ * Установлено экспериментально на реальном узле (C-1/C-2, 250+125мм,
+ * 123.49°, wallJoin.test.ts): если угол `mid` СВОЕГО прямоугольника
+ * оказался ВНУТРИ чужого прямоугольника (otherQuad) — то есть текущий
+ * симметричный митр (пересечение face+/face+ или face-/face-) даёт
+ * "флажок" — правильная замена этого одного невалидного угла — это РОВНО
+ * ДВЕ точки: пересечения его двух смежных рёбер (prev-mid и mid-next)
+ * с границей otherQuad. Толстая стена при этом не трогается вовсе: её
+ * собственные углы остаются натуральными (см. отдельный тест ниже —
+ * "толстая стена у узла остаётся нетронутой" в unionOfTwoQuads).
+ *
+ * Совпадает поточечно с локальным фрагментом полного контура
+ * unionOfTwoQuads(ownQuad, otherQuad) в окрестности `mid` — но не требует
+ * вычислять контур целиком и не спотыкается о "бумеранг" (дальний конец
+ * другой стены может быть сколь угодно длинным — не участвует в расчёте).
+ *
+ * @param prev   сосед `mid` по СВОЕМУ многоугольнику с одной стороны
+ *   (в сторону дальнего конца этой же стены)
+ * @param mid    угол, который проверяем/уточняем (обычно p2p или p2m стены
+ *   на стыкуемом конце — см. wallJoin.ts, applyL)
+ * @param next   сосед `mid` по СВОЕМУ многоугольнику с другой стороны
+ *   (в сторону другой стены — обычно p2m или p2p той же стены)
+ * @param otherQuad  полный (необрезанный) прямоугольник ДРУГОЙ стены стыка
+ * @returns `[mid]` без изменений — если mid уже снаружи otherQuad (клин не
+ *   нужен, обычный симметричный митр на этой стороне уже корректен);
+ *   `[crossPrev, crossNext]` — если mid внутри otherQuad и оба пересечения
+ *   нашлись (типичный случай стыка разной толщины под углом);
+ *   `null` — вырожденный случай (mid внутри otherQuad, но одно из рёбер
+ *   его не пересекает — не должно происходить для реальных прямоугольников
+ *   стен, но защита есть; вызывающий код должен откатиться на старый
+ *   симметричный митр как fallback, как и для unionOfTwoQuads).
+ */
+export function resolveHiddenCorner(
+  prev: Point2D, mid: Point2D, next: Point2D, otherQuad: Point2D[],
+): Point2D[] | null {
+  if (!pointInPolygon(mid, [otherQuad])) return [mid]
+
+  function firstCrossing(a: Point2D, b: Point2D): Point2D | null {
+    for (let i = 0; i < otherQuad.length; i++) {
+      const hit = segmentIntersection(a, b, otherQuad[i], otherQuad[(i + 1) % otherQuad.length])
+      if (hit) return hit.point
+    }
+    return null
+  }
+
+  const crossPrev = firstCrossing(prev, mid)
+  const crossNext = firstCrossing(mid, next)
+  if (!crossPrev || !crossNext) return null
+
+  return [crossPrev, crossNext]
 }
 
 /**
