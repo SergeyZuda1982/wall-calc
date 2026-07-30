@@ -3932,6 +3932,31 @@ export default function FloorPlan() {
                           stroke="#c9a68a" strokeWidth={1 / stageScale} dash={[4 / stageScale, 3 / stageScale]}
                           listening={false} />
                       )}
+                      {/* Длины уже поставленных сторон контура — без подложки не видно, каких
+                          размеров потолок обводишь, поэтому подписываем каждый отрезок сразу
+                          при клике (просьба пользователя, 30.07.2026) */}
+                      {ceilingPts.slice(1).map((p, i) => {
+                        const prev = ceilingPts[i]
+                        const mm = lineLengthMm(prev.x, prev.y, p.x, p.y, scaleMmPx)
+                        if (mm < 10) return null
+                        return (
+                          <Text key={`ceiling-seg-len-${i}`}
+                            x={(prev.x + p.x) / 2 - 30} y={(prev.y + p.y) / 2 - 16}
+                            width={60} text={fmtLen(mm)}
+                            fontSize={10} fill="#c9a68a" align="center" fontStyle="bold" listening={false} />
+                        )
+                      })}
+                      {/* Длина текущего, ещё не подтверждённого отрезка — от последней точки до курсора */}
+                      {cursor && (() => {
+                        const last = ceilingPts[ceilingPts.length - 1]
+                        const mm = lineLengthMm(last.x, last.y, cursor.x, cursor.y, scaleMmPx)
+                        if (mm < 10) return null
+                        return (
+                          <Text x={(last.x + cursor.x) / 2 - 30} y={(last.y + cursor.y) / 2 - 16}
+                            width={60} text={fmtLen(mm)}
+                            fontSize={10} fill="#c9a68a" align="center" fontStyle="bold" listening={false} />
+                        )
+                      })()}
                       {ceilingPts.map((p, i) => (
                         <Circle key={i} x={p.x} y={p.y} radius={3}
                           fill={i === 0 ? '#e53935' : '#c9a68a'} listening={false} />
