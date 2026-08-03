@@ -1034,6 +1034,21 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
   const offY = PAD + (availH - h * scale) / 2
 
   const toStage = (p: Point2D) => ({ x: offX + (p.x - minX) * scale, y: offY + (p.y - minY) * scale })
+
+  // ── Реальные размеры профиля/подвеса/краба в px (30.07.2026) ──
+  // Было: линия профиля — фиксированный strokeWidth={1}, подвес/краб —
+  // фиксированные Rect 10×8/8×8px, НИКАК не зависящие от scale (px/мм) —
+  // при обводке большого помещения (малый scale) профиль превращался в
+  // "ниточку", а подвесы/крабы оставались тех же "огромных" размеров.
+  // Теперь профиль (ПП 60мм) и крепёж считаются от одного и того же scale,
+  // с теми же реальными пропорциями, что и в 3D (crabGeometry sizeMm=22 —
+  // краб МЕНЬШЕ профиля, не больше). Нижние границы — не физический размер,
+  // а чисто читаемость: чтобы значок не пропадал при сильном отдалении.
+  const PP_LINE_W = Math.max(1.5, Math.min(9, scale * 60))
+  const CRAB_SIZE = Math.max(2.5, PP_LINE_W * (22 / 60))
+  const CRAB_LINE = CRAB_SIZE * 1.4
+  const HANGER_W = Math.max(3, PP_LINE_W * 0.55)
+  const HANGER_H = Math.max(2, PP_LINE_W * 0.4)
   const flat = (pts: Point2D[]) => pts.flatMap(p => { const s = toStage(p); return [s.x, s.y] })
   const centroid = (pts: Point2D[]) => {
     const s = toStage({ x: pts.reduce((a, p) => a + p.x, 0) / pts.length, y: pts.reduce((a, p) => a + p.y, 0) / pts.length })
@@ -1152,20 +1167,20 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
               {step >= 2 && polygonFrame.mainRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
                 const wa = toStage(toWorld({ x: a, y: row.pos }, polygonFrame.frame))
                 const wb = toStage(toWorld({ x: b, y: row.pos }, polygonFrame.frame))
-                return <Line key={`m-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.accent} strokeWidth={1} opacity={0.6} />
+                return <Line key={`m-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.accent} strokeWidth={PP_LINE_W} opacity={0.6} />
               }))}
               {step >= 3 && polygonFrame.bearingRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
                 const wa = toStage(toWorld({ x: row.pos, y: a }, polygonFrame.frame))
                 const wb = toStage(toWorld({ x: row.pos, y: b }, polygonFrame.frame))
-                return <Line key={`b-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.text} strokeWidth={1} opacity={0.4} dash={[4, 3]} />
+                return <Line key={`b-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.text} strokeWidth={PP_LINE_W} opacity={0.4} dash={[4, 3]} />
               }))}
               {step >= 2 && polygonFrame.hangerPoints.map((p, i) => {
                 const s = toStage(toWorld(p, polygonFrame.frame))
                 return (
                   <Group key={`hg${i}`} x={s.x} y={s.y}>
-                    <Rect x={-5} y={-4} width={10} height={8}
-                      fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1.5} cornerRadius={1} />
-                    <Line points={[0, -4, 0, -10]} stroke={C.hanger} strokeWidth={1} />
+                    <Rect x={-HANGER_W / 2} y={-HANGER_H / 2 - HANGER_H / 4} width={HANGER_W} height={HANGER_H}
+                      fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1} cornerRadius={1} />
+                    <Line points={[0, -HANGER_H / 4, 0, -HANGER_H / 4 - HANGER_H]} stroke={C.hanger} strokeWidth={1} />
                   </Group>
                 )
               })}
@@ -1174,9 +1189,9 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
                 const col = ceilingType === 'p113' ? C.crab1lvl : C.crab
                 return (
                   <Group key={`cr${i}`} x={s.x} y={s.y}>
-                    <Rect x={-4} y={-4} width={8} height={8} fill={col} opacity={0.9} cornerRadius={1} />
-                    <Line points={[-6, 0, 6, 0]} stroke={col} strokeWidth={1} />
-                    <Line points={[0, -6, 0, 6]} stroke={col} strokeWidth={1} />
+                    <Rect x={-CRAB_SIZE / 2} y={-CRAB_SIZE / 2} width={CRAB_SIZE} height={CRAB_SIZE} fill={col} opacity={0.9} cornerRadius={1} />
+                    <Line points={[-CRAB_LINE / 2, 0, CRAB_LINE / 2, 0]} stroke={col} strokeWidth={1} />
+                    <Line points={[0, -CRAB_LINE / 2, 0, CRAB_LINE / 2]} stroke={col} strokeWidth={1} />
                   </Group>
                 )
               })}
@@ -1355,6 +1370,14 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // ── Профили ──
   const PP_W = Math.max(3, Math.min(10, scale * 60 / 1000))
   const PN_W = Math.max(2, Math.min(6,  scale * 28 / 1000))
+  // 30.07.2026: краб/подвес считались от фиксированных px, а не от scale —
+  // выглядели непропорционально огромными рядом с "ниточкой" профиля на
+  // большом помещении. Пропорции — как в polygonFrame-схеме выше (краб
+  // 22мм — реально МЕНЬШЕ профиля 60мм, см. crabGeometry() в 3D).
+  const CRAB_SIZE = Math.max(2.5, PP_W * (22 / 60))
+  const CRAB_LINE = CRAB_SIZE * 1.4
+  const HANGER_W = Math.max(3, PP_W * 0.55)
+  const HANGER_H = Math.max(2, PP_W * 0.4)
 
   // ── Основные профили (X, шаг c) ──
   const stepC = form.stepC
@@ -1600,10 +1623,10 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
         {/* ── Шаг 2+: Подвесы ── */}
         {step >= 2 && hangers.map((h, i) => (
           <Group key={`hg${i}`} x={h.x} y={h.y}>
-            <Rect x={-5} y={-4} width={10} height={8}
-              fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1.5} cornerRadius={1} />
+            <Rect x={-HANGER_W / 2} y={-HANGER_H / 2 - HANGER_H / 4} width={HANGER_W} height={HANGER_H}
+              fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1} cornerRadius={1} />
             {/* Тяга подвеса — вертикальная линия вверх */}
-            <Line points={[0, -4, 0, -10]} stroke={C.hanger} strokeWidth={1} />
+            <Line points={[0, -HANGER_H / 4, 0, -HANGER_H / 4 - HANGER_H]} stroke={C.hanger} strokeWidth={1} />
           </Group>
         ))}
 
@@ -1652,10 +1675,10 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
         {step >= 3 && mainPosX.map((px, mi) =>
           bearingPosY.map((py, bi) => (
             <Group key={`cr${mi}_${bi}`} x={px} y={py}>
-              <Rect x={-4} y={-4} width={8} height={8}
+              <Rect x={-CRAB_SIZE / 2} y={-CRAB_SIZE / 2} width={CRAB_SIZE} height={CRAB_SIZE}
                 fill={form.type === 'p113' ? C.crab1lvl : C.crab} opacity={0.9} cornerRadius={1} />
-              <Line points={[-6, 0, 6, 0]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
-              <Line points={[0, -6, 0, 6]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
+              <Line points={[-CRAB_LINE / 2, 0, CRAB_LINE / 2, 0]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
+              <Line points={[0, -CRAB_LINE / 2, 0, CRAB_LINE / 2]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
             </Group>
           ))
         )}
