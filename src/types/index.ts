@@ -1,4 +1,5 @@
 import type { CeilingSpec } from '../data/ceilingData'
+import type { OpeningShape } from '../core/geometry2d'
 
 // ─── Геометрия потолка/пола (переменная высота) ──────────────────────────────
 
@@ -135,6 +136,11 @@ export interface Opening {
   width: number
   height: number
   sillHeight: number
+  /** Необязательная форма выреза (косой/радиусный/смешанный контур) —
+   *  см. geometry2d.ts, openingLocalPolygon/openingWorldPolygon. Не задана
+   *  — проём прямоугольный, как раньше (обратная совместимость). Контур в
+   *  ЛОКАЛЬНЫХ координатах bounding box [0,width]×[0,height]. */
+  shape?: OpeningShape
 }
 
 // ─── Транзитные коммуникации (лоток/труба сквозь стену, 14.07.2026) ─────────

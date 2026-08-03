@@ -251,6 +251,91 @@ export function sampleArcPoints(arc: ArcFromChord, segments = 32): Point2D[] {
 }
 
 /**
+ * ─── Форма проёма произвольного контура (23.07.2026) ────────────────────────
+ * Начало полноценной 2D-упаковки листов с произвольными вырезами (см.
+ * TASKS.md, план "2D-solver с полигональными вырезами"). Проём по умолчанию
+ * остаётся прямоугольником (обратная совместимость, `Opening.shape`
+ * необязателен) — эта форма нужна ТОЛЬКО когда вырез отличается от
+ * прямоугольника: косой срез угла, радиусный (арка/скруглённый угол) или
+ * их смесь на одном контуре.
+ *
+ * Контур — вершины в ЛОКАЛЬНЫХ координатах проёма (0,0 — левый нижний угол
+ * bounding box проёма: x∈[0,width], y∈[0,height], Y вверх). Рёбра между
+ * соседними вершинами по умолчанию прямые; ребро может нести `sagitta` —
+ * ТУ ЖЕ стрелу дуги, что и `arcFromChordAndSagitta` (никакой новой
+ * конвенции дуги в проекте не вводим).
+ */
+
+export interface OpeningShapeEdge {
+  /** Стрела дуги для ребра ОТ вершины i К вершине i+1 (по модулю длины
+   *  массива вершин). 0 / не задано — обычная прямая сторона. */
+  sagitta?: number
+}
+
+export interface OpeningShape {
+  /** Вершины контура, по порядку обхода (по/против часовой — не важно,
+   *  polygonArea/pointInPolygon работают в обе стороны). Минимум 3. */
+  points: Point2D[]
+  /** По одному элементу на КАЖДОЕ ребро (edges[i] — ребро points[i]→points[i+1],
+   *  последнее замыкающее — points[length-1]→points[0]). Можно не передавать
+   *  вовсе (все рёбра прямые) или передать короче points — недостающие
+   *  считаются прямыми. */
+  edges?: OpeningShapeEdge[]
+}
+
+/**
+ * Разворачивает OpeningShape в плоский многоугольник (дуги — дискретизированы
+ * через sampleArcPoints). Вырожденные дуги (arcFromChordAndSagitta вернула
+ * null — нулевая стрела или нулевая хорда) молча становятся прямой стороной.
+ */
+export function openingShapePolygon(shape: OpeningShape, arcSegments = 16): Point2D[] {
+  const pts = shape.points
+  if (pts.length < 3) return pts.slice()
+  const result: Point2D[] = []
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]
+    const b = pts[(i + 1) % pts.length]
+    result.push(a)
+    const sagitta = shape.edges?.[i]?.sagitta
+    if (sagitta) {
+      const arc = arcFromChordAndSagitta(a.x, a.y, b.x, b.y, sagitta)
+      if (arc) {
+        // Первая/последняя точка дуги совпадают с a/b — не дублируем их.
+        const arcPts = sampleArcPoints(arc, arcSegments)
+        for (let j = 1; j < arcPts.length - 1; j++) result.push(arcPts[j])
+      }
+    }
+  }
+  return result
+}
+
+/**
+ * Контур проёма в ЛОКАЛЬНЫХ координатах (0,0 = левый нижний угол bounding
+ * box) — прямоугольник [0,width]×[0,height], если `shape` не задан, иначе
+ * `openingShapePolygon(shape)`.
+ */
+export function openingLocalPolygon(
+  width: number, height: number, shape?: OpeningShape, arcSegments = 16,
+): Point2D[] {
+  if (!shape) {
+    return [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }]
+  }
+  return openingShapePolygon(shape, arcSegments)
+}
+
+/**
+ * Контур проёма в МИРОВЫХ координатах стены (x — вдоль стены от 0, y — от
+ * пола) — тот же локальный контур, сдвинутый на (pos, sillHeight).
+ */
+export function openingWorldPolygon(
+  pos: number, sillHeight: number, width: number, height: number,
+  shape?: OpeningShape, arcSegments = 16,
+): Point2D[] {
+  return openingLocalPolygon(width, height, shape, arcSegments)
+    .map(p => ({ x: p.x + pos, y: p.y + sillHeight }))
+}
+
+/**
  * Обрезает прямоугольник [x1,x2] × [y1,y2] наклонной верхней границей —
  * прямой линией от точки (x1, topAtX1) до точки (x2, topAtX2).
  * Возвращает то, что остаётся НИЖЕ этой линии — то есть реальный кусок
