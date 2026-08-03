@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { calcSheetLayout } from '../calcSheetLayout'
 import { flatProfile } from '../profileGeometry'
+import { polygonArea as polygonAreaOf } from '../geometry2d'
 import { DEFAULT_BOARD_SPEC } from '../../types'
 
 const spec = DEFAULT_BOARD_SPEC // 1200×2500
@@ -157,8 +158,8 @@ describe('calcSheetLayout — вертикальная ступень на по�
   })
 })
 
-describe('calcSheetLayout — проёмы всё ещё разбивают колонки корректно (не регрессия)', () => {
-  it('края проёма попадают в границы колонок наравне с точками уклона', () => {
+describe('calcSheetLayout — проёмы больше НЕ разбивают колонки (фаза 2, 23.07.2026)', () => {
+  it('края проёма НЕ попадают в границы колонок — колонка идёт по обычной 1200мм сетке', () => {
     const result = calcSheetLayout(
       3000, flatProfile(3000, 3000), flatProfile(3000, 0),
       600, 600, 1,
@@ -170,8 +171,42 @@ describe('calcSheetLayout — проёмы всё ещё разбивают ко
       boundaryXs.add(col.x1)
       boundaryXs.add(col.x2)
     }
-    expect(boundaryXs.has(900)).toBe(true)
-    expect(boundaryXs.has(1800)).toBe(true)
+    // Раньше здесь ожидались 900 и 1800 (края проёма) — теперь колонки идут
+    // по обычной сетке (600 firstStud, затем каждые 1200мм), проём вырезается
+    // внутри куска через notch-clipping, а не разбиением на колонки.
+    expect(boundaryXs.has(600)).toBe(true)
+    expect(boundaryXs.has(1800)).toBe(true) // 600+1200 — это просто шаг листа, совпадение с краем проёма случайно
+  })
+
+  it('кусок, задетый проёмом, становится notched с реальной вырезанной формой', () => {
+    const result = calcSheetLayout(
+      3000, flatProfile(3000, 3000), flatProfile(3000, 0),
+      600, 600, 1,
+      [{ id: 'd1', type: 'door', pos: 900, width: 900, height: 2000, sillHeight: 0 }],
+      spec, spec, 1,
+    )
+    const allPieces = result.layer1.columns.flatMap(c => c.pieces)
+    const notched = allPieces.filter(p => p.kind === 'notched')
+    expect(notched.length).toBeGreaterThan(0)
+    for (const p of notched) {
+      expect(p.polygon).toBeDefined()
+      expect(p.polygon!.length).toBeGreaterThanOrEqual(3)
+      // Вырезанная площадь строго меньше площади ограничивающего прямоугольника заготовки
+      expect(polygonAreaOf(p.polygon!)).toBeLessThan(p.w * p.h)
+    }
+  })
+
+  it('дверь, упирающаяся в пол (sillHeight=0) — колонка над дверью (если есть) не считается вырезанной', () => {
+    const result = calcSheetLayout(
+      3000, flatProfile(3000, 3000), flatProfile(3000, 0),
+      600, 600, 1,
+      [{ id: 'd1', type: 'door', pos: 900, width: 900, height: 2000, sillHeight: 0 }],
+      spec, spec, 1,
+    )
+    // Общая используемая площадь должна быть строго меньше суммарной площади
+    // листов — часть материала ушла на вырез проёма (не в отход, а просто
+    // не расходуется на эту зону).
+    expect(result.layer1.usedAreaM2).toBeLessThan(result.layer1.sheetAreaM2)
   })
 })
 

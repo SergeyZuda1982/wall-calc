@@ -16,6 +16,8 @@
  * пока не реализованы — когда понадобятся, им место тоже здесь.
  */
 
+import { difference as polygonClippingDifference } from 'polygon-clipping'
+
 export interface Point2D {
   x: number
   y: number
@@ -620,3 +622,76 @@ export function openingOffsetFromClick(
   const rawOffsetMm = tClamped * lineLengthMm
   return Math.max(0, Math.min(lineLengthMm - widthMm, rawOffsetMm - widthMm / 2))
 }
+
+// ─── Вычитание полигонов (23.07.2026, фаза 2 плана "2D-упаковка с вырезами") ─
+// Обёртка над библиотекой polygon-clipping (проверенная реализация булевых
+// операций — вручную такое не пишем, см. TASKS.md). Наш формат точек везде —
+// Point2D[] (простой контур, БЕЗ дыр); библиотека же оперирует
+// GeoJSON-подобным Ring/Polygon (Polygon = [внешнее_кольцо, ...дыры]),
+// с явно ЗАМКНУТЫМИ кольцами (последняя точка = первая).
+//
+// Если вычитание проёма-"острова" (окно, со всех сторон окружённое
+// материалом внутри одной заготовки) даёт кусок с ДЫРОЙ — в проекте нет
+// (и не будет) типа "полигон с дырой" (BoardPiece.polygon — плоский
+// Point2D[]). Вместо расширения типа — стандартный приём "мост" (bridge/
+// keyhole): дыра пришивается к внешнему контуру нулевой ширины перемычкой
+// через ближайшую пару вершин. Получается один простой (самопересекающийся
+// только вырожденно, по нулевой ширине) контур — корректная площадь
+// (shoelace даёт те же см²) и корректная заливка при отрисовке.
+
+function ringFromPoints(points: Point2D[]): [number, number][] {
+  const ring: [number, number][] = points.map(p => [p.x, p.y])
+  const [fx, fy] = ring[0]
+  const [lx, ly] = ring[ring.length - 1]
+  if (fx !== lx || fy !== ly) ring.push([fx, fy])
+  return ring
+}
+
+/** Дыра → перемычка нулевой ширины к внешнему контуру через ближайшую пару вершин. */
+function bridgeHoleIntoOuter(outer: Point2D[], hole: Point2D[]): Point2D[] {
+  let bestOuterI = 0, bestHoleJ = 0, bestDist2 = Infinity
+  for (let i = 0; i < outer.length; i++) {
+    for (let j = 0; j < hole.length; j++) {
+      const dx = outer[i].x - hole[j].x
+      const dy = outer[i].y - hole[j].y
+      const d2 = dx * dx + dy * dy
+      if (d2 < bestDist2) { bestDist2 = d2; bestOuterI = i; bestHoleJ = j }
+    }
+  }
+  // Вставляем контур дыры (начиная с ближайшей вершины, по кругу) сразу
+  // после outer[bestOuterI], и возвращаемся туда же — нулевая перемычка.
+  const holeLoop = [...hole.slice(bestHoleJ), ...hole.slice(0, bestHoleJ), hole[bestHoleJ]]
+  const result = [...outer.slice(0, bestOuterI + 1), ...holeLoop, ...outer.slice(bestOuterI)]
+  return result
+}
+
+/** Polygon (внешнее кольцо + дыры) → один простой Point2D[] (дыры вшиты мостом). */
+function polygonRingsToSimple(rings: [number, number][][]): Point2D[] {
+  const toPts = (ring: [number, number][]): Point2D[] => {
+    const pts = ring.map(([x, y]) => ({ x, y }))
+    // Замкнутое кольцо библиотеки — убираем дублирующую последнюю точку.
+    if (pts.length > 1) {
+      const a = pts[0], b = pts[pts.length - 1]
+      if (a.x === b.x && a.y === b.y) pts.pop()
+    }
+    return pts
+  }
+  let outer = toPts(rings[0])
+  for (let k = 1; k < rings.length; k++) outer = bridgeHoleIntoOuter(outer, toPts(rings[k]))
+  return outer
+}
+
+/**
+ * subject минус объединение subtrahends — оба в Point2D[] (простые контуры,
+ * замыкание не требуется). Возвращает список простых полигонов результата
+ * (может быть 0 — вычлось полностью; 1 — обычный случай, возможно с дырой,
+ * дыра вшита мостом; 2+ — вырез разделил кусок на несколько частей).
+ */
+export function subtractPolygons(subject: Point2D[], subtrahends: Point2D[][]): Point2D[][] {
+  if (subtrahends.length === 0) return [subject]
+  const subjectPoly = [ringFromPoints(subject)]
+  const clipPolys = subtrahends.map(s => [ringFromPoints(s)])
+  const result = polygonClippingDifference(subjectPoly, ...clipPolys)
+  return result.map(polygonRingsToSimple)
+}
+
