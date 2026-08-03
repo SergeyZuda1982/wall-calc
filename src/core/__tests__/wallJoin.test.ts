@@ -420,4 +420,29 @@ describe('computeWallJoins — реальный узел с объекта (KONS
     expect(angles).toHaveLength(1)
     expect(angles[0].angleDeg).toBeCloseTo(123.49, 1)
   })
+
+  it('A2 (resolveHiddenCorner): толстая стена (A) клина не получает — оба её натуральных угла валидны; тонкая (B) получает клин на стороне face+ (её натуральный p2p — внутри A)', () => {
+    const A: WallForJoin = { id: 'A', x1: 12748, y1: 9413, x2: 11187, y2: 9413, halfPx: 15.16, createdIndex: 0 }
+    const B: WallForJoin = { id: 'B', x1: 10115, y1: 11034, x2: 11187, y2: 9413, halfPx: 7.58, createdIndex: 1 }
+    const res = computeWallJoins([A, B])
+    const ja = res.get('A')!, jb = res.get('B')!
+
+    // Толстая стена — клин не нужен ни на одной стороне
+    expect(ja.wedge2p).toBeUndefined()
+    expect(ja.wedge2m).toBeUndefined()
+
+    // Тонкая стена — клин найден на face+ (натуральный p2p спрятан внутри A),
+    // face- клина не требует (натуральный p2m валиден)
+    expect(jb.wedge2m).toBeUndefined()
+    expect(jb.wedge2p).toBeDefined()
+    expect(jb.wedge2p).toHaveLength(2)
+    // Обе точки клина лежат на оси стыка (x=11187, ровно на грани A) —
+    // сверка с независимо посчитанными значениями (см. resolveHiddenCorner
+    // тесты в geometry2d.test.ts, тот же самый узел)
+    const [w0, w1] = jb.wedge2p!
+    expect(w0.x).toBeCloseTo(11187, 3)
+    expect(w0.y).toBeCloseTo(9426.74, 1)
+    expect(w1.x).toBeCloseTo(11187, 3)
+    expect(w1.y).toBeCloseTo(9413, 3)
+  })
 })

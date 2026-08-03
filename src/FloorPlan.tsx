@@ -4180,28 +4180,53 @@ export default function FloorPlan() {
                             // physически находится настоящий конец стены), и только
                             // когда cap=false (значит jw реально что-то посчитал для
                             // этого конца, а не оставил его свободным торцом).
+                            //
+                            // A2 (KONSPEKT.md 19.07.2026, resolveHiddenCorner) —
+                            // разная толщина под углом: одиночная митр-точка выше
+                            // сама может быть "флажком". Если wallJoin.ts нашёл клин
+                            // на этой стороне (стены разной толщины, натуральный угол
+                            // одной из них спрятан внутри другой) — граничная линия
+                            // (обводка/торец) идёт по "лицевой" точке клина (та из
+                            // двух, что лежит на грани СВОЕЙ же стены — см. wedgeXX[i]
+                            // ниже), а полигон заливки/штриховки вставляет ОБЕ точки
+                            // клина (меняя прямоугольник на пятиугольник у стыка —
+                            // см. cornerA..cornerD ниже, тот же порядок обхода, что и
+                            // в wallJoin.ts, cornerIdx/quadOf/applyWedge).
+                            const w1p = (jw && si === 0 && !cap1) ? jw.wedge1p : undefined
+                            const w1m = (jw && si === 0 && !cap1) ? jw.wedge1m : undefined
+                            const w2p = (jw && si === segments.length - 1 && !cap2) ? jw.wedge2p : undefined
+                            const w2m = (jw && si === segments.length - 1 && !cap2) ? jw.wedge2m : undefined
+
                             if (jw && si === 0 && !cap1) {
-                              sAx = jw.p1p.x; sAy = jw.p1p.y
-                              sDx = jw.p1m.x; sDy = jw.p1m.y
+                              sAx = w1p ? w1p[1].x : jw.p1p.x; sAy = w1p ? w1p[1].y : jw.p1p.y
+                              sDx = w1m ? w1m[0].x : jw.p1m.x; sDy = w1m ? w1m[0].y : jw.p1m.y
                             }
                             if (jw && si === segments.length - 1 && !cap2) {
-                              sBx = jw.p2p.x; sBy = jw.p2p.y
-                              sCx = jw.p2m.x; sCy = jw.p2m.y
+                              sBx = w2p ? w2p[0].x : jw.p2p.x; sBy = w2p ? w2p[0].y : jw.p2p.y
+                              sCx = w2m ? w2m[1].x : jw.p2m.x; sCy = w2m ? w2m[1].y : jw.p2m.y
                             }
+
+                            const cornerA = w1p ? [w1p[0].x, w1p[0].y, w1p[1].x, w1p[1].y] : [sAx, sAy]
+                            const cornerB = w2p ? [w2p[0].x, w2p[0].y, w2p[1].x, w2p[1].y] : [sBx, sBy]
+                            const cornerC = w2m ? [w2m[0].x, w2m[0].y, w2m[1].x, w2m[1].y] : [sCx, sCy]
+                            const cornerD = w1m ? [w1m[0].x, w1m[0].y, w1m[1].x, w1m[1].y] : [sDx, sDy]
+                            const fillPts = [...cornerA, ...cornerB, ...cornerC, ...cornerD]
 
                             const sp1p = { x: sAx, y: sAy }, sp2p = { x: sBx, y: sBy }
                             const sp1m = { x: sDx, y: sDy }, sp2m = { x: sCx, y: sCy }
                             return (
                               <Group key={si}>
-                                {/* Заливка сегмента */}
-                                <Line points={[sAx,sAy, sBx,sBy, sCx,sCy, sDx,sDy]} closed fill={fill} stroke="none" listening={false} />
+                                {/* Заливка сегмента — fillPts (пятиугольник при клине, см. выше) */}
+                                <Line points={fillPts} closed fill={fill} stroke="none" listening={false} />
                                 {/* Штриховка существующих конструкций */}
                                 {(l.type === 'wall_existing' || l.type === 'rib_beam') && (() => {
                                   const hatch = calcHatch(sAx, sAy, sBx, sBy, sCx, sCy, sDx, sDy, 8)
                                   return (
                                     <Group clipFunc={(ctx: any) => {
-                                      ctx.beginPath(); ctx.moveTo(sAx, sAy); ctx.lineTo(sBx, sBy)
-                                      ctx.lineTo(sCx, sCy); ctx.lineTo(sDx, sDy); ctx.closePath()
+                                      ctx.beginPath()
+                                      ctx.moveTo(fillPts[0], fillPts[1])
+                                      for (let pi = 2; pi < fillPts.length; pi += 2) ctx.lineTo(fillPts[pi], fillPts[pi + 1])
+                                      ctx.closePath()
                                     }} listening={false}>
                                       {hatch.map((pts, i) => (
                                         <Line key={i} points={pts} stroke={stroke} strokeWidth={0.8} opacity={0.5} listening={false} />
