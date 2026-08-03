@@ -1,4 +1,5 @@
 import type { CeilingSpec } from '../data/ceilingData'
+import type { OpeningShape } from '../core/geometry2d'
 
 // ─── Геометрия потолка/пола (переменная высота) ──────────────────────────────
 
@@ -135,6 +136,11 @@ export interface Opening {
   width: number
   height: number
   sillHeight: number
+  /** Необязательная форма выреза (косой/радиусный/смешанный контур) —
+   *  см. geometry2d.ts, openingLocalPolygon/openingWorldPolygon. Не задана
+   *  — проём прямоугольный, как раньше (обратная совместимость). Контур в
+   *  ЛОКАЛЬНЫХ координатах bounding box [0,width]×[0,height]. */
+  shape?: OpeningShape
 }
 
 // ─── Транзитные коммуникации (лоток/труба сквозь стену, 14.07.2026) ─────────
@@ -315,8 +321,12 @@ export interface BoardPiece {
    *  both_cut — по ширине и высоте; opening_void — проём (не закрывается листом);
    *  diagonal_cut — заготовка дополнительно обрезана по наклонной линии уклона
    *  потолка/пола (реальная форма — см. `polygon`), x/y/w/h остаются
-   *  ограничивающим прямоугольником заготовки, а не итоговой формой */
-  kind: 'full' | 'width_cut' | 'height_cut' | 'both_cut' | 'opening_void' | 'diagonal_cut'
+   *  ограничивающим прямоугольником заготовки, а не итоговой формой;
+   *  notched — заготовка обрезана произвольным контуром проёма(ов),
+   *  задевающих её (прямой/косой/радиусный/смешанный вырез, см.
+   *  `subtractPolygons` в geometry2d.ts, 23.07.2026) — реальная форма в
+   *  `polygon`, x/y/w/h — ограничивающий прямоугольник заготовки */
+  kind: 'full' | 'width_cut' | 'height_cut' | 'both_cut' | 'opening_void' | 'diagonal_cut' | 'notched'
   /** откуда взят материал */
   source: 'new_sheet' | 'offcut'
   /** Только для kind === 'diagonal_cut': реальная форма куска после

@@ -32,6 +32,7 @@ const COLORS: Record<BoardPiece['kind'], string> = {
   both_cut:     '#9b59b6',
   opening_void: '#d0d0d0',
   diagonal_cut: '#e74c3c',
+  notched:      '#e67e22',
 }
 
 const KIND_LABELS: Record<BoardPiece['kind'], string> = {
@@ -41,6 +42,7 @@ const KIND_LABELS: Record<BoardPiece['kind'], string> = {
   both_cut:     'два реза',
   opening_void: 'проём',
   diagonal_cut: 'рез по уклону',
+  notched:      'вырез под проём',
 }
 
 const STUD_RULER_H = 28  // px — высота шкалы стоек сверху
@@ -170,6 +172,26 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW, first
                         fontSize={9} fill="#999" align="center" />
                     )}
                   </Group>
+                )
+              }
+
+              // ── Кусок с вырезом под проём (произвольная форма): настоящий
+              // многоугольник, как и у diagonal_cut выше — базовая
+              // отрисовка фазы 2; полноценная (метки кромок и т.п.) —
+              // фаза 3 плана в TASKS.md.
+              if (p.kind === 'notched' && p.polygon && p.polygon.length >= 3) {
+                const polyPts = p.polygon.flatMap(pt => [tx(pt.x), ty(pt.y)])
+                const isOffcut = p.source === 'offcut'
+                return (
+                  <Line
+                    key={`${ci}-${pi}`}
+                    points={polyPts}
+                    closed
+                    fill={COLORS.notched}
+                    opacity={0.75}
+                    stroke={isOffcut ? '#e74c3c' : '#fff'}
+                    strokeWidth={isOffcut ? 1.5 : 0.5}
+                  />
                 )
               }
 

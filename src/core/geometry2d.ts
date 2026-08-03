@@ -16,6 +16,8 @@
  * пока не реализованы — когда понадобятся, им место тоже здесь.
  */
 
+import { difference as polygonClippingDifference } from 'polygon-clipping'
+
 export interface Point2D {
   x: number
   y: number
@@ -248,6 +250,91 @@ export function sampleArcPoints(arc: ArcFromChord, segments = 32): Point2D[] {
     pts.push({ x: arc.cx + arc.radius * Math.cos(a), y: arc.cy + arc.radius * Math.sin(a) })
   }
   return pts
+}
+
+/**
+ * ─── Форма проёма произвольного контура (23.07.2026) ────────────────────────
+ * Начало полноценной 2D-упаковки листов с произвольными вырезами (см.
+ * TASKS.md, план "2D-solver с полигональными вырезами"). Проём по умолчанию
+ * остаётся прямоугольником (обратная совместимость, `Opening.shape`
+ * необязателен) — эта форма нужна ТОЛЬКО когда вырез отличается от
+ * прямоугольника: косой срез угла, радиусный (арка/скруглённый угол) или
+ * их смесь на одном контуре.
+ *
+ * Контур — вершины в ЛОКАЛЬНЫХ координатах проёма (0,0 — левый нижний угол
+ * bounding box проёма: x∈[0,width], y∈[0,height], Y вверх). Рёбра между
+ * соседними вершинами по умолчанию прямые; ребро может нести `sagitta` —
+ * ТУ ЖЕ стрелу дуги, что и `arcFromChordAndSagitta` (никакой новой
+ * конвенции дуги в проекте не вводим).
+ */
+
+export interface OpeningShapeEdge {
+  /** Стрела дуги для ребра ОТ вершины i К вершине i+1 (по модулю длины
+   *  массива вершин). 0 / не задано — обычная прямая сторона. */
+  sagitta?: number
+}
+
+export interface OpeningShape {
+  /** Вершины контура, по порядку обхода (по/против часовой — не важно,
+   *  polygonArea/pointInPolygon работают в обе стороны). Минимум 3. */
+  points: Point2D[]
+  /** По одному элементу на КАЖДОЕ ребро (edges[i] — ребро points[i]→points[i+1],
+   *  последнее замыкающее — points[length-1]→points[0]). Можно не передавать
+   *  вовсе (все рёбра прямые) или передать короче points — недостающие
+   *  считаются прямыми. */
+  edges?: OpeningShapeEdge[]
+}
+
+/**
+ * Разворачивает OpeningShape в плоский многоугольник (дуги — дискретизированы
+ * через sampleArcPoints). Вырожденные дуги (arcFromChordAndSagitta вернула
+ * null — нулевая стрела или нулевая хорда) молча становятся прямой стороной.
+ */
+export function openingShapePolygon(shape: OpeningShape, arcSegments = 16): Point2D[] {
+  const pts = shape.points
+  if (pts.length < 3) return pts.slice()
+  const result: Point2D[] = []
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]
+    const b = pts[(i + 1) % pts.length]
+    result.push(a)
+    const sagitta = shape.edges?.[i]?.sagitta
+    if (sagitta) {
+      const arc = arcFromChordAndSagitta(a.x, a.y, b.x, b.y, sagitta)
+      if (arc) {
+        // Первая/последняя точка дуги совпадают с a/b — не дублируем их.
+        const arcPts = sampleArcPoints(arc, arcSegments)
+        for (let j = 1; j < arcPts.length - 1; j++) result.push(arcPts[j])
+      }
+    }
+  }
+  return result
+}
+
+/**
+ * Контур проёма в ЛОКАЛЬНЫХ координатах (0,0 = левый нижний угол bounding
+ * box) — прямоугольник [0,width]×[0,height], если `shape` не задан, иначе
+ * `openingShapePolygon(shape)`.
+ */
+export function openingLocalPolygon(
+  width: number, height: number, shape?: OpeningShape, arcSegments = 16,
+): Point2D[] {
+  if (!shape) {
+    return [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }]
+  }
+  return openingShapePolygon(shape, arcSegments)
+}
+
+/**
+ * Контур проёма в МИРОВЫХ координатах стены (x — вдоль стены от 0, y — от
+ * пола) — тот же локальный контур, сдвинутый на (pos, sillHeight).
+ */
+export function openingWorldPolygon(
+  pos: number, sillHeight: number, width: number, height: number,
+  shape?: OpeningShape, arcSegments = 16,
+): Point2D[] {
+  return openingLocalPolygon(width, height, shape, arcSegments)
+    .map(p => ({ x: p.x + pos, y: p.y + sillHeight }))
 }
 
 /**
@@ -535,3 +622,76 @@ export function openingOffsetFromClick(
   const rawOffsetMm = tClamped * lineLengthMm
   return Math.max(0, Math.min(lineLengthMm - widthMm, rawOffsetMm - widthMm / 2))
 }
+
+// ─── Вычитание полигонов (23.07.2026, фаза 2 плана "2D-упаковка с вырезами") ─
+// Обёртка над библиотекой polygon-clipping (проверенная реализация булевых
+// операций — вручную такое не пишем, см. TASKS.md). Наш формат точек везде —
+// Point2D[] (простой контур, БЕЗ дыр); библиотека же оперирует
+// GeoJSON-подобным Ring/Polygon (Polygon = [внешнее_кольцо, ...дыры]),
+// с явно ЗАМКНУТЫМИ кольцами (последняя точка = первая).
+//
+// Если вычитание проёма-"острова" (окно, со всех сторон окружённое
+// материалом внутри одной заготовки) даёт кусок с ДЫРОЙ — в проекте нет
+// (и не будет) типа "полигон с дырой" (BoardPiece.polygon — плоский
+// Point2D[]). Вместо расширения типа — стандартный приём "мост" (bridge/
+// keyhole): дыра пришивается к внешнему контуру нулевой ширины перемычкой
+// через ближайшую пару вершин. Получается один простой (самопересекающийся
+// только вырожденно, по нулевой ширине) контур — корректная площадь
+// (shoelace даёт те же см²) и корректная заливка при отрисовке.
+
+function ringFromPoints(points: Point2D[]): [number, number][] {
+  const ring: [number, number][] = points.map(p => [p.x, p.y])
+  const [fx, fy] = ring[0]
+  const [lx, ly] = ring[ring.length - 1]
+  if (fx !== lx || fy !== ly) ring.push([fx, fy])
+  return ring
+}
+
+/** Дыра → перемычка нулевой ширины к внешнему контуру через ближайшую пару вершин. */
+function bridgeHoleIntoOuter(outer: Point2D[], hole: Point2D[]): Point2D[] {
+  let bestOuterI = 0, bestHoleJ = 0, bestDist2 = Infinity
+  for (let i = 0; i < outer.length; i++) {
+    for (let j = 0; j < hole.length; j++) {
+      const dx = outer[i].x - hole[j].x
+      const dy = outer[i].y - hole[j].y
+      const d2 = dx * dx + dy * dy
+      if (d2 < bestDist2) { bestDist2 = d2; bestOuterI = i; bestHoleJ = j }
+    }
+  }
+  // Вставляем контур дыры (начиная с ближайшей вершины, по кругу) сразу
+  // после outer[bestOuterI], и возвращаемся туда же — нулевая перемычка.
+  const holeLoop = [...hole.slice(bestHoleJ), ...hole.slice(0, bestHoleJ), hole[bestHoleJ]]
+  const result = [...outer.slice(0, bestOuterI + 1), ...holeLoop, ...outer.slice(bestOuterI)]
+  return result
+}
+
+/** Polygon (внешнее кольцо + дыры) → один простой Point2D[] (дыры вшиты мостом). */
+function polygonRingsToSimple(rings: [number, number][][]): Point2D[] {
+  const toPts = (ring: [number, number][]): Point2D[] => {
+    const pts = ring.map(([x, y]) => ({ x, y }))
+    // Замкнутое кольцо библиотеки — убираем дублирующую последнюю точку.
+    if (pts.length > 1) {
+      const a = pts[0], b = pts[pts.length - 1]
+      if (a.x === b.x && a.y === b.y) pts.pop()
+    }
+    return pts
+  }
+  let outer = toPts(rings[0])
+  for (let k = 1; k < rings.length; k++) outer = bridgeHoleIntoOuter(outer, toPts(rings[k]))
+  return outer
+}
+
+/**
+ * subject минус объединение subtrahends — оба в Point2D[] (простые контуры,
+ * замыкание не требуется). Возвращает список простых полигонов результата
+ * (может быть 0 — вычлось полностью; 1 — обычный случай, возможно с дырой,
+ * дыра вшита мостом; 2+ — вырез разделил кусок на несколько частей).
+ */
+export function subtractPolygons(subject: Point2D[], subtrahends: Point2D[][]): Point2D[][] {
+  if (subtrahends.length === 0) return [subject]
+  const subjectPoly = [ringFromPoints(subject)]
+  const clipPolys = subtrahends.map(s => [ringFromPoints(s)])
+  const result = polygonClippingDifference(subjectPoly, ...clipPolys)
+  return result.map(polygonRingsToSimple)
+}
+

@@ -39,7 +39,7 @@ import type {
   BoardOffcut, BoardLayerLayout, BoardSheetResult, EdgeProfile,
 } from '../types'
 import { studHeightAt, studHeightAtLeft } from './profileGeometry'
-import { clipRectBySlopedTop, polygonArea } from './geometry2d'
+import { clipRectBySlopedTop, polygonArea, subtractPolygons, openingWorldPolygon } from './geometry2d'
 
 const SHEET_W = 1200  // ширина листа всегда 1200 мм
 
@@ -70,18 +70,24 @@ function sheetSlot(x1: number, firstW: number): number {
 /**
  * Границы колонок:
  * - шаговые точки по листу (firstStud, затем каждые 1200мм)
- * - края всех проёмов
  * - точки перегиба профилей потолка/пола (уклон/ступени) — чтобы внутри
  *   колонки высота стены менялась линейно, без внутренних изломов
- * → каждая под-колонка либо целиком внутри проёма, либо целиком снаружи,
- *   и целиком лежит на одном линейном участке уклона
+ * → каждая под-колонка целиком лежит на одном линейном участке уклона.
+ *
+ * 23.07.2026 (фаза 2, "2D-упаковка с вырезами", см. TASKS.md): края проёмов
+ * БОЛЬШЕ НЕ добавляются сюда — раньше колонка обязана была обрываться на
+ * каждой кромке проёма (жёсткая граница), из-за чего узкая полоса стены у
+ * проёма резалась на несколько мелких прямоугольных кусков вместо одного
+ * листа с Г-образным вырезом. Теперь колонка идёт по обычной 1200мм сетке
+ * НЕЗАВИСИМО от проёмов, а вычитание проёма (произвольной формы — прямой/
+ * косой/радиусный/смешанный) происходит на уровне отдельного куска
+ * (`subtractPolygons`, geometry2d.ts) внутри calcLayer — см. ниже.
  */
 function columnBoundaries(
   firstStud: number,
   step: number,
   wallL: number,
   layer: 1 | 2,
-  openings: Opening[],
   ceilingProfile: EdgeProfile,
   floorProfile: EdgeProfile,
   sideIndex: 0 | 1 = 0,
@@ -97,15 +103,6 @@ function columnBoundaries(
     while (p + SHEET_W < wallL) { p += SHEET_W; pts.add(p) }
   }
 
-  // Края проёмов — разбиваем колонки на части
-  // pos = левый край проёма, правый = pos + width
-  for (const op of openings.filter(o => o.width > 0)) {
-    const oL = op.pos
-    const oR = op.pos + op.width
-    if (oL > 0 && oL < wallL) pts.add(Math.round(oL))
-    if (oR > 0 && oR < wallL) pts.add(Math.round(oR))
-  }
-
   // Точки перегиба уклона потолка/пола
   for (const p of ceilingProfile) if (p.x > 0 && p.x < wallL) pts.add(Math.round(p.x))
   for (const p of floorProfile) if (p.x > 0 && p.x < wallL) pts.add(Math.round(p.x))
@@ -114,43 +111,26 @@ function columnBoundaries(
 }
 
 /**
- * Высотные диапазоны [yBottom, yTop] где нужно оставить пустоту (проёмы).
- * Применяется к под-колонке [x1, x2].
+ * Проёмы, чей bounding box пересекает прямоугольник куска [x1,x2]×[y1,y2] —
+ * кандидаты на вычитание из этого куска. Дешёвая прямоугольная проверка
+ * ДО дорогого polygon-clipping (точная форма проёма может быть косой/
+ * радиусной — сам вырез вычитается позже, через openingWorldPolygon).
+ *
+ * 23.07.2026 (фаза 2, "2D-упаковка с вырезами"): заменяет прежние
+ * voidZones()/workZones() — раньше проём вырезал из колонки прямоугольную
+ * "рабочую зону" ДО генерации кусков (жёсткая граница), теперь каждый
+ * КАНДИДАТ-кусок генерируется как обычно на всю высоту колонки, а вырез
+ * проёма (любой формы) вычитается уже ИЗ ГОТОВОГО куска — см. `calcLayer`.
  */
-function voidZones(
-  x1: number, x2: number,
-  openings: Opening[],
-): Array<[number, number]> {
-  const voids: Array<[number, number]> = []
-  for (const op of openings.filter(o => o.width > 0)) {
-    const oL = op.pos
-    const oR = op.pos + op.width
-    // Строгая проверка: под-колонка должна полностью лежать внутри проёма
-    if (x1 < oR && x2 > oL) {
-      voids.push([op.sillHeight, op.sillHeight + op.height])
-    }
-  }
-  return voids
-}
-
-/**
- * Рабочие диапазоны [yBottom, yTop] — wallH минус void-зоны.
- */
-function workZones(
-  wallH: number,
-  voids: Array<[number, number]>,
-): Array<[number, number]> {
-  let zones: Array<[number, number]> = [[0, wallH]]
-  for (const [vB, vT] of voids) {
-    const next: Array<[number, number]> = []
-    for (const [z1, z2] of zones) {
-      if (vT <= z1 || vB >= z2) { next.push([z1, z2]); continue }
-      if (z1 < vB) next.push([z1, vB])
-      if (vT < z2) next.push([vT, z2])
-    }
-    zones = next
-  }
-  return zones
+function openingsOverlapping(
+  x1: number, x2: number, y1: number, y2: number, openings: Opening[],
+): Opening[] {
+  return openings.filter(o => {
+    if (o.width <= 0 || o.height <= 0) return false
+    const oL = o.pos, oR = o.pos + o.width
+    const oB = o.sillHeight, oT = o.sillHeight + o.height
+    return x1 < oR && x2 > oL && y1 < oT && y2 > oB
+  })
 }
 
 /**
@@ -341,7 +321,7 @@ function calcLayer(
 ): BoardLayerLayout {
   const SL = spec.sheetLength
 
-  const bounds  = columnBoundaries(firstStud, step, wallL, layer, openings, ceilingProfile, floorProfile, sideIndex)
+  const bounds  = columnBoundaries(firstStud, step, wallL, layer, ceilingProfile, floorProfile, sideIndex)
   const columns: BoardColumn[] = []
   const pool    = sharedPool   // алиас для читаемости
 
@@ -387,28 +367,16 @@ function calcLayer(
       : zoneJoints(0, wallH, SL, vOffset)
     const jointYs = fullYs.slice(1, -1)
 
-    const voids = voidZones(x1, x2, openings)
-    const work  = workZones(wallH, voids)
     const pieces: BoardPiece[] = []
 
-    // Void-зоны → opening_void для Canvas
-    for (const [vB, vT] of voids) {
-      const clampB = Math.max(0, vB)
-      const clampT = Math.min(wallH, vT)
-      if (clampT > clampB) {
-        pieces.push({
-          x: x1, y: clampB, w: cw, h: clampT - clampB,
-          kind: 'opening_void', source: 'new_sheet',
-        })
-      }
-    }
+    // 23.07.2026 (фаза 2): больше не вырезаем "рабочую зону" из колонки ДО
+    // генерации кусков — генерируем на всю высоту колонки [0, wallH], как
+    // если бы проёмов не было, а вычитаем их форму уже ИЗ ГОТОВОГО куска
+    // (см. ниже, после сборки прямоугольника/наклонного полигона куска).
+    const rawYs = zoneJoints(0, wallH, SL, vOffset)
+    const ys = isSlopedColumn ? avoidThinWedge(rawYs, hL, hR, SL, TARGET_WEDGE_MM) : rawYs
 
-    // Рабочие зоны → листы
-    for (const [z1, z2] of work) {
-      const rawYs = zoneJoints(z1, z2, SL, vOffset)
-      const ys = isSlopedColumn ? avoidThinWedge(rawYs, hL, hR, SL, TARGET_WEDGE_MM) : rawYs
-
-      for (let k = 0; k < ys.length - 1; k++) {
+    for (let k = 0; k < ys.length - 1; k++) {
         const py = ys[k]
         const ph = ys[k + 1] - ys[k]
 
@@ -481,13 +449,50 @@ function calcLayer(
           }
         }
 
-        pieces.push({
-          x: x1, y: py, w: cw, h: ph, kind, source, polygon,
-          edgeHeightLeftMm, edgeHeightRightMm,
-        })
-        usedMm2 += pieceAreaMm2
+        // ── Вычитание проёмов (фаза 2, 23.07.2026) ──────────────────────────
+        // Базовый полигон куска — прямоугольник, либо уже обрезанный по
+        // уклону (diagonal_cut) многоугольник выше. Дальше вычитаем ИЗ НЕГО
+        // все проёмы, чей bounding box задевает этот кусок — форма проёма
+        // может быть прямой/косой/радиусной/смешанной (openingWorldPolygon).
+        const basePolygon: { x: number; y: number }[] = polygon ?? [
+          { x: x1, y: py }, { x: x2, y: py }, { x: x2, y: py + ph }, { x: x1, y: py + ph },
+        ]
+        const overlapping = openingsOverlapping(x1, x2, py, py + ph, openings)
+
+        if (overlapping.length === 0) {
+          pieces.push({
+            x: x1, y: py, w: cw, h: ph, kind, source, polygon,
+            edgeHeightLeftMm, edgeHeightRightMm,
+          })
+          usedMm2 += pieceAreaMm2
+        } else {
+          const subtrahends = overlapping.map(o =>
+            openingWorldPolygon(o.pos, o.sillHeight, o.width, o.height, o.shape),
+          )
+          const notched = subtractPolygons(basePolygon, subtrahends)
+
+          if (notched.length === 0) {
+            // Кусок целиком внутри проёма(ов) — материала тут нет вообще.
+            // Не расходуем лист/пул, просто помечаем зону для отрисовки.
+            pieces.push({ x: x1, y: py, w: cw, h: ph, kind: 'opening_void', source })
+          } else {
+            // Может распасться на несколько частей (проём делит кусок
+            // насквозь) — считаем это ОДНИМ физическим листом с несколькими
+            // обрезками (решение пользователя 23.07.2026), а не отдельными
+            // листами: source/пул уже учтены выше по ограничивающему
+            // прямоугольнику cw×ph один раз, дополнительные части не
+            // открывают новый лист повторно — упрощение, площадь каждой
+            // части учитывается в смету отдельно.
+            for (const part of notched) {
+              const partArea = polygonArea(part)
+              pieces.push({
+                x: x1, y: py, w: cw, h: ph, kind: 'notched', source, polygon: part,
+              })
+              usedMm2 += partArea
+            }
+          }
+        }
       }
-    }
 
     columns.push({ x1, x2, pieces, jointYs })
   }
