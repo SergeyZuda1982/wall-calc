@@ -12,6 +12,7 @@
 import type { PlanLine, PlanLineType, LineCategory, RectColumn } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { rectColumnCornersPx } from './columnStamp'
+import { resolveHiddenCorner } from './geometry2d'
 
 const JOIN_EPS = 3 // допуск совпадения точек, px
 
@@ -36,6 +37,21 @@ export interface JoinedWall {
   p1m: Pt; p2m: Pt
   /** Нужен ли торец на конце 1 / конце 2 (false = конец в стыке) */
   cap1: boolean; cap2: boolean
+
+  /**
+   * A2 (KONSPEKT.md 19.07.2026, resolveHiddenCorner) — уточнение L-стыка,
+   * когда натуральный угол ЭТОЙ стены на этой стороне оказался внутри
+   * соседней (симметричный митр p1p/p2p/p1m/p2m выше даёт "флажок"):
+   * РОВНО 2 точки в порядке обхода полигона (см. resolveHiddenCorner),
+   * которыми при отрисовке нужно ЗАМЕНИТЬ соответствующую p*p/p*m точку —
+   * не добавить к ней, а именно заменить (та точка невалидна).
+   * p1p/p2p/p1m/p2m выше в этом случае остаются старым приближением —
+   * для обратной совместимости (T-стыки, расширение оси и т.п. их
+   * по-прежнему используют напрямую, без регресса относительно текущего
+   * поведения). Undefined — клин не нужен, обычный митр уже корректен.
+   */
+  wedge1p?: [Pt, Pt]; wedge1m?: [Pt, Pt]
+  wedge2p?: [Pt, Pt]; wedge2m?: [Pt, Pt]
 }
 
 // ─── утилиты ────────────────────────────────────────────────────────────────
@@ -261,6 +277,59 @@ function applyL(
   if (bUsedMiter) {
     if (bEnd === 'end2') { jb.ax2 += bi.ux * a.halfPx; jb.ay2 += bi.uy * a.halfPx }
     else                  { jb.ax1 -= bi.ux * a.halfPx; jb.ay1 -= bi.uy * a.halfPx }
+  }
+
+  // ── A2 (KONSPEKT.md, resolveHiddenCorner) — уточнение клина ─────────────
+  // Только когда митр реально применился для соответствующей стены (не
+  // откат safeCorner — та защита самостоятельна, поверх неё клин не нужен:
+  // если геометрия уже настолько вырождена, что откатились на исходный
+  // угол, уточнять его через resolveHiddenCorner той же чужой стеной
+  // некорректно — она не участвовала в исходном (не митрованном) угле).
+  if (aUsedMiter) applyWedge(ja, a, ai, aEnd, b, bi)
+  if (bUsedMiter) applyWedge(jb, b, bi, bEnd, a, ai)
+}
+
+/** Натуральные (немитрованные) 4 угла прямоугольника стены — p1p,p2p,p2m,p1m. */
+function quadOf(w: WallForJoin, wi: WInfo): [Pt, Pt, Pt, Pt] {
+  return [
+    { x: w.x1 + wi.nx, y: w.y1 + wi.ny },
+    { x: w.x2 + wi.nx, y: w.y2 + wi.ny },
+    { x: w.x2 - wi.nx, y: w.y2 - wi.ny },
+    { x: w.x1 - wi.nx, y: w.y1 - wi.ny },
+  ]
+}
+
+/** Индекс угла в quadOf()-массиве (0=p1p,1=p2p,2=p2m,3=p1m) по концу+стороне. */
+function cornerIdx(end: 'end1' | 'end2', side: 'p' | 'm'): number {
+  if (end === 'end1') return side === 'p' ? 0 : 3
+  return side === 'p' ? 1 : 2
+}
+
+/**
+ * Для ОДНОЙ стены (own) на конце ownEnd — проверяет обе стороны (p и m) на
+ * необходимость клина против соседней стены (other) и записывает результат
+ * в jw.wedge{1,2}{p,m}, если найден (см. resolveHiddenCorner). Вызывается
+ * отдельно для A и для B — они проверяются независимо, только та сторона,
+ * где реально применился митр у ЭТОЙ стены.
+ */
+function applyWedge(
+  jw: JoinedWall, own: WallForJoin, ownInfo: WInfo, ownEnd: 'end1' | 'end2',
+  other: WallForJoin, otherInfo: WInfo,
+) {
+  const ownQuad = quadOf(own, ownInfo)
+  const otherQuad = quadOf(other, otherInfo)
+
+  for (const side of ['p', 'm'] as const) {
+    const idx = cornerIdx(ownEnd, side)
+    const prev = ownQuad[(idx + 3) % 4], mid = ownQuad[idx], next = ownQuad[(idx + 1) % 4]
+    const wedge = resolveHiddenCorner(prev, mid, next, otherQuad)
+    if (!wedge || wedge.length < 2) continue // клин не нужен либо вырожденный случай — оставляем старый митр как есть
+    const pair: [Pt, Pt] = [wedge[0], wedge[1]]
+    if (ownEnd === 'end1') {
+      if (side === 'p') jw.wedge1p = pair; else jw.wedge1m = pair
+    } else {
+      if (side === 'p') jw.wedge2p = pair; else jw.wedge2m = pair
+    }
   }
 }
 
