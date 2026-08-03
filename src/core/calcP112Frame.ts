@@ -470,6 +470,15 @@ export function resolveFrameParams(opts: {
   /** П112/П113 — своя таблица дефолтного шага b в 'user'-режиме. Не задан
    *  → 'p112' (старое поведение, обратная совместимость). */
   ceilingType?: 'p112' | 'p113'
+  /**
+   * НОВОЕ (30.07.2026) — отступ первого ряда осн./несущего профиля от
+   * стены, только в mode='user' (в 'knauf' отступ жёстко по официальной
+   * таблице, KNAUF_WALL_OFFSET_*_MM, не переопределяется). Не задан →
+   * прежнее поведение (undefined уходит в calcFrameRowPositions, там
+   * дефолт = сам шаг stepC/stepB).
+   */
+  userWallOffsetMainMm?: number
+  userWallOffsetBearingMm?: number
 }): ResolvedFrameParams {
   if (opts.layoutMode === 'knauf') {
     const mountDirection = opts.mountDirection ?? 'crosswise'
@@ -486,7 +495,11 @@ export function resolveFrameParams(opts: {
   const fallback = opts.ceilingType === 'p113' ? 950 : 1000
   const stepB = opts.userStepB ?? (table[opts.stepC as CeilingStep] ?? fallback)
   const stepA = opts.userStepA ?? DEFAULT_USER_HANGER_STEP_MM
-  return { stepB, stepA }
+  return {
+    stepB, stepA,
+    wallOffsetMainMm: opts.userWallOffsetMainMm,
+    wallOffsetBearingMm: opts.userWallOffsetBearingMm,
+  }
 }
 
 export interface P112FrameGeometry {

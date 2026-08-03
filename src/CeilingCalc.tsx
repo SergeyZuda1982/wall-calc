@@ -402,6 +402,7 @@ export default function CeilingCalc() {
     stepC: form.stepC, layoutMode: layoutModeUi, userStepB: form.stepB, userStepA: form.stepA,
     mountDirection: form.mountDirection, loadClass: form.loadClass,
     ceilingType: form.type === 'p113' ? 'p113' : 'p112',
+    userWallOffsetMainMm: form.wallOffsetMainMm, userWallOffsetBearingMm: form.wallOffsetBearingMm,
   })
   // 19.07.2026: реальные позиции несущего профиля — та же формула, что
   // внутри CeilingCanvas (bearingPosYMm) — нужна здесь тоже, чтобы передать
@@ -672,6 +673,29 @@ export default function CeilingCalc() {
                   <input style={inp} type="number" min={0} step={50}
                     placeholder="800"
                     value={form.stepA ?? ''} onChange={e => setField('stepA', +e.target.value || undefined)} />
+                </div>
+              </div>
+            )}
+
+            {layoutModeUi === 'user' && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  {/* 30.07.2026: раньше первый ряд ВСЕГДА стоял ровно на
+                      расстоянии полного шага (c) от стены начала раскладки —
+                      никакого поля для этого не было, и "Зазор плита→каркас"
+                      (slabGapMm, ниже) сюда никак не влиял, хотя пользователь
+                      ожидал обратного (это другая величина — вертикальный
+                      зазор до плиты, для типа подвеса). */}
+                  <label style={lbl}>Отступ 1-го ряда (осн.), мм</label>
+                  <input style={inp} type="number" min={0} step={10}
+                    placeholder={String(form.stepC)}
+                    value={form.wallOffsetMainMm ?? ''} onChange={e => setField('wallOffsetMainMm', +e.target.value || undefined)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={lbl}>Отступ 1-го ряда (несущий), мм</label>
+                  <input style={inp} type="number" min={0} step={10}
+                    placeholder={String(frameParamsUi.stepB)}
+                    value={form.wallOffsetBearingMm ?? ''} onChange={e => setField('wallOffsetBearingMm', +e.target.value || undefined)} />
                 </div>
               </div>
             )}
@@ -1174,6 +1198,27 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
                 const wb = toStage(toWorld({ x: row.pos, y: b }, polygonFrame.frame))
                 return <Line key={`b-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.text} strokeWidth={PP_LINE_W} opacity={0.4} dash={[4, 3]} />
               }))}
+              {/* Реальное расстояние от стены начала раскладки, мм — по
+                  одной подписи на ряд, у начала первого сегмента (30.07.2026,
+                  просьба пользователя — видеть шаг 600-1200-1800...) */}
+              {step >= 2 && polygonFrame.mainRows.map((row, ri) => {
+                if (row.segments.length === 0) return null
+                const [a] = row.segments[0]
+                const wa = toStage(toWorld({ x: a, y: row.pos }, polygonFrame.frame))
+                return (
+                  <Text key={`m-label-${ri}`} x={wa.x - 30} y={wa.y - 14} width={60} align="center"
+                    text={`${Math.round(row.pos)}`} fontSize={10} fill={C.accent} fontStyle="bold" />
+                )
+              })}
+              {step >= 3 && polygonFrame.bearingRows.map((row, ri) => {
+                if (row.segments.length === 0) return null
+                const [a] = row.segments[0]
+                const wa = toStage(toWorld({ x: row.pos, y: a }, polygonFrame.frame))
+                return (
+                  <Text key={`b-label-${ri}`} x={wa.x - 44} y={wa.y - 6} width={40} align="right"
+                    text={`${Math.round(row.pos)}`} fontSize={10} fill={C.text} fontStyle="bold" />
+                )
+              })}
               {step >= 2 && polygonFrame.hangerPoints.map((p, i) => {
                 const s = toStage(toWorld(p, polygonFrame.frame))
                 return (
@@ -1391,6 +1436,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     // 10.07.2026: П112/П113 — своя таблица дефолтного шага b в 'user'-режиме
     // (раньше здесь всегда молча брался П112-вариант, даже для П113).
     ceilingType: form.type === 'p113' ? 'p113' : 'p112',
+    userWallOffsetMainMm: form.wallOffsetMainMm, userWallOffsetBearingMm: form.wallOffsetBearingMm,
   })
   const stepB = frameParams.stepB
   const stepA = frameParams.stepA
@@ -1400,15 +1446,19 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // — не наивная сетка от 0; в режиме 'knauf' — строго по официальной сетке,
   // без сжатия последнего ряда. shiftMainMm — ручной сдвиг гребёнки поверх.
   const mainPosXMm = calcFrameRowPositions(L, stepC, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetMainMm, profileKind: 'main' })
-  const mainPosX = mainPosXMm
-    .map(p => (p + shiftMainMm) * scale)
-    .filter(x => x >= 0 && x <= L * scale)
+  // 30.07.2026: пары (мм-от-стены, px-на-холсте) — раньше знали только px,
+  // подписать реальный шаг (600-1200-1800...) было нечем.
+  const mainRowsPx = mainPosXMm
+    .map(p => ({ mm: p + shiftMainMm, px: (p + shiftMainMm) * scale }))
+    .filter(r => r.px >= 0 && r.px <= L * scale)
+  const mainPosX = mainRowsPx.map(r => r.px)
 
   // ── Несущие профили (Y, шаг b) ──
   const bearingPosYMm = calcFrameRowPositions(W_room, stepB, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm, profileKind: 'bearing' })
-  const bearingPosY = bearingPosYMm
-    .map(p => (p + shiftBearingMm) * scale)
-    .filter(y => y >= 0 && y <= W_room * scale)
+  const bearingRowsPx = bearingPosYMm
+    .map(p => ({ mm: p + shiftBearingMm, px: (p + shiftBearingMm) * scale }))
+    .filter(r => r.px >= 0 && r.px <= W_room * scale)
+  const bearingPosY = bearingRowsPx.map(r => r.px)
 
   // ── Подвесы ──
   // 10.07.2026: подвес обязан висеть строго по оси профиля, на который он
@@ -1608,15 +1658,20 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
         )}
 
         {/* ── Шаг 2+: Основные ПП 60×27 (вертикальные) ── */}
-        {step >= 2 && mainPosX.map((px, i) => (
+        {step >= 2 && mainRowsPx.map((r, i) => (
           <Group key={`mp${i}`}>
             {/* Имитация П-профиля: тёмная полка + светлая середина + тёмная полка */}
-            <Rect x={px - PP_W / 2} y={0} width={PP_W / 4} height={H}
+            <Rect x={r.px - PP_W / 2} y={0} width={PP_W / 4} height={H}
               fill={C.ppMain} opacity={0.9} />
-            <Rect x={px - PP_W / 4} y={0} width={PP_W / 2} height={H}
+            <Rect x={r.px - PP_W / 4} y={0} width={PP_W / 2} height={H}
               fill="#78909c" opacity={0.6} />
-            <Rect x={px + PP_W / 4} y={0} width={PP_W / 4} height={H}
+            <Rect x={r.px + PP_W / 4} y={0} width={PP_W / 4} height={H}
               fill={C.ppMain} opacity={0.9} />
+            {/* Реальное расстояние от стены начала раскладки, мм — просьба
+                пользователя 30.07.2026, чтобы видеть шаг 600-1200-1800...
+                а не гадать по картинке */}
+            <Text x={r.px - 30} y={-14} width={60} align="center"
+              text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppMain} fontStyle="bold" />
           </Group>
         ))}
 
@@ -1638,7 +1693,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
              идёт сплошняком, как у П112. Основной профиль (mainPosX, выше)
              при этом сплошной у ОБОИХ типов — рисовка вертикальных линий не
              меняется. */}
-        {step >= 3 && form.type === 'p113' && bearingPosY.map((py, i) => {
+        {step >= 3 && form.type === 'p113' && bearingRowsPx.map((r, i) => {
           const GAP = PP_W * 0.5
           const boundaries = [0, ...mainPosX, W]
           const segs: { xa: number; xb: number }[] = []
@@ -1652,20 +1707,25 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
           return (
             <Group key={`bp${i}`}>
               {segs.map((s, si) => (
-                <Rect key={`bpseg${i}_${si}`} x={s.xa} y={py - PP_W / 2} width={s.xb - s.xa} height={PP_W}
+                <Rect key={`bpseg${i}_${si}`} x={s.xa} y={r.px - PP_W / 2} width={s.xb - s.xa} height={PP_W}
                   fill={C.ppBearing} opacity={0.75} cornerRadius={1} />
               ))}
+              <Text x={-46} y={r.px - 6} width={40} align="right"
+                text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppBearing} fontStyle="bold" />
             </Group>
           )
         })}
-        {step >= 3 && form.type !== 'p113' && bearingPosY.map((py, i) => (
+        {step >= 3 && form.type !== 'p113' && bearingRowsPx.map((r, i) => (
           <Group key={`bp${i}`}>
-            <Rect x={0} y={py - PP_W / 2} width={W} height={PP_W / 4}
+            <Rect x={0} y={r.px - PP_W / 2} width={W} height={PP_W / 4}
               fill={C.ppBearing} opacity={0.9} />
-            <Rect x={0} y={py - PP_W / 4} width={W} height={PP_W / 2}
+            <Rect x={0} y={r.px - PP_W / 4} width={W} height={PP_W / 2}
               fill="#90a4ae" opacity={0.6} />
-            <Rect x={0} y={py + PP_W / 4} width={W} height={PP_W / 4}
+            <Rect x={0} y={r.px + PP_W / 4} width={W} height={PP_W / 4}
               fill={C.ppBearing} opacity={0.9} />
+            {/* Реальное расстояние от стены начала раскладки, мм (30.07.2026) */}
+            <Text x={-46} y={r.px - 6} width={40} align="right"
+              text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppBearing} fontStyle="bold" />
           </Group>
         ))}
 
