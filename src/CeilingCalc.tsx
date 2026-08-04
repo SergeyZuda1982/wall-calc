@@ -53,6 +53,24 @@ const C = {
   scaleText:    '#546e7a',
 }
 
+/**
+ * 03.08.2026: подписи расстояния от стены (600/1200/1800...) у рядов
+ * профиля — при плотной сетке (много рядов на холсте фиксированной ширины,
+ * см. скриншот пользователя — Г-контур, зазор 100мм) налезали друг на
+ * друга. Возвращает, какие подписи показывать: идём по возрастанию px,
+ * сравниваем с последней ПОКАЗАННОЙ (не с соседней "сырой" позицией —
+ * иначе цепочка близких рядов подряд не показала бы вообще ни одной
+ * подписи после первой), первая позиция показывается всегда.
+ */
+function computeLabelShown(positionsPx: number[], minGapPx: number): boolean[] {
+  let lastShownPx: number | null = null
+  return positionsPx.map(px => {
+    if (lastShownPx !== null && px - lastShownPx < minGapPx) return false
+    lastShownPx = px
+    return true
+  })
+}
+
 // ─── Шаги монтажа ────────────────────────────────────────────────────────────
 
 type Step = 1 | 2 | 3 | 4
@@ -1200,25 +1218,36 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
               }))}
               {/* Реальное расстояние от стены начала раскладки, мм — по
                   одной подписи на ряд, у начала первого сегмента (30.07.2026,
-                  просьба пользователя — видеть шаг 600-1200-1800...) */}
-              {step >= 2 && polygonFrame.mainRows.map((row, ri) => {
-                if (row.segments.length === 0) return null
-                const [a] = row.segments[0]
-                const wa = toStage(toWorld({ x: a, y: row.pos }, polygonFrame.frame))
-                return (
-                  <Text key={`m-label-${ri}`} x={wa.x - 30} y={wa.y - 14} width={60} align="center"
-                    text={`${Math.round(row.pos)}`} fontSize={10} fill={C.accent} fontStyle="bold" />
-                )
-              })}
-              {step >= 3 && polygonFrame.bearingRows.map((row, ri) => {
-                if (row.segments.length === 0) return null
-                const [a] = row.segments[0]
-                const wa = toStage(toWorld({ x: row.pos, y: a }, polygonFrame.frame))
-                return (
-                  <Text key={`b-label-${ri}`} x={wa.x - 44} y={wa.y - 6} width={40} align="right"
-                    text={`${Math.round(row.pos)}`} fontSize={10} fill={C.text} fontStyle="bold" />
-                )
-              })}
+                  просьба пользователя — видеть шаг 600-1200-1800...).
+                  03.08.2026: при плотной сетке подписи налезали друг на
+                  друга — computeLabelShown скрывает лишние (см. определение
+                  функции в начале файла). */}
+              {step >= 2 && (() => {
+                const rows = polygonFrame.mainRows.filter(r => r.segments.length > 0)
+                const shown = computeLabelShown(rows.map(r => r.pos * scale), 34)
+                return rows.map((row, i) => {
+                  if (!shown[i]) return null
+                  const [a] = row.segments[0]
+                  const wa = toStage(toWorld({ x: a, y: row.pos }, polygonFrame.frame))
+                  return (
+                    <Text key={`m-label-${row.pos}`} x={wa.x - 30} y={wa.y - 14} width={60} align="center"
+                      text={`${Math.round(row.pos)}`} fontSize={10} fill={C.accent} fontStyle="bold" />
+                  )
+                })
+              })()}
+              {step >= 3 && (() => {
+                const rows = polygonFrame.bearingRows.filter(r => r.segments.length > 0)
+                const shown = computeLabelShown(rows.map(r => r.pos * scale), 16)
+                return rows.map((row, i) => {
+                  if (!shown[i]) return null
+                  const [a] = row.segments[0]
+                  const wa = toStage(toWorld({ x: row.pos, y: a }, polygonFrame.frame))
+                  return (
+                    <Text key={`b-label-${row.pos}`} x={wa.x - 44} y={wa.y - 6} width={40} align="right"
+                      text={`${Math.round(row.pos)}`} fontSize={10} fill={C.text} fontStyle="bold" />
+                  )
+                })
+              })()}
               {step >= 2 && polygonFrame.hangerPoints.map((p, i) => {
                 const s = toStage(toWorld(p, polygonFrame.frame))
                 return (
@@ -1452,6 +1481,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     .map(p => ({ mm: p + shiftMainMm, px: (p + shiftMainMm) * scale }))
     .filter(r => r.px >= 0 && r.px <= L * scale)
   const mainPosX = mainRowsPx.map(r => r.px)
+  const mainLabelShown = computeLabelShown(mainPosX, 34)
 
   // ── Несущие профили (Y, шаг b) ──
   const bearingPosYMm = calcFrameRowPositions(W_room, stepB, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm, profileKind: 'bearing' })
@@ -1459,6 +1489,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     .map(p => ({ mm: p + shiftBearingMm, px: (p + shiftBearingMm) * scale }))
     .filter(r => r.px >= 0 && r.px <= W_room * scale)
   const bearingPosY = bearingRowsPx.map(r => r.px)
+  const bearingLabelShown = computeLabelShown(bearingPosY, 16)
 
   // ── Подвесы ──
   // 10.07.2026: подвес обязан висеть строго по оси профиля, на который он
@@ -1669,9 +1700,16 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
               fill={C.ppMain} opacity={0.9} />
             {/* Реальное расстояние от стены начала раскладки, мм — просьба
                 пользователя 30.07.2026, чтобы видеть шаг 600-1200-1800...
-                а не гадать по картинке */}
-            <Text x={r.px - 30} y={-14} width={60} align="center"
-              text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppMain} fontStyle="bold" />
+                а не гадать по картинке.
+                03.08.2026: при плотной сетке подписи width=60 налезали друг
+                на друга — mainLabelShown[i] считает нарастающим итогом (см.
+                определение выше, рядом с mainRowsPx), не просто сосед-к-соседу
+                (иначе при цепочке близких рядов подряд не показалась бы ни
+                одна подпись после первой). */}
+            {mainLabelShown[i] && (
+              <Text x={r.px - 30} y={-14} width={60} align="center"
+                text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppMain} fontStyle="bold" />
+            )}
           </Group>
         ))}
 
@@ -1710,8 +1748,10 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
                 <Rect key={`bpseg${i}_${si}`} x={s.xa} y={r.px - PP_W / 2} width={s.xb - s.xa} height={PP_W}
                   fill={C.ppBearing} opacity={0.75} cornerRadius={1} />
               ))}
-              <Text x={-46} y={r.px - 6} width={40} align="right"
-                text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppBearing} fontStyle="bold" />
+              {bearingLabelShown[i] && (
+                <Text x={-46} y={r.px - 6} width={40} align="right"
+                  text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppBearing} fontStyle="bold" />
+              )}
             </Group>
           )
         })}
@@ -1723,9 +1763,12 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
               fill="#90a4ae" opacity={0.6} />
             <Rect x={0} y={r.px + PP_W / 4} width={W} height={PP_W / 4}
               fill={C.ppBearing} opacity={0.9} />
-            {/* Реальное расстояние от стены начала раскладки, мм (30.07.2026) */}
-            <Text x={-46} y={r.px - 6} width={40} align="right"
-              text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppBearing} fontStyle="bold" />
+            {/* Реальное расстояние от стены начала раскладки, мм (30.07.2026);
+                скрывается при плотной сетке, см. computeLabelShown (03.08.2026) */}
+            {bearingLabelShown[i] && (
+              <Text x={-46} y={r.px - 6} width={40} align="right"
+                text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppBearing} fontStyle="bold" />
+            )}
           </Group>
         ))}
 
