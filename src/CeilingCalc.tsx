@@ -55,20 +55,22 @@ const C = {
 
 /**
  * 03.08.2026: подписи расстояния от стены (600/1200/1800...) у рядов
- * профиля — при плотной сетке (много рядов на холсте фиксированной ширины,
- * см. скриншот пользователя — Г-контур, зазор 100мм) налезали друг на
- * друга. Возвращает, какие подписи показывать: идём по возрастанию px,
- * сравниваем с последней ПОКАЗАННОЙ (не с соседней "сырой" позицией —
- * иначе цепочка близких рядов подряд не показала бы вообще ни одной
- * подписи после первой), первая позиция показывается всегда.
+ * профиля — по просьбе пользователя ряды показываются ВСЕ (не через раз),
+ * но размер шрифта подбирается так, чтобы соседние подписи не налезали
+ * друг на друга при плотной сетке. mode='h' — подписи стоят в ряд по
+ * горизонтали (main-ряды, ширина цифр важна), mode='v' — друг под другом по
+ * вертикали (bearing-ряды, важна высота строки, не ширина).
  */
-function computeLabelShown(positionsPx: number[], minGapPx: number): boolean[] {
-  let lastShownPx: number | null = null
-  return positionsPx.map(px => {
-    if (lastShownPx !== null && px - lastShownPx < minGapPx) return false
-    lastShownPx = px
-    return true
-  })
+function computeAutoFontSize(positionsPx: number[], mode: 'h' | 'v'): number {
+  if (positionsPx.length < 2) return 10
+  const sorted = [...positionsPx].sort((a, b) => a - b)
+  let minGap = Infinity
+  for (let i = 1; i < sorted.length; i++) minGap = Math.min(minGap, sorted[i] - sorted[i - 1])
+  if (!isFinite(minGap) || minGap <= 1) return 5
+  // 'h': до 4-5 цифр в ряд, ширина цифры (жирный шрифт) ≈ 0.62×fontSize.
+  // 'v': высота строки ≈ 1.15×fontSize.
+  const raw = mode === 'h' ? minGap / (5 * 0.62) : minGap / 1.15
+  return Math.max(5, Math.min(10, raw))
 }
 
 // ─── Шаги монтажа ────────────────────────────────────────────────────────────
@@ -1219,32 +1221,29 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
               {/* Реальное расстояние от стены начала раскладки, мм — по
                   одной подписи на ряд, у начала первого сегмента (30.07.2026,
                   просьба пользователя — видеть шаг 600-1200-1800...).
-                  03.08.2026: при плотной сетке подписи налезали друг на
-                  друга — computeLabelShown скрывает лишние (см. определение
-                  функции в начале файла). */}
+                  03.08.2026: показываем ВСЕ ряды (по просьбе пользователя),
+                  шрифт мельчает при плотной сетке — см. computeAutoFontSize. */}
               {step >= 2 && (() => {
                 const rows = polygonFrame.mainRows.filter(r => r.segments.length > 0)
-                const shown = computeLabelShown(rows.map(r => r.pos * scale), 34)
-                return rows.map((row, i) => {
-                  if (!shown[i]) return null
+                const fs = computeAutoFontSize(rows.map(r => r.pos * scale), 'h')
+                return rows.map(row => {
                   const [a] = row.segments[0]
                   const wa = toStage(toWorld({ x: a, y: row.pos }, polygonFrame.frame))
                   return (
                     <Text key={`m-label-${row.pos}`} x={wa.x - 30} y={wa.y - 14} width={60} align="center"
-                      text={`${Math.round(row.pos)}`} fontSize={10} fill={C.accent} fontStyle="bold" />
+                      text={`${Math.round(row.pos)}`} fontSize={fs} fill={C.accent} fontStyle="bold" />
                   )
                 })
               })()}
               {step >= 3 && (() => {
                 const rows = polygonFrame.bearingRows.filter(r => r.segments.length > 0)
-                const shown = computeLabelShown(rows.map(r => r.pos * scale), 16)
-                return rows.map((row, i) => {
-                  if (!shown[i]) return null
+                const fs = computeAutoFontSize(rows.map(r => r.pos * scale), 'v')
+                return rows.map(row => {
                   const [a] = row.segments[0]
                   const wa = toStage(toWorld({ x: row.pos, y: a }, polygonFrame.frame))
                   return (
-                    <Text key={`b-label-${row.pos}`} x={wa.x - 44} y={wa.y - 6} width={40} align="right"
-                      text={`${Math.round(row.pos)}`} fontSize={10} fill={C.text} fontStyle="bold" />
+                    <Text key={`b-label-${row.pos}`} x={wa.x - 44} y={wa.y - fs / 2} width={40} align="right"
+                      text={`${Math.round(row.pos)}`} fontSize={fs} fill={C.text} fontStyle="bold" />
                   )
                 })
               })()}
@@ -1481,7 +1480,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     .map(p => ({ mm: p + shiftMainMm, px: (p + shiftMainMm) * scale }))
     .filter(r => r.px >= 0 && r.px <= L * scale)
   const mainPosX = mainRowsPx.map(r => r.px)
-  const mainLabelShown = computeLabelShown(mainPosX, 34)
+  const mainLabelFontSize = computeAutoFontSize(mainPosX, 'h')
 
   // ── Несущие профили (Y, шаг b) ──
   const bearingPosYMm = calcFrameRowPositions(W_room, stepB, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm, profileKind: 'bearing' })
@@ -1489,7 +1488,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     .map(p => ({ mm: p + shiftBearingMm, px: (p + shiftBearingMm) * scale }))
     .filter(r => r.px >= 0 && r.px <= W_room * scale)
   const bearingPosY = bearingRowsPx.map(r => r.px)
-  const bearingLabelShown = computeLabelShown(bearingPosY, 16)
+  const bearingLabelFontSize = computeAutoFontSize(bearingPosY, 'v')
 
   // ── Подвесы ──
   // 10.07.2026: подвес обязан висеть строго по оси профиля, на который он
@@ -1701,15 +1700,11 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
             {/* Реальное расстояние от стены начала раскладки, мм — просьба
                 пользователя 30.07.2026, чтобы видеть шаг 600-1200-1800...
                 а не гадать по картинке.
-                03.08.2026: при плотной сетке подписи width=60 налезали друг
-                на друга — mainLabelShown[i] считает нарастающим итогом (см.
-                определение выше, рядом с mainRowsPx), не просто сосед-к-соседу
-                (иначе при цепочке близких рядов подряд не показалась бы ни
-                одна подпись после первой). */}
-            {mainLabelShown[i] && (
-              <Text x={r.px - 30} y={-14} width={60} align="center"
-                text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppMain} fontStyle="bold" />
-            )}
+                03.08.2026: показываем ВСЕ ряды (по просьбе пользователя — не
+                прятать через раз), вместо этого шрифт мельчает при плотной
+                сетке — см. computeAutoFontSize. */}
+            <Text x={r.px - 30} y={-14} width={60} align="center"
+              text={`${Math.round(r.mm)}`} fontSize={mainLabelFontSize} fill={C.ppMain} fontStyle="bold" />
           </Group>
         ))}
 
@@ -1748,10 +1743,8 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
                 <Rect key={`bpseg${i}_${si}`} x={s.xa} y={r.px - PP_W / 2} width={s.xb - s.xa} height={PP_W}
                   fill={C.ppBearing} opacity={0.75} cornerRadius={1} />
               ))}
-              {bearingLabelShown[i] && (
-                <Text x={-46} y={r.px - 6} width={40} align="right"
-                  text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppBearing} fontStyle="bold" />
-              )}
+              <Text x={-46} y={r.px - bearingLabelFontSize / 2} width={40} align="right"
+                text={`${Math.round(r.mm)}`} fontSize={bearingLabelFontSize} fill={C.ppBearing} fontStyle="bold" />
             </Group>
           )
         })}
@@ -1764,11 +1757,10 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
             <Rect x={0} y={r.px + PP_W / 4} width={W} height={PP_W / 4}
               fill={C.ppBearing} opacity={0.9} />
             {/* Реальное расстояние от стены начала раскладки, мм (30.07.2026);
-                скрывается при плотной сетке, см. computeLabelShown (03.08.2026) */}
-            {bearingLabelShown[i] && (
-              <Text x={-46} y={r.px - 6} width={40} align="right"
-                text={`${Math.round(r.mm)}`} fontSize={10} fill={C.ppBearing} fontStyle="bold" />
-            )}
+                03.08.2026: показываем все ряды, шрифт мельчает при плотной
+                сетке — см. computeAutoFontSize. */}
+            <Text x={-46} y={r.px - bearingLabelFontSize / 2} width={40} align="right"
+              text={`${Math.round(r.mm)}`} fontSize={bearingLabelFontSize} fill={C.ppBearing} fontStyle="bold" />
           </Group>
         ))}
 
