@@ -1192,10 +1192,26 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
             return (
               <Group>
                 {polygonSheetLayout.layer1.pieces.map((pc, pi) => {
+                  const isCut = pc.kind !== 'full'
+                  // 04.08.2026 (фаза 5): notched-куски (задеты дыркой —
+                  // шахта/короб/люстра) рисуем РЕАЛЬНЫМ контуром, а не
+                  // прямоугольником по u1..u2×v1..v2 — тот же принцип, что
+                  // у стен (SheetLayoutCanvas.tsx): bbox notched-куска не
+                  // равен его форме, если дырка просто "откусила" угол/край
+                  // (не разделила кусок насквозь), иначе на схеме был бы
+                  // закрашенный прямоугольник поверх дырки.
+                  if (pc.kind === 'notched' && pc.polygon) {
+                    const pts = pc.polygon
+                      .map(p => toStage(toWorld(p, polygonFrame.frame)))
+                      .flatMap(p => [p.x, p.y])
+                    return (
+                      <Line key={`sh${pi}`} points={pts} closed
+                        fill={C.sheetCutFill} stroke={C.sheetCutBorder} strokeWidth={1} />
+                    )
+                  }
                   const corner = toStage(toWorld({ x: pc.u1, y: pc.v1 }, polygonFrame.frame))
                   const wPx = (pc.u2 - pc.u1) * scale
                   const hPx = (pc.v2 - pc.v1) * scale
-                  const isCut = pc.kind !== 'full'
                   return (
                     <Rect key={`sh${pi}`} x={corner.x} y={corner.y} width={wPx} height={hPx}
                       rotation={angleDeg}

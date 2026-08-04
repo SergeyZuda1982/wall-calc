@@ -77,6 +77,55 @@ describe('calcPolygonSheetLayout — контур с дыркой', () => {
   })
 })
 
+describe('calcPolygonSheetLayout — точный вырез дырки на листе (04.08.2026, фаза 5)', () => {
+  // Контур ровно 2500×1200 — без дырки это ОДИН цельный лист (см. первый
+  // тест файла), удобная база: любое отличие от 'full' тут — заведомо
+  // из-за дырки, а не из-за раскроя на несколько листов.
+  const outer = rect(2500, 1200)
+  const startSide = { start: outer[0], end: outer[1] }
+
+  it('дырка в углу — один notched-кусок с реальным контуром (не рассыпается на прямоугольные огрызки)', () => {
+    const hole: Point2D[] = [{ x: 0, y: 0 }, { x: 500, y: 0 }, { x: 500, y: 500 }, { x: 0, y: 500 }]
+    const r = calcPolygonSheetLayout(outer, [hole], startSide, 2500)!
+    const notched = r.layer1.pieces.filter(p => p.kind === 'notched')
+    expect(notched.length).toBe(1)
+    expect(notched[0].polygon).toBeDefined()
+    expect(notched[0].polygon!.length).toBeGreaterThanOrEqual(6) // L-образный контур, не 4 точки
+
+    // Площадь листа за вычетом дырки, а не полная площадь кандидата.
+    const expectedM2 = (2500 * 1200 - 500 * 500) / 1e6
+    expect(r.totalUsedAreaM2).toBeCloseTo(expectedM2, 3)
+
+    // Дырка целиком внутри одного кандидата — физически всё ещё ОДИН лист.
+    expect(r.layer1.sheetsNeeded).toBe(1)
+  })
+
+  it('дырка делит лист насквозь — один физический лист с двумя обрезками, а не два листа (решение пользователя, как у стен)', () => {
+    // Полоса шириной во всю высоту контура (y: 0..1200), по X — узкая
+    // прорезь посередине листа: делит его на левую и правую часть.
+    const hole: Point2D[] = [{ x: 1000, y: 0 }, { x: 1100, y: 0 }, { x: 1100, y: 1200 }, { x: 1000, y: 1200 }]
+    const r = calcPolygonSheetLayout(outer, [hole], startSide, 2500)!
+    const notched = r.layer1.pieces.filter(p => p.kind === 'notched')
+    expect(notched.length).toBe(2) // левая и правая часть — отдельные куски на схеме
+
+    // Но физически материал взят из ОДНОГО листа (source/пул считаются
+    // один раз по кандидату — см. заголовок calcPolygonSheetLayout.ts).
+    expect(r.layer1.sheetsNeeded).toBe(1)
+
+    // Обе части — реальные прямоугольники по разные стороны от прорези.
+    const boxes = notched.map(p => [p.u1, p.u2]).sort((a, b) => a[0] - b[0])
+    expect(boxes[0][1]).toBeLessThanOrEqual(1000 + 1e-6)
+    expect(boxes[1][0]).toBeGreaterThanOrEqual(1100 - 1e-6)
+  })
+
+  it('дырка целиком перекрывает кандидат — материала нет, но лист/пул уже учтены (как у стен, opening_void)', () => {
+    const hole: Point2D[] = rect(2500, 1200) // ровно весь лист
+    const r = calcPolygonSheetLayout(outer, [hole], startSide, 2500)!
+    expect(r.layer1.pieces.filter(p => p.kind === 'notched').length).toBe(0)
+    expect(r.totalUsedAreaM2).toBeCloseTo(0, 3)
+  })
+})
+
 describe('calcPolygonSheetLayout — разбежка торцевых швов кратно b (12.07.2026, пункт 5 плана, только П112 поперечный монтаж)', () => {
   const outer = rect(6000, 3600) // 3 полосы по 1200мм вдоль V (0-1200, 1200-2400, 2400-3600)
   const startSide = { start: outer[0], end: outer[1] }
