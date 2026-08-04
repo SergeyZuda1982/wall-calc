@@ -482,11 +482,18 @@ function calcLayer(
             // листами: source/пул уже учтены выше по ограничивающему
             // прямоугольнику cw×ph один раз, дополнительные части не
             // открывают новый лист повторно — упрощение, площадь каждой
-            // части учитывается в смету отдельно.
+            // части учитывается в смету отдельно. x/y/w/h каждой части —
+            // её СОБСТВЕННЫЙ tight bounding box (не общий cw×ph кандидата) —
+            // нужно для точной подписи размера на схеме (фаза 3).
             for (const part of notched) {
               const partArea = polygonArea(part)
+              const xs = part.map(pt => pt.x)
+              const yy = part.map(pt => pt.y)
+              const bx1 = Math.min(...xs), bx2 = Math.max(...xs)
+              const by1 = Math.min(...yy), by2 = Math.max(...yy)
               pieces.push({
-                x: x1, y: py, w: cw, h: ph, kind: 'notched', source, polygon: part,
+                x: bx1, y: by1, w: bx2 - bx1, h: by2 - by1,
+                kind: 'notched', source, polygon: part,
               })
               usedMm2 += partArea
             }

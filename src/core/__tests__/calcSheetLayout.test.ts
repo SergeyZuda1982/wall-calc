@@ -191,9 +191,14 @@ describe('calcSheetLayout — проёмы больше НЕ разбивают 
     for (const p of notched) {
       expect(p.polygon).toBeDefined()
       expect(p.polygon!.length).toBeGreaterThanOrEqual(3)
-      // Вырезанная площадь строго меньше площади ограничивающего прямоугольника заготовки
-      expect(polygonAreaOf(p.polygon!)).toBeLessThan(p.w * p.h)
+      // Вырезанная площадь не больше площади СОБСТВЕННОГО ограничивающего
+      // прямоугольника заготовки (может быть точно равна, если после
+      // вычитания проёма кусок сам снова оказался прямоугольником).
+      expect(polygonAreaOf(p.polygon!)).toBeLessThanOrEqual(p.w * p.h + 1e-6)
     }
+    // Хотя бы один кусок — НАСТОЯЩИЙ вырез (не просто уменьшенный
+    // прямоугольник совпадающий со своим bbox), иначе тест ничего не проверяет
+    expect(notched.some(p => polygonAreaOf(p.polygon!) < p.w * p.h - 1)).toBe(true)
   })
 
   it('дверь, упирающаяся в пол (sillHeight=0) — колонка над дверью (если есть) не считается вырезанной', () => {
