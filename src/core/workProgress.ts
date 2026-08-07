@@ -21,7 +21,11 @@ import type {
 /** Создаёт новый WorkProgress "с нуля" из произвольного списка шагов (свой список на линии) */
 export function createWorkProgress(steps: WorkStageTemplateStep[]): WorkProgress {
   return {
-    steps: steps.map(s => ({ stepId: s.id, label: s.label, meaning3D: s.meaning3D, outcome: 'pending' as StepOutcome })),
+    steps: steps.map(s => ({
+      stepId: s.id, label: s.label, meaning3D: s.meaning3D,
+      materialKind: s.materialKind, materialThicknessMm: s.materialThicknessMm, materialLayers: s.materialLayers,
+      outcome: 'pending' as StepOutcome,
+    })),
   }
 }
 
@@ -33,7 +37,11 @@ export function applyTemplate(template: WorkStageTemplate): WorkProgress {
   return {
     templateId: template.id,
     sourceTemplateLabel: template.label,
-    steps: template.steps.map(s => ({ stepId: s.id, label: s.label, meaning3D: s.meaning3D, outcome: 'pending' as StepOutcome })),
+    steps: template.steps.map(s => ({
+      stepId: s.id, label: s.label, meaning3D: s.meaning3D,
+      materialKind: s.materialKind, materialThicknessMm: s.materialThicknessMm, materialLayers: s.materialLayers,
+      outcome: 'pending' as StepOutcome,
+    })),
   }
 }
 
@@ -46,7 +54,10 @@ export function saveAsTemplate(progress: WorkProgress, templateId: string, label
   return {
     id: templateId,
     label,
-    steps: progress.steps.map(s => ({ id: s.stepId, label: s.label, meaning3D: s.meaning3D })),
+    steps: progress.steps.map(s => ({
+      id: s.stepId, label: s.label, meaning3D: s.meaning3D,
+      materialKind: s.materialKind, materialThicknessMm: s.materialThicknessMm, materialLayers: s.materialLayers,
+    })),
   }
 }
 
@@ -130,7 +141,13 @@ export function resetStep(progress: WorkProgress, stepIndex: number): WorkProgre
   return {
     ...progress,
     steps: progress.steps.map((s, i) =>
-      i === stepIndex ? { stepId: s.stepId, label: s.label, outcome: 'pending' } : s
+      i === stepIndex
+        ? {
+            stepId: s.stepId, label: s.label, meaning3D: s.meaning3D,
+            materialKind: s.materialKind, materialThicknessMm: s.materialThicknessMm, materialLayers: s.materialLayers,
+            outcome: 'pending' as StepOutcome,
+          }
+        : s
     ),
   }
 }

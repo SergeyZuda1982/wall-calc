@@ -47,6 +47,33 @@ describe('applyTemplate / createWorkProgress', () => {
     expect(p.steps[0].meaning3D).toBeUndefined() // "Разметка" без тега
   })
 
+  it('копирует materialKind/materialThicknessMm/materialLayers (20.07.2026)', () => {
+    const withMaterial: WorkStageTemplate = {
+      id: 'wall_paint', label: 'x',
+      steps: [
+        { id: 's1', label: 'Грунтовка', materialKind: 'priming' },
+        { id: 's2', label: 'Штукатурка', materialKind: 'plaster_gypsum', materialThicknessMm: 15 },
+        { id: 's3', label: 'Покраска', materialKind: 'paint', materialLayers: 3 },
+      ],
+    }
+    const p = applyTemplate(withMaterial)
+    expect(p.steps[0].materialKind).toBe('priming')
+    expect(p.steps[1].materialKind).toBe('plaster_gypsum')
+    expect(p.steps[1].materialThicknessMm).toBe(15)
+    expect(p.steps[2].materialLayers).toBe(3)
+  })
+
+  it('saveAsTemplate копирует materialKind/materialThicknessMm/materialLayers обратно в шаблон', () => {
+    const withMaterial: WorkStageTemplate = {
+      id: 'x', label: 'x',
+      steps: [{ id: 's1', label: 'Стяжка', materialKind: 'screed', materialThicknessMm: 50 }],
+    }
+    const p = applyTemplate(withMaterial)
+    const saved = saveAsTemplate(p, 'new_id', 'Новый шаблон')
+    expect(saved.steps[0].materialKind).toBe('screed')
+    expect(saved.steps[0].materialThicknessMm).toBe(50)
+  })
+
   it('createWorkProgress строит список с нуля, без templateId', () => {
     const p = createWorkProgress([{ id: 'a', label: 'Свой шаг' }])
     expect(p.templateId).toBeUndefined()
@@ -192,6 +219,23 @@ describe('confirmStep / rejectStep / resetStep', () => {
     p = confirmStep(p, 0)
     p = resetStep(p, 0)
     expect(p.steps[0]).toEqual({ stepId: 's1', label: 'Разметка', outcome: 'pending' })
+  })
+
+  it('resetStep СОХРАНЯЕТ meaning3D/materialKind (регрессия 20.07.2026 — раньше терялись при сбросе)', () => {
+    let p = applyTemplate(gklTemplate)
+    p = confirmStep(p, 1) // 'Каркас', meaning3D: 'frame'
+    p = resetStep(p, 1)
+    expect(p.steps[1].meaning3D).toBe('frame')
+
+    const withMaterial: WorkStageTemplate = {
+      id: 't', label: 't',
+      steps: [{ id: 's1', label: 'Штукатурка', materialKind: 'plaster_gypsum', materialThicknessMm: 15 }],
+    }
+    let p2 = applyTemplate(withMaterial)
+    p2 = confirmStep(p2, 0)
+    p2 = resetStep(p2, 0)
+    expect(p2.steps[0].materialKind).toBe('plaster_gypsum')
+    expect(p2.steps[0].materialThicknessMm).toBe(15)
   })
 
   it('не мутирует исходный объект (иммутабельность)', () => {
