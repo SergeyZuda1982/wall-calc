@@ -572,10 +572,45 @@ export const STEP_REJECT_REASON_LABEL: Record<StepRejectReason, string> = {
  */
 export type WorkStepMeaning3D = 'frame' | 'sheet_a' | 'sheet_b'
 
+/**
+ * НЕОБЯЗАТЕЛЬНЫЙ технический тег шага — что он значит для расчёта материала
+ * отделки (см. data/workMaterialCatalog.ts, обсуждено 20.07.2026). Тот же
+ * принцип, что и у meaning3D выше: тег ничего не меняет в самой свободной
+ * структуре WorkProgress, просто отмечает, что этот КОНКРЕТНЫЙ шаг физически
+ * означает для расчёта количества материала. Без тега — шаг просто не
+ * участвует в смете материалов (безопасный дефолт).
+ *
+ * ГКЛ (каркас/обшивка/минвата) НЕ входит — уже считается точными
+ * калькуляторами (calcSheetLayout.ts, buildPositions.ts), см. комментарий
+ * в data/workMaterialCatalog.ts.
+ */
+export type MaterialCategory = 'priming' | 'plaster' | 'putty' | 'paint' | 'screed' | 'self_leveling' | 'waterproofing' | 'flooring'
+
+export type MaterialKind =
+  | 'priming'               // грунтовка
+  | 'plaster_gypsum'        // штукатурка гипсовая (толщино-зависимая)
+  | 'plaster_cement'        // штукатурка цементно-песчаная (толщино-зависимая)
+  | 'plaster_decorative'    // штукатурка декоративная (короед/шуба и т.п., без толщины — фактурный слой)
+  | 'putty'                 // шпаклёвка финишная
+  | 'paint'                 // покраска водоэмульсионная
+  | 'screed'                // цементно-песчаная стяжка пола (толщино-зависимая)
+  | 'self_leveling'         // наливной пол / ровнитель (толщино-зависимый)
+  | 'waterproofing'         // обмазочная гидроизоляция
+  | 'flooring_laminate'     // ламинат/паркетная доска (штучный по площади)
+  | 'flooring_quartz_vinyl' // кварцвинил/SPC-плитка (штучный по площади)
+  | 'flooring_parquet'      // штучный паркет (штучный по площади, больше подрезки на рисунок)
+
+export type MaterialUnit = 'bag' | 'can' | 'bucket' | 'pack'
+
 export interface WorkStageTemplateStep {
   id: string
   label: string
   meaning3D?: WorkStepMeaning3D
+  materialKind?: MaterialKind
+  /** Толщина слоя, мм — используется только если WORK_MATERIAL_CATALOG[materialKind].thicknessDependent */
+  materialThicknessMm?: number
+  /** Число слоёв — используется только если !thicknessDependent (по умолчанию — rate.defaultLayers) */
+  materialLayers?: number
 }
 
 /**
@@ -598,6 +633,9 @@ export interface StepProgress {
   stepId: string
   label: string             // копия label на момент применения шаблона (шаблон могли поменять/удалить позже)
   meaning3D?: WorkStepMeaning3D // копия тега шаблона на момент применения, см. WorkStageTemplateStep
+  materialKind?: MaterialKind           // копия тега шаблона, см. WorkStageTemplateStep
+  materialThicknessMm?: number          // копия/правка пользователя после применения шаблона
+  materialLayers?: number               // копия/правка пользователя после применения шаблона
   outcome: StepOutcome
   rejectReason?: StepRejectReason
   rejectNote?: string       // текст своей причины, если rejectReason === 'other'
