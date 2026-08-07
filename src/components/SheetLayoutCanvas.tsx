@@ -32,6 +32,7 @@ const COLORS: Record<BoardPiece['kind'], string> = {
   both_cut:     '#9b59b6',
   opening_void: '#d0d0d0',
   diagonal_cut: '#e74c3c',
+  notched:      '#e67e22',
 }
 
 const KIND_LABELS: Record<BoardPiece['kind'], string> = {
@@ -41,6 +42,7 @@ const KIND_LABELS: Record<BoardPiece['kind'], string> = {
   both_cut:     'два реза',
   opening_void: 'проём',
   diagonal_cut: 'рез по уклону',
+  notched:      'вырез под проём',
 }
 
 const STUD_RULER_H = 28  // px — высота шкалы стоек сверху
@@ -170,6 +172,46 @@ export default function SheetLayoutCanvas({ layout, wallL, wallH, canvasW, first
                         fontSize={9} fill="#999" align="center" />
                     )}
                   </Group>
+                )
+              }
+
+              // ── Кусок с вырезом под проём (произвольная форма) ──────────
+              // x/y/w/h — СОБСТВЕННЫЙ tight bounding box вырезанной формы
+              // (не общий кандидат-прямоугольник, см. calcSheetLayout.ts) —
+              // поэтому пунктирная рамка заготовки здесь не нужна (в
+              // отличие от diagonal_cut, где x/y/w/h — заготовка ДО реза):
+              // рамка совпала бы с самим полигоном там, где он прямоуголен,
+              // и была бы просто не видна там, где он не прямоуголен.
+              if (p.kind === 'notched' && p.polygon && p.polygon.length >= 3) {
+                const polyPts = p.polygon.flatMap(pt => [tx(pt.x), ty(pt.y)])
+                const isOffcut = p.source === 'offcut'
+                // Центроид полигона — подпись размера кладём туда, а не в
+                // центр bbox (bbox может частично лежать вне закрашенной
+                // фигуры, если вырез не в углу).
+                const cx = p.polygon.reduce((s, pt) => s + pt.x, 0) / p.polygon.length
+                const cy = p.polygon.reduce((s, pt) => s + pt.y, 0) / p.polygon.length
+                const labelW = pw
+                return (
+                  <React.Fragment key={`${ci}-${pi}`}>
+                    <Line
+                      points={polyPts}
+                      closed
+                      fill={COLORS.notched}
+                      opacity={0.75}
+                      stroke={isOffcut ? '#e74c3c' : '#fff'}
+                      strokeWidth={isOffcut ? 1.5 : 0.5}
+                    />
+                    {pw > 30 && ph > 18 && (
+                      <Text
+                        x={tx(cx) - labelW / 2} y={ty(cy) - 8}
+                        width={labelW}
+                        text={`${fmtMm(p.w)}×${fmtMm(p.h)}`}
+                        fontSize={9}
+                        fill="#fff"
+                        align="center"
+                      />
+                    )}
+                  </React.Fragment>
                 )
               }
 

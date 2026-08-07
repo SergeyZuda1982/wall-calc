@@ -161,6 +161,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       const layoutMode = full.layoutMode ?? 'user'
       const frameParams = resolveFrameParams({
         stepC, layoutMode, userStepB: full.stepB, userStepA: full.stepA, mountDirection: full.mountDirection, loadClass: full.loadClass,
+        userWallOffsetMainMm: full.wallOffsetMainMm, userWallOffsetBearingMm: full.wallOffsetBearingMm,
       })
       if (frameParams.warning) warnings.push(frameParams.warning)
       polygonFrame = calcPolygonP112Frame(
@@ -193,6 +194,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       const frameParams = resolveFrameParams({
         stepC, layoutMode, userStepB: full.stepB, userStepA: full.stepA, mountDirection: full.mountDirection,
         loadClass: full.loadClass, ceilingType: 'p113',
+        userWallOffsetMainMm: full.wallOffsetMainMm, userWallOffsetBearingMm: full.wallOffsetBearingMm,
       })
       if (frameParams.warning) warnings.push(frameParams.warning)
       const polygonFrameP113 = calcPolygonP113Frame(
@@ -222,6 +224,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       const bearingAlongLength = full.bearingAlongLength ?? true
       const frameParams = resolveFrameParams({
         stepC, layoutMode, userStepB: full.stepB, userStepA: full.stepA, mountDirection: full.mountDirection, loadClass: full.loadClass,
+        userWallOffsetMainMm: full.wallOffsetMainMm, userWallOffsetBearingMm: full.wallOffsetBearingMm,
       })
       if (frameParams.warning) warnings.push(frameParams.warning)
       const geo = calcP112FrameGeometry(
@@ -258,6 +261,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       const frameParams = resolveFrameParams({
         stepC, layoutMode, userStepB: full.stepB, userStepA: full.stepA, mountDirection: full.mountDirection,
         loadClass: full.loadClass, ceilingType: 'p113',
+        userWallOffsetMainMm: full.wallOffsetMainMm, userWallOffsetBearingMm: full.wallOffsetBearingMm,
       })
       if (frameParams.warning) warnings.push(frameParams.warning)
       const geo113 = calcP113FrameGeometry(

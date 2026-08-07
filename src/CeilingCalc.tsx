@@ -53,6 +53,26 @@ const C = {
   scaleText:    '#546e7a',
 }
 
+/**
+ * 03.08.2026: подписи расстояния от стены (600/1200/1800...) у рядов
+ * профиля — по просьбе пользователя ряды показываются ВСЕ (не через раз),
+ * но размер шрифта подбирается так, чтобы соседние подписи не налезали
+ * друг на друга при плотной сетке. mode='h' — подписи стоят в ряд по
+ * горизонтали (main-ряды, ширина цифр важна), mode='v' — друг под другом по
+ * вертикали (bearing-ряды, важна высота строки, не ширина).
+ */
+function computeAutoFontSize(positionsPx: number[], mode: 'h' | 'v'): number {
+  if (positionsPx.length < 2) return 10
+  const sorted = [...positionsPx].sort((a, b) => a - b)
+  let minGap = Infinity
+  for (let i = 1; i < sorted.length; i++) minGap = Math.min(minGap, sorted[i] - sorted[i - 1])
+  if (!isFinite(minGap) || minGap <= 1) return 5
+  // 'h': до 4-5 цифр в ряд, ширина цифры (жирный шрифт) ≈ 0.62×fontSize.
+  // 'v': высота строки ≈ 1.15×fontSize.
+  const raw = mode === 'h' ? minGap / (5 * 0.62) : minGap / 1.15
+  return Math.max(5, Math.min(10, raw))
+}
+
 // ─── Шаги монтажа ────────────────────────────────────────────────────────────
 
 type Step = 1 | 2 | 3 | 4
@@ -402,6 +422,7 @@ export default function CeilingCalc() {
     stepC: form.stepC, layoutMode: layoutModeUi, userStepB: form.stepB, userStepA: form.stepA,
     mountDirection: form.mountDirection, loadClass: form.loadClass,
     ceilingType: form.type === 'p113' ? 'p113' : 'p112',
+    userWallOffsetMainMm: form.wallOffsetMainMm, userWallOffsetBearingMm: form.wallOffsetBearingMm,
   })
   // 19.07.2026: реальные позиции несущего профиля — та же формула, что
   // внутри CeilingCanvas (bearingPosYMm) — нужна здесь тоже, чтобы передать
@@ -672,6 +693,29 @@ export default function CeilingCalc() {
                   <input style={inp} type="number" min={0} step={50}
                     placeholder="800"
                     value={form.stepA ?? ''} onChange={e => setField('stepA', +e.target.value || undefined)} />
+                </div>
+              </div>
+            )}
+
+            {layoutModeUi === 'user' && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  {/* 30.07.2026: раньше первый ряд ВСЕГДА стоял ровно на
+                      расстоянии полного шага (c) от стены начала раскладки —
+                      никакого поля для этого не было, и "Зазор плита→каркас"
+                      (slabGapMm, ниже) сюда никак не влиял, хотя пользователь
+                      ожидал обратного (это другая величина — вертикальный
+                      зазор до плиты, для типа подвеса). */}
+                  <label style={lbl}>Отступ 1-го ряда (осн.), мм</label>
+                  <input style={inp} type="number" min={0} step={10}
+                    placeholder={String(form.stepC)}
+                    value={form.wallOffsetMainMm ?? ''} onChange={e => setField('wallOffsetMainMm', +e.target.value || undefined)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={lbl}>Отступ 1-го ряда (несущий), мм</label>
+                  <input style={inp} type="number" min={0} step={10}
+                    placeholder={String(frameParamsUi.stepB)}
+                    value={form.wallOffsetBearingMm ?? ''} onChange={e => setField('wallOffsetBearingMm', +e.target.value || undefined)} />
                 </div>
               </div>
             )}
@@ -1034,6 +1078,21 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
   const offY = PAD + (availH - h * scale) / 2
 
   const toStage = (p: Point2D) => ({ x: offX + (p.x - minX) * scale, y: offY + (p.y - minY) * scale })
+
+  // ── Реальные размеры профиля/подвеса/краба в px (30.07.2026) ──
+  // Было: линия профиля — фиксированный strokeWidth={1}, подвес/краб —
+  // фиксированные Rect 10×8/8×8px, НИКАК не зависящие от scale (px/мм) —
+  // при обводке большого помещения (малый scale) профиль превращался в
+  // "ниточку", а подвесы/крабы оставались тех же "огромных" размеров.
+  // Теперь профиль (ПП 60мм) и крепёж считаются от одного и того же scale,
+  // с теми же реальными пропорциями, что и в 3D (crabGeometry sizeMm=22 —
+  // краб МЕНЬШЕ профиля, не больше). Нижние границы — не физический размер,
+  // а чисто читаемость: чтобы значок не пропадал при сильном отдалении.
+  const PP_LINE_W = Math.max(1.5, Math.min(9, scale * 60))
+  const CRAB_SIZE = Math.max(2.5, PP_LINE_W * (22 / 60))
+  const CRAB_LINE = CRAB_SIZE * 1.4
+  const HANGER_W = Math.max(3, PP_LINE_W * 0.55)
+  const HANGER_H = Math.max(2, PP_LINE_W * 0.4)
   const flat = (pts: Point2D[]) => pts.flatMap(p => { const s = toStage(p); return [s.x, s.y] })
   const centroid = (pts: Point2D[]) => {
     const s = toStage({ x: pts.reduce((a, p) => a + p.x, 0) / pts.length, y: pts.reduce((a, p) => a + p.y, 0) / pts.length })
@@ -1152,20 +1211,49 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
               {step >= 2 && polygonFrame.mainRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
                 const wa = toStage(toWorld({ x: a, y: row.pos }, polygonFrame.frame))
                 const wb = toStage(toWorld({ x: b, y: row.pos }, polygonFrame.frame))
-                return <Line key={`m-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.accent} strokeWidth={1} opacity={0.6} />
+                return <Line key={`m-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.accent} strokeWidth={PP_LINE_W} opacity={0.6} />
               }))}
               {step >= 3 && polygonFrame.bearingRows.flatMap((row, ri) => row.segments.map(([a, b], si) => {
                 const wa = toStage(toWorld({ x: row.pos, y: a }, polygonFrame.frame))
                 const wb = toStage(toWorld({ x: row.pos, y: b }, polygonFrame.frame))
-                return <Line key={`b-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.text} strokeWidth={1} opacity={0.4} dash={[4, 3]} />
+                return <Line key={`b-${ri}-${si}`} points={[wa.x, wa.y, wb.x, wb.y]} stroke={C.text} strokeWidth={PP_LINE_W} opacity={0.4} dash={[4, 3]} />
               }))}
+              {/* Реальное расстояние от стены начала раскладки, мм — по
+                  одной подписи на ряд, у начала первого сегмента (30.07.2026,
+                  просьба пользователя — видеть шаг 600-1200-1800...).
+                  03.08.2026: показываем ВСЕ ряды (по просьбе пользователя),
+                  шрифт мельчает при плотной сетке — см. computeAutoFontSize. */}
+              {step >= 2 && (() => {
+                const rows = polygonFrame.mainRows.filter(r => r.segments.length > 0)
+                const fs = computeAutoFontSize(rows.map(r => r.pos * scale), 'h')
+                return rows.map(row => {
+                  const [a] = row.segments[0]
+                  const wa = toStage(toWorld({ x: a, y: row.pos }, polygonFrame.frame))
+                  return (
+                    <Text key={`m-label-${row.pos}`} x={wa.x - 30} y={wa.y - 14} width={60} align="center"
+                      text={`${Math.round(row.pos)}`} fontSize={fs} fill={C.accent} fontStyle="bold" />
+                  )
+                })
+              })()}
+              {step >= 3 && (() => {
+                const rows = polygonFrame.bearingRows.filter(r => r.segments.length > 0)
+                const fs = computeAutoFontSize(rows.map(r => r.pos * scale), 'v')
+                return rows.map(row => {
+                  const [a] = row.segments[0]
+                  const wa = toStage(toWorld({ x: row.pos, y: a }, polygonFrame.frame))
+                  return (
+                    <Text key={`b-label-${row.pos}`} x={wa.x - 44} y={wa.y - fs / 2} width={40} align="right"
+                      text={`${Math.round(row.pos)}`} fontSize={fs} fill={C.text} fontStyle="bold" />
+                  )
+                })
+              })()}
               {step >= 2 && polygonFrame.hangerPoints.map((p, i) => {
                 const s = toStage(toWorld(p, polygonFrame.frame))
                 return (
                   <Group key={`hg${i}`} x={s.x} y={s.y}>
-                    <Rect x={-5} y={-4} width={10} height={8}
-                      fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1.5} cornerRadius={1} />
-                    <Line points={[0, -4, 0, -10]} stroke={C.hanger} strokeWidth={1} />
+                    <Rect x={-HANGER_W / 2} y={-HANGER_H / 2 - HANGER_H / 4} width={HANGER_W} height={HANGER_H}
+                      fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1} cornerRadius={1} />
+                    <Line points={[0, -HANGER_H / 4, 0, -HANGER_H / 4 - HANGER_H]} stroke={C.hanger} strokeWidth={1} />
                   </Group>
                 )
               })}
@@ -1174,9 +1262,9 @@ function CeilingContourPreview({ zones, canvasW, areaSqm, perimeterM, startWall,
                 const col = ceilingType === 'p113' ? C.crab1lvl : C.crab
                 return (
                   <Group key={`cr${i}`} x={s.x} y={s.y}>
-                    <Rect x={-4} y={-4} width={8} height={8} fill={col} opacity={0.9} cornerRadius={1} />
-                    <Line points={[-6, 0, 6, 0]} stroke={col} strokeWidth={1} />
-                    <Line points={[0, -6, 0, 6]} stroke={col} strokeWidth={1} />
+                    <Rect x={-CRAB_SIZE / 2} y={-CRAB_SIZE / 2} width={CRAB_SIZE} height={CRAB_SIZE} fill={col} opacity={0.9} cornerRadius={1} />
+                    <Line points={[-CRAB_LINE / 2, 0, CRAB_LINE / 2, 0]} stroke={col} strokeWidth={1} />
+                    <Line points={[0, -CRAB_LINE / 2, 0, CRAB_LINE / 2]} stroke={col} strokeWidth={1} />
                   </Group>
                 )
               })}
@@ -1355,6 +1443,14 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // ── Профили ──
   const PP_W = Math.max(3, Math.min(10, scale * 60 / 1000))
   const PN_W = Math.max(2, Math.min(6,  scale * 28 / 1000))
+  // 30.07.2026: краб/подвес считались от фиксированных px, а не от scale —
+  // выглядели непропорционально огромными рядом с "ниточкой" профиля на
+  // большом помещении. Пропорции — как в polygonFrame-схеме выше (краб
+  // 22мм — реально МЕНЬШЕ профиля 60мм, см. crabGeometry() в 3D).
+  const CRAB_SIZE = Math.max(2.5, PP_W * (22 / 60))
+  const CRAB_LINE = CRAB_SIZE * 1.4
+  const HANGER_W = Math.max(3, PP_W * 0.55)
+  const HANGER_H = Math.max(2, PP_W * 0.4)
 
   // ── Основные профили (X, шаг c) ──
   const stepC = form.stepC
@@ -1368,6 +1464,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     // 10.07.2026: П112/П113 — своя таблица дефолтного шага b в 'user'-режиме
     // (раньше здесь всегда молча брался П112-вариант, даже для П113).
     ceilingType: form.type === 'p113' ? 'p113' : 'p112',
+    userWallOffsetMainMm: form.wallOffsetMainMm, userWallOffsetBearingMm: form.wallOffsetBearingMm,
   })
   const stepB = frameParams.stepB
   const stepA = frameParams.stepA
@@ -1377,15 +1474,21 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   // — не наивная сетка от 0; в режиме 'knauf' — строго по официальной сетке,
   // без сжатия последнего ряда. shiftMainMm — ручной сдвиг гребёнки поверх.
   const mainPosXMm = calcFrameRowPositions(L, stepC, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetMainMm, profileKind: 'main' })
-  const mainPosX = mainPosXMm
-    .map(p => (p + shiftMainMm) * scale)
-    .filter(x => x >= 0 && x <= L * scale)
+  // 30.07.2026: пары (мм-от-стены, px-на-холсте) — раньше знали только px,
+  // подписать реальный шаг (600-1200-1800...) было нечем.
+  const mainRowsPx = mainPosXMm
+    .map(p => ({ mm: p + shiftMainMm, px: (p + shiftMainMm) * scale }))
+    .filter(r => r.px >= 0 && r.px <= L * scale)
+  const mainPosX = mainRowsPx.map(r => r.px)
+  const mainLabelFontSize = computeAutoFontSize(mainPosX, 'h')
 
   // ── Несущие профили (Y, шаг b) ──
   const bearingPosYMm = calcFrameRowPositions(W_room, stepB, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetBearingMm, profileKind: 'bearing' })
-  const bearingPosY = bearingPosYMm
-    .map(p => (p + shiftBearingMm) * scale)
-    .filter(y => y >= 0 && y <= W_room * scale)
+  const bearingRowsPx = bearingPosYMm
+    .map(p => ({ mm: p + shiftBearingMm, px: (p + shiftBearingMm) * scale }))
+    .filter(r => r.px >= 0 && r.px <= W_room * scale)
+  const bearingPosY = bearingRowsPx.map(r => r.px)
+  const bearingLabelFontSize = computeAutoFontSize(bearingPosY, 'v')
 
   // ── Подвесы ──
   // 10.07.2026: подвес обязан висеть строго по оси профиля, на который он
@@ -1585,25 +1688,33 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
         )}
 
         {/* ── Шаг 2+: Основные ПП 60×27 (вертикальные) ── */}
-        {step >= 2 && mainPosX.map((px, i) => (
+        {step >= 2 && mainRowsPx.map((r, i) => (
           <Group key={`mp${i}`}>
             {/* Имитация П-профиля: тёмная полка + светлая середина + тёмная полка */}
-            <Rect x={px - PP_W / 2} y={0} width={PP_W / 4} height={H}
+            <Rect x={r.px - PP_W / 2} y={0} width={PP_W / 4} height={H}
               fill={C.ppMain} opacity={0.9} />
-            <Rect x={px - PP_W / 4} y={0} width={PP_W / 2} height={H}
+            <Rect x={r.px - PP_W / 4} y={0} width={PP_W / 2} height={H}
               fill="#78909c" opacity={0.6} />
-            <Rect x={px + PP_W / 4} y={0} width={PP_W / 4} height={H}
+            <Rect x={r.px + PP_W / 4} y={0} width={PP_W / 4} height={H}
               fill={C.ppMain} opacity={0.9} />
+            {/* Реальное расстояние от стены начала раскладки, мм — просьба
+                пользователя 30.07.2026, чтобы видеть шаг 600-1200-1800...
+                а не гадать по картинке.
+                03.08.2026: показываем ВСЕ ряды (по просьбе пользователя — не
+                прятать через раз), вместо этого шрифт мельчает при плотной
+                сетке — см. computeAutoFontSize. */}
+            <Text x={r.px - 30} y={-14} width={60} align="center"
+              text={`${Math.round(r.mm)}`} fontSize={mainLabelFontSize} fill={C.ppMain} fontStyle="bold" />
           </Group>
         ))}
 
         {/* ── Шаг 2+: Подвесы ── */}
         {step >= 2 && hangers.map((h, i) => (
           <Group key={`hg${i}`} x={h.x} y={h.y}>
-            <Rect x={-5} y={-4} width={10} height={8}
-              fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1.5} cornerRadius={1} />
+            <Rect x={-HANGER_W / 2} y={-HANGER_H / 2 - HANGER_H / 4} width={HANGER_W} height={HANGER_H}
+              fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1} cornerRadius={1} />
             {/* Тяга подвеса — вертикальная линия вверх */}
-            <Line points={[0, -4, 0, -10]} stroke={C.hanger} strokeWidth={1} />
+            <Line points={[0, -HANGER_H / 4, 0, -HANGER_H / 4 - HANGER_H]} stroke={C.hanger} strokeWidth={1} />
           </Group>
         ))}
 
@@ -1615,7 +1726,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
              идёт сплошняком, как у П112. Основной профиль (mainPosX, выше)
              при этом сплошной у ОБОИХ типов — рисовка вертикальных линий не
              меняется. */}
-        {step >= 3 && form.type === 'p113' && bearingPosY.map((py, i) => {
+        {step >= 3 && form.type === 'p113' && bearingRowsPx.map((r, i) => {
           const GAP = PP_W * 0.5
           const boundaries = [0, ...mainPosX, W]
           const segs: { xa: number; xb: number }[] = []
@@ -1629,20 +1740,27 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
           return (
             <Group key={`bp${i}`}>
               {segs.map((s, si) => (
-                <Rect key={`bpseg${i}_${si}`} x={s.xa} y={py - PP_W / 2} width={s.xb - s.xa} height={PP_W}
+                <Rect key={`bpseg${i}_${si}`} x={s.xa} y={r.px - PP_W / 2} width={s.xb - s.xa} height={PP_W}
                   fill={C.ppBearing} opacity={0.75} cornerRadius={1} />
               ))}
+              <Text x={-46} y={r.px - bearingLabelFontSize / 2} width={40} align="right"
+                text={`${Math.round(r.mm)}`} fontSize={bearingLabelFontSize} fill={C.ppBearing} fontStyle="bold" />
             </Group>
           )
         })}
-        {step >= 3 && form.type !== 'p113' && bearingPosY.map((py, i) => (
+        {step >= 3 && form.type !== 'p113' && bearingRowsPx.map((r, i) => (
           <Group key={`bp${i}`}>
-            <Rect x={0} y={py - PP_W / 2} width={W} height={PP_W / 4}
+            <Rect x={0} y={r.px - PP_W / 2} width={W} height={PP_W / 4}
               fill={C.ppBearing} opacity={0.9} />
-            <Rect x={0} y={py - PP_W / 4} width={W} height={PP_W / 2}
+            <Rect x={0} y={r.px - PP_W / 4} width={W} height={PP_W / 2}
               fill="#90a4ae" opacity={0.6} />
-            <Rect x={0} y={py + PP_W / 4} width={W} height={PP_W / 4}
+            <Rect x={0} y={r.px + PP_W / 4} width={W} height={PP_W / 4}
               fill={C.ppBearing} opacity={0.9} />
+            {/* Реальное расстояние от стены начала раскладки, мм (30.07.2026);
+                03.08.2026: показываем все ряды, шрифт мельчает при плотной
+                сетке — см. computeAutoFontSize. */}
+            <Text x={-46} y={r.px - bearingLabelFontSize / 2} width={40} align="right"
+              text={`${Math.round(r.mm)}`} fontSize={bearingLabelFontSize} fill={C.ppBearing} fontStyle="bold" />
           </Group>
         ))}
 
@@ -1652,10 +1770,10 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
         {step >= 3 && mainPosX.map((px, mi) =>
           bearingPosY.map((py, bi) => (
             <Group key={`cr${mi}_${bi}`} x={px} y={py}>
-              <Rect x={-4} y={-4} width={8} height={8}
+              <Rect x={-CRAB_SIZE / 2} y={-CRAB_SIZE / 2} width={CRAB_SIZE} height={CRAB_SIZE}
                 fill={form.type === 'p113' ? C.crab1lvl : C.crab} opacity={0.9} cornerRadius={1} />
-              <Line points={[-6, 0, 6, 0]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
-              <Line points={[0, -6, 0, 6]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
+              <Line points={[-CRAB_LINE / 2, 0, CRAB_LINE / 2, 0]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
+              <Line points={[0, -CRAB_LINE / 2, 0, CRAB_LINE / 2]} stroke={form.type === 'p113' ? C.crab1lvl : C.crab} strokeWidth={1} />
             </Group>
           ))
         )}
