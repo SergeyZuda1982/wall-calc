@@ -5541,6 +5541,28 @@ export default function FloorPlan() {
                     💾 Сохранить как шаблон
                   </button>
                 )}
+
+                {/* Этапы отделки пола/потолка — колонна их не имеет (нет пола/потолка отдельно от периметра) */}
+                {!room.isColumn && (
+                  <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 10, marginTop: 2 }}>
+                    <div style={{ fontSize: 10, color: '#999', marginBottom: 6, textTransform: 'uppercase' }}>Этапы отделки пола/потолка</div>
+                    <WorkProgressChecklist
+                      label="Пол"
+                      progress={room.floorProgress}
+                      templates={allWorkStageTemplates}
+                      onChange={p => updateRoom(room.id, { floorProgress: p })}
+                      onSaveTemplate={t => addCustomWorkStageTemplate(t)}
+                    />
+                    <WorkProgressChecklist
+                      label="Потолок"
+                      progress={room.ceilingProgress}
+                      templates={allWorkStageTemplates}
+                      onChange={p => updateRoom(room.id, { ceilingProgress: p })}
+                      onSaveTemplate={t => addCustomWorkStageTemplate(t)}
+                    />
+                  </div>
+                )}
+
                 <button onClick={() => { removeRoom(room.id); setInspectorRoomId(null) }}
                   style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
                   🗑 Удалить {room.isColumn ? 'колонну' : 'помещение'}
