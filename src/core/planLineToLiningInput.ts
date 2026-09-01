@@ -33,7 +33,7 @@
  * направляющая при С623, крайняя стойка без нахлёста).
  */
 
-import type { PlanLine, LiningInput, LiningType, ProfileType, Opening } from '../types'
+import type { PlanLine, LiningInput, LiningType, ProfileType, Opening, EdgeProfile } from '../types'
 import { DEFAULT_BOARD_SPEC } from '../types'
 import type { LineAttachments } from './attachmentResolver'
 import { resolveAbutment } from './planLineToWallInput'
@@ -90,7 +90,11 @@ function mapOpenings(line: PlanLine): Opening[] {
  * (tile/plaster/paint — не листовая облицовка), способа "на клею" (glued/
  * С611 — расчёта нет), нулевой длины.
  */
-export function planLineToLiningInput(line: PlanLine, attachments?: LineAttachments): LiningInput | null {
+export function planLineToLiningInput(
+  line: PlanLine,
+  attachments?: LineAttachments,
+  ceilingProfile?: EdgeProfile,
+): LiningInput | null {
   if (line.type !== 'wall_lining') return null
   if (line.spec?.material !== 'gkl') return null
   if (line.lengthMm <= 0) return null
@@ -116,20 +120,26 @@ export function planLineToLiningInput(line: PlanLine, attachments?: LineAttachme
     abutment: resolveAbutment(attachments),
     openings: mapOpenings(line),
     communications: [],
+    ceilingProfile,
     layer1: line.spec.layer1 ?? DEFAULT_BOARD_SPEC,
     layer2: line.spec.layer2 ?? DEFAULT_BOARD_SPEC,
     plywoodInserts: [],
   }
 }
 
-/** Батч-версия: переводит все линии плана, отбрасывая неприменимые (null). Порядок сохраняется. */
+/**
+ * Батч-версия: переводит все линии плана, отбрасывая неприменимые (null).
+ * Порядок сохраняется. ceilingProfilesById — карта line.id → готовый
+ * ceilingProfile (см. core/ceilingSlope.ts); не задано — все линии плоские.
+ */
 export function planLinesToLiningInputs(
   lines: PlanLine[],
   attachmentsMap?: Map<string, LineAttachments>,
+  ceilingProfilesById?: Map<string, EdgeProfile>,
 ): { line: PlanLine; input: LiningInput }[] {
   const out: { line: PlanLine; input: LiningInput }[] = []
   for (const l of lines) {
-    const input = planLineToLiningInput(l, attachmentsMap?.get(l.id))
+    const input = planLineToLiningInput(l, attachmentsMap?.get(l.id), ceilingProfilesById?.get(l.id))
     if (input) out.push({ line: l, input })
   }
   return out

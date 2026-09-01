@@ -26,7 +26,7 @@
  * 90°-примыканиях".
  */
 
-import type { PlanLine, RectColumn, CalcResult, LiningResult } from '../types'
+import type { PlanLine, RectColumn, CalcResult, LiningResult, EdgeProfile } from '../types'
 import type { LineAttachments } from './attachmentResolver'
 import { buildWallsForJoin } from './wallJoin'
 import { findFrameCornerNodes, type FrameCornerNode } from './frameCornerNodes'
@@ -38,6 +38,7 @@ import { calcLining } from './calcLining'
 import { normalizeProfile } from './profileGeometry'
 import { getProfile } from '../data/profiles'
 import { buildCutList, type CutListResult, type Piece } from './cutList'
+import { wallThicknessMm } from './planTo3D'
 
 // ─── Перегородки (wall_new) — БЕЗ дедупликации, плоская сумма по линиям ────
 
@@ -55,8 +56,9 @@ export interface PlanFramePartitionEstimate {
 function calcPartitionEstimate(
   lines: PlanLine[],
   attachmentsMap: Map<string, LineAttachments>,
+  ceilingProfilesById?: Map<string, EdgeProfile>,
 ): PlanFramePartitionEstimate {
-  const inputs = planLinesToWallInputs(lines, attachmentsMap)
+  const inputs = planLinesToWallInputs(lines, attachmentsMap, ceilingProfilesById)
   const perLine: PlanFramePartitionLineResult[] = []
 
   for (const { line, input } of inputs) {
@@ -117,8 +119,9 @@ function calcLiningEstimate(
   attachmentsMap: Map<string, LineAttachments>,
   scaleMmPx: number,
   rectColumns: RectColumn[],
+  ceilingProfilesById?: Map<string, EdgeProfile>,
 ): PlanFrameLiningEstimate {
-  const inputs = planLinesToLiningInputs(lines, attachmentsMap)
+  const inputs = planLinesToLiningInputs(lines, attachmentsMap, ceilingProfilesById)
 
   const perLine: PlanFrameLiningLineResult[] = []
   const lineLenById = new Map<string, number>()
@@ -221,9 +224,62 @@ export function calcPlanFrameEstimate(
   attachmentsMap: Map<string, LineAttachments>,
   scaleMmPx: number,
   rectColumns: RectColumn[] = [],
+  ceilingProfilesById?: Map<string, EdgeProfile>,
 ): PlanFrameEstimate {
   return {
-    partitions: calcPartitionEstimate(lines, attachmentsMap),
-    lining: calcLiningEstimate(lines, attachmentsMap, scaleMmPx, rectColumns),
+    partitions: calcPartitionEstimate(lines, attachmentsMap, ceilingProfilesById),
+    lining: calcLiningEstimate(lines, attachmentsMap, scaleMmPx, rectColumns, ceilingProfilesById),
   }
+}
+
+// ─── Сводка площади ГКЛ по типу конструкции + ширине (30.08.2026) ──────────
+//
+// Нужно посчитать объём работ: сколько м² перегородок каждой ширины,
+// отдельно от облицовки и от потолка (потолок сюда не входит — это отдельный
+// расчёт, calcRoomMaterials/CeilingCalc, здесь только каркасные вертикальные
+// конструкции с плана). gklArea уже учитывает уклон (если ceilingProfile был
+// передан на входе) — отдельная логика площади здесь не нужна, только группировка
+// готовых per-line результатов.
+
+export type PlanFrameAreaGroupKind = 'Перегородка' | 'Облицовка'
+
+export interface PlanFrameAreaGroup {
+  kind: PlanFrameAreaGroupKind
+  widthMm: number
+  areaM2: number
+  lineIds: string[]
+}
+
+/**
+ * Группирует площадь ГКЛ по (тип конструкции × ширина стены/облицовки в мм,
+ * см. wallThicknessMm из planTo3D.ts — та же величина, что рисуется на плане).
+ * Сортировка: сперва перегородки, потом облицовка; внутри — по возрастанию ширины.
+ */
+export function calcPlanFrameAreaByType(
+  estimate: PlanFrameEstimate,
+  lines: PlanLine[],
+): PlanFrameAreaGroup[] {
+  const lineById = new Map(lines.map(l => [l.id, l]))
+  const groups = new Map<string, PlanFrameAreaGroup>()
+
+  function addTo(kind: PlanFrameAreaGroupKind, lineId: string, areaM2: number) {
+    const line = lineById.get(lineId)
+    if (!line || areaM2 <= 0) return
+    const widthMm = wallThicknessMm(line)
+    const key = `${kind}#${widthMm}`
+    const existing = groups.get(key)
+    if (existing) {
+      existing.areaM2 += areaM2
+      existing.lineIds.push(lineId)
+    } else {
+      groups.set(key, { kind, widthMm, areaM2, lineIds: [lineId] })
+    }
+  }
+
+  for (const p of estimate.partitions.perLine) addTo('Перегородка', p.lineId, p.result.gklArea)
+  for (const p of estimate.lining.perLine) addTo('Облицовка', p.lineId, p.result.gklArea)
+
+  return [...groups.values()].sort((a, b) =>
+    a.kind !== b.kind ? a.kind.localeCompare(b.kind) : a.widthMm - b.widthMm,
+  )
 }
