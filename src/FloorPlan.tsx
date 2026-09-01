@@ -13,7 +13,7 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Shape, Image as KonvaIma
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, WorkProgress, WorkStageTemplate, MepDiscipline } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, WorkProgress, WorkStageTemplate, MepDiscipline, CeilingSlope } from './types'
 import { DEFAULT_BOARD_SPEC } from './types'
 import { getLineVisual, getContourFill, TAXONOMY, isLiningLayersFixed, parseDoubleFrameSubtype, getDoubleFrameLayerCounts } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
@@ -30,7 +30,8 @@ import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory
 import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
-import { calcPlanFrameEstimate } from './core/planFrameEstimate'
+import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrameEstimate'
+import { buildCeilingProfilesByLineId } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf } from './core/finishResolver'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
@@ -79,7 +80,7 @@ function defaultStatus(category: LineCategory): WorkStatus {
   return category === 'capital' ? 'existing' : 'planned'
 }
 
-type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'ceiling' | 'stamp' | 'trim' | 'opening' | 'freeform' | 'freeformOpening' | 'mep_route'
+type Mode = 'draw' | 'select' | 'contour' | 'scale' | 'erase' | 'pencil' | 'ceiling' | 'stamp' | 'trim' | 'opening' | 'freeform' | 'freeformOpening' | 'mep_route' | 'slope'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -347,6 +348,7 @@ export default function FloorPlan() {
     addCeiling, removeCeiling,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
+    addCeilingSlope, updateCeilingSlope, removeCeilingSlope,
     addFreeformStructure, updateFreeformStructure, removeFreeformStructure,
     addFreeformOpening, updateFreeformOpening, removeFreeformOpening,
     addMepRoute, removeMepRoute, setMepBackground, updateMepBackground,
@@ -369,6 +371,7 @@ export default function FloorPlan() {
   const ceilings  = floorPlan?.ceilings ?? []
   const roundColumns = floorPlan?.roundColumns ?? []
   const rectColumns  = floorPlan?.rectColumns  ?? []
+  const ceilingSlopes = floorPlan?.ceilingSlopes ?? []
   const freeformStructures = floorPlan?.freeformStructures ?? []
   const mepRoutes = floorPlan?.mepRoutes ?? []
   const mepBackgrounds = floorPlan?.mepBackgrounds ?? {}
@@ -434,6 +437,14 @@ export default function FloorPlan() {
   // и наоборот, чтобы план не превращался в кашу).
   const [mepVisible, setMepVisible] = useState<Record<MepDiscipline, boolean>>({ ventilation: true, electrical: true })
   const [mepRoutePts, setMepRoutePts] = useState<{ x: number; y: number }[]>([])   // накопленные точки трассы (открытый путь, не замкнутый контур)
+  // Уклон плиты перекрытия (30.08.2026) — накопленные опорные точки (максимум 2,
+  // как у линии плана: клик 1 -> клик 2 -> форма высот -> "Сохранить уклон").
+  const [slopePts, setSlopePts] = useState<{ x: number; y: number }[]>([])
+  const [slopeHeight1Mm, setSlopeHeight1Mm] = useState('3000')
+  const [slopeHeight2Mm, setSlopeHeight2Mm] = useState('3000')
+  const [slopeLabel, setSlopeLabel] = useState('Уклон')
+  const [slopeRoomId, setSlopeRoomId] = useState<string>('') // '' = весь план
+  const [editingSlopeId, setEditingSlopeId] = useState<string | null>(null)
   const [mepDrawDiameterMm, setMepDrawDiameterMm] = useState('160')  // сечение новой трассы: диаметр (круглый воздуховод/труба) ...
   const [mepDrawWidthMm, setMepDrawWidthMm] = useState('')            // ...ЛИБО прямоугольное сечение (короб) — ширина
   const [mepDrawHeightSectionMm, setMepDrawHeightSectionMm] = useState('') // ...и высота короба (заполняется вместе с шириной)
@@ -865,7 +876,40 @@ export default function FloorPlan() {
     if (m !== 'freeformOpening') setOpeningTargetFreeformId(null)
     if (m !== 'freeform' && m !== 'freeformOpening') setFreeformPts([])
     if (m !== 'mep_route') setMepRoutePts([])
+    if (m !== 'slope') { setSlopePts([]); setEditingSlopeId(null) }
     if (isMobile && m === 'draw') setMobileLeftOpen(false)
+  }
+
+  // Сохранить уклон плиты перекрытия по двум накопленным точкам slopePts
+  // (или обновить editingSlopeId, если открыт на редактирование).
+  function saveSlope() {
+    if (slopePts.length !== 2) return
+    const h1 = parseFloat(slopeHeight1Mm) || 0
+    const h2 = parseFloat(slopeHeight2Mm) || 0
+    const payload = {
+      label: slopeLabel || 'Уклон',
+      x1: slopePts[0].x, y1: slopePts[0].y,
+      x2: slopePts[1].x, y2: slopePts[1].y,
+      height1Mm: h1, height2Mm: h2,
+      roomId: slopeRoomId || undefined,
+    }
+    if (editingSlopeId) {
+      updateCeilingSlope(editingSlopeId, payload)
+    } else {
+      addCeilingSlope(payload)
+    }
+    setSlopePts([])
+    setEditingSlopeId(null)
+  }
+
+  function startEditSlope(s: CeilingSlope) {
+    setMode('slope')
+    setSlopePts([{ x: s.x1, y: s.y1 }, { x: s.x2, y: s.y2 }])
+    setSlopeHeight1Mm(String(s.height1Mm))
+    setSlopeHeight2Mm(String(s.height2Mm))
+    setSlopeLabel(s.label)
+    setSlopeRoomId(s.roomId ?? '')
+    setEditingSlopeId(s.id)
   }
 
   // Завершить трассу инженерной дисциплины (открытый путь — не может сам себя
@@ -1539,6 +1583,22 @@ export default function FloorPlan() {
       return
     }
 
+    if (mode === 'slope') {
+      // Ровно 2 опорные точки — уклон это отрезок направления, третий клик
+      // не добавляется (нужно сначала сохранить/сбросить форму высот, см.
+      // панель инструмента). Клик рядом с уже поставленной точкой — убрать её.
+      const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
+      const hitIdx = slopePts.findIndex(p => dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
+      if (hitIdx !== -1) {
+        setSlopePts(prev => prev.filter((_, i) => i !== hitIdx))
+        return
+      }
+      if (slopePts.length >= 2) return
+      const pt = applySnap(pos.x, pos.y)
+      setSlopePts(prev => [...prev, { x: pt.x, y: pt.y }])
+      return
+    }
+
     if (mode === 'freeformOpening' && openingTargetFreeformId) {
       const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
       // См. фикс в 'freeform'/'pencil' выше — та же причина: контур проёма тоже
@@ -1699,7 +1759,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') { setSelected(null); setSelectedOpening(null) }
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, ceilingPts, addCeiling, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, ceilingPts, addCeiling, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline, slopePts])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -1808,6 +1868,7 @@ export default function FloorPlan() {
         setCeilingPts([])
         setFreeformPts([])
         setMepRoutePts([])
+        setSlopePts([]); setEditingSlopeId(null)
         setSelectedOpening(null)
         if (mode === 'freeformOpening') { setOpeningTargetFreeformId(null); switchMode('select') }
       }
@@ -1835,7 +1896,7 @@ export default function FloorPlan() {
       }
     }
     if (e.key === 'Shift') setOrthoMode(true)
-  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter, mepRoutePts, activeDiscipline, mepDrawElevationMm, mepDrawDiameterMm, mepDrawWidthMm, mepDrawHeightSectionMm, addMepRoute, mepRoutes, selectedOpening, undo, redo])
+  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter, mepRoutePts, activeDiscipline, mepDrawElevationMm, mepDrawDiameterMm, mepDrawWidthMm, mepDrawHeightSectionMm, addMepRoute, mepRoutes, selectedOpening, undo, redo, slopePts])
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Shift') setOrthoMode(false)
@@ -2214,9 +2275,27 @@ export default function FloorPlan() {
   // угловой стойки на 90°-примыканиях (короба/ниши/колонны, углы двух
   // перегородок) — см. TASKS.md/KONSPEKT.md "дедупликация угловой
   // стойки". Пересчитывается только при изменении линий/колонн/масштаба.
+  // ── Уклон плиты перекрытия (30.08.2026) — карта line.id → ceilingProfile,
+  // готовый к передаче в переводчики через calcPlanFrameEstimate. Пересчитывается
+  // только когда меняются линии/уклоны/комнаты — не на каждый рендер.
+  const ceilingProfilesById = useMemo(
+    () => buildCeilingProfilesByLineId(lines, ceilingSlopes, rooms),
+    [lines, ceilingSlopes, rooms],
+  )
+
+  // ── Смета каркаса ГКЛ (стойки ПС) по всему проекту, с дедупликацией
+  // угловой стойки на 90°-примыканиях (короба/ниши/колонны, углы двух
+  // перегородок) — см. TASKS.md/KONSPEKT.md "дедупликация угловой
+  // стойки". Пересчитывается только при изменении линий/колонн/масштаба.
   const frameSummary = useMemo(
-    () => calcPlanFrameEstimate(lines, lineAttachments, scaleMmPx, rectColumns),
-    [lines, lineAttachments, scaleMmPx, rectColumns],
+    () => calcPlanFrameEstimate(lines, lineAttachments, scaleMmPx, rectColumns, ceilingProfilesById),
+    [lines, lineAttachments, scaleMmPx, rectColumns, ceilingProfilesById],
+  )
+
+  // ── Сводка площади ГКЛ по типу конструкции + ширине (30.08.2026) ──────────
+  const frameAreaByType = useMemo(
+    () => calcPlanFrameAreaByType(frameSummary, lines),
+    [frameSummary, lines],
   )
 
   // ── Подсчёт площади выбранной линии ───────────────────────────────────────
@@ -3036,6 +3115,89 @@ export default function FloorPlan() {
             </div>
           )}
 
+          {/* Уклон плиты перекрытия (30.08.2026) — задаётся двумя опорными точками
+              с известной высотой в каждой; все перегородки/облицовка, попавшие в
+              зону действия (весь план либо конкретная комната), автоматически
+              получают верный ceilingProfile вместо плоского heightMm — см.
+              core/ceilingSlope.ts. */}
+          <div>
+            <div style={{ ...sectionHeaderStyle, color: '#7fb3d5' }}>Уклон плиты перекрытия</div>
+            <button
+              onClick={() => { setSlopePts([]); setEditingSlopeId(null); setMode('slope') }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 14px', background: 'transparent', border: 'none',
+                cursor: 'pointer', width: '100%', textAlign: 'left',
+                borderLeft: mode === 'slope' ? '3px solid #7fb3d5' : '3px solid transparent',
+                color: mode === 'slope' ? '#fff' : '#8a9ac8', fontSize: 12,
+              }}>
+              <span style={{ fontSize: 14, minWidth: 16, textAlign: 'center' }}>⬊</span>
+              <span>{editingSlopeId ? 'Правка уклона' : 'Задать уклон'}</span>
+            </button>
+            {mode === 'slope' && (
+              <div style={{ padding: '2px 14px 10px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
+                Клик — точка 1 (начало ската), клик — точка 2 (конец ската).
+                Высота — реальная высота плиты перекрытия в каждой точке.
+                Направление, перпендикулярное точкам, считается ровным (без
+                бокового уклона). Esc — отменить.
+                {slopePts.length > 0 && <div style={{ marginTop: 2 }}>Точек: {slopePts.length}/2</div>}
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{ minWidth: 62 }}>Название</span>
+                    <input value={slopeLabel} onChange={e => setSlopeLabel(e.target.value)}
+                      style={{ flex: 1, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{ minWidth: 62 }}>Высота 1, мм</span>
+                    <input type="number" value={slopeHeight1Mm} onChange={e => setSlopeHeight1Mm(e.target.value)}
+                      style={{ width: 80, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{ minWidth: 62 }}>Высота 2, мм</span>
+                    <input type="number" value={slopeHeight2Mm} onChange={e => setSlopeHeight2Mm(e.target.value)}
+                      style={{ width: 80, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{ minWidth: 62 }}>Помещение</span>
+                    <select value={slopeRoomId} onChange={e => setSlopeRoomId(e.target.value)}
+                      style={{ flex: 1, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }}>
+                      <option value="">Весь план</option>
+                      {rooms.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                    </select>
+                  </div>
+                  <button onClick={saveSlope} disabled={slopePts.length !== 2}
+                    style={{
+                      marginTop: 2, fontSize: 11, padding: '5px 10px', borderRadius: 4, border: 'none',
+                      background: slopePts.length !== 2 ? '#3a4060' : '#7fb3d5', color: '#0c1220',
+                      fontWeight: 600, cursor: slopePts.length !== 2 ? 'default' : 'pointer',
+                    }}>
+                    {editingSlopeId ? '✓ Сохранить правки' : '✓ Создать уклон'}
+                  </button>
+                </div>
+              </div>
+            )}
+            {ceilingSlopes.length > 0 && (
+              <div style={{ padding: '4px 14px 8px' }}>
+                {ceilingSlopes.map(s => (
+                  <div key={s.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+                      padding: '5px 10px', marginBottom: 3, fontSize: 11, borderRadius: 4,
+                      border: '1px solid #3a4060', color: '#8a9ac8',
+                    }}>
+                    <span style={{ cursor: 'pointer' }} onClick={() => startEditSlope(s)}>
+                      {s.label} ({s.height1Mm}→{s.height2Mm} мм{s.roomId ? `, ${rooms.find(r => r.id === s.roomId)?.label ?? '?'}` : ''})
+                    </span>
+                    <button onClick={() => { if (window.confirm(`Удалить «${s.label}»?`)) removeCeilingSlope(s.id) }}
+                      style={{ background: 'transparent', border: 'none', color: '#e57373', cursor: 'pointer', fontSize: 12 }}>
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Шаблоны колонн — библиотека общая на все объекты (useTemplateStore),
               штамповка: прямоугольная — 2 клика (центр, потом угол), круглая — 1 клик.
               Библиотека наполняется либо "Сохранить как шаблон" с уже нарисованной
@@ -3623,6 +3785,28 @@ export default function FloorPlan() {
                     <Circle key={i} x={p.x} y={p.y} radius={4}
                       fill={i === 0 ? '#fff' : (activeDiscipline === 'ventilation' ? '#26a69a' : '#fbc02d')}
                       stroke="#1a1f33" strokeWidth={1} listening={false} />
+                  ))}
+
+                  {/* Уклон плиты перекрытия (30.08.2026) — сохранённые + текущий рисуемый */}
+                  {ceilingSlopes.filter(s => s.id !== editingSlopeId).map(s => (
+                    <Group key={s.id} listening={false}>
+                      <Line points={[s.x1, s.y1, s.x2, s.y2]} stroke="#7fb3d5" strokeWidth={2} dash={[10, 6]} lineCap="round" />
+                      <Circle x={s.x1} y={s.y1} radius={4} fill="#7fb3d5" stroke="#1a1f33" strokeWidth={1} />
+                      <Circle x={s.x2} y={s.y2} radius={4} fill="#7fb3d5" stroke="#1a1f33" strokeWidth={1} />
+                      <Text x={(s.x1 + s.x2) / 2 + 6} y={(s.y1 + s.y2) / 2 - 14}
+                        text={`⬊ ${s.label}: ${s.height1Mm}→${s.height2Mm} мм`}
+                        fontSize={11} fill="#7fb3d5" listening={false} />
+                    </Group>
+                  ))}
+                  {mode === 'slope' && slopePts.length > 0 && cursor && (
+                    <Line
+                      points={slopePts.length === 2 ? [slopePts[0].x, slopePts[0].y, slopePts[1].x, slopePts[1].y] : [...slopePts.flatMap(p => [p.x, p.y]), cursor.x, cursor.y]}
+                      stroke="#7fb3d5" strokeWidth={2} dash={[10, 6]} lineCap="round" listening={false}
+                    />
+                  )}
+                  {mode === 'slope' && slopePts.map((p, i) => (
+                    <Circle key={i} x={p.x} y={p.y} radius={5}
+                      fill={i === 0 ? '#fff' : '#7fb3d5'} stroke="#1a1f33" strokeWidth={1} listening={false} />
                   ))}
 
                   {/* Помещения (замкнутые периметры wall_existing) */}
@@ -6088,6 +6272,28 @@ export default function FloorPlan() {
                         <span>Раскрой прутков 3м (облицовка)</span>
                         <span style={{ fontWeight: 600 }}>{frameSummary.lining.studCutList.totalBars} шт</span>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Площадь ГКЛ по типу + ширине (30.08.2026) — учитывает уклон
+                    плиты перекрытия, если он задан на плане (см. gklArea в
+                    каждой строке frameSummary — там же посчитан). */}
+                {frameAreaByType.length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: '#1e2433', marginBottom: 6 }}>
+                      Площадь ГКЛ по типу и ширине
+                    </div>
+                    {frameAreaByType.map(g => (
+                      <div key={`${g.kind}#${g.widthMm}`}
+                        style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555', marginBottom: 2 }}>
+                        <span>{g.kind}, {g.widthMm} мм</span>
+                        <span style={{ fontWeight: 600 }}>{g.areaM2.toFixed(2)} м²</span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, color: '#1e2433', marginTop: 6, padding: '8px 4px', background: '#f5f7fb', borderRadius: 6 }}>
+                      <span>Итого</span>
+                      <span>{frameAreaByType.reduce((s, g) => s + g.areaM2, 0).toFixed(2)} м²</span>
                     </div>
                   </div>
                 )}

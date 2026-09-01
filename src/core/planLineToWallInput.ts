@@ -29,7 +29,7 @@
  * конце линии → это "стена" для abutment, независимо от материала соседа.
  */
 
-import type { PlanLine, WallInput, WallType, ProfileType, Opening, AbutmentType } from '../types'
+import type { PlanLine, WallInput, WallType, ProfileType, Opening, AbutmentType, EdgeProfile } from '../types'
 import { DEFAULT_BOARD_SPEC } from '../types'
 import type { LineAttachments } from './attachmentResolver'
 
@@ -85,7 +85,17 @@ export function mapOpenings(line: PlanLine): Opening[] {
  * калькулятор каркаса их не считает), нулевой длины, неподдержанного
  * профиля (ps125/double — см. resolveWallProfileType).
  */
-export function planLineToWallInput(line: PlanLine, attachments?: LineAttachments): WallInput | null {
+/**
+ * ceilingProfile — если для линии на плане действует уклон плиты перекрытия
+ * (см. core/ceilingSlope.ts, buildCeilingProfilesByLineId), передаётся сюда
+ * готовым (два конца линии с уже вычисленной высотой). Не задано — стена
+ * плоская на line.heightMm, как раньше.
+ */
+export function planLineToWallInput(
+  line: PlanLine,
+  attachments?: LineAttachments,
+  ceilingProfile?: EdgeProfile,
+): WallInput | null {
   if (line.type !== 'wall_new') return null
   if (line.spec?.material !== 'gkl') return null
   if (line.lengthMm <= 0) return null
@@ -106,20 +116,26 @@ export function planLineToWallInput(line: PlanLine, attachments?: LineAttachment
     firstStud: step, // калька: позиции стоек на линии плана не хранятся (как в planLineToSurfaceInput)
     openings: mapOpenings(line),
     communications: [],
+    ceilingProfile,
     layer1: line.spec.layer1 ?? DEFAULT_BOARD_SPEC,
     layer2: line.spec.layer2 ?? DEFAULT_BOARD_SPEC,
     plywoodInserts: [],
   }
 }
 
-/** Батч-версия: переводит все линии плана, отбрасывая неприменимые (null). Порядок сохраняется. */
+/**
+ * Батч-версия: переводит все линии плана, отбрасывая неприменимые (null).
+ * Порядок сохраняется. ceilingProfilesById — карта line.id → готовый
+ * ceilingProfile (см. core/ceilingSlope.ts); не задано — все линии плоские.
+ */
 export function planLinesToWallInputs(
   lines: PlanLine[],
   attachmentsMap?: Map<string, LineAttachments>,
+  ceilingProfilesById?: Map<string, EdgeProfile>,
 ): { line: PlanLine; input: WallInput }[] {
   const out: { line: PlanLine; input: WallInput }[] = []
   for (const l of lines) {
-    const input = planLineToWallInput(l, attachmentsMap?.get(l.id))
+    const input = planLineToWallInput(l, attachmentsMap?.get(l.id), ceilingProfilesById?.get(l.id))
     if (input) out.push({ line: l, input })
   }
   return out

@@ -942,6 +942,40 @@ export interface MepRoute {
   label: string
 }
 
+/**
+ * Уклон плиты перекрытия (потолка) — задаётся ДВУМЯ опорными точками на
+ * плане с известной высотой в каждой (30.08.2026, найдено на объекте —
+ * philharmonic Ростов, реальный скошенный потолок над перегородками).
+ *
+ * Модель: одна наклонная ПЛОСКОСТЬ, постоянная в направлении,
+ * перпендикулярном линии p1→p2 (обычный по факту случай — скат в одну
+ * сторону, как мансардный потолок/наклонный зал). Высота в произвольной
+ * точке плана = линейная экстраполяция вдоль направления p1→p2 (проекция,
+ * без ограничения отрезком — плоскость продолжается на весь охват roomId
+ * или всего плана).
+ *
+ * roomId не задан → уклон действует на весь план (кроме линий внутри
+ * помещений со своим собственным уклоном — см. resolveCeilingSlopeForLine
+ * в core/ceilingSlope.ts). roomId задан → действует только на линии,
+ * геометрически принадлежащие этому Room (см. wallSideToRoom.ts/
+ * extractContourPoints для аналогичной точечной проверки).
+ *
+ * Известное ограничение (как и у других мест с EdgeProfile/sagittaMm):
+ * применяется только к прямым линиям (без sagittaMm) — для линий-дуг
+ * высота не выводится (не только слоан — не заложено и в existing
+ * arc-ограничениях, см. PlanLine.sagittaMm), такие линии остаются на
+ * плоском heightMm.
+ */
+export interface CeilingSlope {
+  id: string
+  label: string           // "Уклон зала" и т.п.
+  x1: number; y1: number  // опорная точка 1, px (мировые координаты плана)
+  x2: number; y2: number  // опорная точка 2, px
+  height1Mm: number       // высота плиты перекрытия в точке 1, мм
+  height2Mm: number       // высота плиты перекрытия в точке 2, мм
+  roomId?: string         // область действия — конкретное помещение; не задано = весь план
+}
+
 /** План объекта */
 export interface FloorPlan {
   scaleMmPerPx: number
@@ -953,6 +987,7 @@ export interface FloorPlan {
   roundColumns: RoundColumn[]
   rectColumns: RectColumn[]
   freeformStructures: FreeformStructure[]
+  ceilingSlopes: CeilingSlope[]
   backgroundImage?: BackgroundImage | null
   mepRoutes: MepRoute[]
   mepBackgrounds: MepBackgrounds
@@ -982,6 +1017,7 @@ export const DEFAULT_FLOOR_PLAN: FloorPlan = {
   roundColumns: [],
   rectColumns: [],
   freeformStructures: [],
+  ceilingSlopes: [],
   backgroundImage: null,
   mepRoutes: [],
   mepBackgrounds: {},

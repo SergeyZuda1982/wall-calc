@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, FreeformOpening } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, FreeformOpening, CeilingSlope } from '../types'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 import { duplicateFloorPlanGeometry } from '../core/duplicateFloorPlan'
 import { idbSetBackground, idbGetBackground, idbDeleteBackground, backgroundStorageKey } from './bgIndexedDb'
@@ -190,6 +190,10 @@ export interface ProjectStore {
   addRectColumn: (col: Omit<RectColumn, 'id'>) => string
   updateRectColumn: (id: string, patch: Partial<RectColumn>) => void
   removeRectColumn: (id: string) => void
+  // уклон плиты перекрытия (30.08.2026) — см. types/index.ts CeilingSlope
+  addCeilingSlope: (slope: Omit<CeilingSlope, 'id'>) => string
+  updateCeilingSlope: (id: string, patch: Partial<CeilingSlope>) => void
+  removeCeilingSlope: (id: string) => void
 
   addFreeformStructure: (fs: Omit<FreeformStructure, 'id'>) => string
   updateFreeformStructure: (id: string, patch: Partial<FreeformStructure>) => void
@@ -1012,6 +1016,29 @@ export const useProjectStore = create<ProjectStore>()(
         })))
       },
 
+      // ─── Уклон плиты перекрытия (30.08.2026, см. types/index.ts CeilingSlope) ──
+
+      addCeilingSlope: (slope) => {
+        const id = `slope_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const newSlope: CeilingSlope = { ...slope, id }
+          return updateActiveFloorPlan(s, fp => ({ ...fp, ceilingSlopes: [...(fp.ceilingSlopes ?? []), newSlope] }))
+        })
+        return id
+      },
+
+      updateCeilingSlope: (id, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, ceilingSlopes: (fp.ceilingSlopes ?? []).map(cs => cs.id === id ? { ...cs, ...patch } : cs),
+        })))
+      },
+
+      removeCeilingSlope: (id) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, ceilingSlopes: (fp.ceilingSlopes ?? []).filter(cs => cs.id !== id),
+        })))
+      },
+
       // ─── Обводка произвольной формы: стена/перегородка или колонна (07.07.2026) ──
 
       addFreeformStructure: (fsInput) => {
@@ -1191,13 +1218,13 @@ export const useProjectStore = create<ProjectStore>()(
           state.projects = state.projects.map(p => {
             const legacy = p as unknown as { floorPlan?: FloorPlan; levels?: Level[]; activeLevelId?: string }
             const levels: Level[] = legacy.levels && legacy.levels.length > 0
-              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], ceilings: lv.floorPlan.ceilings ?? [], roundColumns: lv.floorPlan.roundColumns ?? [], rectColumns: lv.floorPlan.rectColumns ?? [], freeformStructures: lv.floorPlan.freeformStructures ?? [], mepRoutes: lv.floorPlan.mepRoutes ?? [], mepBackgrounds: lv.floorPlan.mepBackgrounds ?? {}, defaultHeightMm: lv.floorPlan.defaultHeightMm ?? 3000 } }))
+              ? legacy.levels.map(lv => ({ ...lv, floorPlan: { ...lv.floorPlan, contours: lv.floorPlan.contours ?? [], slabs: lv.floorPlan.slabs ?? [], ceilings: lv.floorPlan.ceilings ?? [], roundColumns: lv.floorPlan.roundColumns ?? [], rectColumns: lv.floorPlan.rectColumns ?? [], freeformStructures: lv.floorPlan.freeformStructures ?? [], ceilingSlopes: lv.floorPlan.ceilingSlopes ?? [], mepRoutes: lv.floorPlan.mepRoutes ?? [], mepBackgrounds: lv.floorPlan.mepBackgrounds ?? {}, defaultHeightMm: lv.floorPlan.defaultHeightMm ?? 3000 } }))
               : [{
                   id: `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`,
                   name: 'Этаж 1',
                   elevationMm: 0,
                   floorPlan: legacy.floorPlan
-                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], ceilings: legacy.floorPlan.ceilings ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [], rectColumns: legacy.floorPlan.rectColumns ?? [], freeformStructures: legacy.floorPlan.freeformStructures ?? [], mepRoutes: legacy.floorPlan.mepRoutes ?? [], mepBackgrounds: legacy.floorPlan.mepBackgrounds ?? {}, defaultHeightMm: legacy.floorPlan.defaultHeightMm ?? 3000 }
+                    ? { ...legacy.floorPlan, contours: legacy.floorPlan.contours ?? [], slabs: legacy.floorPlan.slabs ?? [], ceilings: legacy.floorPlan.ceilings ?? [], roundColumns: legacy.floorPlan.roundColumns ?? [], rectColumns: legacy.floorPlan.rectColumns ?? [], freeformStructures: legacy.floorPlan.freeformStructures ?? [], ceilingSlopes: legacy.floorPlan.ceilingSlopes ?? [], mepRoutes: legacy.floorPlan.mepRoutes ?? [], mepBackgrounds: legacy.floorPlan.mepBackgrounds ?? {}, defaultHeightMm: legacy.floorPlan.defaultHeightMm ?? 3000 }
                     : { ...DEFAULT_FLOOR_PLAN, lines: [], contours: [] },
                 }]
             const activeLevelId = legacy.activeLevelId && levels.some(lv => lv.id === legacy.activeLevelId)
