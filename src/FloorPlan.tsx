@@ -5626,12 +5626,18 @@ export default function FloorPlan() {
                       </div>
                     )
                   })()}
-                  <div style={{ fontSize: 12, color: '#555', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ fontSize: 12, color: '#555', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
                     Высота:
                     <input type="number" value={inspectorLine.heightMm ?? 3000}
                       onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updatePlanLine(inspectorLine.id, { heightMm: v }) }}
                       style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
                   </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#999', cursor: 'pointer', marginBottom: 8 }}
+                    title="Если на этой линии действует уклон плиты перекрытия — по умолчанию высота считается по уклону, а поле выше игнорируется. Включите, если эта конструкция НЕ до перекрытия (короб/перила/заниженная перегородка) и должна оставаться на своей фиксированной высоте независимо от уклона.">
+                    <input type="checkbox" checked={!!inspectorLine.customHeight}
+                      onChange={e => updatePlanLine(inspectorLine.id, { customHeight: e.target.checked })} />
+                    своя высота (не до перекрытия, игнорировать уклон)
+                  </label>
                   <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
                     Площадь: <b>{calcLineArea(inspectorLine).toFixed(2)} м²</b>
                   </div>
