@@ -87,6 +87,7 @@ export function buildCeilingSlopeResolver(
  */
 export function ceilingProfileForLine(line: PlanLine, slope: CeilingSlope | undefined): EdgeProfile | undefined {
   if (!slope) return undefined
+  if (line.customHeight) return undefined // высота зафиксирована пользователем — не до перекрытия, уклон не применяем
   if (line.sagittaMm) return undefined // дуга — известное ограничение, см. заголовок файла
   if (line.lengthMm <= 0) return undefined
   const h1 = ceilingSlopeHeightAt(slope, line.x1, line.y1)

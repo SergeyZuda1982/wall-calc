@@ -138,4 +138,13 @@ describe('buildCeilingSlopeResolver / buildCeilingProfilesByLineId', () => {
     const profile = ceilingProfileForLine(inside, resolve(inside))
     expect(profile).toEqual([{ x: 0, y: 2500 }, { x: 1000, y: 2500 }])
   })
+
+  it('customHeight:true — уклон не применяется, линия остаётся плоской на своей heightMm', () => {
+    const slope = globalSlope({ height1Mm: 4500, height2Mm: 5500 })
+    const fixed = line({ id: 'FIXED', x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, heightMm: 3000, customHeight: true })
+    const normal = line({ id: 'NORM', x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, heightMm: 3000 })
+
+    expect(ceilingProfileForLine(fixed, slope)).toBeUndefined()
+    expect(ceilingProfileForLine(normal, slope)).toEqual([{ x: 0, y: 4500 }, { x: 1000, y: 5500 }])
+  })
 })
