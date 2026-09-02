@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
-import type { WallInput, Opening, Communication, PlywoodInsert, BoardSheetResult, BoardLayerLayout } from './types'
+import type { WallInput, Opening, Communication, PlywoodInsert, BoardSheetResult, BoardLayerLayout, BoardSpec, DoubleFrameType } from './types'
 import { DEFAULT_BOARD_SPEC, boardLabel } from './types'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
-import type { WallEntry, LiningEntry } from './store/useProjectStore'
+import type { WallEntry, LiningEntry, WallEntryData } from './store/useProjectStore'
 import { PROFILES } from './data/profiles'
 import { useWallCalc } from './hooks/useWallCalc'
+import { useDoubleFrameCalc } from './hooks/useDoubleFrameCalc'
+import type { DoubleFrameInput, DoubleFrameResult } from './core/calcDoubleFrame'
 import { CANVAS_W as CANVAS_W_MAX, PAD } from './constants'
 import { useContainerWidth } from './hooks/useContainerWidth'
 import { MIN_GAP } from './core/buildPositions'
@@ -113,8 +115,25 @@ const MATERIAL_COUNT_PCS: Record<MaterialKey, boolean> = {
 type MaterialMap = Partial<Record<MaterialKey, number>>
 
 function wallMaterials(w: WallEntry): MaterialMap {
+  if (w.kind === 'double') {
+    const { doubleInput, doubleResult } = w
+    if (!doubleInput || !doubleResult) return {}
+    const prof = doubleInput.profileType
+    const psKey: MaterialKey = prof === 'ps50' ? 'ps_50' : prof === 'ps75' ? 'ps_75' : 'ps_100'
+    const pnKey: MaterialKey = prof === 'ps50' ? 'pn_50' : prof === 'ps75' ? 'pn_75' : 'pn_100'
+    const { frameA, frameB } = doubleResult
+    return {
+      [pnKey]: frameA.uwFloor + frameA.uwCeiling + frameA.lintel + frameA.uwSill
+        + frameB.uwFloor + frameB.uwCeiling + frameB.lintel + frameB.uwSill,
+      [psKey]: frameA.cwTotal + frameB.cwTotal,
+      // Разделитель (С115.2) и 3-й слой стороны Б (С115.3) — тот же ГКЛ,
+      // добавляем в общую площадь листа (упрощение, как в calcDoubleFrame.ts —
+      // они не участвуют в общем раскрое листа, только в итоговой площади).
+      gkl_m2: frameA.gklArea + frameB.gklArea + doubleResult.separatorAreaM2 + doubleResult.extraLayerAreaM2,
+    }
+  }
   const { result, input } = w
-  if (!result) return {}
+  if (!result || !input) return {}
   const prof = input.profileType
   const psKey: MaterialKey = prof === 'ps50' ? 'ps_50' : prof === 'ps75' ? 'ps_75' : 'ps_100'
   const pnKey: MaterialKey = prof === 'ps50' ? 'pn_50' : prof === 'ps75' ? 'pn_75' : 'pn_100'
@@ -123,6 +142,19 @@ function wallMaterials(w: WallEntry): MaterialMap {
     [psKey]: result.cwTotal,
     gkl_m2: result.gklArea,
   }
+}
+function wallHasResult(w: WallEntry): boolean {
+  return w.kind === 'double' ? !!w.doubleResult : !!w.result
+}
+function wallDisplayType(w: WallEntry): string {
+  if (w.kind === 'double' && w.doubleInput) {
+    const map: Record<string, string> = { c115_1: 'С115.1', c115_2: 'С115.2', c115_3: 'С115.3', c116: 'С116' }
+    return map[w.doubleInput.dfType] ?? w.doubleInput.dfType.toUpperCase()
+  }
+  return w.input ? w.input.wallType.toUpperCase() : '?'
+}
+function wallDisplayProfileType(w: WallEntry): 'ps50' | 'ps75' | 'ps100' | null {
+  return w.kind === 'double' ? (w.doubleInput?.profileType ?? null) : (w.input?.profileType ?? null)
 }
 function liningMaterials(l: LiningEntry): MaterialMap {
   const { result, input } = l
@@ -186,11 +218,64 @@ export default function App() {
   const [showProjectOffcuts, setShowProjectOffcuts] = useState(false)
   const [hasInsulation, setHasInsulation] = useState(false)
   const [canvasWrapRef, CANVAS_W] = useContainerWidth(CANVAS_W_MAX, 48)
-  const {
-    positions, snap, result, heightWarning, profileWidth,
-    calculate, onDragEnd, onRightDragEnd, shiftGrid, addStud, removeStud,
-    currentFirstStud, currentStep,
-  } = useWallCalc()
+  const wallCalc = useWallCalc()
+  const dfCalc = useDoubleFrameCalc()
+
+  // Серия перегородки — отдельно от form.wallType (тот строго 'c111'|'c112',
+  // как раньше). C115/С116 (01.09.2026) — двойной каркас, использует
+  // useDoubleFrameCalc() вместо useWallCalc(), но ту же самую канву/драг —
+  // см. алиасы positions/result/... ниже.
+  const [wallSeries, setWallSeries] = useState<WallInput['wallType'] | DoubleFrameType>('c111')
+  const isDoubleFrame = wallSeries === 'c115_1' || wallSeries === 'c115_2' || wallSeries === 'c115_3' || wallSeries === 'c116'
+  const [dfSide, setDfSide] = useState<'A' | 'B'>('A') // какую сторону сейчас показываем/двигаем на канве
+  const [dfLayerB1, setDfLayerB1] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
+  const [dfLayerB2, setDfLayerB2] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
+  const [dfLayerB3, setDfLayerB3] = useState<BoardSpec>(DEFAULT_BOARD_SPEC)
+  const [dfGapMm, setDfGapMm] = useState('150')
+
+  // Алиасы под старые имена — весь код канвы/драга ниже написан один раз для
+  // одинарной стены и НЕ трогается: при двойном каркасе он прозрачно читает
+  // данные активного ряда (dfSide) из useDoubleFrameCalc() вместо useWallCalc().
+  const positions = isDoubleFrame ? dfCalc.positions : wallCalc.positions
+  const snap = isDoubleFrame ? dfCalc.snap : wallCalc.snap
+  const result = isDoubleFrame ? (dfSide === 'A' ? dfCalc.resultA : dfCalc.resultB) : wallCalc.result
+  // Таблиц макс. высоты для С115/С116 пока нет (data/maxHeight.ts) — известное
+  // упрощение, см. useDoubleFrameCalc.ts.
+  const heightWarning = isDoubleFrame ? null : wallCalc.heightWarning
+  const profileWidth = isDoubleFrame ? dfCalc.profileWidth : wallCalc.profileWidth
+  const currentFirstStud = isDoubleFrame ? dfCalc.currentFirstStud : wallCalc.currentFirstStud
+  const currentStep = isDoubleFrame ? dfCalc.currentStep : wallCalc.currentStep
+  // Сетка стоек ОДНА на оба ряда (подтверждено на объекте, см. calcDoubleFrame.ts) —
+  // драг/добавление/удаление стойки всегда идёт через dfCalc независимо от dfSide.
+  const onDragEnd = isDoubleFrame ? dfCalc.onDragEnd : wallCalc.onDragEnd
+  const onRightDragEnd = isDoubleFrame ? dfCalc.onRightDragEnd : wallCalc.onRightDragEnd
+  const shiftGrid = isDoubleFrame ? dfCalc.shiftGrid : wallCalc.shiftGrid
+  const addStud = isDoubleFrame ? dfCalc.addStud : wallCalc.addStud
+  const removeStud = isDoubleFrame ? dfCalc.removeStud : wallCalc.removeStud
+
+  function runCalculate(overlap: number) {
+    if (isDoubleFrame) {
+      dfCalc.calculate({
+        dfType: wallSeries as DoubleFrameType,
+        profileType: form.profileType,
+        abutment: form.abutment,
+        length: form.length,
+        height: form.height,
+        step: form.step,
+        firstStud: form.firstStud,
+        openings: form.openings,
+        overlap,
+        layerA1: form.layer1,
+        layerA2: form.layer2,
+        layerB1: dfLayerB1,
+        layerB2: dfLayerB2,
+        layerB3: wallSeries === 'c115_3' ? dfLayerB3 : undefined,
+        gapMm: wallSeries === 'c116' ? (parseFloat(dfGapMm) || 0) : undefined,
+      })
+    } else {
+      wallCalc.calculate({ ...form, wallType: wallSeries as WallInput['wallType'], customOverlap: overlap })
+    }
+  }
 
   const rightDragStart = useRef<{ studPos: number; startXpx: number } | null>(null)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -295,6 +380,29 @@ export default function App() {
   function set<K extends keyof WallInput>(key: K, value: WallInput[K]) {
     setForm(prev => ({ ...prev, [key]: value }))
   }
+
+  function loadWallIntoForm(w: WallEntry) {
+    setActiveWall(w.id)
+    if (w.kind === 'double' && w.doubleInput) {
+      const di = w.doubleInput
+      setWallSeries(di.dfType)
+      setForm(prev => ({
+        ...prev,
+        profileType: di.profileType, abutment: di.abutment as WallInput['abutment'], length: di.length, height: di.height,
+        step: di.step, firstStud: di.firstStud, openings: di.openings, customOverlap: di.overlap,
+        layer1: di.layerA1, layer2: di.layerA2,
+      }))
+      setDfLayerB1(di.layerB1); setDfLayerB2(di.layerB2)
+      setDfLayerB3(di.layerB3 ?? DEFAULT_BOARD_SPEC)
+      setDfGapMm(di.gapMm != null ? String(di.gapMm) : '150')
+      setDfSide('A')
+    } else if (w.input) {
+      setForm(w.input)
+      setWallSeries(w.input.wallType)
+    }
+    setActiveTab('wall')
+  }
+
 
   // ─── Управление проёмами ───────────────────────────────────────────────────
 
@@ -485,9 +593,9 @@ export default function App() {
 
   type ItemRow = { id: string; label: string; type: 'wall' | 'lining'; constructionType: string; materials: MaterialMap }
   const itemRows: ItemRow[] = [
-    ...walls.filter(w => w.result).map(w => ({
+    ...walls.filter(wallHasResult).map(w => ({
       id: w.id, label: w.label, type: 'wall' as const,
-      constructionType: w.input.wallType.toUpperCase(), materials: wallMaterials(w),
+      constructionType: wallDisplayType(w), materials: wallMaterials(w),
     })),
     ...linings.filter(l => l.result).map(l => ({
       id: l.id, label: l.label, type: 'lining' as const,
@@ -705,16 +813,20 @@ export default function App() {
                   <select value={activeWallId ?? ''} onChange={e => {
                     const id = e.target.value; if (!id) return
                     const w = walls.find(w => w.id === id)
-                    if (w) { setActiveWall(w.id); setForm(w.input); setActiveTab('wall') }
+                    if (w) loadWallIntoForm(w)
                   }} style={{ flex: 1, padding: '6px 8px', fontSize: 13, border: '1px solid #ccc', borderRadius: 4 }}>
                     <option value="">— Выберите перегородку —</option>
-                    {walls.map(w => (
-                      <option key={w.id} value={w.id}>
-                        {w.label} · {w.input.length}×{w.input.height} · {w.input.wallType.toUpperCase()} · {
-                          w.input.profileType === 'ps50' ? 'ПС50' : w.input.profileType === 'ps75' ? 'ПС75' : 'ПС100'
-                        }
-                      </option>
-                    ))}
+                    {walls.map(w => {
+                      const dims = w.kind === 'double' ? w.doubleInput : w.input
+                      const pt = wallDisplayProfileType(w)
+                      return (
+                        <option key={w.id} value={w.id}>
+                          {w.label} · {dims?.length}×{dims?.height} · {wallDisplayType(w)} · {
+                            pt === 'ps50' ? 'ПС50' : pt === 'ps75' ? 'ПС75' : 'ПС100'
+                          }
+                        </option>
+                      )
+                    })}
                   </select>
                   {activeWallId && (
                     <button onClick={() => { if (window.confirm('Удалить перегородку?')) { removeWall(activeWallId) } }}
@@ -796,19 +908,48 @@ export default function App() {
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
           <div style={{ flex: 1, minWidth: 180 }}>
             <label style={{ fontSize: 13 }}>Тип перегородки</label><br />
-            <select value={form.wallType} onChange={e => set('wallType', e.target.value as WallInput['wallType'])} style={{ width: '100%', padding: 7 }}>
+            <select value={wallSeries} onChange={e => setWallSeries(e.target.value as typeof wallSeries)} style={{ width: '100%', padding: 7 }}>
               <option value="c111">С111 — 1 слой</option>
               <option value="c112">С112 — 2 слоя</option>
+              <option value="c115_1">С115.1 — двойной каркас, 2+2</option>
+              <option value="c115_2">С115.2 — двойной каркас, 2+2 + разделитель</option>
+              <option value="c115_3">С115.3 — двойной каркас, 2+3 (асимметрично)</option>
+              <option value="c116">С116 — двойной каркас, увеличенный зазор</option>
             </select>
           </div>
           <div style={{ flex: 1, minWidth: 200 }}>
-            <label style={{ fontSize: 13 }}>{form.wallType === 'c112' ? '1-й слой' : 'Материал обшивки'}</label><br />
+            <label style={{ fontSize: 13 }}>{isDoubleFrame ? '1-й слой, сторона А' : (wallSeries === 'c112' ? '1-й слой' : 'Материал обшивки')}</label><br />
             <BoardSpecSelector value={form.layer1} onChange={v => set('layer1', v)} />
           </div>
-          {form.wallType === 'c112' && (
+          {(wallSeries === 'c112' || isDoubleFrame) && (
             <div style={{ flex: 1, minWidth: 200 }}>
-              <label style={{ fontSize: 13 }}>2-й слой</label><br />
+              <label style={{ fontSize: 13 }}>{isDoubleFrame ? '2-й слой, сторона А' : '2-й слой'}</label><br />
               <BoardSpecSelector value={form.layer2} onChange={v => set('layer2', v)} />
+            </div>
+          )}
+          {isDoubleFrame && (
+            <>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <label style={{ fontSize: 13 }}>1-й слой, сторона Б</label><br />
+                <BoardSpecSelector value={dfLayerB1} onChange={setDfLayerB1} />
+              </div>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <label style={{ fontSize: 13 }}>2-й слой, сторона Б</label><br />
+                <BoardSpecSelector value={dfLayerB2} onChange={setDfLayerB2} />
+              </div>
+            </>
+          )}
+          {wallSeries === 'c115_3' && (
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <label style={{ fontSize: 13 }}>3-й слой, сторона Б</label><br />
+              <BoardSpecSelector value={dfLayerB3} onChange={setDfLayerB3} />
+            </div>
+          )}
+          {wallSeries === 'c116' && (
+            <div style={{ flex: 1, minWidth: 140 }}>
+              <label style={{ fontSize: 13 }}>Зазор под коммуникации, мм</label><br />
+              <input type="number" value={dfGapMm} onChange={e => setDfGapMm(e.target.value)}
+                style={{ width: '100%', padding: 7, boxSizing: 'border-box' }} />
             </div>
           )}
           <div style={{ flex: 1, minWidth: 180 }}>
@@ -1079,13 +1220,18 @@ export default function App() {
 
         <div style={{ display: 'flex', gap: 10, marginBottom: hasOpeningConflict ? 8 : 20, flexWrap: 'wrap' }}>
           {walls.length > 0 && (
-            <button onClick={() => { setActiveWall(null); setForm(DEFAULT_INPUT) }}
+            <button onClick={() => {
+              setActiveWall(null); setForm(DEFAULT_INPUT)
+              setWallSeries('c111'); setDfSide('A')
+              setDfLayerB1(DEFAULT_BOARD_SPEC); setDfLayerB2(DEFAULT_BOARD_SPEC); setDfLayerB3(DEFAULT_BOARD_SPEC)
+              setDfGapMm('150')
+            }}
               style={{ padding: '10px 20px', fontSize: 15, cursor: 'pointer', background: '#fff', border: '1px solid #aaa', borderRadius: 4 }}>
               + Новая
             </button>
           )}
           <button
-            onClick={() => !hasOpeningConflict && calculate({ ...form, customOverlap: effectiveOverlap })}
+            onClick={() => !hasOpeningConflict && runCalculate(effectiveOverlap)}
             disabled={hasOpeningConflict}
             style={{ padding: '10px 32px', fontSize: 15,
               cursor: hasOpeningConflict ? 'not-allowed' : 'pointer',
@@ -1096,13 +1242,43 @@ export default function App() {
             Рассчитать
           </button>
           <button onClick={() => {
-            if (result && positions.length) {
-              if (activeWallId) {
-                updateWall(activeWallId, form, result, positions)
-
-              } else {
-                addWall(form, result, positions)
-
+            if (isDoubleFrame) {
+              if (!dfCalc.resultA || !dfCalc.resultB || !dfCalc.positions.length) return
+              const doubleInput: DoubleFrameInput = {
+                dfType: wallSeries as DoubleFrameType,
+                profileType: form.profileType,
+                abutment: form.abutment,
+                length: form.length,
+                height: form.height,
+                step: form.step,
+                firstStud: form.firstStud,
+                openings: form.openings,
+                overlap: effectiveOverlap,
+                layerA1: form.layer1,
+                layerA2: form.layer2,
+                layerB1: dfLayerB1,
+                layerB2: dfLayerB2,
+                layerB3: wallSeries === 'c115_3' ? dfLayerB3 : undefined,
+                gapMm: wallSeries === 'c116' ? (parseFloat(dfGapMm) || 0) : undefined,
+              }
+              const doubleResult: DoubleFrameResult = {
+                dfType: wallSeries as DoubleFrameType,
+                frameA: dfCalc.resultA, frameB: dfCalc.resultB,
+                thicknessMm: dfCalc.thicknessMm,
+                sealingTapeLm: dfCalc.sealingTapeLm,
+                separatorAreaM2: dfCalc.extras?.separatorAreaM2 ?? 0,
+                tapeStrips: dfCalc.extras?.tapeStrips ?? 0,
+                extraLayerAreaM2: dfCalc.extras?.extraLayerAreaM2 ?? 0,
+                extraLayerScrews: dfCalc.extras?.extraLayerScrews ?? null,
+              }
+              const data: WallEntryData = { kind: 'double', doubleInput, doubleResult, positions: dfCalc.positions }
+              if (activeWallId) updateWall(activeWallId, data)
+              else addWall(data)
+            } else {
+              if (result && positions.length) {
+                const data: WallEntryData = { kind: 'single', input: { ...form, wallType: wallSeries as WallInput['wallType'] }, result, positions }
+                if (activeWallId) updateWall(activeWallId, data)
+                else addWall(data)
               }
             }
           }} disabled={!result || hasOpeningConflict}
@@ -1111,6 +1287,23 @@ export default function App() {
             {activeWallId ? '💾 Обновить' : '➕ В объект'}
           </button>
         </div>
+
+        {isDoubleFrame && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, marginTop: -8 }}>
+            <span style={{ fontSize: 12, color: '#666', alignSelf: 'center', marginRight: 4 }}>Показать на схеме:</span>
+            {(['A', 'B'] as const).map(side => (
+              <button key={side} onClick={() => setDfSide(side)}
+                style={{ padding: '4px 14px', fontSize: 12, borderRadius: 4, cursor: 'pointer',
+                  border: `1px solid ${dfSide === side ? '#3a7bd5' : '#ccc'}`,
+                  background: dfSide === side ? '#3a7bd5' : '#fff', color: dfSide === side ? '#fff' : '#333' }}>
+                Сторона {side}
+              </button>
+            ))}
+            <span style={{ fontSize: 11, color: '#999', alignSelf: 'center', marginLeft: 6 }}>
+              Сетка стоек общая — двигаете один раз, действует на обе стороны
+            </span>
+          </div>
+        )}
 
         {/* Предупреждение о пересечении проёмов */}
         {hasOpeningConflict && (
@@ -1863,7 +2056,7 @@ export default function App() {
               <tbody>
                 {itemRows.map(row => (
                   <tr key={row.id} onClick={() => {
-                    if (row.type === 'wall') { const w = walls.find(w => w.id === row.id); if (w) { setActiveWall(w.id); setForm(w.input); setActiveTab('wall') } }
+                    if (row.type === 'wall') { const w = walls.find(w => w.id === row.id); if (w) loadWallIntoForm(w) }
                     else { setActiveLining(row.id); setActiveTab('lining') }
                   }} style={{ cursor: 'pointer', background: (row.type === 'wall' && row.id === activeWallId) || (row.type === 'lining' && row.id === activeLiningId) ? '#e8f0ff' : 'transparent' }}>
                     <td style={tdS}><b>{row.label}</b></td>

@@ -21,6 +21,49 @@ export interface CloudProjectContent {
   profileTemplates: ProfileTemplate[]
 }
 
+// ─── Сериализация стены для облака (01.09.2026, добавление С115/С116) ──────
+// Таблица `walls` в Supabase хранит input/result как обычные JSONB-колонки
+// без схемы (см. комментарий у DbProject) — новых колонок под kind/
+// doubleInput/doubleResult не заводим (это потребовало бы миграции БД,
+// недоступной отсюда). Вместо этого: одинарная стена (kind:'single')
+// сериализуется РОВНО как раньше (input=WallInput, result=CalcResult,
+// без обёртки — старые строки в базе читаются без изменений). Двойной
+// каркас (kind:'double') кладёт свои данные в ТЕ ЖЕ колонки, но обёрнутыми
+// в `{ kind: 'double', ... }` — на чтении отличаем по наличию этого поля.
+export function wallToDbRow(w: WallEntry, projectId: string) {
+  if (w.kind === 'double') {
+    return {
+      id: w.id, project_id: projectId, label: w.label,
+      input: { kind: 'double' as const, doubleInput: w.doubleInput },
+      result: { kind: 'double' as const, doubleResult: w.doubleResult },
+      positions: w.positions,
+    }
+  }
+  return {
+    id: w.id, project_id: projectId, label: w.label,
+    input: w.input, result: w.result, positions: w.positions,
+  }
+}
+
+export function wallFromDbRow(row: any): WallEntry {
+  const isDouble = row?.input && typeof row.input === 'object' && row.input.kind === 'double'
+  if (isDouble) {
+    return {
+      id: row.id, label: row.label, kind: 'double',
+      input: null, result: null,
+      doubleInput: row.input.doubleInput ?? null,
+      doubleResult: row.result?.doubleResult ?? null,
+      positions: row.positions ?? [],
+    }
+  }
+  return {
+    id: row.id, label: row.label, kind: 'single',
+    input: row.input ?? null, result: row.result ?? null,
+    doubleInput: null, doubleResult: null,
+    positions: row.positions ?? [],
+  }
+}
+
 // ─── Загрузка полного содержимого одного объекта ────────────────────────────
 export async function fetchProjectContent(projectId: string): Promise<CloudProjectContent> {
   const [{ data: walls }, { data: linings }, { data: projectRow }] = await Promise.all([
@@ -30,7 +73,7 @@ export async function fetchProjectContent(projectId: string): Promise<CloudProje
   ])
 
   return {
-    walls: (walls ?? []) as unknown as WallEntry[],
+    walls: (walls ?? []).map(wallFromDbRow),
     linings: (linings ?? []) as unknown as LiningEntry[],
     levels: (projectRow?.levels_data as Level[] | null) ?? [],
     profileTemplates: (projectRow?.profile_templates as ProfileTemplate[] | null) ?? [],
@@ -50,9 +93,7 @@ export async function syncFullProjectToCloud(projectId: string, content: CloudPr
 
   await supabase.from('walls').delete().eq('project_id', projectId)
   if (content.walls.length > 0) {
-    await supabase.from('walls').insert(content.walls.map(w => ({
-      id: w.id, project_id: projectId, label: w.label, input: w.input, result: w.result, positions: w.positions,
-    })))
+    await supabase.from('walls').insert(content.walls.map(w => wallToDbRow(w, projectId)))
   }
 
   await supabase.from('linings').delete().eq('project_id', projectId)
@@ -97,9 +138,7 @@ export async function migrateLocalProjectsToCloud(
     if (memberError) errors.push(`Объект "${p.name}": не удалось создать владельца в project_members (${memberError.message})`)
 
     if (p.walls.length > 0) {
-      const { error } = await supabase.from('walls').insert(p.walls.map(w => ({
-        id: w.id, project_id: newProjectId, label: w.label, input: w.input, result: w.result, positions: w.positions,
-      })))
+      const { error } = await supabase.from('walls').insert(p.walls.map(w => wallToDbRow(w, newProjectId)))
       if (error) errors.push(`Объект "${p.name}", стены: ${error.message}`)
     }
 

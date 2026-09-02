@@ -14,8 +14,23 @@ export interface ProjectCutList {
 // ─── Куски из перегородки ────────────────────────────────────────────────────
 
 function wallPieces(w: WallEntry): Partial<Record<ProfilePool, Piece[]>> {
+  if (w.kind === 'double') {
+    const { doubleInput, doubleResult } = w
+    if (!doubleInput || !doubleResult) return {}
+    const prof = doubleInput.profileType
+    const pnKey: ProfilePool = prof === 'ps50' ? 'pn_50' : prof === 'ps75' ? 'pn_75' : 'pn_100'
+    const psKey: ProfilePool = prof === 'ps50' ? 'ps_50' : prof === 'ps75' ? 'ps_75' : 'ps_100'
+    // Одна и та же сетка стоек у обоих рядов (см. calcDoubleFrame.ts), но
+    // КАЖДЫЙ ряд — свой набор направляющих/стоек (два независимых каркаса) —
+    // куски обоих рядов идут в один пул на раскрой, чтобы обрезки одного ряда
+    // могли уйти на другой (реальная экономия материала на объекте).
+    return {
+      [pnKey]: [...doubleResult.frameA.rawPieces.pn, ...doubleResult.frameB.rawPieces.pn],
+      [psKey]: [...doubleResult.frameA.rawPieces.ps, ...doubleResult.frameB.rawPieces.ps],
+    }
+  }
   const { input, result } = w
-  if (!result) return {}
+  if (!result || !input) return {}
 
   const prof = input.profileType
   const pnKey: ProfilePool = prof === 'ps50' ? 'pn_50' : prof === 'ps75' ? 'pn_75' : 'pn_100'

@@ -99,26 +99,90 @@ export function calcDoubleFrame(input: DoubleFrameInput): DoubleFrameResult {
   // с обеих сторон, ряды строго параллельны (подтверждено пользователем).
   const { positions } = buildPositions(l, step, firstStud, openings)
 
-  const { sideA, sideB, hasSeparator } = getDoubleFrameLayerCounts(dfType)
-
-  const frameA = calcResults(
+  const { frameA, frameB } = calcDoubleFrameFromPositions(
     positions, ceilingProfile, floorProfile, l, openings, abutment, overlap,
+    dfType, layerA1, layerA2, layerB1, layerB2, plywoodInsertsA, plywoodInsertsB,
+  )
+
+  const extras = calcDoubleFrameExtras(
+    dfType, positions, ceilingProfile, floorProfile, l, step, openings, overlap, frameB, layerB3,
+  )
+
+  return {
+    dfType,
+    frameA,
+    frameB,
+    thicknessMm: getDoubleFrameThicknessMm(dfType, input.profileType, input.gapMm),
+    sealingTapeLm: frameA.sealingTapeLm + frameB.sealingTapeLm,
+    ...extras,
+  }
+}
+
+/**
+ * Ядро расчёта БЕЗ buildPositions — принимает уже готовую сетку позиций
+ * стоек. Нужно для интерактивного редактора (перетаскивание/добавление/
+ * удаление стойки мышкой, см. hooks/useDoubleFrameCalc.ts): там positions
+ * меняется на каждом драге, а buildPositions вызывается только один раз,
+ * при первом calculate() — как и у одинарной стены (useWallCalc.ts).
+ */
+export function calcDoubleFrameFromPositions(
+  positions: number[],
+  ceilingProfile: EdgeProfile,
+  floorProfile: EdgeProfile,
+  length: number,
+  openings: Opening[],
+  abutment: AbutmentType | string,
+  overlap: number,
+  dfType: DoubleFrameType,
+  layerA1: BoardSpec,
+  layerA2: BoardSpec,
+  layerB1: BoardSpec,
+  layerB2: BoardSpec,
+  plywoodInsertsA: PlywoodInsert[] = [],
+  plywoodInsertsB: PlywoodInsert[] = [],
+): { frameA: CalcResult; frameB: CalcResult } {
+  const { sideA, sideB } = getDoubleFrameLayerCounts(dfType)
+  const frameA = calcResults(
+    positions, ceilingProfile, floorProfile, length, openings, abutment, overlap,
     Math.min(sideA, 2) as 1 | 2, layerA1, layerA2, plywoodInsertsA, 1,
   )
   const frameB = calcResults(
-    positions, ceilingProfile, floorProfile, l, openings, abutment, overlap,
+    positions, ceilingProfile, floorProfile, length, openings, abutment, overlap,
     Math.min(sideB, 2) as 1 | 2, layerB1, layerB2, plywoodInsertsB, 1,
   )
+  return { frameA, frameB }
+}
+
+/**
+ * Часть результата, которая НЕ зависит от конкретных позиций стоек — только
+ * от геометрии (длина/профиль потолка-пола/проёмы/шаг) — лист-разделитель,
+ * штучные отрезки ленты, третий слой стороны B. Считается один раз при
+ * calculate(), не пересчитывается на каждый драг стойки (в отличие от
+ * frameA/frameB выше).
+ */
+export function calcDoubleFrameExtras(
+  dfType: DoubleFrameType,
+  positions: number[],
+  ceilingProfile: EdgeProfile,
+  floorProfile: EdgeProfile,
+  length: number,
+  step: number,
+  openings: Opening[],
+  overlap: number,
+  frameB: CalcResult,
+  layerB3?: BoardSpec,
+): Pick<DoubleFrameResult, 'separatorAreaM2' | 'tapeStrips' | 'extraLayerAreaM2' | 'extraLayerScrews'> {
+  const { sideB, hasSeparator } = getDoubleFrameLayerCounts(dfType)
 
   const openingsArea = openings.filter(o => o.width > 0).reduce((s, o) => s + o.width * o.height, 0)
-  const wallArea = integrateHeight(ceilingProfile, floorProfile, 0, l)
+  const wallArea = integrateHeight(ceilingProfile, floorProfile, 0, length)
   const netAreaM2 = (wallArea - openingsArea) / 1_000_000
 
   // ─── Лист-разделитель в зазоре (только С115.2) ──────────────────────────
   const separatorAreaM2 = hasSeparator ? netAreaM2 : 0
 
   // ─── Штучные отрезки ленты между стойками (там, где нет разделителя) ───
-  const tapeStrips = hasSeparator ? 0 : calcDoubleFrameTapeStrips(l, step)
+  const tapeStrips = hasSeparator ? 0 : calcDoubleFrameTapeStrips(length, step)
 
   // ─── Третий слой стороны B (только С115.3) ──────────────────────────────
   let extraLayerAreaM2 = 0
@@ -129,15 +193,5 @@ export function calcDoubleFrame(input: DoubleFrameInput): DoubleFrameResult {
     extraLayerScrews = { code: extra.code25, count: extra.count25 }
   }
 
-  return {
-    dfType,
-    frameA,
-    frameB,
-    thicknessMm: getDoubleFrameThicknessMm(dfType, input.profileType, input.gapMm),
-    separatorAreaM2,
-    tapeStrips,
-    sealingTapeLm: frameA.sealingTapeLm + frameB.sealingTapeLm,
-    extraLayerAreaM2,
-    extraLayerScrews,
-  }
+  return { separatorAreaM2, tapeStrips, extraLayerAreaM2, extraLayerScrews }
 }
