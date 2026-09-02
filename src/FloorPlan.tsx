@@ -344,7 +344,7 @@ export default function FloorPlan() {
     addContour, addRoom, updateRoom, removeRoom, updateContour,
     setBackgroundImage, updateBackgroundImage,
     levels, activeLevelId, addLevel, duplicateLevel, removeLevel, renameLevel, setLevelElevation, selectLevel,
-    addSlab, addSlabHole, removeSlab,
+    addSlab, addSlabHole, removeSlab, updateSlabOuter,
     addCeiling, removeCeiling,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
@@ -407,11 +407,17 @@ export default function FloorPlan() {
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
   const [pencilPts, setPencilPts] = useState<{ x: number; y: number }[]>([])       // карандаш: накопленные точки контура
   const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
+  // Точный ввод длины следующего отрезка карандаша (01.09.2026) — направление
+  // берётся из текущего положения курсора (с учётом ortho-снапа, если включён),
+  // расстояние — из этого поля. Позволяет рисовать плиту/потолок без подложки,
+  // когда известны только размеры (из обмера объекта), а не координаты на экране.
+  const [pencilLenInput, setPencilLenInput] = useState('')
   // Мульти-выбор Плит/Потолков для объединения в один расчёт потолка —
   // "несколько именованных зон одновременно" (KONSPEKT.md 10.07.2026, п.4).
   // Отдельно от одиночной кнопки "→ Потолок" на каждой карточке — та
   // работает как раньше, без изменений.
   const [combineSelection, setCombineSelection] = useState<Array<{ type: 'slab' | 'ceiling'; id: string }>>([])
+  const [slabPointsOpenId, setSlabPointsOpenId] = useState<string | null>(null) // какая плита сейчас раскрыта для правки точек (x/y в мм)
   const toggleCombineSelection = (type: 'slab' | 'ceiling', id: string) => {
     setCombineSelection(prev => {
       const exists = prev.some(s => s.type === type && s.id === id)
@@ -1418,6 +1424,23 @@ export default function FloorPlan() {
       const pts = extractContourPoints(room.lineIds, lines)
       return pts.length >= 3 && pointInPolygon(x, y, pts)
     })
+  }
+
+  // Точный ввод длины следующего отрезка карандаша — направление берётся
+  // от последней точки контура к текущему курсору (с ortho-снапом при
+  // включённом режиме), расстояние — из pencilLenInput. См. объявление
+  // pencilLenInput выше.
+  function commitPencilTypedLength() {
+    if (!cursor || pencilPts.length === 0) return
+    const mm = parseFloat(pencilLenInput)
+    if (!(mm > 0)) return
+    const last = pencilPts[pencilPts.length - 1]
+    let angle = angleTo(last.x, last.y, cursor.x, cursor.y)
+    if (orthoMode) angle = snapAngleToStep(angle, 15)
+    const px = mmToPx(mm, scaleMmPx)
+    const next = { x: last.x + Math.cos(angle) * px, y: last.y + Math.sin(angle) * px }
+    setPencilPts(prev => [...prev, next])
+    setPencilLenInput('')
   }
 
   const handleStageClick = useCallback((e: KonvaEventObject<MouseEvent | TouchEvent>) => {
@@ -2668,6 +2691,19 @@ export default function FloorPlan() {
                 Клик — точка контура. Клик рядом с первой точкой — замкнуть.
                 ПКМ или Esc — отменить текущий контур.
                 {pencilPts.length > 0 && <div style={{ marginTop: 2 }}>Точек: {pencilPts.length}</div>}
+                {pencilPts.length > 0 && (
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 6 }}>
+                    <input type="number" placeholder="длина отрезка, мм" value={pencilLenInput}
+                      onChange={e => setPencilLenInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitPencilTypedLength() } }}
+                      style={{ flex: 1, fontSize: 11, padding: '5px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff', minWidth: 0 }} />
+                    <button onClick={commitPencilTypedLength} disabled={!(parseFloat(pencilLenInput) > 0)}
+                      title="Добавить точку на этом расстоянии от последней, в направлении курсора (наведите мышью, чтобы задать сторону)"
+                      style={{ fontSize: 10, padding: '5px 8px', borderRadius: 3, border: '1px solid #3a6ea5', background: 'transparent', color: '#6fa8dc', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      + точка
+                    </button>
+                  </div>
+                )}
               </div>
             )}
             {mode === 'opening' && (
@@ -2764,11 +2800,22 @@ export default function FloorPlan() {
                           → Потолок
                         </button>
                         <button
+                          onClick={() => setSlabPointsOpenId(prev => prev === sl.id ? null : sl.id)}
+                          title="Точный ввод координат вершин контура (x/y в мм)"
+                          style={{
+                            fontSize: 10, padding: '4px 8px', borderRadius: 3,
+                            border: '1px solid #3a6ea5', background: slabPointsOpenId === sl.id ? 'rgba(111,168,220,0.2)' : 'transparent',
+                            color: '#6fa8dc', cursor: 'pointer',
+                          }}>
+                          ✎ точки
+                        </button>
+                        <button
                           onClick={() => {
                             if (window.confirm(`Удалить плиту «${sl.label}»?`)) {
                               if (pencilHoleTargetId === sl.id) { setPencilHoleTargetId(null); setPencilPts([]) }
                               removeSlab(sl.id)
                               setCombineSelection(prev => prev.filter(s => !(s.type === 'slab' && s.id === sl.id)))
+                              if (slabPointsOpenId === sl.id) setSlabPointsOpenId(null)
                             }
                           }}
                           title="Удалить плиту"
@@ -2779,6 +2826,44 @@ export default function FloorPlan() {
                           ✕
                         </button>
                       </div>
+                      {slabPointsOpenId === sl.id && (
+                        <div style={{ padding: '2px 10px 8px' }}>
+                          {sl.outer.map((p, i) => (
+                            <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 3 }}>
+                              <span style={{ fontSize: 9, color: '#5c7a99', width: 14 }}>{i + 1}</span>
+                              <input type="number" value={Math.round(p.x * scaleMmPx)}
+                                onChange={e => {
+                                  const mm = parseFloat(e.target.value)
+                                  if (!Number.isFinite(mm)) return
+                                  const next = sl.outer.map((pt, j) => j === i ? { ...pt, x: mmToPx(mm, scaleMmPx) } : pt)
+                                  updateSlabOuter(sl.id, next)
+                                }}
+                                style={{ width: 66, fontSize: 10, padding: '3px 5px', borderRadius: 3, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                              <span style={{ fontSize: 9, color: '#5c7a99' }}>×</span>
+                              <input type="number" value={Math.round(p.y * scaleMmPx)}
+                                onChange={e => {
+                                  const mm = parseFloat(e.target.value)
+                                  if (!Number.isFinite(mm)) return
+                                  const next = sl.outer.map((pt, j) => j === i ? { ...pt, y: mmToPx(mm, scaleMmPx) } : pt)
+                                  updateSlabOuter(sl.id, next)
+                                }}
+                                style={{ width: 66, fontSize: 10, padding: '3px 5px', borderRadius: 3, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                              <span style={{ fontSize: 9, color: '#5c7a99' }}>мм</span>
+                              <button
+                                disabled={sl.outer.length <= 3}
+                                onClick={() => updateSlabOuter(sl.id, sl.outer.filter((_, j) => j !== i))}
+                                title="Удалить вершину"
+                                style={{
+                                  fontSize: 9, padding: '2px 6px', borderRadius: 3, border: '1px solid #7a3a3a',
+                                  background: 'transparent', color: '#d98a8a',
+                                  cursor: sl.outer.length > 3 ? 'pointer' : 'not-allowed', opacity: sl.outer.length > 3 ? 1 : 0.35,
+                                }}>
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )
                 })}
@@ -4056,10 +4141,21 @@ export default function FloorPlan() {
                   {mode === 'pencil' && pencilPts.length > 0 && (
                     <>
                       {cursor && (
-                        <Line
-                          points={[...pencilPts.flatMap(p => [p.x, p.y]), cursor.x, cursor.y]}
-                          stroke="#8d99ae" strokeWidth={1.5} dash={[6, 3]} listening={false}
-                        />
+                        <>
+                          <Line
+                            points={[...pencilPts.flatMap(p => [p.x, p.y]), cursor.x, cursor.y]}
+                            stroke="#8d99ae" strokeWidth={1.5} dash={[6, 3]} listening={false}
+                          />
+                          {(() => {
+                            const last = pencilPts[pencilPts.length - 1]
+                            const segMm = dist(last.x, last.y, cursor.x, cursor.y) * scaleMmPx
+                            return (
+                              <Text x={(last.x + cursor.x) / 2 + 8} y={(last.y + cursor.y) / 2 - 16}
+                                text={fmtLen(Math.round(segMm))} fontSize={12} fill="#37474f"
+                                fontStyle="bold" listening={false} />
+                            )
+                          })()}
+                        </>
                       )}
                       {/* Пунктирное кольцо зоны замыкания — см. тот же приём у 'freeform' */}
                       {pencilPts.length >= 3 && (
