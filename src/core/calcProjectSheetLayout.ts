@@ -107,10 +107,36 @@ export function buildSurfaceInputs(
 
   // ── Перегородки ──────────────────────────────────────────────────────────
   for (const w of walls) {
-    if (!w.result || !w.positions || w.positions.length < 2) continue
-
+    if (!w.positions || w.positions.length < 2) continue
     const snapL = w.positions[w.positions.length - 1]
-    const firstStud = w.positions.find(p => p > 0 && p < snapL) ?? w.input.step
+    const firstStud = w.positions.find(p => p > 0 && p < snapL) ?? 0
+
+    if (w.kind === 'double') {
+      const { doubleInput, doubleResult } = w
+      if (!doubleInput || !doubleResult) continue
+      // Два независимых ряда — двумя отдельными поверхностями с sides:1
+      // каждая (у рядов может быть разная обшивка, см. С115.3), но общая
+      // сетка стоек/firstStud/step (см. calcDoubleFrame.ts). Разделитель
+      // (С115.2) и 3-й слой стороны Б (С115.3) в раскрой листа НЕ идут —
+      // то же упрощение, что и в calcDoubleFrame.ts (только площадь).
+      const worstHA = doubleResult.frameA.studInfos.length > 0
+        ? Math.max(...doubleResult.frameA.studInfos.map(s => s.height)) : doubleInput.height
+      const worstHB = doubleResult.frameB.studInfos.length > 0
+        ? Math.max(...doubleResult.frameB.studInfos.map(s => s.height)) : doubleInput.height
+      surfaces.push({
+        id: `${w.id}_A`, label: `${w.label} (сторона А)`, wallL: snapL, wallH: worstHA,
+        firstStud, step: doubleInput.step, gklLayers: 2,
+        openings: doubleInput.openings, layer1: doubleInput.layerA1, layer2: doubleInput.layerA2, sides: 1,
+      })
+      surfaces.push({
+        id: `${w.id}_B`, label: `${w.label} (сторона Б)`, wallL: snapL, wallH: worstHB,
+        firstStud, step: doubleInput.step, gklLayers: 2,
+        openings: doubleInput.openings, layer1: doubleInput.layerB1, layer2: doubleInput.layerB2, sides: 1,
+      })
+      continue
+    }
+
+    if (!w.result || !w.input) continue
     const snapWorstH = w.result.studInfos.length > 0
       ? Math.max(...w.result.studInfos.map(s => s.height))
       : w.input.height
@@ -123,7 +149,7 @@ export function buildSurfaceInputs(
       label: w.label,
       wallL: snapL,
       wallH: snapWorstH,
-      firstStud,
+      firstStud: w.positions.find(p => p > 0 && p < snapL) ?? w.input.step,
       step: w.input.step,
       gklLayers,
       openings: w.input.openings,

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, FreeformOpening, CeilingSlope } from '../types'
+import type { DoubleFrameInput, DoubleFrameResult } from '../core/calcDoubleFrame'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 import { duplicateFloorPlanGeometry } from '../core/duplicateFloorPlan'
 import { idbSetBackground, idbGetBackground, idbDeleteBackground, backgroundStorageKey } from './bgIndexedDb'
@@ -26,11 +27,31 @@ export interface LiningEntry {
   result: LiningResult | null
 }
 
+export type WallKind = 'single' | 'double'
+
+/**
+ * Данные записи стены, без id/label — то, что реально передаёт вызывающий
+ * код (addWall/updateWall достраивают id/label сами). Дискриминированный
+ * union по kind (01.09.2026, добавление С115/С116 в общий список стен —
+ * см. ceilingSlope-style комментарий в calcDoubleFrame.ts): 'single' —
+ * обычная одинарная стена (С111/С112, как было всегда), 'double' —
+ * двойной каркас (два независимых ряда стоек на одной сетке позиций,
+ * см. core/calcDoubleFrame.ts).
+ */
+export type WallEntryData =
+  | { kind: 'single'; input: WallInput; result: CalcResult | null; positions: number[] }
+  | { kind: 'double'; doubleInput: DoubleFrameInput; doubleResult: DoubleFrameResult | null; positions: number[] }
+
 export interface WallEntry {
   id: string
   label: string
-  input: WallInput
+  kind: WallKind
+  /** Заполнено только при kind === 'single' */
+  input: WallInput | null
   result: CalcResult | null
+  /** Заполнено только при kind === 'double' */
+  doubleInput: DoubleFrameInput | null
+  doubleResult: DoubleFrameResult | null
   positions: number[]
 }
 
@@ -123,8 +144,8 @@ export interface ProjectStore {
 
   // управление перегородками
   setProjectName: (name: string) => void
-  addWall: (input: WallInput, result: CalcResult | null, positions: number[]) => void
-  updateWall: (id: string, input: WallInput, result: CalcResult | null, positions: number[]) => void
+  addWall: (data: WallEntryData) => void
+  updateWall: (id: string, data: WallEntryData) => void
   removeWall: (id: string) => void
   setActiveWall: (id: string | null) => void
 
@@ -590,13 +611,16 @@ export const useProjectStore = create<ProjectStore>()(
 
       // ─── Перегородки ─────────────────────────────────────────────────────
 
-      addWall: (input, result, positions) => {
+      addWall: (data) => {
         set(s => {
-          const letter = PROFILE_LETTER[input.profileType] ?? 'А'
+          const profileType = data.kind === 'single' ? data.input.profileType : data.doubleInput.profileType
+          const letter = PROFILE_LETTER[profileType] ?? 'А'
           const count = s.walls.filter(w => w.label.startsWith(letter)).length + 1
           const label = `${letter}${count}`
           const id = `w_${Date.now()}`
-          const wall: WallEntry = { id, label, input, result, positions }
+          const wall: WallEntry = data.kind === 'single'
+            ? { id, label, kind: 'single', input: data.input, result: data.result, doubleInput: null, doubleResult: null, positions: data.positions }
+            : { id, label, kind: 'double', input: null, result: null, doubleInput: data.doubleInput, doubleResult: data.doubleResult, positions: data.positions }
           const walls = [...s.walls, wall]
           const projects = s.projects.map(p =>
             p.id === s.activeProjectId ? { ...p, walls } : p
@@ -605,9 +629,14 @@ export const useProjectStore = create<ProjectStore>()(
         })
       },
 
-      updateWall: (id, input, result, positions) => {
+      updateWall: (id, data) => {
         set(s => {
-          const walls = s.walls.map(w => w.id === id ? { ...w, input, result, positions } : w)
+          const walls = s.walls.map(w => {
+            if (w.id !== id) return w
+            return data.kind === 'single'
+              ? { ...w, kind: 'single' as const, input: data.input, result: data.result, doubleInput: null, doubleResult: null, positions: data.positions }
+              : { ...w, kind: 'double' as const, input: null, result: null, doubleInput: data.doubleInput, doubleResult: data.doubleResult, positions: data.positions }
+          })
           const projects = s.projects.map(p =>
             p.id === s.activeProjectId ? { ...p, walls } : p
           )
@@ -1237,12 +1266,15 @@ export const useProjectStore = create<ProjectStore>()(
               activeLevelId,
               walls: p.walls.map(w => ({
                 ...w,
-                input: {
+                kind: (w as any).kind ?? 'single',
+                doubleInput: (w as any).doubleInput ?? null,
+                doubleResult: (w as any).doubleResult ?? null,
+                input: w.input ? {
                   ...w.input,
                   layer1: migrateBoard((w.input as any).layer1 ?? DEFAULT_BOARD_SPEC),
                   layer2: migrateBoard((w.input as any).layer2 ?? DEFAULT_BOARD_SPEC),
                   plywoodInserts: w.input.plywoodInserts ?? [],
-                },
+                } : null,
               })),
               linings: p.linings.map(l => ({
                 ...l,

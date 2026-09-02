@@ -128,3 +128,50 @@ describe('calcDoubleFrame — толщина перегородки D', () => {
     expect(big.thicknessMm - small.thicknessMm).toBeCloseTo(200, 1)
   })
 })
+
+// ─── Ядро для интерактивного редактора (01.09.2026, useDoubleFrameCalc) ──────
+// calcDoubleFrame() внутри вызывает buildPositions один раз; интерактивный
+// драг стойки мышкой не может пересчитывать всё заново каждый раз — ему нужна
+// версия, принимающая уже готовую (изменённую) сетку positions напрямую.
+
+import { calcDoubleFrameFromPositions, calcDoubleFrameExtras } from '../calcDoubleFrame'
+import { buildPositions } from '../buildPositions'
+import { flatProfile } from '../profileGeometry'
+
+describe('calcDoubleFrameFromPositions — то же ядро, но без buildPositions внутри', () => {
+  it('на той же сетке позиций даёт тот же результат, что calcDoubleFrame целиком', () => {
+    const full = base()
+    const { positions } = buildPositions(6000, 600, 0, [])
+    const { frameA, frameB } = calcDoubleFrameFromPositions(
+      positions, flatProfile(6000, 2700), flatProfile(6000, 0),
+      6000, [], 'both', 500, 'c115_1', L1, L2, L1, L2,
+    )
+    expect(frameA.gklArea).toBeCloseTo(full.frameA.gklArea, 6)
+    expect(frameB.gklArea).toBeCloseTo(full.frameB.gklArea, 6)
+  })
+
+  it('сдвиг одной стойки применяется ОДИНАКОВО к обоим рядам (общая сетка)', () => {
+    const { positions } = buildPositions(6000, 600, 0, [])
+    const moved = positions.map(p => (p === positions[1] ? p + 100 : p))
+    const { frameA, frameB } = calcDoubleFrameFromPositions(
+      moved, flatProfile(6000, 2700), flatProfile(6000, 0),
+      6000, [], 'both', 500, 'c115_1', L1, L2, L1, L2,
+    )
+    expect(frameA.studInfos.map(s => s.pos)).toEqual(moved)
+    expect(frameB.studInfos.map(s => s.pos)).toEqual(moved)
+  })
+})
+
+describe('calcDoubleFrameExtras — не зависит от сетки позиций стоек', () => {
+  it('одинаковые extras при разных positions (та же длина/шаг/проёмы)', () => {
+    const { positions } = buildPositions(6000, 600, 0, [])
+    const moved = positions.map(p => (p === positions[1] ? p + 100 : p))
+    const cp = flatProfile(6000, 2700), fp = flatProfile(6000, 0)
+    const { frameB: fb1 } = calcDoubleFrameFromPositions(positions, cp, fp, 6000, [], 'both', 500, 'c115_1', L1, L2, L1, L2)
+    const { frameB: fb2 } = calcDoubleFrameFromPositions(moved, cp, fp, 6000, [], 'both', 500, 'c115_1', L1, L2, L1, L2)
+    const e1 = calcDoubleFrameExtras('c115_1', positions, cp, fp, 6000, 600, [], 500, fb1)
+    const e2 = calcDoubleFrameExtras('c115_1', moved, cp, fp, 6000, 600, [], 500, fb2)
+    expect(e1.separatorAreaM2).toBe(e2.separatorAreaM2)
+    expect(e1.tapeStrips).toBe(e2.tapeStrips)
+  })
+})
