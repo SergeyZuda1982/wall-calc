@@ -1057,6 +1057,53 @@ export default function Scene3D() {
   const [verticalSectionEnabled, setVerticalSectionEnabled] = useState(false)
   const [verticalSectionM, setVerticalSectionM] = useState<number | null>(null)
   const controlsRef = useRef<any>(null)
+
+  // Полноэкранный режим (01.09.2026) — для просмотра на объекте с телефона/
+  // планшета, когда нужно максимум деталей на экране. Двухуровневый:
+  // 1) сам контейнер сцены становится fixed-оверлеем на весь вьюпорт
+  //    (работает всегда и везде, включая iOS Safari, где Fullscreen API
+  //    для произвольного элемента не поддерживается);
+  // 2) поверх, если браузер это умеет (Android/десктоп), дополнительно
+  //    запрашиваем настоящий Fullscreen API — тогда прячется ещё и адресная
+  //    строка/чёрная рамка браузера. Оба переключаются одной кнопкой; выход
+  //    по Esc/жесту браузера синхронизируется через fullscreenchange.
+  const sceneContainerRef = useRef<HTMLDivElement>(null)
+  const [maximized, setMaximized] = useState(false)
+
+  useEffect(() => {
+    function onFullscreenChange() {
+      if (!document.fullscreenElement) setMaximized(false)
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
+
+  useEffect(() => {
+    if (!maximized) return
+    // Esc всегда закрывает CSS-оверлей — даже если настоящий Fullscreen API
+    // не сработал (iOS Safari), fullscreenchange там просто не придёт.
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMaximized(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [maximized])
+
+
+  async function toggleMaximized() {
+    if (maximized) {
+      if (document.fullscreenElement) {
+        try { await document.exitFullscreen() } catch { /* игнорируем — ниже всё равно снимаем CSS-оверлей */ }
+      }
+      setMaximized(false)
+    } else {
+      setMaximized(true)
+      if (sceneContainerRef.current?.requestFullscreen) {
+        try { await sceneContainerRef.current.requestFullscreen() } catch { /* iOS Safari и т.п. — остаёмся на CSS-оверлее */ }
+      }
+    }
+  }
+
   const levels = useProjectStore(s => s.levels)
   const activeLevelId = useProjectStore(s => s.activeLevelId)
   // Выбор объекта кликом (10.07.2026, стена/колонны/произвольные
@@ -1210,11 +1257,24 @@ export default function Scene3D() {
   }
 
   return (
-    <div style={{ width: '100%', height: '100%', background: '#eef1f6', position: 'relative' }}>
+    <div ref={sceneContainerRef} style={{
+      width: '100%', height: '100%', background: '#eef1f6', position: maximized ? 'fixed' : 'relative',
+      ...(maximized ? { top: 0, left: 0, right: 0, bottom: 0, width: '100vw', height: '100vh', zIndex: 2000 } : {}),
+    }}>
       <div style={{
         position: 'absolute', top: 12, left: 12, zIndex: 10,
         display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start',
       }}>
+        <button
+          onClick={toggleMaximized}
+          style={{
+            padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            border: '1px solid #2d7d46', borderRadius: 6,
+            background: maximized ? '#2d7d46' : '#fff',
+            color: maximized ? '#fff' : '#2d7d46',
+          }}>
+          {maximized ? '⤢ Свернуть' : '⛶ Во весь экран'}
+        </button>
         <button
           onClick={() => setCameraMode(m => m === 'orbit' ? 'fly' : 'orbit')}
           style={{
