@@ -264,11 +264,46 @@ function getActiveLevel(p: ProjectEntry | undefined): Level | undefined {
   return p.levels.find(lv => lv.id === p.activeLevelId) ?? p.levels[0]
 }
 
+/**
+ * Самолечение осиротевшего activeProjectId (03.09.2026, см. подробности у
+ * syncActive ниже) — общий helper для сеттеров, которые сами ищут "свой"
+ * проект по activeProjectId ДО вызова syncActive (addWall, addLevel и т.д.).
+ * Если activeProjectId ни на что не похож — берём первый доступный проект,
+ * а не молча мутируем в никуда.
+ */
+function resolveActiveProjectId(projects: ProjectEntry[], activeProjectId: string | null): string | null {
+  return projects.some(p => p.id === activeProjectId) ? activeProjectId : (projects[0]?.id ?? null)
+}
+
 // Синхронизирует плоские поля (projectName, walls, linings, floorPlan активного этажа) с активным объектом
+//
+// ⚠️ Самолечение activeProjectId (03.09.2026) — реальный кейс с объекта:
+// activeProjectId пережил рассинхронизацию с projects[] (не нашлось точного
+// триггера среди облачных гонок cloud.loadActiveProjectEntry/hydrateProject,
+// но сам симптом воспроизведён и подтверждён пользователем в консоли —
+// projects.find(p => p.id === activeProjectId) вернул undefined). Раньше
+// applyFloorPlanToProjects в этой ситуации намеренно НЕ трогал state.levels
+// (см. комментарий там от 07.07.2026) — это не давало 3D/панели этажей
+// сломаться ЕЩЁ сильнее прямо в моменте, но и не лечило: activeProjectId
+// оставался осиротевшим НАВСЕГДА, пока пользователь не создавал новый
+// проект вручную (плита/стены при этом продолжали рисоваться в 2D через
+// плоское зеркало floorPlan — путаница, из-за которой баг было тяжело
+// поймать: 2D работал, 3D — нет).
+//
+// syncActive — единственная функция, через которую проходит activeProjectId
+// почти на каждое действие в сторе (~15 мест: ...syncActive(projects,
+// s.activeProjectId) в возвращаемом объекте). Раз он не находится в
+// projects — подставляем первый доступный проект и возвращаем ИСПРАВЛЕННЫЙ
+// activeProjectId в самом результате: у большинства вызывающих мест он —
+// единственный источник этого поля в возвращаемом объекте (или стоит ДО
+// спреда и потому перезаписывается), так что состояние самовосстанавливается
+// на следующее же действие в сторе, а не остаётся тихо сломанным навсегда.
 function syncActive(projects: ProjectEntry[], activeProjectId: string | null) {
-  const p = projects.find(p => p.id === activeProjectId)
+  const healedActiveProjectId = resolveActiveProjectId(projects, activeProjectId)
+  const p = projects.find(p => p.id === healedActiveProjectId)
   const activeLevel = getActiveLevel(p)
   return {
+    activeProjectId: healedActiveProjectId,
     projectName: p?.name ?? '',
     walls: p?.walls ?? [],
     linings: p?.linings ?? [],
@@ -314,25 +349,30 @@ function applyFloorPlanToProjects(
   s: { projects: ProjectEntry[]; activeProjectId: string | null },
   floorPlan: FloorPlan,
 ) {
+  // Самолечение (03.09.2026, см. подробный комментарий у syncActive выше) —
+  // тот же принцип здесь: если activeProjectId осиротел, работаем с первым
+  // доступным проектом и возвращаем ИСПРАВЛЕННЫЙ activeProjectId, а не
+  // просто молча теряем правку. У обоих вызывающих мест (updateActiveFloorPlan,
+  // undo/redo) это поле спредится первым в возвращаемом объекте — новых
+  // конфликтов по ключу не возникает.
+  const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
   const projects = s.projects.map(p => {
-    if (p.id !== s.activeProjectId) return p
+    if (p.id !== activeProjectId) return p
     const activeLevel = getActiveLevel(p)
     if (!activeLevel) return p
     const levels = p.levels.map(lv => lv.id === activeLevel.id ? { ...lv, floorPlan } : lv)
     return { ...p, levels }
   })
-  const activeProject = projects.find(p => p.id === s.activeProjectId)
-  // ⚠️ Защита от регресса (07.07.2026): если активный проект не нашёлся
-  // (activeProjectId разошёлся с projects — само по себе отдельный
-  // потенциальный баг, но не повод портить состояние ещё сильнее) — НЕ
-  // возвращаем levels вообще, чтобы не затереть верхнеуровневое зеркало
-  // пустым массивом. Раньше (до фикса levels-mirror-stale-on-edit) эта
-  // функция вообще не трогала levels в такой ситуации — оставляем то же
-  // безопасное поведение, а не подменяем на [], которое ломает 3D и
-  // панель этажей (обе читают state.levels напрямую).
+  const activeProject = projects.find(p => p.id === activeProjectId)
+  // Раньше здесь была отдельная защита на случай "activeProjectId разошёлся
+  // с projects" (07.07.2026) — теперь эта ситуация лечится выше проактивно
+  // (activeProjectId пересчитан на первый доступный проект), так что
+  // activeProject не находится только если s.projects вообще пуст (нет ни
+  // одного проекта) — тогда просто не трогаем levels, ничего портить не из
+  // чего.
   return activeProject
-    ? { floorPlan, projects, levels: activeProject.levels }
-    : { floorPlan, projects }
+    ? { floorPlan, projects, levels: activeProject.levels, activeProjectId }
+    : { floorPlan, projects, activeProjectId }
 }
 
 /**
@@ -541,7 +581,7 @@ export const useProjectStore = create<ProjectStore>()(
         const p = emptyProject(name)
         set(s => {
           const projects = [p, ...s.projects]
-          return { projects, activeProjectId: p.id, ...syncActive(projects, p.id), activeWallId: null, activeLiningId: null }
+          return { projects, ...syncActive(projects, p.id), activeWallId: null, activeLiningId: null }
         })
         return p
       },
@@ -552,7 +592,7 @@ export const useProjectStore = create<ProjectStore>()(
           const activeProjectId = s.activeProjectId === id
             ? (projects[0]?.id ?? null)
             : s.activeProjectId
-          return { projects, activeProjectId, ...syncActive(projects, activeProjectId), activeWallId: null, activeLiningId: null }
+          return { projects, ...syncActive(projects, activeProjectId), activeWallId: null, activeLiningId: null }
         })
       },
 
@@ -565,7 +605,6 @@ export const useProjectStore = create<ProjectStore>()(
 
       selectProject: (id) => {
         set(s => ({
-          activeProjectId: id,
           ...syncActive(s.projects, id),
           activeWallId: null,
           activeLiningId: null,
@@ -588,7 +627,6 @@ export const useProjectStore = create<ProjectStore>()(
             : [entry, ...s.projects]
           return {
             projects,
-            activeProjectId: entry.id,
             ...syncActive(projects, entry.id),
             activeWallId: null,
             activeLiningId: null,
@@ -601,11 +639,12 @@ export const useProjectStore = create<ProjectStore>()(
 
       setProjectName: (name) => {
         set(s => {
-          if (!s.activeProjectId) return { projectName: name }
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
+          if (!activeProjectId) return { projectName: name }
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, name } : p
+            p.id === activeProjectId ? { ...p, name } : p
           )
-          return { projects, projectName: name }
+          return { projects, projectName: name, activeProjectId }
         })
       },
 
@@ -613,6 +652,7 @@ export const useProjectStore = create<ProjectStore>()(
 
       addWall: (data) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const profileType = data.kind === 'single' ? data.input.profileType : data.doubleInput.profileType
           const letter = PROFILE_LETTER[profileType] ?? 'А'
           const count = s.walls.filter(w => w.label.startsWith(letter)).length + 1
@@ -623,14 +663,15 @@ export const useProjectStore = create<ProjectStore>()(
             : { id, label, kind: 'double', input: null, result: null, doubleInput: data.doubleInput, doubleResult: data.doubleResult, positions: data.positions }
           const walls = [...s.walls, wall]
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, walls } : p
+            p.id === activeProjectId ? { ...p, walls } : p
           )
-          return { walls, projects }
+          return { walls, projects, activeProjectId }
         })
       },
 
       updateWall: (id, data) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const walls = s.walls.map(w => {
             if (w.id !== id) return w
             return data.kind === 'single'
@@ -638,19 +679,20 @@ export const useProjectStore = create<ProjectStore>()(
               : { ...w, kind: 'double' as const, input: null, result: null, doubleInput: data.doubleInput, doubleResult: data.doubleResult, positions: data.positions }
           })
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, walls } : p
+            p.id === activeProjectId ? { ...p, walls } : p
           )
-          return { walls, projects }
+          return { walls, projects, activeProjectId }
         })
       },
 
       removeWall: (id) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const walls = s.walls.filter(w => w.id !== id)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, walls } : p
+            p.id === activeProjectId ? { ...p, walls } : p
           )
-          return { walls, projects, activeWallId: s.activeWallId === id ? null : s.activeWallId }
+          return { walls, projects, activeProjectId, activeWallId: s.activeWallId === id ? null : s.activeWallId }
         })
       },
 
@@ -660,35 +702,38 @@ export const useProjectStore = create<ProjectStore>()(
 
       addLining: (input, result) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const count = s.linings.length + 1
           const label = `О${count}`
           const id = `l_${Date.now()}`
           const lining: LiningEntry = { id, label, input, result }
           const linings = [...s.linings, lining]
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, linings } : p
+            p.id === activeProjectId ? { ...p, linings } : p
           )
-          return { linings, projects }
+          return { linings, projects, activeProjectId }
         })
       },
 
       updateLining: (id, input, result) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const linings = s.linings.map(l => l.id === id ? { ...l, input, result } : l)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, linings } : p
+            p.id === activeProjectId ? { ...p, linings } : p
           )
-          return { linings, projects }
+          return { linings, projects, activeProjectId }
         })
       },
 
       removeLining: (id) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const linings = s.linings.filter(l => l.id !== id)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, linings } : p
+            p.id === activeProjectId ? { ...p, linings } : p
           )
-          return { linings, projects, activeLiningId: s.activeLiningId === id ? null : s.activeLiningId }
+          return { linings, projects, activeProjectId, activeLiningId: s.activeLiningId === id ? null : s.activeLiningId }
         })
       },
 
@@ -698,22 +743,24 @@ export const useProjectStore = create<ProjectStore>()(
 
       addProfileTemplate: (name, shape) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const tpl: ProfileTemplate = { id: `t_${Date.now()}_${Math.random().toString(36).slice(2)}`, name, shape }
           const profileTemplates = [...s.profileTemplates, tpl]
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, profileTemplates } : p
+            p.id === activeProjectId ? { ...p, profileTemplates } : p
           )
-          return { profileTemplates, projects }
+          return { profileTemplates, projects, activeProjectId }
         })
       },
 
       removeProfileTemplate: (id) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const profileTemplates = s.profileTemplates.filter(t => t.id !== id)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, profileTemplates } : p
+            p.id === activeProjectId ? { ...p, profileTemplates } : p
           )
-          return { profileTemplates, projects }
+          return { profileTemplates, projects, activeProjectId }
         })
       },
 
@@ -721,35 +768,38 @@ export const useProjectStore = create<ProjectStore>()(
 
       addCustomWorkStageTemplate: (template) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId
+            p.id === activeProjectId
               ? { ...p, customWorkStageTemplates: [...(p.customWorkStageTemplates ?? []), template] }
               : p
           )
-          const active = projects.find(p => p.id === s.activeProjectId)
-          return { projects, customWorkStageTemplates: active?.customWorkStageTemplates ?? [] }
+          const active = projects.find(p => p.id === activeProjectId)
+          return { projects, activeProjectId, customWorkStageTemplates: active?.customWorkStageTemplates ?? [] }
         })
       },
 
       removeCustomWorkStageTemplate: (id) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId
+            p.id === activeProjectId
               ? { ...p, customWorkStageTemplates: (p.customWorkStageTemplates ?? []).filter(t => t.id !== id) }
               : p
           )
-          const active = projects.find(p => p.id === s.activeProjectId)
-          return { projects, customWorkStageTemplates: active?.customWorkStageTemplates ?? [] }
+          const active = projects.find(p => p.id === activeProjectId)
+          return { projects, activeProjectId, customWorkStageTemplates: active?.customWorkStageTemplates ?? [] }
         })
       },
 
       renameProfileTemplate: (id, name) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const profileTemplates = s.profileTemplates.map(t => t.id === id ? { ...t, name } : t)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, profileTemplates } : p
+            p.id === activeProjectId ? { ...p, profileTemplates } : p
           )
-          return { profileTemplates, projects }
+          return { profileTemplates, projects, activeProjectId }
         })
       },
 
@@ -758,10 +808,11 @@ export const useProjectStore = create<ProjectStore>()(
       addLevel: (name, elevationMm) => {
         const level = emptyLevel(name, elevationMm)
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, levels: [...p.levels, level], activeLevelId: level.id } : p
+            p.id === activeProjectId ? { ...p, levels: [...p.levels, level], activeLevelId: level.id } : p
           )
-          return { projects, ...syncActive(projects, s.activeProjectId) }
+          return { projects, ...syncActive(projects, activeProjectId) }
         })
         return level.id
       },
@@ -769,60 +820,65 @@ export const useProjectStore = create<ProjectStore>()(
       duplicateLevel: (id, name, elevationMm) => {
         let newId = ''
         set(s => {
-          const p = s.projects.find(p => p.id === s.activeProjectId)
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
+          const p = s.projects.find(p => p.id === activeProjectId)
           const src = p?.levels.find(lv => lv.id === id)
-          if (!p || !src) return {}
+          if (!p || !src) return { activeProjectId }
           newId = `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`
           const copy: Level = { id: newId, name, elevationMm, floorPlan: duplicateFloorPlanGeometry(src.floorPlan) }
           const projects = s.projects.map(pr =>
-            pr.id === s.activeProjectId ? { ...pr, levels: [...pr.levels, copy], activeLevelId: copy.id } : pr
+            pr.id === activeProjectId ? { ...pr, levels: [...pr.levels, copy], activeLevelId: copy.id } : pr
           )
-          return { projects, ...syncActive(projects, s.activeProjectId) }
+          return { projects, ...syncActive(projects, activeProjectId) }
         })
         return newId
       },
 
       removeLevel: (id) => {
         set(s => {
-          const p = s.projects.find(p => p.id === s.activeProjectId)
-          if (!p || p.levels.length <= 1) return {} // последний этаж не удаляем — иначе объект без плана
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
+          const p = s.projects.find(p => p.id === activeProjectId)
+          if (!p || p.levels.length <= 1) return { activeProjectId } // последний этаж не удаляем — иначе объект без плана
           const levels = p.levels.filter(lv => lv.id !== id)
           const activeLevelId = p.activeLevelId === id ? levels[0].id : p.activeLevelId
           const projects = s.projects.map(pr =>
-            pr.id === s.activeProjectId ? { ...pr, levels, activeLevelId } : pr
+            pr.id === activeProjectId ? { ...pr, levels, activeLevelId } : pr
           )
-          return { projects, ...syncActive(projects, s.activeProjectId) }
+          return { projects, ...syncActive(projects, activeProjectId) }
         })
       },
 
       renameLevel: (id, name) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId
+            p.id === activeProjectId
               ? { ...p, levels: p.levels.map(lv => lv.id === id ? { ...lv, name } : lv) }
               : p
           )
-          return { projects, ...syncActive(projects, s.activeProjectId) }
+          return { projects, ...syncActive(projects, activeProjectId) }
         })
       },
 
       setLevelElevation: (id, elevationMm) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId
+            p.id === activeProjectId
               ? { ...p, levels: p.levels.map(lv => lv.id === id ? { ...lv, elevationMm } : lv) }
               : p
           )
-          return { projects, ...syncActive(projects, s.activeProjectId) }
+          return { projects, ...syncActive(projects, activeProjectId) }
         })
       },
 
       selectLevel: (id) => {
         set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const projects = s.projects.map(p =>
-            p.id === s.activeProjectId ? { ...p, activeLevelId: id } : p
+            p.id === activeProjectId ? { ...p, activeLevelId: id } : p
           )
-          return { projects, ...syncActive(projects, s.activeProjectId) }
+          return { projects, ...syncActive(projects, activeProjectId) }
         })
         get().ensureBackgroundsLoaded()
       },
