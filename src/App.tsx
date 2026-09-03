@@ -2,6 +2,10 @@ import { useState, useRef, useEffect } from 'react'
 import { Stage, Layer, Rect, Text, Group, Line, Arrow } from 'react-konva'
 import type { WallInput, Opening, Communication, PlywoodInsert, BoardSheetResult, BoardLayerLayout, BoardSpec, DoubleFrameType } from './types'
 import { DEFAULT_BOARD_SPEC, boardLabel } from './types'
+import {
+  defaultOpeningShape, updateOpeningShapePoint, setOpeningShapeEdgeSagitta,
+  insertOpeningShapeVertexAfter, removeOpeningShapeVertex, MIN_OPENING_SHAPE_VERTICES,
+} from './core/openingShapeEdit'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
 import type { WallEntry, LiningEntry, WallEntryData } from './store/useProjectStore'
 import { PROFILES } from './data/profiles'
@@ -1108,6 +1112,70 @@ export default function App() {
                 style={{ padding: '5px 8px', fontSize: 13, cursor: 'pointer', background: '#fff', border: '1px solid #e05', color: '#e05', borderRadius: 4, marginBottom: 1 }}>
                 🗑
               </button>
+
+              <div style={{ flexBasis: '100%', marginTop: 4 }}>
+                <label style={{ fontSize: 11, color: '#666', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!o.shape}
+                    onChange={e => updateOpening(o.id, {
+                      shape: e.target.checked ? defaultOpeningShape(o.width, o.height) : undefined,
+                    })} />
+                  Нестандартная форма (скос угла / дуга на ребре)
+                </label>
+
+                {o.shape && (
+                  <div style={{ marginTop: 6, padding: '8px 10px', background: '#fffef5', border: '1px solid #eed', borderRadius: 6 }}>
+                    <p style={{ margin: '0 0 8px', fontSize: 11, color: '#888' }}>
+                      Вершины контура проёма (0,0 — левый нижний угол, мм). На каждом ребре можно
+                      задать стрелу дуги H — 0 или пусто = прямое ребро. Прямой скос угла — просто
+                      добавьте вершину и сдвиньте её, дугу не задавая.
+                    </p>
+                    {o.shape.points.map((p, i) => {
+                      const n = o.shape!.points.length
+                      const sagitta = o.shape!.edges?.[i]?.sagitta ?? ''
+                      const nextLabel = i === n - 1 ? '→ 1' : `→ ${i + 2}`
+                      return (
+                        <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 6 }}>
+                          <span style={{ fontSize: 11, color: '#999', minWidth: 16, paddingBottom: 6 }}>{i + 1}</span>
+                          <div style={{ width: 80 }}>
+                            <label style={{ fontSize: 10, color: '#666' }}>X (мм)</label><br />
+                            <input type="number" value={p.x} onChange={e => updateOpening(o.id, {
+                              shape: updateOpeningShapePoint(o.shape!, i, { x: Number(e.target.value) }),
+                            })} style={{ width: '100%', padding: '4px 5px', fontSize: 12 }} />
+                          </div>
+                          <div style={{ width: 80 }}>
+                            <label style={{ fontSize: 10, color: '#666' }}>Y (мм)</label><br />
+                            <input type="number" value={p.y} onChange={e => updateOpening(o.id, {
+                              shape: updateOpeningShapePoint(o.shape!, i, { y: Number(e.target.value) }),
+                            })} style={{ width: '100%', padding: '4px 5px', fontSize: 12 }} />
+                          </div>
+                          <div style={{ width: 110 }}>
+                            <label style={{ fontSize: 10, color: '#666' }}>Дуга {i + 1}{nextLabel}, H (мм)</label><br />
+                            <input type="number" value={sagitta} placeholder="0 — прямая"
+                              onChange={e => updateOpening(o.id, {
+                                shape: setOpeningShapeEdgeSagitta(o.shape!, i, Number(e.target.value) || undefined),
+                              })} style={{ width: '100%', padding: '4px 5px', fontSize: 12 }} />
+                          </div>
+                          <button title="Добавить вершину на этом ребре"
+                            onClick={() => updateOpening(o.id, { shape: insertOpeningShapeVertexAfter(o.shape!, i) })}
+                            style={{ padding: '4px 7px', fontSize: 12, cursor: 'pointer', background: '#fff', border: '1px solid #ccc', borderRadius: 4, marginBottom: 1 }}>
+                            +
+                          </button>
+                          <button title="Удалить вершину" disabled={n <= MIN_OPENING_SHAPE_VERTICES}
+                            onClick={() => updateOpening(o.id, { shape: removeOpeningShapeVertex(o.shape!, i) })}
+                            style={{ padding: '4px 7px', fontSize: 12, cursor: n <= MIN_OPENING_SHAPE_VERTICES ? 'default' : 'pointer',
+                              background: '#fff', border: '1px solid #ccc', borderRadius: 4, marginBottom: 1,
+                              opacity: n <= MIN_OPENING_SHAPE_VERTICES ? 0.4 : 1 }}>
+                            🗑
+                          </button>
+                        </div>
+                      )
+                    })}
+                    <p style={{ margin: '4px 0 0', fontSize: 10, color: '#aaa' }}>
+                      Вставка/удаление вершины сбрасывает стрелы дуг на этом контуре.
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
             )
           })}
