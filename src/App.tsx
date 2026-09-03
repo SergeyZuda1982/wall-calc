@@ -204,6 +204,10 @@ export default function App() {
   const [openingClickSill, setOpeningClickSill] = useState('0')
   const [openingClickHeight, setOpeningClickHeight] = useState('2100')
   const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling' | 'tile' | '3d'>('wall')
+  // Вкладки с собственной адаптивной канвой (план/3D были такими всегда;
+  // потолки/плитка добавлены 01.09.2026) — рабочая область должна занимать
+  // весь экран без отступов и без ограничения ширины 900px формы-калькулятора.
+  const isFullBleedTab = activeTab === 'plan' || activeTab === '3d' || activeTab === 'ceiling' || activeTab === 'tile'
 
   // Плита ("карандаш") на плане отправлена в расчёт потолка — переключаемся
   // на вкладку сразу, не заставляя искать её руками (сам расчёт CeilingCalc
@@ -780,7 +784,11 @@ export default function App() {
         )}
 
         {/* Основной контент */}
-        <div ref={canvasWrapRef} style={{ flex: 1, padding: 'clamp(10px, 4vw, 24px)', maxWidth: (activeTab === 'plan' || activeTab === '3d') ? 'none' : 900, overflowY: 'auto', minWidth: 0 }}>
+        {/* Вкладки, где рабочая канва должна занимать весь экран (01.09.2026) —
+            План/3D уже были такими; Потолки/Плитка добавлены следом, чтобы
+            их канва (тоже уже адаптивная по ширине) не была искусственно
+            зажата в 900px и не съедала экран отступами по краям. */}
+        <div ref={canvasWrapRef} style={{ flex: 1, padding: isFullBleedTab ? 8 : 'clamp(10px, 4vw, 24px)', maxWidth: isFullBleedTab ? 'none' : 900, overflowY: 'auto', minWidth: 0 }}>
 
       {/* ─── Панель объекта ─── (на вкладках "План" и "3D" скрыта — освобождаем высоту под канвас) */}
       {activeTab !== 'plan' && activeTab !== '3d' && (
@@ -890,13 +898,13 @@ export default function App() {
       {activeTab === 'tile' && <TileCalc />}
 
       {activeTab === 'plan' && (
-        <div style={{ margin: '0 -24px', height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <FloorPlan />
         </div>
       )}
 
       {activeTab === '3d' && (
-        <div style={{ margin: '0 -24px', height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <Scene3D />
         </div>
       )}
