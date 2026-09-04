@@ -10,7 +10,7 @@ import {
   P131_FRAME_RATES, P131_SPECIAL_RATES, P131_SHEET_RATES,
   KNAUF_BEARING_STEP_BY_MOUNT,
 } from '../data/ceilingData'
-import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL } from './calcP112Frame'
+import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL, type CeilingGapSpec } from './calcP112Frame'
 import { calcP113FrameGeometry } from './calcP113Frame'
 import { calcPolygonP112Frame, type PolygonP112FrameResult } from './calcPolygonP112Frame'
 import { calcPolygonP113Frame, type PolygonP113FrameResult } from './calcPolygonP113Frame'
@@ -149,7 +149,10 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
     const full = spec as CeilingSpecFull
     const hasPolygonGeometry = type === 'p112' && !!polygonInput && !!full.slabGapMm
     const hasPreciseGeometry = !hasPolygonGeometry && type === 'p112'
-      && !!full.roomLengthMm && !!full.roomWidthMm && !!full.slabGapMm
+      && !!full.roomLengthMm && !!full.roomWidthMm
+      // 03.09.2026: уклон плиты (slopeGapMinMm/MaxMm) — альтернатива плоскому
+      // slabGapMm, см. calcP112Frame.ts CeilingGapSpec.
+      && (!!full.slabGapMm || (full.slopeGapMinMm != null && full.slopeGapMaxMm != null))
     // 13.07.2026: контур произвольной формы для П113 — см. calcPolygonP113Frame.ts
     // (PR #16, геометрия сделана параллельной сессией; здесь — подключение к смете).
     const hasPolygonGeometryP113 = type === 'p113' && !!polygonInput && !!full.slabGapMm
@@ -227,12 +230,22 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
         userWallOffsetMainMm: full.wallOffsetMainMm, userWallOffsetBearingMm: full.wallOffsetBearingMm,
       })
       if (frameParams.warning) warnings.push(frameParams.warning)
+      const gapSpec: CeilingGapSpec =
+        (full.slopeGapMinMm != null && full.slopeGapMaxMm != null)
+          ? { mode: 'slope', gapMinMm: full.slopeGapMinMm, gapMaxMm: full.slopeGapMaxMm, axis: full.slopeAxis ?? 'length' }
+          : { mode: 'flat', gapMm: full.slabGapMm! }
+      // Легаси-параметр функции (5-й позиционный, для обратной совместимости
+      // hangerKind/hangerWarning) — при уклоне без единого slabGapMm берём
+      // максимальный опуск как представительное значение (не влияет на
+      // geo.hangerBom — та честно считает по gapSpec выше).
+      const legacyFlatGapMm = full.slabGapMm ?? full.slopeGapMaxMm ?? full.slopeGapMinMm!
       const geo = calcP112FrameGeometry(
-        full.roomLengthMm, full.roomWidthMm, stepC, frameParams.stepB, full.slabGapMm!, bearingAlongLength, layoutMode,
+        full.roomLengthMm, full.roomWidthMm, stepC, frameParams.stepB, legacyFlatGapMm, bearingAlongLength, layoutMode,
         {
           stepA: frameParams.stepA,
           wallOffsetMainMm: frameParams.wallOffsetMainMm,
           wallOffsetBearingMm: frameParams.wallOffsetBearingMm,
+          gapSpec, hangerSystem: full.hangerSystem ?? 'knauf_rod',
         },
       )
 
@@ -243,12 +256,18 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
         materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotal })
       }
       materials.push({ name: 'Соединитель двухуровневый ПП 60×27', unit: 'шт', qty: geo.connectorsTotal })
-      materials.push({ name: HANGER_LABEL[geo.hangerKind], unit: 'шт', qty: geo.hangersTotal })
+      // 03.09.2026: честный BOM подвесов — при уклоне (gapSpec.mode='slope')
+      // это МИКС разных размеров/видов, не одна строка на весь потолок (см.
+      // calcP112Frame.ts buildHangerBom). При плоском опуске и системе
+      // 'knauf_rod' даёт ровно одну строку — то же самое, что было раньше.
+      for (const line of geo.hangerBom.lines) {
+        materials.push({ name: line.label, unit: 'шт', qty: line.qty })
+      }
       materials.push({ name: 'Анкер-клин (крепление подвеса к плите)', unit: 'шт', qty: geo.hangersTotal })
       // Шуруп LN — крепление несущего профиля в подвесе, 2 шт на узел (типовая
       // практика обжима/крепления, не табличное значение).
       materials.push({ name: 'Шуруп LN (крепление в подвесе)', unit: 'шт', qty: geo.hangersTotal * 2 })
-      if (geo.hangerWarning) warnings.push(geo.hangerWarning)
+      for (const w of geo.hangerBom.warnings) warnings.push(w)
     } else if (hasPreciseGeometryP113) {
       // 12.07.2026: топология П113 — см. calcP113Frame.ts. Роли профилей
       // ОБРАТНЫЕ по сравнению с П112 (подтверждено пользователем, реальная

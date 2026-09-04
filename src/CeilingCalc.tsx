@@ -723,7 +723,63 @@ export default function CeilingCalc() {
             <div style={{ marginBottom: 8 }}>
               <label style={lbl}>Зазор плита→каркас, мм</label>
               <input style={inp} type="number" min={0} step={10}
+                disabled={form.slopeGapMinMm != null && form.slopeGapMaxMm != null}
                 value={form.slabGapMm ?? ''} onChange={e => setField('slabGapMm', +e.target.value || undefined)} />
+            </div>
+            <label style={{ ...lbl, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: 8 }}>
+              <input type="checkbox" checked={form.slopeGapMinMm != null && form.slopeGapMaxMm != null}
+                onChange={e => {
+                  if (e.target.checked) {
+                    setField('slopeGapMinMm', form.slabGapMm ?? 0)
+                    setField('slopeGapMaxMm', (form.slabGapMm ?? 0) + 500)
+                    setField('slopeAxis', form.slopeAxis ?? 'length')
+                  } else {
+                    setField('slopeGapMinMm', undefined)
+                    setField('slopeGapMaxMm', undefined)
+                  }
+                }} />
+              Уклонное перекрытие (опуск разный по помещению)
+            </label>
+            {/* 03.09.2026: реальный кейс — второй этаж, косая несущая плита,
+                опуск варьируется от места к месту. Задаётся напрямую как
+                МИНИМАЛЬНЫЙ/МАКСИМАЛЬНЫЙ опуск (не как отметки плиты — так
+                не нужно отдельно знать целевую высоту потолка), линейно
+                интерполируется по выбранной оси. См. calcP112Frame.ts
+                CeilingGapSpec/buildHangerBom. */}
+            {form.slopeGapMinMm != null && form.slopeGapMaxMm != null && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={lbl}>Опуск мин., мм</label>
+                  <input style={inp} type="number" min={0} step={10}
+                    value={form.slopeGapMinMm} onChange={e => setField('slopeGapMinMm', +e.target.value || 0)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={lbl}>Опуск макс., мм</label>
+                  <input style={inp} type="number" min={0} step={10}
+                    value={form.slopeGapMaxMm} onChange={e => setField('slopeGapMaxMm', +e.target.value || 0)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={lbl}>Ось уклона</label>
+                  <select style={inp} value={form.slopeAxis ?? 'length'}
+                    onChange={e => setField('slopeAxis', e.target.value as 'length' | 'width')}>
+                    <option value="length">Вдоль длины</option>
+                    <option value="width">Вдоль ширины</option>
+                  </select>
+                </div>
+              </div>
+            )}
+            <div style={{ marginBottom: 8 }}>
+              <label style={lbl}>Система крепления к плите</label>
+              <select style={inp} value={form.hangerSystem ?? 'knauf_rod'}
+                onChange={e => setField('hangerSystem', e.target.value as 'knauf_rod' | 'nonius')}>
+                <option value="knauf_rod">Тяга/подвес КНАУФ (до ~1000мм)</option>
+                <option value="nonius">Нониус-подвес (до ~3128мм с удлинителем)</option>
+              </select>
+              {(form.slopeGapMaxMm ?? form.slabGapMm ?? 0) > 1000 && (form.hangerSystem ?? 'knauf_rod') === 'knauf_rod' && (
+                <div style={{ marginTop: 6, fontSize: 11, color: C.warning }}>
+                  Опуск больше 1000мм — обычная тяга КНАУФ может не подойти, рекомендуется нониус-подвес.
+                </div>
+              )}
             </div>
             <label style={{ ...lbl, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={form.bearingAlongLength ?? true}
@@ -732,7 +788,7 @@ export default function CeilingCalc() {
                 ? 'Основной профиль вдоль длины (снять — вдоль ширины)'
                 : 'Несущий профиль вдоль длины (снять — вдоль ширины)'}
             </label>
-            {!form.slabGapMm && (
+            {!form.slabGapMm && form.slopeGapMinMm == null && (
               <div style={{ marginTop: 6, fontSize: 11, color: C.warning }}>
                 Без зазора каркас считается по среднему расходу на м² (менее точно).
               </div>

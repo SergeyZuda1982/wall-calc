@@ -55,6 +55,7 @@ import {
   KNAUF_HANGER_SPACING_TABLE, KNAUF_BEARING_STEP_BY_MOUNT,
   KNAUF_WALL_OFFSET_MAIN_MM, KNAUF_WALL_OFFSET_BEARING_MM,
   P112_HANGER_STEP, P113_HANGER_STEP,
+  NONIUS_BOTTOM_MM, NONIUS_TOP_SIZES_MM, NONIUS_EXTENDER_SIZES_MM, NONIUS_MAX_STANDARD_GAP_MM,
 } from '../data/ceilingData'
 
 export type HangerKind = 'direct' | 'direct_extended' | 'rod_500' | 'rod_1000'
@@ -68,6 +69,79 @@ export const HANGER_LABEL: Record<HangerKind, string> = {
 
 /** ~20-30см от противоположной стены — реальная практика, не строгая сетка. */
 export const CLOSE_GAP_MM = 250
+
+/**
+ * Система крепления каркаса к плите. 'knauf_rod' — стандартные тяги/подвесы
+ * КНАУФ (resolveHangerKind, диапазон практически до 1000мм). 'nonius' —
+ * нониус-подвес (resolveNoniusAssembly), даёт диапазон до ~3128мм с одним
+ * удлинителем — обязателен при опуске >1000мм (косое/уклонное перекрытие),
+ * опционален как более дорогая, но проще регулируемая замена тяге на любом
+ * опуске (03.09.2026, см. подробный комментарий в ceilingData.ts).
+ */
+export type HangerSystem = 'knauf_rod' | 'nonius'
+
+export interface NoniusAssembly {
+  /** Размер верхней части, крепится к плите — один из NONIUS_TOP_SIZES_MM. */
+  topMm: number
+  /** Нижняя часть, зажим на основной профиль — всегда NONIUS_BOTTOM_MM (128мм). */
+  bottomMm: number
+  /** Удлинитель между верхней и нижней частью — 0, если не нужен. */
+  extenderMm: number
+  /** Шплинт/скоба нониус — 1 шт на соединение (без удлинителя — 1, с ним — 2). */
+  shplintCount: number
+  /** Номинальная суммарная длина сборки, мм. */
+  totalMm: number
+  warning?: string
+}
+
+/**
+ * Подбирает минимально достаточную сборку нониус-подвеса под нужный опуск
+ * (зазор от плиты до основного профиля каркаса), мм. Верхняя часть и
+ * удлинитель — стандартные дискретные размеры (см. ceilingData.ts), поэтому
+ * итоговая длина сборки обычно чуть БОЛЬШЕ заданного опуска (округление
+ * вверх до ближайшего доступного размера) — это нормальная практика,
+ * нониус-механизм даёт запас регулировки по месту.
+ */
+export function resolveNoniusAssembly(gapMm: number): NoniusAssembly {
+  const remaining = gapMm - NONIUS_BOTTOM_MM
+  const minTop = NONIUS_TOP_SIZES_MM[0]
+  const maxTop = NONIUS_TOP_SIZES_MM[NONIUS_TOP_SIZES_MM.length - 1]
+
+  const roundUpTop = (mm: number) =>
+    NONIUS_TOP_SIZES_MM.find(t => t >= mm) ?? maxTop
+
+  if (remaining <= maxTop) {
+    // Без удлинителя — верхняя часть одна перекрывает нужный опуск.
+    const topMm = roundUpTop(Math.max(minTop, remaining))
+    return { topMm, bottomMm: NONIUS_BOTTOM_MM, extenderMm: 0, shplintCount: 1, totalMm: topMm + NONIUS_BOTTOM_MM }
+  }
+
+  if (remaining <= NONIUS_MAX_STANDARD_GAP_MM - NONIUS_BOTTOM_MM) {
+    // Нужен один удлинитель — берём наименьший, которого хватает вместе с
+    // максимальной верхней частью, затем добираем верхнюю часть под остаток
+    // (минимизирует переплату за более длинный/дорогой удлинитель).
+    const extenderMm = NONIUS_EXTENDER_SIZES_MM.find(e => e + maxTop >= remaining)
+      ?? NONIUS_EXTENDER_SIZES_MM[NONIUS_EXTENDER_SIZES_MM.length - 1]
+    const topMm = roundUpTop(Math.max(minTop, remaining - extenderMm))
+    return {
+      topMm, bottomMm: NONIUS_BOTTOM_MM, extenderMm, shplintCount: 2,
+      totalMm: topMm + extenderMm + NONIUS_BOTTOM_MM,
+    }
+  }
+
+  // За пределами стандартного диапазона (128 + 1000 + 2000 = 3128мм) —
+  // берём максимальную стандартную сборку и явно предупреждаем, а не
+  // молча занижаем: на месте потребуется нестандартное решение (второй
+  // удлинитель встык — уточнить у КНАУФ/поставщика, не типовая сборка).
+  return {
+    topMm: maxTop, bottomMm: NONIUS_BOTTOM_MM, extenderMm: NONIUS_EXTENDER_SIZES_MM[NONIUS_EXTENDER_SIZES_MM.length - 1],
+    shplintCount: 2, totalMm: NONIUS_MAX_STANDARD_GAP_MM,
+    warning: `Опуск ${gapMm}мм больше стандартного максимума нониус-подвеса ` +
+      `(${NONIUS_MAX_STANDARD_GAP_MM}мм = верх ${maxTop} + удлинитель ` +
+      `${NONIUS_EXTENDER_SIZES_MM[NONIUS_EXTENDER_SIZES_MM.length - 1]} + низ ${NONIUS_BOTTOM_MM}) — ` +
+      `нужна нестандартная сборка (второй удлинитель и т.п.), уточнить на месте/у поставщика.`,
+  }
+}
 /** Не добавлять ряд почти вплотную к предыдущему регулярному ряду. */
 export const MIN_BAY_MM = 150
 /** Стандартная длина профиля ПП 60×27 (бара), мм — подтверждено пользователем. */
@@ -555,6 +629,92 @@ export interface P112FrameGeometry {
   mainExtenders: number
   hangerKind: HangerKind
   hangerWarning?: string
+  /**
+   * НОВОЕ (03.09.2026) — точный BOM подвесов с учётом СВОЕГО опуска у
+   * каждого подвеса (если задан уклон плиты, gapSpec.mode='slope') и
+   * выбранной системы крепления (knauf_rod/nonius, hangerBom.system).
+   * В отличие от hangerKind/hangerWarning выше (один "средний" вид на весь
+   * потолок, только для обратной совместимости с полигональными/П113
+   * путями расчёта, которые эту функцию не используют) — здесь честно
+   * разложено по фактическим размерам компонентов, которые понадобятся на
+   * объекте. См. resolveHangerKind/resolveNoniusAssembly и calcCeiling.ts.
+   */
+  hangerBom: HangerBomResult
+}
+
+export interface HangerBomLine { label: string; qty: number }
+export interface HangerBomResult { system: HangerSystem; lines: HangerBomLine[]; warnings: string[] }
+
+/** Ось, вдоль физической длины/ширины помещения меняется опуск (уклон плиты). */
+export type CeilingSlopeAxis = 'length' | 'width'
+
+export type CeilingGapSpec =
+  | { mode: 'flat'; gapMm: number }
+  | { mode: 'slope'; gapMinMm: number; gapMaxMm: number; axis: CeilingSlopeAxis }
+
+/** Опуск в конкретной точке (posAlongAxisMm — координата вдоль оси уклона, 0..axisTotalMm). */
+function gapAtPosition(spec: CeilingGapSpec, posAlongAxisMm: number, axisTotalMm: number): number {
+  if (spec.mode === 'flat') return spec.gapMm
+  if (axisTotalMm <= 0) return spec.gapMinMm
+  const t = Math.min(1, Math.max(0, posAlongAxisMm / axisTotalMm))
+  return spec.gapMinMm + (spec.gapMaxMm - spec.gapMinMm) * t
+}
+
+/**
+ * Точный BOM подвесов по факту опуска в каждой точке сетки (плоский опуск —
+ * все подвесы одинаковые, как и раньше; уклонный — честно разный микс по
+ * позиции, см. CeilingGapSpec). Не зависит от прямоугольная/полигональная
+ * геометрия — принимает готовые позиции подвесов в системе координат
+ * (lengthPosMm, widthPosMm) по физической длине/ширине помещения.
+ */
+export function buildHangerBom(
+  hangerLengthWidthPositions: Array<{ lengthMm: number; widthMm: number }>,
+  gapSpec: CeilingGapSpec,
+  roomLengthMm: number,
+  roomWidthMm: number,
+  system: HangerSystem,
+): HangerBomResult {
+  const warnings = new Set<string>()
+
+  if (system === 'knauf_rod') {
+    const counts = new Map<HangerKind, number>()
+    for (const pos of hangerLengthWidthPositions) {
+      const axisPos = gapSpec.mode === 'slope' && gapSpec.axis === 'width' ? pos.widthMm : pos.lengthMm
+      const axisTotal = gapSpec.mode === 'slope' && gapSpec.axis === 'width' ? roomWidthMm : roomLengthMm
+      const gapMm = gapAtPosition(gapSpec, axisPos, axisTotal)
+      const { kind, warning } = resolveHangerKind(gapMm)
+      counts.set(kind, (counts.get(kind) ?? 0) + 1)
+      if (warning) warnings.add(warning)
+    }
+    const lines = [...counts.entries()].map(([kind, qty]) => ({ label: HANGER_LABEL[kind], qty }))
+    return { system, lines, warnings: [...warnings] }
+  }
+
+  // system === 'nonius'
+  let bottomQty = 0
+  let shplintQty = 0
+  const topCounts = new Map<number, number>()
+  const extenderCounts = new Map<number, number>()
+  for (const pos of hangerLengthWidthPositions) {
+    const axisPos = gapSpec.mode === 'slope' && gapSpec.axis === 'width' ? pos.widthMm : pos.lengthMm
+    const axisTotal = gapSpec.mode === 'slope' && gapSpec.axis === 'width' ? roomWidthMm : roomLengthMm
+    const gapMm = gapAtPosition(gapSpec, axisPos, axisTotal)
+    const a = resolveNoniusAssembly(gapMm)
+    bottomQty += 1
+    shplintQty += a.shplintCount
+    topCounts.set(a.topMm, (topCounts.get(a.topMm) ?? 0) + 1)
+    if (a.extenderMm > 0) extenderCounts.set(a.extenderMm, (extenderCounts.get(a.extenderMm) ?? 0) + 1)
+    if (a.warning) warnings.add(a.warning)
+  }
+  const lines: HangerBomLine[] = [
+    { label: `Нониус-подвес, нижняя часть ${NONIUS_BOTTOM_MM}мм`, qty: bottomQty },
+    ...[...topCounts.entries()].sort((a, b) => a[0] - b[0])
+      .map(([mm, qty]) => ({ label: `Нониус-подвес, верхняя часть ${mm}мм`, qty })),
+    ...[...extenderCounts.entries()].sort((a, b) => a[0] - b[0])
+      .map(([mm, qty]) => ({ label: `Нониус-подвес, удлинитель ${mm}мм`, qty })),
+    { label: 'Шплинт/скоба нониус', qty: shplintQty },
+  ]
+  return { system, lines, warnings: [...warnings] }
 }
 
 /**
@@ -573,7 +733,16 @@ export function calcP112FrameGeometry(
   slabGapMm: number,
   bearingAlongLength: boolean,
   layoutMode: FrameLayoutMode = 'user',
-  extra: { stepA?: number; wallOffsetMainMm?: number; wallOffsetBearingMm?: number } = {},
+  extra: {
+    stepA?: number; wallOffsetMainMm?: number; wallOffsetBearingMm?: number
+    /** НОВОЕ (03.09.2026) — переопределяет плоский slabGapMm уклоном плиты
+     *  (разный опуск у разных подвесов). Не задано — как раньше, весь
+     *  потолок на одном slabGapMm. */
+    gapSpec?: CeilingGapSpec
+    /** НОВОЕ (03.09.2026) — система крепления, по умолчанию 'knauf_rod'
+     *  (прежнее поведение). */
+    hangerSystem?: HangerSystem
+  } = {},
 ): P112FrameGeometry {
   // A — пролёт вдоль которого идёт (своей длиной) несущий профиль
   // B — пролёт поперёк которого несущий профиль расставлен с шагом stepB
@@ -620,11 +789,32 @@ export function calcP112FrameGeometry(
 
   const { kind, warning } = resolveHangerKind(slabGapMm)
 
+  // Позиции каждого подвеса в физической системе (длина, ширина) помещения —
+  // для buildHangerBom. mainPositions — позиции вдоль A, hangerPositions —
+  // вдоль B (одни и те же для каждого ряда основного профиля, см. комментарий
+  // у hangerPositions выше). A/B = length/width или наоборот, в зависимости
+  // от bearingAlongLength.
+  const hangerLengthWidthPositions: Array<{ lengthMm: number; widthMm: number }> = []
+  for (const mainPos of mainPositions) {
+    for (const hangerPos of hangerPositions) {
+      hangerLengthWidthPositions.push(
+        bearingAlongLength
+          ? { lengthMm: mainPos, widthMm: hangerPos }
+          : { lengthMm: hangerPos, widthMm: mainPos },
+      )
+    }
+  }
+  const gapSpec: CeilingGapSpec = extra.gapSpec ?? { mode: 'flat', gapMm: slabGapMm }
+  const hangerBom = buildHangerBom(
+    hangerLengthWidthPositions, gapSpec, roomLengthMm, roomWidthMm, extra.hangerSystem ?? 'knauf_rod',
+  )
+
   return {
     bearingCount, bearingLengthEachMm, bearingTotalLm, bearingPositions,
     mainCount, mainLengthEachMm, mainTotalLm, mainPositions,
     hangersPerMain, hangersTotal, hangerPositions,
     connectorsTotal, bearingExtenders, mainExtenders,
     hangerKind: kind, hangerWarning: warning,
+    hangerBom,
   }
 }
