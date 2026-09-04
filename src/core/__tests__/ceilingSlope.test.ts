@@ -4,6 +4,7 @@ import {
   ceilingProfileForLine,
   buildCeilingSlopeResolver,
   buildCeilingProfilesByLineId,
+  ceilingSlopeHeightAtPoint,
 } from '../ceilingSlope'
 import type { CeilingSlope, PlanLine, Room } from '../../types'
 
@@ -146,5 +147,32 @@ describe('buildCeilingSlopeResolver / buildCeilingProfilesByLineId', () => {
 
     expect(ceilingProfileForLine(fixed, slope)).toBeUndefined()
     expect(ceilingProfileForLine(normal, slope)).toEqual([{ x: 0, y: 4500 }, { x: 1000, y: 5500 }])
+  })
+})
+
+describe('ceilingSlopeHeightAtPoint', () => {
+  const perim: PlanLine[] = [
+    { id: 'R1', x1: 0, y1: 0, x2: 2000, y2: 0, type: 'wall_existing', lengthMm: 2000, label: '' } as PlanLine,
+    { id: 'R2', x1: 2000, y1: 0, x2: 2000, y2: 2000, type: 'wall_existing', lengthMm: 2000, label: '' } as PlanLine,
+    { id: 'R3', x1: 2000, y1: 2000, x2: 0, y2: 2000, type: 'wall_existing', lengthMm: 2000, label: '' } as PlanLine,
+    { id: 'R4', x1: 0, y1: 2000, x2: 0, y2: 0, type: 'wall_existing', lengthMm: 2000, label: '' } as PlanLine,
+  ]
+  const room: Room = { id: 'ROOM1', lineIds: ['R1', 'R2', 'R3', 'R4'], areaM2: 4, perimeterMm: 8000, label: 'Комната' }
+
+  it('нет уклонов вообще — undefined', () => {
+    expect(ceilingSlopeHeightAtPoint({ x: 1000, y: 1000 }, perim, [], [room])).toBeUndefined()
+  })
+
+  it('точка внутри комнаты с уклоном комнаты — берёт уклон комнаты', () => {
+    const roomSlope = globalSlope({ id: 'S_ROOM', roomId: 'ROOM1', x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 2500, height2Mm: 4500 })
+    const h = ceilingSlopeHeightAtPoint({ x: 1000, y: 500 }, perim, [roomSlope], [room])
+    expect(h).toBe(3500) // середина отрезка 0..2000 -> середина 2500..4500
+  })
+
+  it('точка вне всех комнат с уклоном — падает на глобальный уклон', () => {
+    const roomSlope = globalSlope({ id: 'S_ROOM', roomId: 'ROOM1', height1Mm: 9999, height2Mm: 9999 })
+    const global = globalSlope({ id: 'S_GLOBAL', x1: 3000, y1: 3000, x2: 4000, y2: 3000, height1Mm: 3000, height2Mm: 3000 })
+    const h = ceilingSlopeHeightAtPoint({ x: 3500, y: 3000 }, perim, [roomSlope, global], [room])
+    expect(h).toBe(3000)
   })
 })

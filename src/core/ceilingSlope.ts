@@ -79,6 +79,26 @@ export function buildCeilingSlopeResolver(
 }
 
 /**
+ * Резолвер уклона в ПРОИЗВОЛЬНОЙ точке плана (не привязанной к линии) —
+ * та же логика выбора "свой уклон комнаты перекрывает общий", что и в
+ * buildCeilingSlopeResolver выше, но по точке. Нужен для колонн (04.09.2026,
+ * закрытие объёмов на оплату) — у колонны нет двух концов, только центр.
+ */
+export function ceilingSlopeHeightAtPoint(
+  point: Point2D, allLines: PlanLine[], slopes: CeilingSlope[], rooms: Room[],
+): number | undefined {
+  if (slopes.length === 0) return undefined
+  const globalSlope = slopes.find(s => !s.roomId)
+  for (const s of slopes) {
+    if (!s.roomId) continue
+    const room = rooms.find(r => r.id === s.roomId)
+    const poly = room ? roomPolygon(room, allLines) : null
+    if (poly && pointInPolygon(point, [poly])) return ceilingSlopeHeightAt(s, point.x, point.y)
+  }
+  return globalSlope ? ceilingSlopeHeightAt(globalSlope, point.x, point.y) : undefined
+}
+
+/**
  * Профиль потолка для линии line под данным уклоном, или undefined если
  * уклон неприменим (нет уклона / линия — дуга, sagittaMm задан и не 0).
  * Прямая линия на плоскости всегда имеет ЛИНЕЙНО меняющуюся высоту вдоль
