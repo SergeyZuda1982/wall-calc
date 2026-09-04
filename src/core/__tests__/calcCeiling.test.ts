@@ -460,3 +460,42 @@ describe('calcCeiling — с polygonInput, П113 (13.07.2026, calcPolygonP113Fra
     expect(fallback.polygonFrame).toBeNull()
   })
 })
+
+// ─── Нониус-подвес + уклонное перекрытие (03.09.2026) ────────────────────────
+// Реальный кейс пользователя: второй этаж, косая несущая плита, опуск
+// 2000-2700мм вдоль длины помещения, система крепления — нониус-подвес.
+
+describe('calcCeiling — П112, уклонное перекрытие + нониус-подвес (реальный кейс объекта)', () => {
+  const SLOPE: CeilingSpecFull = {
+    ...BASE, stepB: 900, bearingAlongLength: true,
+    hangerSystem: 'nonius', slopeGapMinMm: 2000, slopeGapMaxMm: 2700, slopeAxis: 'length',
+  }
+  const res = calcCeiling(SLOPE)
+
+  it('точная геометрия сработала без slabGapMm (одних slope-полей достаточно)', () => {
+    expect(res.warnings.some(w => w.includes('среднему расходу'))).toBe(false)
+  })
+
+  it('в смете есть строки нониус-подвеса (верхняя/нижняя часть, удлинитель, шплинт) — не одна усреднённая строка тяги', () => {
+    const names = res.materials.map(m => m.name)
+    expect(names.some(n => n.includes('нижняя часть'))).toBe(true)
+    expect(names.some(n => n.includes('удлинитель'))).toBe(true)
+    expect(names.some(n => n.includes('Шплинт'))).toBe(true)
+    expect(names.some(n => n.includes('Тяга'))).toBe(false) // knauf_rod-строк быть не должно
+  })
+
+  it('количество нижних частей нониуса = общему числу подвесов (по одной на каждый)', () => {
+    const geo = calcP112FrameGeometry(
+      SLOPE.roomLengthMm!, SLOPE.roomWidthMm!, SLOPE.stepC, resolveFrameParams({
+        stepC: SLOPE.stepC, layoutMode: 'user', userStepB: SLOPE.stepB,
+      }).stepB, 2000, true, 'user', { stepA: undefined },
+    )
+    const bottomLine = res.materials.find(m => m.name.includes('нижняя часть'))
+    expect(bottomLine?.qty).toBe(geo.hangersTotal)
+  })
+
+  it('без указания системы (по умолчанию knauf_rod) при том же уклоне видно предупреждение про опуск >1000мм', () => {
+    const defaultSystem = calcCeiling({ ...SLOPE, hangerSystem: undefined })
+    expect(defaultSystem.warnings.some(w => w.includes('1000мм'))).toBe(true)
+  })
+})

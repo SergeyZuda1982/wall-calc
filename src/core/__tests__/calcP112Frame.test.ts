@@ -8,6 +8,8 @@ import {
   resolveKnaufHangerStep,
   resolveFrameParams,
   calcP112FrameGeometry,
+  resolveNoniusAssembly,
+  buildHangerBom,
   KNAUF_WALL_OFFSET_MAIN_MM,
   KNAUF_WALL_OFFSET_BEARING_MM,
 } from '../calcP112Frame'
@@ -542,5 +544,111 @@ describe('resolveFrameParams — ceilingType (10.07.2026, поддержка П1
   it('15.07.2026: 400мм добавлен в допустимые шаги основного профиля (реальный объект пользователя, П113)', () => {
     expect(CEILING_STEP_OPTIONS).toContain(400)
     expect(CEILING_STEP_OPTIONS[0]).toBe(400) // первый по возрастанию
+  })
+})
+
+// ─── Нониус-подвес (03.09.2026) ──────────────────────────────────────────────
+// Реальный кейс: второй этаж, уклонное несущее перекрытие, опуск 2000-2700мм
+// (нижняя точка плиты 4500мм, верхняя 5200мм, целевая высота потолка ~2500мм).
+// Параметры сборки (низ 128мм, верх 200-1000мм шаг 100, удлинитель 500-2000мм
+// шаг 500, 1 шплинт на соединение) сверены с пользователем на объекте.
+
+describe('resolveNoniusAssembly', () => {
+  it('малый опуск (300мм) — без удлинителя, минимально достаточная верхняя часть', () => {
+    const a = resolveNoniusAssembly(300)
+    expect(a.bottomMm).toBe(128)
+    expect(a.extenderMm).toBe(0)
+    expect(a.shplintCount).toBe(1)
+    expect(a.topMm).toBe(200) // 300-128=172, округляется вверх до 200
+    expect(a.totalMm).toBe(328)
+  })
+
+  it('опуск ровно на границе без удлинителя (1128 = 1000+128) — верх 1000, без удлинителя', () => {
+    const a = resolveNoniusAssembly(1128)
+    expect(a.extenderMm).toBe(0)
+    expect(a.topMm).toBe(1000)
+  })
+
+  it('опуск чуть больше границы (1129мм) — уже нужен удлинитель', () => {
+    const a = resolveNoniusAssembly(1129)
+    expect(a.extenderMm).toBeGreaterThan(0)
+    expect(a.shplintCount).toBe(2)
+  })
+
+  it('реальный кейс пользователя: опуск 2700мм — верх 600 + удлинитель 2000 + низ 128 = 2728мм, 2 шплинта', () => {
+    const a = resolveNoniusAssembly(2700)
+    expect(a.topMm).toBe(600)
+    expect(a.extenderMm).toBe(2000)
+    expect(a.bottomMm).toBe(128)
+    expect(a.totalMm).toBe(2728)
+    expect(a.totalMm).toBeGreaterThanOrEqual(2700)
+    expect(a.shplintCount).toBe(2)
+    expect(a.warning).toBeUndefined()
+  })
+
+  it('реальный кейс пользователя: опуск 2000мм (нижняя точка) — тоже укладывается стандартной сборкой', () => {
+    const a = resolveNoniusAssembly(2000)
+    expect(a.totalMm).toBeGreaterThanOrEqual(2000)
+    expect(a.extenderMm).toBeGreaterThan(0) // 2000-128=1872 > макс. верхней части (1000) без удлинителя
+  })
+
+  it('опуск за пределами стандартного диапазона (>3128мм) — предупреждение, не молчаливое занижение', () => {
+    const a = resolveNoniusAssembly(3500)
+    expect(a.warning).toBeTruthy()
+    expect(a.topMm).toBe(1000)
+    expect(a.extenderMm).toBe(2000)
+    expect(a.totalMm).toBe(3128) // максимум стандартной сборки, честно меньше запрошенных 3500
+  })
+
+  it('монотонность: больший опуск никогда не даёт меньшую итоговую длину сборки', () => {
+    let prevTotal = 0
+    for (let gap = 150; gap <= 3200; gap += 50) {
+      const a = resolveNoniusAssembly(gap)
+      expect(a.totalMm).toBeGreaterThanOrEqual(prevTotal)
+      prevTotal = a.totalMm
+    }
+  })
+})
+
+describe('buildHangerBom', () => {
+  it('плоский опуск, система knauf_rod — одна строка, как раньше', () => {
+    const positions = [{ lengthMm: 0, widthMm: 0 }, { lengthMm: 1000, widthMm: 500 }, { lengthMm: 2000, widthMm: 1000 }]
+    const bom = buildHangerBom(positions, { mode: 'flat', gapMm: 300 }, 3000, 1500, 'knauf_rod')
+    expect(bom.system).toBe('knauf_rod')
+    expect(bom.lines.length).toBe(1)
+    expect(bom.lines[0].qty).toBe(3)
+  })
+
+  it('уклон, система knauf_rod — честный микс видов подвеса по позиции', () => {
+    // Опуск вдоль length: 0мм у left края, 1200мм у правого — пересекает
+    // все пороги resolveHangerKind (100/200/500/1000).
+    const positions = [
+      { lengthMm: 0, widthMm: 0 },      // gap≈0 → direct
+      { lengthMm: 3000, widthMm: 0 },   // gap=1200 → тяга 1000 (с предупреждением)
+    ]
+    const bom = buildHangerBom(positions, { mode: 'slope', gapMinMm: 0, gapMaxMm: 1200, axis: 'length' }, 3000, 1000, 'knauf_rod')
+    expect(bom.lines.length).toBe(2)
+    expect(bom.warnings.length).toBeGreaterThan(0) // gap=1200 > 1000 → предупреждение resolveHangerKind
+  })
+
+  it('уклон, система nonius — реальный кейс: опуск 2000..2700мм вдоль length, честный BOM по факту', () => {
+    // Имитация сетки 3×2 подвеса равномерно по length 0..4000, gap растёт линейно 2000..2700.
+    const positions = [
+      { lengthMm: 0, widthMm: 0 }, { lengthMm: 2000, widthMm: 0 }, { lengthMm: 4000, widthMm: 0 },
+      { lengthMm: 0, widthMm: 1000 }, { lengthMm: 2000, widthMm: 1000 }, { lengthMm: 4000, widthMm: 1000 },
+    ]
+    const bom = buildHangerBom(positions, { mode: 'slope', gapMinMm: 2000, gapMaxMm: 2700, axis: 'length' }, 4000, 1000, 'nonius')
+    expect(bom.system).toBe('nonius')
+    // Нижняя часть — по одной на каждый из 6 подвесов.
+    const bottomLine = bom.lines.find(l => l.label.includes('нижняя часть'))
+    expect(bottomLine?.qty).toBe(6)
+    // Удлинители нужны всем (даже при gap=2000, см. тест выше) — 6 шт суммарно по размерам.
+    const extenderLines = bom.lines.filter(l => l.label.includes('удлинитель'))
+    const extenderQtyTotal = extenderLines.reduce((s, l) => s + l.qty, 0)
+    expect(extenderQtyTotal).toBe(6)
+    // Шплинтов — по 2 на каждый (раз у всех есть удлинитель) = 12.
+    const shplintLine = bom.lines.find(l => l.label.includes('Шплинт'))
+    expect(shplintLine?.qty).toBe(12)
+    expect(bom.warnings.length).toBe(0) // весь диапазон 2000-2700 в пределах стандартной сборки
   })
 })
