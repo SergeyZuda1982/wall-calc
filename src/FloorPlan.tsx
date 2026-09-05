@@ -2622,7 +2622,7 @@ export default function FloorPlan() {
                                       background: (drawSpec.layers ?? 1) === n ? '#7c8fcf' : 'transparent',
                                       color: (drawSpec.layers ?? 1) === n ? '#fff' : '#8a9ac8',
                                     }}>
-                                    {n} слой{n === 2 ? 'я' : ''}
+                                    {n === 1 ? '1 слой' : '2 слоя'}
                                   </button>
                                 ))}
                               </div>
