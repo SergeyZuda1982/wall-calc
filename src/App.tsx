@@ -34,6 +34,7 @@ import { calcProjectCutList } from './core/calcProjectCutList'
 import { calcProjectSheetLayout, buildSurfaceInputs } from './core/calcProjectSheetLayout'
 import { BAR_LENGTH } from './core/cutList'
 import ProfileEditor from './components/ProfileEditor'
+import ProfileCanvasEditor from './components/ProfileCanvasEditor'
 import { interpolateY, flatProfile, maxStudHeight, integrateHeight } from './core/profileGeometry'
 import { calcSheetLayout } from './core/calcSheetLayout'
 import SheetLayoutCanvas from './components/SheetLayoutCanvas'
@@ -1032,14 +1033,28 @@ export default function App() {
             </label>
           </div>
           {form.ceilingProfile && (
-            <ProfileEditor label="Потолок" yHint="высота потолка от пола"
-              points={form.ceilingProfile} length={form.length} baseY={form.height}
-              onChange={pts => set('ceilingProfile', pts)} />
+            <>
+              <ProfileCanvasEditor label="Потолок" yHint="высота потолка от пола"
+                points={form.ceilingProfile} length={form.length} baseY={form.height}
+                onChange={pts => set('ceilingProfile', pts)}
+                otherLabel="пол"
+                otherPoints={form.floorProfile && form.floorProfile.length >= 2 ? form.floorProfile : flatProfile(form.length, 0)} />
+              <ProfileEditor label="Потолок" yHint="высота потолка от пола"
+                points={form.ceilingProfile} length={form.length} baseY={form.height}
+                onChange={pts => set('ceilingProfile', pts)} />
+            </>
           )}
           {form.floorProfile && (
-            <ProfileEditor label="Пол" yHint="уровень пола (0 = базовый)"
-              points={form.floorProfile} length={form.length} baseY={0}
-              onChange={pts => set('floorProfile', pts)} />
+            <>
+              <ProfileCanvasEditor label="Пол" yHint="уровень пола (0 = базовый)"
+                points={form.floorProfile} length={form.length} baseY={0}
+                onChange={pts => set('floorProfile', pts)}
+                otherLabel="потолок"
+                otherPoints={form.ceilingProfile && form.ceilingProfile.length >= 2 ? form.ceilingProfile : flatProfile(form.length, form.height)} />
+              <ProfileEditor label="Пол" yHint="уровень пола (0 = базовый)"
+                points={form.floorProfile} length={form.length} baseY={0}
+                onChange={pts => set('floorProfile', pts)} />
+            </>
           )}
         </div>
 
