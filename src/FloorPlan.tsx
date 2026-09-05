@@ -3579,9 +3579,14 @@ export default function FloorPlan() {
               ряд (layerA1/A2/B1/B2/(B3)) — задаётся точечно в инспекторе после рисования. */}
           <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }}>Шаг стоек:</span>
-            <input type="number" value={drawStep}
+            <select value={drawStep}
               onChange={e => setDrawStep(e.target.value)}
-              style={{ width: 70, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+              style={{ width: 90, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }}>
+              <option value="600">600</option>
+              <option value="400">400</option>
+              <option value="300">300</option>
+              <option value="200">200 (радиус)</option>
+            </select>
             <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
           </div>
           {parseDoubleFrameSubtype(drawSpec?.subtype) ? (
@@ -5432,14 +5437,19 @@ export default function FloorPlan() {
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                             <span style={{ fontSize: 11, color: '#666' }}>Шаг:</span>
-                            <input type="number" value={inspectorLine.spec?.step ?? ''}
-                              placeholder="600"
+                            <select value={inspectorLine.spec?.step ?? ''}
                               onClick={e => e.stopPropagation()}
                               onChange={e => {
                                 const step = parseFloat(e.target.value)
                                 if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, step: step > 0 ? step : undefined } })
                               }}
-                              style={{ width: 70, fontSize: 12, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
+                              style={{ width: 130, fontSize: 12, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }}>
+                              <option value="">По умолчанию (600)</option>
+                              <option value={600}>600</option>
+                              <option value={400}>400</option>
+                              <option value={300}>300</option>
+                              <option value={200}>200 (радиус)</option>
+                            </select>
                             <span style={{ fontSize: 11, color: '#666' }}>мм</span>
                           </div>
 
@@ -5490,13 +5500,18 @@ export default function FloorPlan() {
                       <div style={{ fontSize: 11, color: '#888', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Шаг стоек и лист</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                         <span style={{ fontSize: 11, color: '#666' }}>Шаг:</span>
-                        <input type="number" value={inspectorLine.spec?.step ?? ''}
-                          placeholder="600"
+                        <select value={inspectorLine.spec?.step ?? ''}
                           onChange={e => {
                             const step = parseFloat(e.target.value)
                             if (inspectorLine.spec) updatePlanLine(inspectorLine.id, { spec: { ...inspectorLine.spec, step: step > 0 ? step : undefined } })
                           }}
-                          style={{ width: 70, fontSize: 12, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }} />
+                          style={{ width: 130, fontSize: 12, padding: '5px 6px', borderRadius: 5, border: '1px solid #ddd' }}>
+                          <option value="">По умолчанию (600)</option>
+                          <option value={600}>600</option>
+                          <option value={400}>400</option>
+                          <option value={300}>300</option>
+                          <option value={200}>200 (радиус)</option>
+                        </select>
                         <span style={{ fontSize: 11, color: '#666' }}>мм</span>
                       </div>
                       {(() => {
