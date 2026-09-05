@@ -115,19 +115,28 @@ export function wallMaterialKindOf(material: string | undefined): WallMaterialKi
  * различает — рисуется один ряд стоек (известное упрощение, см.
  * wallProfileDepthMm в Scene3D.tsx).
  *
+ * ПС125 (05.09.2026) — калькулятор материала его НЕ считает (нет в
+ * ProfileType, см. planLineToWallInput.ts), но buildPositions чисто
+ * геометрическая функция (длина/шаг/проёмы, без параметра профиля) —
+ * поэтому позиции стоек для ПС125 тоже считаем реально, а не наивной
+ * сеткой; сам материал (раскрой/крепёж) по ПС125 по-прежнему не считается
+ * нигде в проекте — это отдельная, более крупная задача.
+ *
  * Для wall_lining (облицовка, там нет "каркаса" в смысле calcResults — обрешётка
- * на кляймерах) и для неподдержанных профилей (ps125 — сам калькулятор
- * материала его тоже не считает, см. planLineToWallInput.ts) —
- * упрощённая равномерная сетка с шагом spec.step без учёта проёмов; известное
- * упрощение, документировано здесь и там же, где аналогичное для материала.
+ * на кляймерах) — упрощённая равномерная сетка с шагом spec.step без учёта
+ * проёмов; известное упрощение, документировано здесь и там же, где
+ * аналогичное для материала.
  */
 export function wallStudPositionsMm(line: PlanLine): number[] {
   if (line.lengthMm <= 0) return []
   const stepMm = line.spec?.step ?? DEFAULT_STEP_MM
 
   if (line.type === 'wall_new') {
-    const profileType = resolveWallProfileType(line.spec?.subtype) ?? parseDoubleFrameSubtype(line.spec?.subtype)?.profile
-    if (profileType) {
+    const hasRealFrameGeometry =
+      !!resolveWallProfileType(line.spec?.subtype) ||
+      !!parseDoubleFrameSubtype(line.spec?.subtype) ||
+      line.spec?.subtype === 'ps125'
+    if (hasRealFrameGeometry) {
       return buildPositions(line.lengthMm, stepMm, stepMm, mapOpenings(line)).positions
     }
   }

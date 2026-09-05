@@ -75,16 +75,22 @@ const GKL_SHEET_COLOR = '#d9d4c5'
  * перегородки D (два ряда + зазор, см. getDoubleFrameThicknessMm) — 3D пока
  * рисует один ряд на всю толщину бокса, не два реальных ряда с зазором
  * между ними (отдельная, более крупная задача, не начата).
+ * ПС125 (05.09.2026) — частный случай ЗДЕСЬ (125мм, по той же логике
+ * "тотал минус 2×12.5мм лист", см. constructionTaxonomy.ts WALL_THICKNESS_MM
+ * ps125:150), НЕ через resolveWallProfileType/ProfileType — калькулятор
+ * материала (раскрой/крепёж) по ПС125 по-прежнему не считает нигде в
+ * проекте, это только для схематичной 3D-глубины.
  * wall_lining -> resolveLiningProfileType (тот же справочник значений ProfileType, см.
  * planLineToLiningInput.ts — включая С623/frame_pn28, там подставляется
  * дефолт 'ps75' просто чтобы было валидное значение, физически это другая
  * система (обрешётка на кляймерах), но для схематичной 3D-глубины сойдёт —
  * тот же порядок допущения, что уже был в комментарии wallStudPositionsMm).
- * Для неподдержанных подтипов (ps125 и т.п.) или линий без подтипа —
- * null, вызывающая сторона откатывается на прежнюю оценку по box.size.sz.
+ * Для остальных неподдержанных подтипов или линий без подтипа — null,
+ * вызывающая сторона откатывается на прежнюю оценку по box.size.sz.
  */
 function wallProfileDepthMm(line: PlanLine | undefined): number | null {
   if (!line) return null
+  if (line.type === 'wall_new' && line.spec?.subtype === 'ps125') return 125
   const profileType = line.type === 'wall_lining'
     ? resolveLiningProfileType(line.spec?.subtype)
     : resolveWallProfileType(line.spec?.subtype) ?? parseDoubleFrameSubtype(line.spec?.subtype)?.profile
