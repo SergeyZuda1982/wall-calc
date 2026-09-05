@@ -145,6 +145,24 @@ describe('wallStudPositionsMm (10-11.07.2026, Этап 2 — 3D-каркас Г�
     const line = baseLine({ type: 'wall_lining', spec: { material: 'gkl', step: 400 }, lengthMm: 1000 })
     expect(wallStudPositionsMm(line)).toEqual([400, 800])
   })
+
+  it('двойной каркас (С115/С116, subtype вида c115_1_ps50) — тоже реальный buildPositions, не наивная сетка (05.09.2026)', () => {
+    const line = baseLine({ type: 'wall_new', spec: { material: 'gkl', subtype: 'c115_1_ps50' }, lengthMm: 2000 })
+    const positions = wallStudPositionsMm(line)
+    // Тот же результат, что и для одинарного ps50 — общая сетка на оба ряда
+    // (см. calcDoubleFrame.ts: buildPositions вызывается один раз)
+    expect(positions).toEqual([0, 600, 1200, 1800, 2000])
+  })
+
+  it('двойной каркас с проёмом — тоже учитывает проём (buildPositions), в отличие от неподдержанных профилей', () => {
+    const line = baseLine({
+      type: 'wall_new', spec: { material: 'gkl', subtype: 'c116_ps75' }, lengthMm: 2000,
+      openings: [{ id: 'd1', type: 'door', offsetMm: 590, widthMm: 20, heightMm: 2000, label: 'Д-1' }],
+    })
+    const positions = wallStudPositionsMm(line)
+    expect(positions).toContain(590)
+    expect(positions).toContain(610)
+  })
 })
 
 describe('wallThicknessMm', () => {

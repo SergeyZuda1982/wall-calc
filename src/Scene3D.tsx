@@ -36,6 +36,7 @@ import { lineProgressColor, lineProgressSummary, wallGklVisual3D } from './core/
 import { finishSidesOf } from './core/finishResolver'
 import { getWallTexture, tintOverTexture } from './textures3D'
 import { resolveWallProfileType } from './core/planLineToWallInput'
+import { parseDoubleFrameSubtype } from './data/constructionTaxonomy'
 import { resolveLiningProfileType } from './core/planLineToLiningInput'
 import { wallProfileGeometryM, STUD_FLANGE_MM, TRACK_FLANGE_MM } from './components/wallProfileGeometry'
 
@@ -66,20 +67,27 @@ const GKL_SHEET_COLOR = '#d9d4c5'
 /**
  * Глубина профиля (мм, в толщу стены) по подтипу линии — 14.07.2026, для
  * реального сечения (wallProfileGeometry.ts) вместо схематичной box.size.sz*0.9.
- * wall_new -> resolveWallProfileType (ps50/75/100 -> 50/75/100мм). wall_lining
- * -> resolveLiningProfileType (тот же справочник значений ProfileType, см.
+ * wall_new -> resolveWallProfileType (ps50/75/100 -> 50/75/100мм), ИЛИ
+ * parseDoubleFrameSubtype (С115/С116, 05.09.2026) — оба ряда двойного
+ * каркаса используют один и тот же профиль с двух сторон (архитектурная
+ * основа calcDoubleFrame.ts), так что глубина одного ряда — та же таблица.
+ * ⚠️ Известное упрощение: это глубина ОДНОГО ряда стоек, не общая толщина
+ * перегородки D (два ряда + зазор, см. getDoubleFrameThicknessMm) — 3D пока
+ * рисует один ряд на всю толщину бокса, не два реальных ряда с зазором
+ * между ними (отдельная, более крупная задача, не начата).
+ * wall_lining -> resolveLiningProfileType (тот же справочник значений ProfileType, см.
  * planLineToLiningInput.ts — включая С623/frame_pn28, там подставляется
  * дефолт 'ps75' просто чтобы было валидное значение, физически это другая
  * система (обрешётка на кляймерах), но для схематичной 3D-глубины сойдёт —
  * тот же порядок допущения, что уже был в комментарии wallStudPositionsMm).
- * Для неподдержанных подтипов (ps125/double и т.п.) или линий без подтипа —
+ * Для неподдержанных подтипов (ps125 и т.п.) или линий без подтипа —
  * null, вызывающая сторона откатывается на прежнюю оценку по box.size.sz.
  */
 function wallProfileDepthMm(line: PlanLine | undefined): number | null {
   if (!line) return null
   const profileType = line.type === 'wall_lining'
     ? resolveLiningProfileType(line.spec?.subtype)
-    : resolveWallProfileType(line.spec?.subtype)
+    : resolveWallProfileType(line.spec?.subtype) ?? parseDoubleFrameSubtype(line.spec?.subtype)?.profile
   if (!profileType) return null
   return { ps50: 50, ps75: 75, ps100: 100 }[profileType]
 }

@@ -34,6 +34,7 @@ import { isLineBuiltForRender } from './lineProgress'
 import { computeWallJoins, buildWallsForJoin, type JoinedWall } from './wallJoin'
 import { resolveWallProfileType, mapOpenings, DEFAULT_STEP_MM } from './planLineToWallInput'
 import { buildPositions } from './buildPositions'
+import { parseDoubleFrameSubtype } from '../data/constructionTaxonomy'
 
 export const DEFAULT_HEIGHT_MM = 3000
 export const DEFAULT_RIB_SECTION_MM = 300
@@ -104,11 +105,19 @@ export function wallMaterialKindOf(material: string | undefined): WallMaterialKi
  * где они физически будут (тот же расчёт, что и материал на смету, см.
  * planLineToWallInput.ts/buildPositions.ts), а не выдуманную равномерную сетку.
  *
- * Полноценный расчёт (buildPositions с учётом проёмов) — только для wall_new
- * с поддержанным профилем каркаса (ps50/ps75/ps100, см. resolveWallProfileType).
+ * Полноценный расчёт (buildPositions с учётом проёмов) — для wall_new с
+ * поддержанным одинарным профилем (ps50/75/100, см. resolveWallProfileType)
+ * ИЛИ с распознанным двойным каркасом (С115/С116, parseDoubleFrameSubtype,
+ * 05.09.2026) — оба ряда двойного каркаса используют ОДНУ и ту же сетку
+ * позиций (см. calcDoubleFrame.ts — buildPositions вызывается один раз),
+ * поэтому здесь достаточно посчитать её один раз тем же способом; сам факт,
+ * что рядов физически два (с зазором) и обшивка у каждого своя, 3D пока не
+ * различает — рисуется один ряд стоек (известное упрощение, см.
+ * wallProfileDepthMm в Scene3D.tsx).
+ *
  * Для wall_lining (облицовка, там нет "каркаса" в смысле calcResults — обрешётка
- * на кляймерах) и для неподдержанных профилей (ps125/двойной каркас — сам
- * калькулятор материала их тоже не считает, см. planLineToWallInput.ts) —
+ * на кляймерах) и для неподдержанных профилей (ps125 — сам калькулятор
+ * материала его тоже не считает, см. planLineToWallInput.ts) —
  * упрощённая равномерная сетка с шагом spec.step без учёта проёмов; известное
  * упрощение, документировано здесь и там же, где аналогичное для материала.
  */
@@ -117,7 +126,7 @@ export function wallStudPositionsMm(line: PlanLine): number[] {
   const stepMm = line.spec?.step ?? DEFAULT_STEP_MM
 
   if (line.type === 'wall_new') {
-    const profileType = resolveWallProfileType(line.spec?.subtype)
+    const profileType = resolveWallProfileType(line.spec?.subtype) ?? parseDoubleFrameSubtype(line.spec?.subtype)?.profile
     if (profileType) {
       return buildPositions(line.lengthMm, stepMm, stepMm, mapOpenings(line)).positions
     }
