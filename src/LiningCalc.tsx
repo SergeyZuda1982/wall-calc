@@ -11,6 +11,7 @@ import { getLiningMaxHeight } from './data/liningMaxHeight'
 import { useProjectStore } from './store/useProjectStore'
 import { normalizeProfile, maxStudHeight, integrateHeight, interpolateY } from './core/profileGeometry'
 import ProfileEditor from './components/ProfileEditor'
+import ProfileCanvasEditor from './components/ProfileCanvasEditor'
 
 const PAD = 60
 const TOP_PAD = 50
@@ -325,14 +326,28 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
           </label>
         </div>
         {form.ceilingProfile && (
-          <ProfileEditor label="Потолок" yHint="высота потолка от пола"
-            points={form.ceilingProfile} length={form.length} baseY={form.height}
-            onChange={pts => set('ceilingProfile', pts)} />
+          <>
+            <ProfileCanvasEditor label="Потолок" yHint="высота потолка от пола"
+              points={form.ceilingProfile} length={form.length} baseY={form.height}
+              onChange={pts => set('ceilingProfile', pts)}
+              otherLabel="пол"
+              otherPoints={normalizeProfile(form.floorProfile, form.length, 0)} />
+            <ProfileEditor label="Потолок" yHint="высота потолка от пола"
+              points={form.ceilingProfile} length={form.length} baseY={form.height}
+              onChange={pts => set('ceilingProfile', pts)} />
+          </>
         )}
         {form.floorProfile && (
-          <ProfileEditor label="Пол" yHint="уровень пола (0 = базовый)"
-            points={form.floorProfile} length={form.length} baseY={0}
-            onChange={pts => set('floorProfile', pts)} />
+          <>
+            <ProfileCanvasEditor label="Пол" yHint="уровень пола (0 = базовый)"
+              points={form.floorProfile} length={form.length} baseY={0}
+              onChange={pts => set('floorProfile', pts)}
+              otherLabel="потолок"
+              otherPoints={normalizeProfile(form.ceilingProfile, form.length, form.height)} />
+            <ProfileEditor label="Пол" yHint="уровень пола (0 = базовый)"
+              points={form.floorProfile} length={form.length} baseY={0}
+              onChange={pts => set('floorProfile', pts)} />
+          </>
         )}
       </div>
 
