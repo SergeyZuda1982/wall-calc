@@ -545,7 +545,7 @@ export default function App() {
   // размерной стрелки слева и нескольких decorations, не привязанных к
   // конкретной стойке.
   const wallTop = wallTopAt(0), wallBot = wallBotAt(0)
-  const gklLayers = form.wallType === 'c112' ? 2 : 1
+  const gklLayers = wallSeries === 'c112' ? 2 : 1
 
   // Точки полилинии направляющей (потолок или пол) на участке [fromX, toX],
   // с изломами в точках перегиба профиля — поэтому уклон/ступень видны на
@@ -1794,7 +1794,7 @@ export default function App() {
           <div style={{ marginTop: 20, background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
             <h2 style={{ marginTop: 0 }}>Результат</h2>
             <p style={{ color: '#666', fontSize: 13 }}>
-              {form.wallType.toUpperCase()} · {gklLayers} сл. {boardLabel(form.layer1)}{gklLayers === 2 ? ` + ${boardLabel(form.layer2)}` : ''} · профиль {form.profileThickness === '06' ? '0.6' : '0.7'}мм
+              {wallSeries.toString().toUpperCase()} · {gklLayers} сл. {boardLabel(form.layer1)}{gklLayers === 2 ? ` + ${boardLabel(form.layer2)}` : ''} · профиль {form.profileThickness === '06' ? '0.6' : '0.7'}мм
             </p>
             {result.needsOverlap && (
               <div style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: 10, borderRadius: 6, marginBottom: 12 }}>
