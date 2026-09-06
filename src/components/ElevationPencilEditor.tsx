@@ -16,7 +16,9 @@ const PAD = 30
 const PAD_TOP = 20
 const PAD_BOTTOM = 20
 const CLOSE_PX = 14
-const DEFAULT_SPAN = 3000 // мм — «чистый лист» до первой точки
+const DEFAULT_SPAN = 4000 // мм по ширине канваса — «чистый лист» до первой точки
+const NICE_STEPS = [50, 100, 200, 250, 500, 1000, 2000, 2500, 5000] // мм, для клетки
+const MIN_CELL_PX = 28
 
 /**
  * Рисование ВСЕГО периметра сечения стены (вид сбоку) с нуля — без
@@ -24,7 +26,8 @@ const DEFAULT_SPAN = 3000 // мм — «чистый лист» до перво�
  * порядке обхода — низ/торец/верх/торец), точная длина текущего отрезка
  * вбивается числом (направление берётся от курсора) — тот же принцип, что
  * уже работает у карандаша Плиты в FloorPlan.tsx, перенесённый в разрез.
- * Замыкание — клик рядом с первой точкой ИЛИ кнопка «Готово».
+ * Замыкание — клик рядом с первой точкой ИЛИ кнопка «Готово». ПКМ по
+ * холсту — отмена последней точки (как Ctrl+Z, без модалки подтверждения).
  *
  * По завершении контур раскладывается на ceilingProfile/floorProfile/length
  * через decomposeElevationPerimeter (core/profileGeometry.ts) — торцы стены
@@ -42,21 +45,26 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
 
   // Масштаб считаем ТОЛЬКО от уже поставленных точек (не от курсора) —
   // иначе холст «дёргался» бы при каждом движении мыши. Пока точек нет —
-  // условный чистый лист DEFAULT_SPAN×DEFAULT_SPAN.
+  // условный чистый лист, растянутый РОВНО под пропорции канваса (иначе
+  // при несовпадении пропорций дефолтного листа и широкого/низкого канваса
+  // основная часть холста превращается в мёртвые поля по бокам, и клик
+  // почти всегда попадает в узкую центральную полосу).
   const { minX, minY, scale, offX, offY, usedH } = useMemo(() => {
+    if (pts.length === 0) {
+      const scale = DEFAULT_SPAN / plotW
+      return { minX: -DEFAULT_SPAN * 0.1, minY: -(plotH * scale) * 0.25, scale, offX: 0, offY: 0, usedH: plotH }
+    }
     const xs = pts.map(p => p.x), ys = pts.map(p => p.y)
-    const minX = xs.length ? Math.min(...xs) : 0
-    const maxX = xs.length ? Math.max(...xs) : DEFAULT_SPAN
-    const minY = ys.length ? Math.min(...ys) : 0
-    const maxY = ys.length ? Math.max(...ys) : DEFAULT_SPAN * 0.75
-    const pad = Math.max((maxX - minX) * 0.15, (maxY - minY) * 0.15, 300)
-    const xSpan = Math.max(maxX - minX + pad * 2, 500)
-    const ySpan = Math.max(maxY - minY + pad * 2, 500)
+    const minXRaw = Math.min(...xs), maxXRaw = Math.max(...xs)
+    const minYRaw = Math.min(...ys), maxYRaw = Math.max(...ys)
+    const pad = Math.max((maxXRaw - minXRaw) * 0.15, (maxYRaw - minYRaw) * 0.15, 300)
+    const xSpan = Math.max(maxXRaw - minXRaw + pad * 2, 500)
+    const ySpan = Math.max(maxYRaw - minYRaw + pad * 2, 500)
     const scale = Math.max(xSpan / plotW, ySpan / plotH) // мм на px
     const usedW = xSpan / scale, usedH = ySpan / scale
     return {
-      minX: minX - pad, minY: minY - pad, scale,
-      offX: (plotW - usedW) / 2, offY: (plotH - usedH) / 2, usedW, usedH,
+      minX: minXRaw - pad, minY: minYRaw - pad, scale,
+      offX: (plotW - usedW) / 2, offY: (plotH - usedH) / 2, usedH,
     }
   }, [pts, plotW, plotH])
 
@@ -64,6 +72,23 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   const yToPx = (y: number) => PAD_TOP + offY + usedH - (y - minY) / scale
   const pxToX = (px: number) => minX + (px - PAD - offX) * scale
   const pxToY = (py: number) => minY + (usedH - (py - PAD_TOP - offY)) * scale
+
+  // Лист в клетку — шаг подбирается так, чтобы клетка была 28-56px на экране
+  // (не мельчила и не была слишком крупной при разном масштабе/зуме).
+  const gridStep = useMemo(() => {
+    return NICE_STEPS.find(s => s / scale >= MIN_CELL_PX) ?? NICE_STEPS[NICE_STEPS.length - 1]
+  }, [scale])
+
+  const gridLines = useMemo(() => {
+    const leftMm = pxToX(PAD), rightMm = pxToX(PAD + plotW)
+    const topMm = pxToY(PAD_TOP), bottomMm = pxToY(PAD_TOP + plotH)
+    const vs: number[] = []
+    for (let x = Math.ceil(leftMm / gridStep) * gridStep; x <= rightMm; x += gridStep) vs.push(x)
+    const hs: number[] = []
+    for (let y = Math.ceil(bottomMm / gridStep) * gridStep; y <= topMm; y += gridStep) hs.push(y)
+    return { vs, hs }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gridStep, minX, minY, scale, offX, offY, usedH, plotW, plotH])
 
   const last = pts[pts.length - 1] ?? null
 
@@ -126,7 +151,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: '8px 10px', marginTop: 6, background: '#fafafe' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>
-          Рисование периметра сечения (клик — точка контура, клик у первой точки — замкнуть)
+          Рисование периметра сечения (клик — точка контура, клик у первой точки — замкнуть, ПКМ — отменить последнюю)
         </span>
         <button type="button" onClick={() => { setPts([]); setCursorMm(null); setError(null); onCancel() }}
           style={{ fontSize: 11, color: '#999', background: 'none', border: 'none', cursor: 'pointer' }}>
@@ -138,8 +163,17 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
         <Stage width={CANVAS_W} height={CANVAS_H}
           onMouseMove={handleMove} onTouchMove={handleMove}
           onClick={handleStageClick} onTap={handleStageClick}
+          onContextMenu={e => { e.evt.preventDefault(); removeLast() }}
           style={{ background: '#fff', border: '1px solid #eee', borderRadius: 4, cursor: 'crosshair' }}>
           <Layer>
+            {gridLines.vs.map(x => (
+              <Line key={`v${x}`} points={[xToPx(x), PAD_TOP, xToPx(x), PAD_TOP + plotH]}
+                stroke={x === 0 ? '#cfd8ea' : '#eef1f7'} strokeWidth={x === 0 ? 1.2 : 1} listening={false} />
+            ))}
+            {gridLines.hs.map(y => (
+              <Line key={`h${y}`} points={[PAD, yToPx(y), PAD + plotW, yToPx(y)]}
+                stroke={y === 0 ? '#cfd8ea' : '#eef1f7'} strokeWidth={y === 0 ? 1.2 : 1} listening={false} />
+            ))}
             {pts.length >= 2 && (
               <Line points={pts.flatMap(p => [xToPx(p.x), yToPx(p.y)])} stroke="#4a7dff" strokeWidth={2.5} listening={false} />
             )}
@@ -168,7 +202,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
         <button type="button" onClick={commitTyped} disabled={!last}
           style={{ padding: '4px 10px', fontSize: 12, cursor: last ? 'pointer' : 'default' }}>+ точка</button>
         <button type="button" onClick={removeLast} disabled={pts.length === 0}
-          style={{ padding: '4px 10px', fontSize: 12, cursor: pts.length ? 'pointer' : 'default' }}>↩ убрать последнюю</button>
+          style={{ padding: '4px 10px', fontSize: 12, cursor: pts.length ? 'pointer' : 'default' }}>↩ убрать последнюю (или ПКМ)</button>
         <button type="button" onClick={tryClose} disabled={pts.length < 3}
           style={{ padding: '4px 10px', fontSize: 12, marginLeft: 'auto', fontWeight: 600,
             background: pts.length >= 3 ? '#1a9c4a' : '#eee', color: pts.length >= 3 ? '#fff' : '#aaa',
@@ -180,7 +214,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       <p style={{ margin: '6px 0 0', fontSize: 10, color: '#aaa' }}>
         Точки можно ставить в любом порядке обхода (низ → торец → верх → торец
         или наоборот) — главное, чтобы получился один замкнутый контур. Торец
-        необязательно вертикальный.
+        необязательно вертикальный. Клетка — {gridStep} мм.
       </p>
     </div>
   )
