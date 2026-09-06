@@ -138,7 +138,7 @@ export function getFlushCandidates(
     const len = Math.sqrt(dx * dx + dy * dy)
     const ux = len > 1 ? dx / len : 0, uy = len > 1 ? dy / len : 0
     const nx = -uy, ny = ux
-    const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
+    const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm, l.spec?.layers)
     const halfThicknessPx = vis.thicknessMm > 0 ? (vis.thicknessMm / 2) / scaleMmPx : 0
     if (halfThicknessPx <= 0 || Math.abs(newHalfThicknessPx - halfThicknessPx) <= 0.01) continue
     const flushOffsetPx = halfThicknessPx - newHalfThicknessPx
@@ -186,7 +186,7 @@ export function snapPoint(
     const ux = len > 1 ? dx / len : 0, uy = len > 1 ? dy / len : 0
     const nx = -uy, ny = ux
 
-    const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
+    const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm, l.spec?.layers)
     const halfThicknessPx = vis.thicknessMm > 0 ? (vis.thicknessMm / 2) / scaleMmPx : 0
 
     // Концы оси (центр по толщине) — как и раньше, для стыковки "ось в ось".

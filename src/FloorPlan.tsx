@@ -1051,7 +1051,7 @@ export default function FloorPlan() {
     let refDir: { dx: number; dy: number } | undefined
     let newHalfThicknessPx = 0
     if (mode === 'draw') {
-      const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
+      const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm, drawSpec?.layers)
       newHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
       if (drawing) refDir = { dx: x - drawing.x1, dy: y - drawing.y1 }
     }
@@ -1131,7 +1131,7 @@ export default function FloorPlan() {
     let moveRefDir: { dx: number; dy: number } | undefined
     let moveNewHalfThicknessPx = 0
     if (mode === 'draw') {
-      const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
+      const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm, drawSpec?.layers)
       moveNewHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
       if (drawing) moveRefDir = { dx: rawX - drawing.x1, dy: rawY - drawing.y1 }
     }
@@ -2154,7 +2154,7 @@ export default function FloorPlan() {
   // возле каждой стены другой толщины превратились бы в шум.
   const flushCandidatesNearCursor = useMemo(() => {
     if (mode !== 'draw' || !cursor || freeSnapActive) return []
-    const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
+    const newVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm, drawSpec?.layers)
     const newHalfThicknessPx = newVis.thicknessMm > 0 ? (newVis.thicknessMm / 2) / scaleMmPx : 0
     if (newHalfThicknessPx <= 0) return []
     const all = getFlushCandidates(lines, scaleMmPx, newHalfThicknessPx)
@@ -2249,7 +2249,7 @@ export default function FloorPlan() {
   const lineAttachments = useMemo(() => {
     const surfaces: AttachSurface[] = []
     lines.forEach(l => {
-      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
+      const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm, l.spec?.layers)
       const hasSpec = !!(l.spec?.material) || l.type === 'wall_existing'
       const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
       if (thicknessPx <= 3) return
@@ -4337,7 +4337,7 @@ export default function FloorPlan() {
                     const inTrimSrc  = mode === 'trim' && l.id === trimSourceId
                     const baseColor  = LINE_COLORS[l.type]
 
-                    const vis       = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
+                    const vis       = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm, l.spec?.layers)
                     const specColor = vis.colorOverride ?? baseColor
                     const stroke    = inErase ? '#e53935' : inContour ? '#ff9800' : inTrimSrc ? '#00897b' : isSelected ? '#ff5722' : specColor
                     const dash      = (inErase || inContour || isSelected || inTrimSrc) ? undefined : (vis.dash ?? undefined)
@@ -4830,7 +4830,7 @@ export default function FloorPlan() {
 
                   {/* Превью рисования */}
                   {mode === 'draw' && drawing && previewPt && (() => {
-                    const previewVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
+                    const previewVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm, drawSpec?.layers)
                     const previewColor = previewVis.colorOverride ?? LINE_COLORS[drawType]
 
                     // Засечки толщины на концах превью-линии (по просьбе пользователя,
@@ -4884,7 +4884,7 @@ export default function FloorPlan() {
 
                   {/* Курсор снапа — крестик вместо круга */}
                   {cursor && mode === 'draw' && (() => {
-                    const curVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm)
+                    const curVis = getLineVisual(drawType, drawSpec?.material, drawSpec?.subtype, drawSpec?.gapMm, drawSpec?.layers)
                     const curColor = curVis.colorOverride ?? LINE_COLORS[drawType]
                     const sz = 7 / stageScale
                     const sw = 1.5 / stageScale
