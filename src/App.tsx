@@ -35,6 +35,7 @@ import { calcProjectSheetLayout, buildSurfaceInputs } from './core/calcProjectSh
 import { BAR_LENGTH } from './core/cutList'
 import ProfileEditor from './components/ProfileEditor'
 import ProfileCanvasEditor from './components/ProfileCanvasEditor'
+import ElevationPencilEditor from './components/ElevationPencilEditor'
 import { interpolateY, flatProfile, maxStudHeight, integrateHeight } from './core/profileGeometry'
 import { calcSheetLayout } from './core/calcSheetLayout'
 import SheetLayoutCanvas from './components/SheetLayoutCanvas'
@@ -200,6 +201,7 @@ function fmtCut(totalMm: number, bars: number, wasteMm: number): React.ReactNode
 
 export default function App() {
   const [form, setForm] = useState<WallInput>(DEFAULT_INPUT)
+  const [drawingElevation, setDrawingElevation] = useState(false)
   const [shiftInput, setShiftInput] = useState('100')
 
   // Произвольный проём по двум кликам на плане (14.07.2026): 1-й клик — начало,
@@ -1016,7 +1018,7 @@ export default function App() {
 
         {/* ─── Геометрия потолка/пола (скос, ломаная, ступени) ─── */}
         <div style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 4 }}>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 4, alignItems: 'center' }}>
             <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={!!form.ceilingProfile}
                 onChange={e => set('ceilingProfile', e.target.checked
@@ -1031,7 +1033,22 @@ export default function App() {
                   : undefined)} />
               Пол с уклоном / ступенями
             </label>
+            <button type="button" onClick={() => setDrawingElevation(v => !v)}
+              style={{ fontSize: 12, padding: '4px 10px', marginLeft: 'auto',
+                background: drawingElevation ? '#4a7dff' : '#fff',
+                color: drawingElevation ? '#fff' : '#4a7dff',
+                border: '1px solid #4a7dff', borderRadius: 4, cursor: 'pointer' }}>
+              🖊 Нарисовать периметр вручную
+            </button>
           </div>
+          {drawingElevation && (
+            <ElevationPencilEditor
+              onCancel={() => setDrawingElevation(false)}
+              onFinish={({ length, ceilingProfile, floorProfile }) => {
+                setForm(prev => ({ ...prev, length, ceilingProfile, floorProfile }))
+                setDrawingElevation(false)
+              }} />
+          )}
           {form.ceilingProfile && (
             <>
               <ProfileCanvasEditor label="Потолок" yHint="высота потолка от пола"
