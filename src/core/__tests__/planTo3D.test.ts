@@ -128,14 +128,12 @@ describe('wallStudPositionsMm (10-11.07.2026, Этап 2 — 3D-каркас Г�
     }
   })
 
-  it('wall_new с ПС125 — тоже реальный buildPositions (учитывает проём), не наивная сетка (05.09.2026: buildPositions профиль-агностична)', () => {
+  it('wall_new с неподдержанным/несуществующим подтипом — упрощённая равномерная сетка без учёта проёмов (05.09.2026: подтипа ps125 в реальности не существует — убран из таксономии; на всякий случай проверяем, что незнакомая строка подтипа по-прежнему безопасно откатывается на наивную сетку)', () => {
     const line = baseLine({
-      type: 'wall_new', spec: { material: 'gkl', subtype: 'ps125' }, lengthMm: 2000,
+      type: 'wall_new', spec: { material: 'gkl', subtype: 'garbage_unknown_subtype' }, lengthMm: 1800,
       openings: [{ id: 'd1', type: 'door', offsetMm: 590, widthMm: 20, heightMm: 2000, label: 'Д-1' }],
     })
-    const positions = wallStudPositionsMm(line)
-    expect(positions).toContain(590)
-    expect(positions).toContain(610)
+    expect(wallStudPositionsMm(line)).toEqual([600, 1200])
   })
 
   it('wall_lining (облицовка) — упрощённая равномерная сетка (нет полноценного WallInput для облицовки)', () => {
