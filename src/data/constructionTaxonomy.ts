@@ -44,7 +44,6 @@ export const TAXONOMY: Record<PlanLineType, TaxNode[]> = {
         { value: 'ps50',  label: 'ПС 50 (~75мм)',  abbr: 'ПС50' },
         { value: 'ps75',  label: 'ПС 75 (~100мм)', abbr: 'ПС75' },
         { value: 'ps100', label: 'ПС 100 (~125мм)',abbr: 'ПС100' },
-        { value: 'ps125', label: 'ПС 125 (~150мм)',abbr: 'ПС125' },
         { value: 'double',label: 'Двойной каркас (общий, ~200мм)', abbr: 'ДК' },
         // ── Двойной каркас, конкретные системы Кнауф (см. КОНСПЕКТ.md,
         // сессия 04.07.2026) — два параллельных ряда стоек, профиль
@@ -280,7 +279,7 @@ export function getContourFill(type: PlanLineType, material?: string, subtype?: 
 // ─── Толщина стены по spec ───────────────────────────────────────────────────
 
 const GKL_STUD_THICKNESS: Record<string, number> = {
-  ps50: 75, ps75: 100, ps100: 125, ps125: 150, double: 200,
+  ps50: 75, ps75: 100, ps100: 125, double: 200,
 }
 
 // ─── Двойной каркас (С115.1/.2/.3, С116) ─────────────────────────────────────
