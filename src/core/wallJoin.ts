@@ -446,7 +446,7 @@ export function buildWallsForJoin(
 ): WallForJoin[] {
   const walls: WallForJoin[] = []
   lines.forEach((l, idx) => {
-    const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm)
+    const vis = getLineVisual(l.type, l.spec?.material, l.spec?.subtype, l.spec?.gapMm, l.spec?.layers)
     const hasSpec = !!(l.spec?.material)
     const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
     if (thicknessPx <= 3) return

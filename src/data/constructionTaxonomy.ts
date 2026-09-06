@@ -278,8 +278,8 @@ export function getContourFill(type: PlanLineType, material?: string, subtype?: 
 
 // ─── Толщина стены по spec ───────────────────────────────────────────────────
 
-const GKL_STUD_THICKNESS: Record<string, number> = {
-  ps50: 75, ps75: 100, ps100: 125, double: 200,
+const GKL_STUD_WIDTH: Record<string, number> = {
+  ps50: 50, ps75: 75, ps100: 100,
 }
 
 // ─── Двойной каркас (С115.1/.2/.3, С116) ─────────────────────────────────────
@@ -364,14 +364,21 @@ const LINING_THICKNESS: Record<string, number> = {
 }
 
 export function getWallThicknessMm(
-  type: PlanLineType, material?: string, subtype?: string, gapMm?: number,
+  type: PlanLineType, material?: string, subtype?: string, gapMm?: number, layers?: 1 | 2,
 ): number {
   if (type === 'wall_new') {
     if (!material) return 0  // нет spec → не рисуем трапецию
     if (material === 'gkl') {
       const df = parseDoubleFrameSubtype(subtype)
       if (df) return getDoubleFrameThicknessMm(df.dfType, df.profile, gapMm)
-      return GKL_STUD_THICKNESS[subtype ?? ''] ?? 100
+      // Толщина = профиль + обшивка С ОБЕИХ сторон, слоями (Сергей, 05.09.2026):
+      // ПС75 + 2 слоя ГКЛ 12.5мм с каждой стороны -> 75 + 2×2×12.5 = 125мм.
+      // Раньше была фиксированная таблица "профиль -> толщина", молча
+      // предполагавшая всегда 1 слой — для С112 (2 слоя) давала заниженную
+      // толщину на 2×12.5=25мм.
+      const width = GKL_STUD_WIDTH[subtype ?? '']
+      if (width !== undefined) return width + (layers ?? 1) * 2 * DEFAULT_LAYER_THICKNESS_MM
+      return subtype === 'double' ? 200 : 100  // общий "двойной каркас" (без деталей) / неизвестный подтип
     }
     if (material === 'brick' || material === 'gasblock' || material === 'foamblock')
       return parseInt(subtype ?? '0') || 200
@@ -430,8 +437,9 @@ export function getLineVisual(
   material?: string,
   subtype?: string,
   gapMm?: number,
+  layers?: 1 | 2,
 ): LineVisualSpec {
-  const thicknessMm = getWallThicknessMm(type, material, subtype, gapMm)
+  const thicknessMm = getWallThicknessMm(type, material, subtype, gapMm, layers)
   const fillKey = material ? `${type}:${material}` : type
   const fillColor = DOUBLE_LINE_FILLS[fillKey] ?? 'rgba(200,200,200,0.3)'
   const contourFill = getContourFill(type, material, subtype) ?? 'transparent'
