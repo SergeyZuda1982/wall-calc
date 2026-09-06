@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   flatProfile, normalizeProfile, sortProfile,
   interpolateY, interpolateYLeft, studHeightAt, studHeightAtLeft,
-  maxStudHeight, integrateHeight, profilePathLength,
+  maxStudHeight, integrateHeight, profilePathLength, decomposeElevationPerimeter,
 } from '../profileGeometry'
 
 // ─── flatProfile / sortProfile ───────────────────────────────────────────────
@@ -227,5 +227,72 @@ describe('profilePathLength', () => {
   it('подотрезок внутри профиля', () => {
     const flat = [{ x: 0, y: 2700 }, { x: 6000, y: 2700 }]
     expect(profilePathLength(flat, 1000, 4000)).toBeCloseTo(3000)
+  })
+})
+
+describe('decomposeElevationPerimeter', () => {
+  it('прямоугольник (вертикальные торцы) → плоские потолок/пол', () => {
+    // Контур по часовой: низ-лево → верх-лево → верх-право → низ-право
+    const rect = [
+      { x: 0, y: 0 }, { x: 0, y: 2700 }, { x: 4000, y: 2700 }, { x: 4000, y: 0 },
+    ]
+    const res = decomposeElevationPerimeter(rect)
+    expect(res).not.toBeNull()
+    expect(res!.length).toBe(4000)
+    expect(res!.floorProfile).toEqual([{ x: 0, y: 0 }, { x: 4000, y: 0 }])
+    expect(res!.ceilingProfile).toEqual([{ x: 0, y: 2700 }, { x: 4000, y: 2700 }])
+  })
+
+  it('прямоугольник, обход против часовой (обратный порядок точек) → тот же результат', () => {
+    const rectCCW = [
+      { x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 2700 }, { x: 0, y: 2700 },
+    ]
+    const res = decomposeElevationPerimeter(rectCCW)
+    expect(res!.floorProfile).toEqual([{ x: 0, y: 0 }, { x: 4000, y: 0 }])
+    expect(res!.ceilingProfile).toEqual([{ x: 0, y: 2700 }, { x: 4000, y: 2700 }])
+  })
+
+  it('скошенный торец (мансарда) → торец становится частью потолочного профиля', () => {
+    // Низ ровный 0..4000 на y=0. Слева вертикальный торец 0..2700. Справа торец
+    // скошен: верх правой стороны опускается с 2700 (x=3000) до 0 (x=4000) —
+    // реальный случай примыкания перегородки к скату кровли.
+    const gableRight = [
+      { x: 0, y: 0 }, { x: 0, y: 2700 }, { x: 3000, y: 2700 }, { x: 4000, y: 0 },
+    ]
+    const res = decomposeElevationPerimeter(gableRight)
+    expect(res!.length).toBe(4000)
+    expect(res!.floorProfile).toEqual([{ x: 0, y: 0 }, { x: 4000, y: 0 }])
+    expect(res!.ceilingProfile).toEqual([{ x: 0, y: 2700 }, { x: 3000, y: 2700 }, { x: 4000, y: 0 }])
+  })
+
+  it('оба торца скошены до нуля (треугольная/гейбл-перегородка целиком под скатом)', () => {
+    const gable = [
+      { x: 0, y: 0 }, { x: 2000, y: 2700 }, { x: 4000, y: 0 },
+    ]
+    const res = decomposeElevationPerimeter(gable)
+    expect(res!.length).toBe(4000)
+    // Слева и справа — по одной точке контура (y=0), потолок и пол сходятся в них.
+    expect(res!.floorProfile).toEqual([{ x: 0, y: 0 }, { x: 4000, y: 0 }])
+    expect(res!.ceilingProfile).toEqual([{ x: 0, y: 0 }, { x: 2000, y: 2700 }, { x: 4000, y: 0 }])
+  })
+
+  it('ступенчатый потолок (ригель) сохраняется на выходе как перепад по x', () => {
+    const withStep = [
+      { x: 0, y: 0 }, { x: 0, y: 2500 }, { x: 1000, y: 2500 }, { x: 1000, y: 3200 },
+      { x: 3000, y: 3200 }, { x: 3000, y: 0 },
+    ]
+    const res = decomposeElevationPerimeter(withStep)
+    expect(res!.ceilingProfile).toEqual([
+      { x: 0, y: 2500 }, { x: 1000, y: 2500 }, { x: 1000, y: 3200 }, { x: 3000, y: 3200 },
+    ])
+    expect(res!.floorProfile).toEqual([{ x: 0, y: 0 }, { x: 3000, y: 0 }])
+  })
+
+  it('меньше 3 точек → null', () => {
+    expect(decomposeElevationPerimeter([{ x: 0, y: 0 }, { x: 1000, y: 0 }])).toBeNull()
+  })
+
+  it('нулевая ширина (все точки на одном x) → null', () => {
+    expect(decomposeElevationPerimeter([{ x: 0, y: 0 }, { x: 0, y: 1000 }, { x: 0, y: 2000 }])).toBeNull()
   })
 })

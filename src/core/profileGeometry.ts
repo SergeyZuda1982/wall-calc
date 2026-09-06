@@ -1,4 +1,4 @@
-import type { EdgeProfile } from '../types'
+import type { EdgeProfile, ProfilePoint } from '../types'
 
 /**
  * Геометрия переменной высоты перегородки.
@@ -193,4 +193,100 @@ export function profilePathLength(
   }
 
   return length
+}
+
+// ─── Разложение нарисованного вручную контура (вид сбоку) на два профиля ────
+// Повод (05.09.2026): вместо готовой рамки length×height + правки точек ВНУТРИ
+// неё — пользователь хочет рисовать весь периметр сечения стены с нуля (низ,
+// торец, верх, торец), как контур Плиты на плане, и получать length +
+// ceilingProfile + floorProfile автоматически из рисунка. Торцы стены НЕ
+// обязаны быть строго вертикальными (реальный случай — торец идёт по скату
+// кровли, мансардная геометрия) — алгоритм это учитывает: торец становится
+// частью соответствующего профиля, спускающегося до общей точки на краю.
+
+/**
+ * Разбивает замкнутый контур (произвольный порядок обхода, любое направление)
+ * на верхнюю (потолок) и нижнюю (пол) ломаные — каждая как функция x от 0 до
+ * length. Крайняя левая и крайняя правая точки контура становятся границами
+ * x=0/x=length каждого профиля; если на краю ровно одна точка контура —
+ * потолок и пол сходятся в ней в одну точку (вырожденный конец, нулевая
+ * высота стены — реальный случай для треугольной перегородки под скатом
+ * кровли до самого пола). Если на краю ровно две точки — они естественно
+ * расходятся: с меньшим y — начало пола, с большим y — начало потолка
+ * (вертикальный торец, обычный случай).
+ *
+ * Возвращает null, если контур вырожден (< 3 точек или нулевая ширина по x).
+ */
+export function decomposeElevationPerimeter(
+  rawPts: ProfilePoint[]
+): { length: number; ceilingProfile: EdgeProfile; floorProfile: EdgeProfile } | null {
+  const n = rawPts.length
+  if (n < 3) return null
+
+  const minX = Math.min(...rawPts.map(p => p.x))
+  const maxX = Math.max(...rawPts.map(p => p.x))
+  const length = maxX - minX
+  if (!(length > 0)) return null
+
+  const leftGroup = rawPts.map((p, i) => ({ p, i })).filter(({ p }) => p.x === minX)
+  const rightGroup = rawPts.map((p, i) => ({ p, i })).filter(({ p }) => p.x === maxX)
+  const argMinY = (g: typeof leftGroup) => g.reduce((a, b) => (b.p.y < a.p.y ? b : a))
+  const argMaxY = (g: typeof leftGroup) => g.reduce((a, b) => (b.p.y > a.p.y ? b : a))
+
+  const leftFloorIdx = argMinY(leftGroup).i
+  const leftCeilIdx = argMaxY(leftGroup).i
+  const rightFloorIdx = argMinY(rightGroup).i
+  const rightCeilIdx = argMaxY(rightGroup).i
+
+  function walkDir(from: number, to: number, dir: 1 | -1): number[] {
+    const out: number[] = []
+    let i = from
+    while (true) { out.push(i); if (i === to) break; i = (i + dir + n) % n }
+    return out
+  }
+
+  // Направление, в котором от leftFloorIdx мы доходим до rightFloorIdx РАНЬШЕ,
+  // чем встречаем один из потолочных якорей — это и есть "сторона пола".
+  // Потолочная цепочка идёт от rightCeilIdx до leftCeilIdx в ТОМ ЖЕ
+  // направлении (дополнение по кругу до пола).
+  function reachesFloorFirst(dir: 1 | -1): boolean {
+    let i = leftFloorIdx
+    while (i !== rightFloorIdx) {
+      i = (i + dir + n) % n
+      if (i !== rightFloorIdx && (i === leftCeilIdx || i === rightCeilIdx)) return false
+    }
+    return true
+  }
+
+  const bothShared = leftFloorIdx === leftCeilIdx && rightFloorIdx === rightCeilIdx
+  let floorIdxs: number[], ceilIdxs: number[]
+
+  if (bothShared) {
+    // Оба конца — вырожденные (контур сходится в одну точку слева и справа,
+    // например треугольная перегородка целиком под скатом кровли до пола) —
+    // якоря пола и потолка совпадают, различить стороны можно только по
+    // средней высоте половины контура: ниже — пол, выше — потолок.
+    const fwd = walkDir(leftFloorIdx, rightFloorIdx, 1)
+    const bwd = walkDir(leftFloorIdx, rightFloorIdx, -1)
+    const avgY = (idxs: number[]) => idxs.reduce((s, i) => s + rawPts[i].y, 0) / idxs.length
+    ;[floorIdxs, ceilIdxs] = avgY(fwd) <= avgY(bwd) ? [fwd, bwd] : [bwd, fwd]
+  } else {
+    const dir: 1 | -1 = reachesFloorFirst(1) ? 1 : -1
+    floorIdxs = walkDir(leftFloorIdx, rightFloorIdx, dir)
+    ceilIdxs = walkDir(rightCeilIdx, leftCeilIdx, dir)
+  }
+
+  // Обход мог пройти цепочку в любую сторону (по возрастанию или убыванию x) —
+  // сортировка по x сама всё расставит правильно, КРОМЕ порядка внутри пары
+  // точек с ОДИНАКОВЫМ x (вертикальная ступень/ригель): там важно, какая из
+  // двух идёт первой. Разворачиваем всю цепочку заранее, если её общий тренд
+  // (первая точка → последняя) убывающий — тогда относительный порядок внутри
+  // каждой такой пары после сортировки останется физически верным.
+  const toProfile = (idxs: number[]): EdgeProfile => {
+    const chain = rawPts[idxs[0]].x > rawPts[idxs[idxs.length - 1]].x ? [...idxs].reverse() : idxs
+    const raw = chain.map(i => ({ x: rawPts[i].x - minX, y: rawPts[i].y }))
+    return normalizeProfile(raw, length, raw[0]?.y ?? 0)
+  }
+
+  return { length, ceilingProfile: toProfile(ceilIdxs), floorProfile: toProfile(floorIdxs) }
 }
