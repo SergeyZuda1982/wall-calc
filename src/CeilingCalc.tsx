@@ -1605,7 +1605,9 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     // с этой же осью экрана (см. известное упрощение выше — картинка несущего
     // всегда вдоль длины, поэтому корректный снэп доступен только для
     // rotated=true, для rotated=false — деградация без снэпа, как раньше).
-    const bearingForSnap = rotated ? bearingPosY : []
+    const bearingForSnap = rotated
+      ? bearingRowsPx.map(r => r.mm).filter(mm => mm >= 0 && mm <= W_room)
+      : []
     const { flipX, flipZ } = resolveSheetStartFlips(form.sheetStartCorner, rotated)
     for (const r of calcCeilingSheetRects(sheetAxisL, sheetAxisW, layout.sheetL, layout.sheetW, bearingForSnap, { flipX, flipZ })) {
       const screenX = rotated ? r.z : r.x
