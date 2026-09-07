@@ -11,12 +11,15 @@ interface ElevationPencilEditorProps {
   onCancel: () => void
 }
 
+interface ViewFrame { x0: number; y0: number; span: number } // мм: левый-нижний угол + ширина видимой области
+
 const CANVAS_H = 320
 const PAD = 30
 const PAD_TOP = 20
 const PAD_BOTTOM = 20
 const CLOSE_PX = 14
-const DEFAULT_SPAN = 4000 // мм по ширине канваса — «чистый лист» до первой точки
+const DEFAULT_SPAN = 4000 // мм — ширина «чистого листа» до первой точки
+const FRAME_MARGIN_RATIO = 0.1 // насколько близко к краю точка ещё считается "в кадре"
 const NICE_STEPS = [50, 100, 200, 250, 500, 1000, 2000, 2500, 5000] // мм, для клетки
 const MIN_CELL_PX = 28
 
@@ -27,7 +30,14 @@ const MIN_CELL_PX = 28
  * вбивается числом (направление берётся от курсора) — тот же принцип, что
  * уже работает у карандаша Плиты в FloorPlan.tsx, перенесённый в разрез.
  * Замыкание — клик рядом с первой точкой ИЛИ кнопка «Готово». ПКМ по
- * холсту — отмена последней точки (как Ctrl+Z, без модалки подтверждения).
+ * холсту — отмена последней точки.
+ *
+ * Система координат (ViewFrame) НЕ пересчитывается на каждый клик — иначе
+ * только что поставленная точка визуально «прыгает» в центр (первая версия
+ * так и делала: bbox тесно облегал единственную точку, из-за чего вид
+ * перемасштабировался сразу после клика). Вместо этого кадр растёт только
+ * когда новая точка реально выходит за его пределы (с запасом), и всегда
+ * сохраняет пропорции канваса — letterbox'а по бокам нет вообще.
  *
  * По завершении контур раскладывается на ceilingProfile/floorProfile/length
  * через decomposeElevationPerimeter (core/profileGeometry.ts) — торцы стены
@@ -36,6 +46,7 @@ const MIN_CELL_PX = 28
 export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationPencilEditorProps) {
   const [wrapRef, CANVAS_W] = useContainerWidth(CANVAS_W_MAX, 20)
   const [pts, setPts] = useState<ProfilePoint[]>([])
+  const [frame, setFrame] = useState<ViewFrame | null>(null)
   const [cursorMm, setCursorMm] = useState<ProfilePoint | null>(null)
   const [typedLen, setTypedLen] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -43,52 +54,59 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   const plotW = Math.max(CANVAS_W - PAD * 2, 10)
   const plotH = CANVAS_H - PAD_TOP - PAD_BOTTOM
 
-  // Масштаб считаем ТОЛЬКО от уже поставленных точек (не от курсора) —
-  // иначе холст «дёргался» бы при каждом движении мыши. Пока точек нет —
-  // условный чистый лист, растянутый РОВНО под пропорции канваса (иначе
-  // при несовпадении пропорций дефолтного листа и широкого/низкого канваса
-  // основная часть холста превращается в мёртвые поля по бокам, и клик
-  // почти всегда попадает в узкую центральную полосу).
-  const { minX, minY, scale, offX, offY, usedH } = useMemo(() => {
-    if (pts.length === 0) {
-      const scale = DEFAULT_SPAN / plotW
-      return { minX: -DEFAULT_SPAN * 0.1, minY: -(plotH * scale) * 0.25, scale, offX: 0, offY: 0, usedH: plotH }
-    }
-    const xs = pts.map(p => p.x), ys = pts.map(p => p.y)
-    const minXRaw = Math.min(...xs), maxXRaw = Math.max(...xs)
-    const minYRaw = Math.min(...ys), maxYRaw = Math.max(...ys)
-    const pad = Math.max((maxXRaw - minXRaw) * 0.15, (maxYRaw - minYRaw) * 0.15, 300)
-    const xSpan = Math.max(maxXRaw - minXRaw + pad * 2, 500)
-    const ySpan = Math.max(maxYRaw - minYRaw + pad * 2, 500)
-    const scale = Math.max(xSpan / plotW, ySpan / plotH) // мм на px
-    const usedW = xSpan / scale, usedH = ySpan / scale
-    return {
-      minX: minXRaw - pad, minY: minYRaw - pad, scale,
-      offX: (plotW - usedW) / 2, offY: (plotH - usedH) / 2, usedH,
-    }
-  }, [pts, plotW, plotH])
+  const defaultFrame: ViewFrame = useMemo(
+    () => ({ x0: -DEFAULT_SPAN * 0.1, y0: -(DEFAULT_SPAN * (plotH / plotW)) * 0.25, span: DEFAULT_SPAN }),
+    [plotW, plotH]
+  )
+  const activeFrame = frame ?? defaultFrame
+  const height = activeFrame.span * (plotH / plotW) // мм, высота видимой области — та же пропорция, что у канваса
+  const scale = activeFrame.span / plotW // мм на px, единый для X и Y — углы не искажаются
 
-  const xToPx = (x: number) => PAD + offX + (x - minX) / scale
-  const yToPx = (y: number) => PAD_TOP + offY + usedH - (y - minY) / scale
-  const pxToX = (px: number) => minX + (px - PAD - offX) * scale
-  const pxToY = (py: number) => minY + (usedH - (py - PAD_TOP - offY)) * scale
+  const xToPx = (x: number) => PAD + (x - activeFrame.x0) / scale
+  const yToPx = (y: number) => PAD_TOP + plotH - (y - activeFrame.y0) / scale
+  const pxToX = (px: number) => activeFrame.x0 + (px - PAD) * scale
+  const pxToY = (py: number) => activeFrame.y0 + (plotH - (py - PAD_TOP)) * scale
+
+  // Растим кадр, только если точка реально выходит за его пределы (с запасом
+  // FRAME_MARGIN_RATIO) — иначе кадр не меняется вообще, никакого "прыжка".
+  function ensureFrame(f: ViewFrame, p: ProfilePoint): ViewFrame {
+    const h = f.span * (plotH / plotW)
+    const mx = f.span * FRAME_MARGIN_RATIO, my = h * FRAME_MARGIN_RATIO
+    const inside = p.x >= f.x0 + mx && p.x <= f.x0 + f.span - mx && p.y >= f.y0 + my && p.y <= f.y0 + h - my
+    if (inside) return f
+    const minX = Math.min(f.x0, p.x), maxX = Math.max(f.x0 + f.span, p.x)
+    const minY = Math.min(f.y0, p.y), maxY = Math.max(f.y0 + h, p.y)
+    const pad = Math.max((maxX - minX) * 0.15, (maxY - minY) * 0.15, 300)
+    const xSpanNeeded = maxX - minX + pad * 2
+    const ySpanNeeded = maxY - minY + pad * 2
+    const span = Math.max(xSpanNeeded, ySpanNeeded * (plotW / plotH))
+    const hNew = span * (plotH / plotW)
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+    return { x0: cx - span / 2, y0: cy - hNew / 2, span }
+  }
+
+  function addPoint(p: ProfilePoint) {
+    setFrame(ensureFrame(activeFrame, p))
+    setPts(prev => [...prev, p])
+    setError(null)
+  }
 
   // Лист в клетку — шаг подбирается так, чтобы клетка была 28-56px на экране
   // (не мельчила и не была слишком крупной при разном масштабе/зуме).
-  const gridStep = useMemo(() => {
-    return NICE_STEPS.find(s => s / scale >= MIN_CELL_PX) ?? NICE_STEPS[NICE_STEPS.length - 1]
-  }, [scale])
+  const gridStep = useMemo(
+    () => NICE_STEPS.find(s => s / scale >= MIN_CELL_PX) ?? NICE_STEPS[NICE_STEPS.length - 1],
+    [scale]
+  )
 
   const gridLines = useMemo(() => {
-    const leftMm = pxToX(PAD), rightMm = pxToX(PAD + plotW)
-    const topMm = pxToY(PAD_TOP), bottomMm = pxToY(PAD_TOP + plotH)
+    const leftMm = activeFrame.x0, rightMm = activeFrame.x0 + activeFrame.span
+    const bottomMm = activeFrame.y0, topMm = activeFrame.y0 + height
     const vs: number[] = []
     for (let x = Math.ceil(leftMm / gridStep) * gridStep; x <= rightMm; x += gridStep) vs.push(x)
     const hs: number[] = []
     for (let y = Math.ceil(bottomMm / gridStep) * gridStep; y <= topMm; y += gridStep) hs.push(y)
     return { vs, hs }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gridStep, minX, minY, scale, offX, offY, usedH, plotW, plotH])
+  }, [gridStep, activeFrame, height])
 
   const last = pts[pts.length - 1] ?? null
 
@@ -104,7 +122,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     if (!res) { setError('Контур вырожден — нулевая ширина или все точки на одной вертикали.'); return false }
     setError(null)
     onFinish(res)
-    setPts([]); setCursorMm(null); setTypedLen('')
+    setPts([]); setFrame(null); setCursorMm(null); setTypedLen('')
     return true
   }
 
@@ -116,9 +134,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       const dx = pos.x - xToPx(pts[0].x), dy = pos.y - yToPx(pts[0].y)
       if (Math.sqrt(dx * dx + dy * dy) < CLOSE_PX) { tryClose(); return }
     }
-    const x = Math.round(pxToX(pos.x)), y = Math.round(pxToY(pos.y))
-    setPts([...pts, { x, y }])
-    setError(null)
+    addPoint({ x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) })
   }
 
   function commitTyped() {
@@ -127,19 +143,18 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     if (!last) {
       // первая точка — числа тут задавать нечем (нет направления), кладём
       // на условный ноль чистого листа
-      setPts([{ x: 0, y: 0 }])
+      addPoint({ x: 0, y: 0 })
       setTypedLen('')
       return
     }
     const dir = cursorMm ?? { x: last.x + 1, y: last.y }
     const angle = Math.atan2(dir.y - last.y, dir.x - last.x)
-    const next = { x: Math.round(last.x + Math.cos(angle) * mm), y: Math.round(last.y + Math.sin(angle) * mm) }
-    setPts([...pts, next])
+    addPoint({ x: Math.round(last.x + Math.cos(angle) * mm), y: Math.round(last.y + Math.sin(angle) * mm) })
     setTypedLen('')
   }
 
   function removeLast() {
-    setPts(pts.slice(0, -1))
+    setPts(prev => prev.slice(0, -1))
     setError(null)
   }
 
@@ -153,17 +168,19 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
         <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>
           Рисование периметра сечения (клик — точка контура, клик у первой точки — замкнуть, ПКМ — отменить последнюю)
         </span>
-        <button type="button" onClick={() => { setPts([]); setCursorMm(null); setError(null); onCancel() }}
+        <button type="button" onClick={() => { setPts([]); setFrame(null); setCursorMm(null); setError(null); onCancel() }}
           style={{ fontSize: 11, color: '#999', background: 'none', border: 'none', cursor: 'pointer' }}>
           ✕ отмена
         </button>
       </div>
 
-      <div ref={wrapRef}>
+      {/* ПКМ вешаем на обычный div (гарантированный React DOM-обработчик), а не
+          на <Stage> — там contextmenu проходит через внутреннюю подписку Konva
+          и на практике не всегда доходил до обработчика надёжно. */}
+      <div ref={wrapRef} onContextMenu={e => { e.preventDefault(); removeLast() }}>
         <Stage width={CANVAS_W} height={CANVAS_H}
           onMouseMove={handleMove} onTouchMove={handleMove}
           onClick={handleStageClick} onTap={handleStageClick}
-          onContextMenu={e => { e.evt.preventDefault(); removeLast() }}
           style={{ background: '#fff', border: '1px solid #eee', borderRadius: 4, cursor: 'crosshair' }}>
           <Layer>
             {gridLines.vs.map(x => (
