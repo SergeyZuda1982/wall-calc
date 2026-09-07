@@ -174,10 +174,13 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
         </button>
       </div>
 
-      {/* ПКМ вешаем на обычный div (гарантированный React DOM-обработчик), а не
-          на <Stage> — там contextmenu проходит через внутреннюю подписку Konva
-          и на практике не всегда доходил до обработчика надёжно. */}
-      <div ref={wrapRef} onContextMenu={e => { e.preventDefault(); removeLast() }}>
+      {/* ПКМ ловим на mousedown (button===2) на обычном div — надёжнее, чем
+          событие contextmenu через внутреннюю Konva-подписку на <Stage>,
+          которое на практике не всегда доходило до обработчика. Отдельный
+          onContextMenu только гасит системное меню браузера. */}
+      <div ref={wrapRef}
+        onContextMenu={e => e.preventDefault()}
+        onMouseDown={e => { if (e.button === 2) { e.preventDefault(); removeLast() } }}>
         <Stage width={CANVAS_W} height={CANVAS_H}
           onMouseMove={handleMove} onTouchMove={handleMove}
           onClick={handleStageClick} onTap={handleStageClick}
