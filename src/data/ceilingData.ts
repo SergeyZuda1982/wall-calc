@@ -11,7 +11,7 @@ import type { HangerSystem, CeilingSlopeAxis } from '../core/calcP112Frame'
 
 export type CeilingType = 'p112' | 'p113' | 'p131' | 'p19'
 export type CeilingLayers = 1 | 2
-export type CeilingMaterial = 'gsp' | 'gvl'
+export type CeilingMaterial = 'gsp' | 'gvl' | 'sapphire'
 export type CeilingSheetThickness = 9.5 | 12.5
 
 /** Шаг основных профилей c (мм). 400 добавлен 15.07.2026 — реальная практика

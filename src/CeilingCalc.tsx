@@ -592,14 +592,25 @@ export default function CeilingCalc() {
               </div>
               <div>
                 <label style={lbl}>Материал</label>
-                <select style={sel} value={form.material} onChange={e => setField('material', e.target.value as CeilingMaterial)}>
+                <select style={sel} value={form.material} onChange={e => {
+                  const mat = e.target.value as CeilingMaterial
+                  if (mat === 'sapphire') {
+                    // Сапфир — как и у стен/облицовки (BoardSpecSelector), сортамент
+                    // фиксирован: только 12.5мм, длина листа только 2500мм.
+                    setForm(prev => ({ ...prev, material: mat, thickness: 12.5, sheetLengthMm: 2500 }))
+                  } else {
+                    setField('material', mat)
+                  }
+                }}>
                   <option value="gsp">ГСП (ГКЛ)</option>
                   <option value="gvl">ГВЛ</option>
+                  <option value="sapphire">Сапфир</option>
                 </select>
               </div>
               <div>
                 <label style={lbl}>Толщина, мм</label>
-                <select style={sel} value={form.thickness} onChange={e => setField('thickness', +e.target.value as CeilingSheetThickness)}>
+                <select style={sel} value={form.thickness} disabled={form.material === 'sapphire'}
+                  onChange={e => setField('thickness', +e.target.value as CeilingSheetThickness)}>
                   <option value={9.5}>9.5</option>
                   <option value={12.5}>12.5</option>
                 </select>
@@ -613,7 +624,8 @@ export default function CeilingCalc() {
             </div>
             <div>
               <label style={lbl}>Длина листа, мм</label>
-              <select style={sel} value={form.sheetLengthMm} onChange={e => setField('sheetLengthMm', +e.target.value)}>
+              <select style={sel} value={form.sheetLengthMm} disabled={form.material === 'sapphire'}
+                onChange={e => setField('sheetLengthMm', +e.target.value)}>
                 <option value={2500}>2500</option>
                 <option value={2700}>2700</option>
                 <option value={3000}>3000</option>
