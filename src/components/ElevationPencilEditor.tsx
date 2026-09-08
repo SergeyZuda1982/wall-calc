@@ -14,7 +14,7 @@ interface ElevationPencilEditorProps {
 interface ViewFrame { x0: number; y0: number; span: number } // мм: левый-нижний угол + ширина видимой области
 
 const CANVAS_H = 320
-const PAD = 30
+const PAD = 34
 const PAD_TOP = 20
 const PAD_BOTTOM = 20
 const CLOSE_PX = 14
@@ -25,22 +25,28 @@ const MIN_CELL_PX = 28
 
 /**
  * Рисование ВСЕГО периметра сечения стены (вид сбоку) с нуля — без
- * предварительно заданных длины/высоты. Клик = точка контура (в любом
- * порядке обхода — низ/торец/верх/торец), точная длина текущего отрезка
- * вбивается числом (направление берётся от курсора) — тот же принцип, что
- * уже работает у карандаша Плиты в FloorPlan.tsx, перенесённый в разрез.
- * Замыкание — клик рядом с первой точкой ИЛИ кнопка «Готово». ПКМ по
- * холсту — отмена последней точки. Чекбокс «прямой угол» (orthoSnap,
- * вкл. по умолчанию) магнитит направление к ближайшей из 4 сторон света
- * (0/90/180/270°) — удобно для ровных участков и вертикальных ступеней/
- * ригелей; выключается для единственного наклонного отрезка.
+ * предварительно заданных длины/высоты.
  *
- * Система координат (ViewFrame) НЕ пересчитывается на каждый клик — иначе
- * только что поставленная точка визуально «прыгает» в центр (первая версия
- * так и делала: bbox тесно облегал единственную точку, из-за чего вид
- * перемасштабировался сразу после клика). Вместо этого кадр растёт только
- * когда новая точка реально выходит за его пределы (с запасом), и всегда
- * сохраняет пропорции канваса — letterbox'а по бокам нет вообще.
+ * ГЛАВНЫЙ способ добавить точку — ввод АБСОЛЮТНЫХ координат X/Y числом
+ * (как график: есть 0, есть оси, деления подписаны) — НЕ "отрезок от
+ * последней точки по направлению курсора". Так и задумано специально:
+ * пользователь по факту знает высоту в конкретных точках по длине стены
+ * (из проекта или замера рулеткой/дальномером), а не относительные
+ * смещения — и для наклонной/скошенной стены ему нужно ЗАДАТЬ известную
+ * высоту во второй опорной точке, а не пытаться попасть туда мышкой
+ * (мышь физически не может уйти за пределы видимого холста, а нужная
+ * точка может быть выше текущего окна — с относительным вводом это была
+ * тупиковая ситуация). Клик по холсту остаётся как ВТОРОЙ, черновой
+ * способ (с ортоснапом) — для быстрой визуальной прикидки, а не для
+ * точных чисел.
+ *
+ * Замыкание — клик рядом с первой точкой ИЛИ кнопка «Готово». ПКМ (через
+ * mousedown, см. handleStageClick) — отмена последней точки.
+ *
+ * Система координат (ViewFrame) не пересчитывается на каждую точку —
+ * растёт только когда точка реально выходит за её пределы (с запасом),
+ * всегда сохраняет пропорции канваса (letterbox'а нет). Оси подписаны
+ * числами по краям — видно масштаб, даже не наводя курсор.
  *
  * По завершении контур раскладывается на ceilingProfile/floorProfile/length
  * через decomposeElevationPerimeter (core/profileGeometry.ts) — торцы стены
@@ -51,7 +57,8 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   const [pts, setPts] = useState<ProfilePoint[]>([])
   const [frame, setFrame] = useState<ViewFrame | null>(null)
   const [cursorMm, setCursorMm] = useState<ProfilePoint | null>(null)
-  const [typedLen, setTypedLen] = useState('')
+  const [typedX, setTypedX] = useState('')
+  const [typedY, setTypedY] = useState('')
   const [orthoSnap, setOrthoSnap] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -73,6 +80,9 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
 
   // Растим кадр, только если точка реально выходит за его пределы (с запасом
   // FRAME_MARGIN_RATIO) — иначе кадр не меняется вообще, никакого "прыжка".
+  // Работает одинаково и для точки с холста, и для введённой числом — после
+  // ввода абсолютных координат далеко за пределами текущего окна холст сам
+  // подстроится и покажет добавленную точку.
   function ensureFrame(f: ViewFrame, p: ProfilePoint): ViewFrame {
     const h = f.span * (plotH / plotW)
     const mx = f.span * FRAME_MARGIN_RATIO, my = h * FRAME_MARGIN_RATIO
@@ -95,8 +105,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     setError(null)
   }
 
-  // Лист в клетку — шаг подбирается так, чтобы клетка была 28-56px на экране
-  // (не мельчила и не была слишком крупной при разном масштабе/зуме).
+  // Лист в клетку — шаг подбирается так, чтобы клетка была 28-56px на экране.
   const gridStep = useMemo(
     () => NICE_STEPS.find(s => s / scale >= MIN_CELL_PX) ?? NICE_STEPS[NICE_STEPS.length - 1],
     [scale]
@@ -133,14 +142,14 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     if (!res) { setError('Контур вырожден — нулевая ширина или все точки на одной вертикали.'); return false }
     setError(null)
     onFinish(res)
-    setPts([]); setFrame(null); setCursorMm(null); setTypedLen('')
+    setPts([]); setFrame(null); setCursorMm(null); setTypedX(''); setTypedY('')
     return true
   }
 
   function handleStageClick(e: KonvaEventObject<MouseEvent | TouchEvent>) {
     // Konva шлёт 'click' по отпусканию ЛЮБОЙ кнопки мыши, не только левой —
-    // без этой проверки ПКМ одновременно и убирала точку (наш mousedown-
-    // обработчик), и тут же добавляла новую (этот обработчик клика).
+    // без этой проверки ПКМ одновременно и убирала точку (mousedown-
+    // обработчик ниже), и тут же добавляла новую (этот обработчик клика).
     if ('button' in e.evt && e.evt.button !== 0) return
     if (e.target !== e.target.getStage()) return // клик по точке — обработан её обработчиком
     const pos = e.target.getStage()?.getPointerPosition()
@@ -149,25 +158,17 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       const dx = pos.x - xToPx(pts[0].x), dy = pos.y - yToPx(pts[0].y)
       if (Math.sqrt(dx * dx + dy * dy) < CLOSE_PX) { tryClose(); return }
     }
+    // Клик — черновое (визуальное) размещение точки, для точных чисел
+    // используется поле X/Y ниже.
     const raw = { x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) }
-    addPoint(last && orthoSnap ? snapToOrtho(last, raw) : raw)
+    addPoint(last ? (orthoSnap ? snapToOrtho(last, raw) : raw) : raw)
   }
 
-  function commitTyped() {
-    const mm = Number(typedLen)
-    if (!mm || mm <= 0) return
-    if (!last) {
-      // первая точка — числа тут задавать нечем (нет направления), кладём
-      // на условный ноль чистого листа
-      addPoint({ x: 0, y: 0 })
-      setTypedLen('')
-      return
-    }
-    const rawDir = cursorMm ?? { x: last.x + 1, y: last.y }
-    const dir = orthoSnap ? snapToOrtho(last, rawDir) : rawDir
-    const angle = Math.atan2(dir.y - last.y, dir.x - last.x)
-    addPoint({ x: Math.round(last.x + Math.cos(angle) * mm), y: Math.round(last.y + Math.sin(angle) * mm) })
-    setTypedLen('')
+  function commitAbsolute() {
+    const x = Number(typedX), y = Number(typedY)
+    if (typedX.trim() === '' || typedY.trim() === '' || Number.isNaN(x) || Number.isNaN(y)) return
+    addPoint({ x: Math.round(x), y: Math.round(y) })
+    setTypedX(''); setTypedY('')
   }
 
   function removeLast() {
@@ -183,7 +184,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: '8px 10px', marginTop: 6, background: '#fafafe' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>
-          Рисование периметра сечения (клик — точка контура, клик у первой точки — замкнуть, ПКМ — отменить последнюю)
+          Рисование периметра сечения — точки по координатам X/Y (ниже), клик по холсту — черновой набросок
         </span>
         <button type="button" onClick={() => { setPts([]); setFrame(null); setCursorMm(null); setError(null); onCancel() }}
           style={{ fontSize: 11, color: '#999', background: 'none', border: 'none', cursor: 'pointer' }}>
@@ -192,9 +193,8 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       </div>
 
       {/* ПКМ ловим на mousedown (button===2) на обычном div — надёжнее, чем
-          событие contextmenu через внутреннюю Konva-подписку на <Stage>,
-          которое на практике не всегда доходило до обработчика. Отдельный
-          onContextMenu только гасит системное меню браузера. */}
+          событие contextmenu через внутреннюю Konva-подписку на <Stage>.
+          Отдельный onContextMenu только гасит системное меню браузера. */}
       <div ref={wrapRef}
         onContextMenu={e => e.preventDefault()}
         onMouseDown={e => { if (e.button === 2) { e.preventDefault(); removeLast() } }}>
@@ -211,6 +211,17 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
               <Line key={`h${y}`} points={[PAD, yToPx(y), PAD + plotW, yToPx(y)]}
                 stroke={y === 0 ? '#cfd8ea' : '#eef1f7'} strokeWidth={y === 0 ? 1.2 : 1} listening={false} />
             ))}
+            {/* Подписи делений — сама суть графика с осями: видно масштаб и
+                конкретные числа, даже не наводя курсор и не завися от того,
+                видна ли сейчас нужная зона под курсором. */}
+            {gridLines.vs.map(x => (
+              <Text key={`vt${x}`} x={xToPx(x) - 14} y={PAD_TOP + plotH + 3} width={28} align="center"
+                text={String(x)} fontSize={9} fill="#aab" listening={false} />
+            ))}
+            {gridLines.hs.map(y => (
+              <Text key={`ht${y}`} x={2} y={yToPx(y) - 6} width={PAD - 6} align="right"
+                text={String(y)} fontSize={9} fill="#aab" listening={false} />
+            ))}
             {pts.length >= 2 && (
               <Line points={pts.flatMap(p => [xToPx(p.x), yToPx(p.y)])} stroke="#4a7dff" strokeWidth={2.5} listening={false} />
             )}
@@ -223,27 +234,33 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
                 fill={i === 0 ? '#1a9c4a' : '#4a7dff'} stroke="#fff" strokeWidth={1.5} listening={false} />
             ))}
             {last && previewPoint && previewLen !== null && (
-              <Text x={xToPx(previewPoint.x) + 10} y={yToPx(previewPoint.y) - 18}
+              <Text x={Math.min(xToPx(previewPoint.x) + 10, CANVAS_W - 90)} y={Math.max(yToPx(previewPoint.y) - 18, PAD_TOP)}
                 text={`${previewLen} мм`} fontSize={12} fill="#333" />
             )}
           </Layer>
         </Stage>
       </div>
 
+      {/* ГЛАВНЫЙ способ добавить точку — абсолютные X/Y, независимо от того,
+          что сейчас видно на холсте и куда дотягивается курсор. */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-        <label style={{ fontSize: 11, color: '#555', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-          <input type="checkbox" checked={orthoSnap} onChange={e => setOrthoSnap(e.target.checked)} />
-          ⊥ прямой угол
-        </label>
-        <span style={{ fontSize: 11, color: '#888' }}>Длина отрезка от последней точки, мм:</span>
-        <input type="number" value={typedLen} onChange={e => setTypedLen(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') commitTyped() }}
-          placeholder={last ? 'напр. 1500' : 'сначала клик — 1-я точка'} disabled={!last}
-          style={{ width: 110, padding: '4px 6px', fontSize: 12 }} />
-        <button type="button" onClick={commitTyped} disabled={!last}
-          style={{ padding: '4px 10px', fontSize: 12, cursor: last ? 'pointer' : 'default' }}>+ точка</button>
+        <span style={{ fontSize: 11, color: '#888' }}>Точка по координатам — X (по стене), Y (высота), мм:</span>
+        <input type="number" value={typedX} onChange={e => setTypedX(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commitAbsolute() }}
+          placeholder="X" style={{ width: 90, padding: '4px 6px', fontSize: 12 }} />
+        <input type="number" value={typedY} onChange={e => setTypedY(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commitAbsolute() }}
+          placeholder="Y" style={{ width: 90, padding: '4px 6px', fontSize: 12 }} />
+        <button type="button" onClick={commitAbsolute}
+          style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>+ точка</button>
         <button type="button" onClick={removeLast} disabled={pts.length === 0}
           style={{ padding: '4px 10px', fontSize: 12, cursor: pts.length ? 'pointer' : 'default' }}>↩ убрать последнюю (или ПКМ)</button>
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 11, color: '#555', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <input type="checkbox" checked={orthoSnap} onChange={e => setOrthoSnap(e.target.checked)} />
+          ⊥ прямой угол (для клика по холсту)
+        </label>
         <button type="button" onClick={tryClose} disabled={pts.length < 3}
           style={{ padding: '4px 10px', fontSize: 12, marginLeft: 'auto', fontWeight: 600,
             background: pts.length >= 3 ? '#1a9c4a' : '#eee', color: pts.length >= 3 ? '#fff' : '#aaa',
@@ -253,11 +270,10 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       </div>
       {error && <p style={{ margin: '6px 0 0', fontSize: 11, color: '#c0392b' }}>{error}</p>}
       <p style={{ margin: '6px 0 0', fontSize: 10, color: '#aaa' }}>
-        Точки можно ставить в любом порядке обхода (низ → торец → верх → торец
-        или наоборот) — главное, чтобы получился один замкнутый контур. Торец
-        необязательно вертикальный. «Прямой угол» магнитит направление к
-        ближайшей горизонтали/вертикали — выключи для наклонного отрезка.
-        Клетка — {gridStep} мм.
+        Вводи точки по координатам в порядке обхода периметра (низ → торец →
+        верх → торец или наоборот) — главное, чтобы получился один замкнутый
+        контур. Торец необязательно вертикальный. Клик по холсту — черновой
+        набросок (не обязателен). Клетка — {gridStep} мм.
       </p>
     </div>
   )
