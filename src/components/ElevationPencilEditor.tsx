@@ -30,7 +30,10 @@ const MIN_CELL_PX = 28
  * вбивается числом (направление берётся от курсора) — тот же принцип, что
  * уже работает у карандаша Плиты в FloorPlan.tsx, перенесённый в разрез.
  * Замыкание — клик рядом с первой точкой ИЛИ кнопка «Готово». ПКМ по
- * холсту — отмена последней точки.
+ * холсту — отмена последней точки. Чекбокс «прямой угол» (orthoSnap,
+ * вкл. по умолчанию) магнитит направление к ближайшей из 4 сторон света
+ * (0/90/180/270°) — удобно для ровных участков и вертикальных ступеней/
+ * ригелей; выключается для единственного наклонного отрезка.
  *
  * Система координат (ViewFrame) НЕ пересчитывается на каждый клик — иначе
  * только что поставленная точка визуально «прыгает» в центр (первая версия
@@ -49,6 +52,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   const [frame, setFrame] = useState<ViewFrame | null>(null)
   const [cursorMm, setCursorMm] = useState<ProfilePoint | null>(null)
   const [typedLen, setTypedLen] = useState('')
+  const [orthoSnap, setOrthoSnap] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const plotW = Math.max(CANVAS_W - PAD * 2, 10)
@@ -110,6 +114,13 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
 
   const last = pts[pts.length - 1] ?? null
 
+  function snapToOrtho(from: ProfilePoint, to: ProfilePoint): ProfilePoint {
+    const dx = to.x - from.x, dy = to.y - from.y
+    return Math.abs(dx) >= Math.abs(dy) ? { x: to.x, y: from.y } : { x: from.x, y: to.y }
+  }
+
+  const previewPoint = last && cursorMm ? (orthoSnap ? snapToOrtho(last, cursorMm) : cursorMm) : null
+
   function handleMove(e: KonvaEventObject<MouseEvent | TouchEvent>) {
     const pos = e.target.getStage()?.getPointerPosition()
     if (!pos) return
@@ -138,7 +149,8 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       const dx = pos.x - xToPx(pts[0].x), dy = pos.y - yToPx(pts[0].y)
       if (Math.sqrt(dx * dx + dy * dy) < CLOSE_PX) { tryClose(); return }
     }
-    addPoint({ x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) })
+    const raw = { x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) }
+    addPoint(last && orthoSnap ? snapToOrtho(last, raw) : raw)
   }
 
   function commitTyped() {
@@ -151,7 +163,8 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       setTypedLen('')
       return
     }
-    const dir = cursorMm ?? { x: last.x + 1, y: last.y }
+    const rawDir = cursorMm ?? { x: last.x + 1, y: last.y }
+    const dir = orthoSnap ? snapToOrtho(last, rawDir) : rawDir
     const angle = Math.atan2(dir.y - last.y, dir.x - last.x)
     addPoint({ x: Math.round(last.x + Math.cos(angle) * mm), y: Math.round(last.y + Math.sin(angle) * mm) })
     setTypedLen('')
@@ -162,8 +175,8 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     setError(null)
   }
 
-  const previewLen = last && cursorMm
-    ? Math.round(Math.hypot(cursorMm.x - last.x, cursorMm.y - last.y))
+  const previewLen = last && previewPoint
+    ? Math.round(Math.hypot(previewPoint.x - last.x, previewPoint.y - last.y))
     : null
 
   return (
@@ -201,16 +214,16 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
             {pts.length >= 2 && (
               <Line points={pts.flatMap(p => [xToPx(p.x), yToPx(p.y)])} stroke="#4a7dff" strokeWidth={2.5} listening={false} />
             )}
-            {last && cursorMm && (
-              <Line points={[xToPx(last.x), yToPx(last.y), xToPx(cursorMm.x), yToPx(cursorMm.y)]}
+            {last && previewPoint && (
+              <Line points={[xToPx(last.x), yToPx(last.y), xToPx(previewPoint.x), yToPx(previewPoint.y)]}
                 stroke="#4a7dff" strokeWidth={1.5} dash={[5, 4]} listening={false} />
             )}
             {pts.map((p, i) => (
               <Circle key={i} x={xToPx(p.x)} y={yToPx(p.y)} radius={i === 0 ? 7 : 5.5}
                 fill={i === 0 ? '#1a9c4a' : '#4a7dff'} stroke="#fff" strokeWidth={1.5} listening={false} />
             ))}
-            {last && cursorMm && previewLen !== null && (
-              <Text x={xToPx(cursorMm.x) + 10} y={yToPx(cursorMm.y) - 18}
+            {last && previewPoint && previewLen !== null && (
+              <Text x={xToPx(previewPoint.x) + 10} y={yToPx(previewPoint.y) - 18}
                 text={`${previewLen} мм`} fontSize={12} fill="#333" />
             )}
           </Layer>
@@ -218,6 +231,10 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 11, color: '#555', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <input type="checkbox" checked={orthoSnap} onChange={e => setOrthoSnap(e.target.checked)} />
+          ⊥ прямой угол
+        </label>
         <span style={{ fontSize: 11, color: '#888' }}>Длина отрезка от последней точки, мм:</span>
         <input type="number" value={typedLen} onChange={e => setTypedLen(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') commitTyped() }}
@@ -238,7 +255,9 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       <p style={{ margin: '6px 0 0', fontSize: 10, color: '#aaa' }}>
         Точки можно ставить в любом порядке обхода (низ → торец → верх → торец
         или наоборот) — главное, чтобы получился один замкнутый контур. Торец
-        необязательно вертикальный. Клетка — {gridStep} мм.
+        необязательно вертикальный. «Прямой угол» магнитит направление к
+        ближайшей горизонтали/вертикали — выключи для наклонного отрезка.
+        Клетка — {gridStep} мм.
       </p>
     </div>
   )
