@@ -127,6 +127,10 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   }
 
   function handleStageClick(e: KonvaEventObject<MouseEvent | TouchEvent>) {
+    // Konva шлёт 'click' по отпусканию ЛЮБОЙ кнопки мыши, не только левой —
+    // без этой проверки ПКМ одновременно и убирала точку (наш mousedown-
+    // обработчик), и тут же добавляла новую (этот обработчик клика).
+    if ('button' in e.evt && e.evt.button !== 0) return
     if (e.target !== e.target.getStage()) return // клик по точке — обработан её обработчиком
     const pos = e.target.getStage()?.getPointerPosition()
     if (!pos) return
