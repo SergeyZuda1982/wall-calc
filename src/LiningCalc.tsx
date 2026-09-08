@@ -49,10 +49,13 @@ const DEFAULT_INPUT: LiningInput = {
   plywoodInserts: [],
 }
 
-export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
+export default function LiningCalc({ canvasW = 820, drawingElevation = false, onDrawingElevationChange }: {
+  canvasW?: number
+  drawingElevation?: boolean
+  onDrawingElevationChange?: (v: boolean) => void
+}) {
   const CANVAS_W = canvasW
   const [form, setForm] = useState<LiningInput>(DEFAULT_INPUT)
-  const [drawingElevation, setDrawingElevation] = useState(false)
   const [result, setResult] = useState<LiningResult | null>(null)
   const [heightWarning, setHeightWarning] = useState<string | null>(null)
   const [hasInsulation, setHasInsulation] = useState(false)
@@ -326,7 +329,7 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
                 : undefined)} />
             Пол с уклоном / ступенями
           </label>
-          <button type="button" onClick={() => setDrawingElevation(v => !v)}
+          <button type="button" onClick={() => onDrawingElevationChange?.(!drawingElevation)}
             style={{ fontSize: 12, padding: '4px 10px', marginLeft: 'auto',
               background: drawingElevation ? '#4a7dff' : '#fff',
               color: drawingElevation ? '#fff' : '#4a7dff',
@@ -336,10 +339,10 @@ export default function LiningCalc({ canvasW = 820 }: { canvasW?: number }) {
         </div>
         {drawingElevation && (
           <ElevationPencilEditor
-            onCancel={() => setDrawingElevation(false)}
+            onCancel={() => onDrawingElevationChange?.(false)}
             onFinish={({ length, ceilingProfile, floorProfile }) => {
               setForm(prev => ({ ...prev, length, ceilingProfile, floorProfile }))
-              setDrawingElevation(false)
+              onDrawingElevationChange?.(false)
             }} />
         )}
         {form.ceilingProfile && (

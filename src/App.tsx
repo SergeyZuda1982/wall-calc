@@ -215,7 +215,11 @@ export default function App() {
   // Вкладки с собственной адаптивной канвой (план/3D были такими всегда;
   // потолки/плитка добавлены 01.09.2026) — рабочая область должна занимать
   // весь экран без отступов и без ограничения ширины 900px формы-калькулятора.
-  const isFullBleedTab = activeTab === 'plan' || activeTab === '3d' || activeTab === 'ceiling' || activeTab === 'tile'
+  // drawingElevation (карандаш в разрезе, 05.09.2026) добавлен туда же по
+  // той же причине — на широком экране холст был втиснут в узкую колонку,
+  // хотя справа полно свободного места.
+  const isFullBleedTab = activeTab === 'plan' || activeTab === '3d' || activeTab === 'ceiling'
+    || activeTab === 'tile' || drawingElevation
 
   // Плита ("карандаш") на плане отправлена в расчёт потолка — переключаемся
   // на вкладку сразу, не заставляя искать её руками (сам расчёт CeilingCalc
@@ -901,7 +905,9 @@ export default function App() {
         ))}
       </div>
 
-      {activeTab === 'lining' && <LiningCalc canvasW={CANVAS_W} />}
+      {activeTab === 'lining' && (
+        <LiningCalc canvasW={CANVAS_W} drawingElevation={drawingElevation} onDrawingElevationChange={setDrawingElevation} />
+      )}
       {activeTab === 'ceiling' && <CeilingCalc />}
       {activeTab === 'tile' && <TileCalc />}
       {activeTab === 'closing' && <ClosingVolumesReport />}
