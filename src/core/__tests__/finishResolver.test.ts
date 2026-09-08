@@ -5,8 +5,10 @@ import {
   nextBaseStage,
   prevBaseStage,
   finishBaseStageLabel,
+  resolveFinishZones,
+  finishTemplateContextOf,
 } from '../finishResolver'
-import type { PlanLine } from '../../types'
+import type { PlanLine, WorkProgress } from '../../types'
 
 function line(overrides: Partial<PlanLine>): PlanLine {
   return { id: 'L1', x1: 0, y1: 0, x2: 1000, y2: 0, type: 'wall_new', lengthMm: 1000, label: 'Л1', ...overrides } as PlanLine
@@ -83,5 +85,37 @@ describe('finishBaseStageLabel', () => {
 
   it('puttied — одинаковая подпись для обеих категорий', () => {
     expect(finishBaseStageLabel('puttied', 'masonry')).toBe(finishBaseStageLabel('puttied', 'gkl'))
+  })
+})
+
+describe('finishTemplateContextOf', () => {
+  it('masonry -> finish_masonry, gkl -> finish_gkl', () => {
+    expect(finishTemplateContextOf('masonry')).toBe('finish_masonry')
+    expect(finishTemplateContextOf('gkl')).toBe('finish_gkl')
+  })
+})
+
+describe('resolveFinishZones (07.09.2026 — зоны отделки + fallback на устаревшее finishProgressA/B)', () => {
+  const progress: WorkProgress = { steps: [{ stepId: 's1', label: 'Шпаклёвка', outcome: 'pending' }] }
+
+  it('пусто, если ни зон, ни устаревшего прогресса нет', () => {
+    expect(resolveFinishZones(line({}), 'A')).toEqual([])
+  })
+
+  it('читает finishZonesA/B напрямую, когда они заданы', () => {
+    const zones = [{ id: 'base', progress }]
+    expect(resolveFinishZones(line({ finishZonesA: zones }), 'A')).toBe(zones)
+  })
+
+  it('fallback на finishProgressA/B, если finishZonesA/B не заданы (реальные данные с объектов до 07.09.2026)', () => {
+    const l = line({ finishProgressA: progress, finishProgressB: undefined })
+    expect(resolveFinishZones(l, 'A')).toEqual([{ id: 'base', progress }])
+    expect(resolveFinishZones(l, 'B')).toEqual([])
+  })
+
+  it('finishZonesA/B имеет приоритет над устаревшим finishProgressA/B, если оба заданы', () => {
+    const newZones = [{ id: 'base', progress: { steps: [] } }]
+    const l = line({ finishZonesA: newZones, finishProgressA: progress })
+    expect(resolveFinishZones(l, 'A')).toBe(newZones)
   })
 })

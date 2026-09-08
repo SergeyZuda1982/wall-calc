@@ -24,6 +24,8 @@ import type { PlanLine, Room, MaterialKind } from '../types'
 import { calcStepMaterial, type MaterialRate } from '../data/workMaterialCatalog'
 import { wallSideFacingRoom } from './wallSideToRoom'
 import { extractContourPoints } from './contour'
+import { resolveFinishZones } from './finishResolver'
+import { polygonArea } from './geometry2d'
 
 /** Площадь поверхности стены для отделки: length×height минус проёмы, не меньше 0. */
 export function wallFinishAreaM2(line: PlanLine): number {
@@ -81,9 +83,18 @@ export function calcRoomMaterials(room: Room, allLines: PlanLine[]): RoomMateria
     if (!line) continue
     const side = wallSideFacingRoom(line, roomPolygon)
     if (!side) continue
-    const progress = side === 'A' ? line.finishProgressA : line.finishProgressB
-    const areaM2 = wallFinishAreaM2(line)
-    pushStepLines(progress, areaM2, `${line.label} (сторона ${side})`, lines)
+    const totalAreaM2 = wallFinishAreaM2(line)
+    const zones = resolveFinishZones(line, side)
+    // Зоны с outline (07.09.2026, Фаза B — рисование ещё не реализовано, на
+    // практике здесь пока всегда 0 элементов) считаются по площади своего
+    // контура; базовая зона (без outline) получает всё, что осталось.
+    const drawnAreaM2 = zones
+      .filter(z => z.outline)
+      .reduce((sum, z) => sum + polygonArea(z.outline!) / 1_000_000, 0)
+    for (const zone of zones) {
+      const areaM2 = zone.outline ? polygonArea(zone.outline) / 1_000_000 : Math.max(0, totalAreaM2 - drawnAreaM2)
+      pushStepLines(zone.progress, areaM2, `${line.label} (сторона ${side})`, lines)
+    }
   }
 
   const pooled: RoomMaterialPool = {}

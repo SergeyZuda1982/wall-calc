@@ -121,6 +121,32 @@ describe('calcRoomMaterials', () => {
     expect(result.lines[0].materialKind).toBe('priming')
   })
 
+  it('finishZonesA (07.09.2026) с зоной произвольной формы — площадь зоны считается по контуру, база получает остаток', () => {
+    const { room, lines } = squareRoom()
+    // top: 4000×2700 = 10.8 м². Зона-контур 1000×1000мм = 1 м² (плитка), остальное — база (грунтовка).
+    lines[0].finishZonesA = [
+      { id: 'base', progress: { steps: [{ stepId: 's1', label: 'Грунтовка', materialKind: 'priming', outcome: 'pending' }] } },
+      {
+        id: 'z1',
+        outline: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
+        progress: { steps: [{ stepId: 's1', label: 'Плитка', outcome: 'pending' }] }, // без materialKind — считает TileCalc
+      },
+    ]
+    const result = calcRoomMaterials(room, lines)
+    expect(result.lines).toHaveLength(1) // Плитка без materialKind не считается здесь
+    expect(result.lines[0].materialKind).toBe('priming')
+    expect(result.lines[0].areaM2).toBeCloseTo(4 * 2.7 - 1, 5) // 10.8 - 1 м² под плиткой
+  })
+
+  it('finishZonesA имеет приоритет над устаревшим finishProgressA, если оба заданы на линии', () => {
+    const { room, lines } = squareRoom()
+    lines[0].finishProgressA = { steps: [{ stepId: 's1', label: 'Старое', materialKind: 'paint', outcome: 'pending' }] }
+    lines[0].finishZonesA = [{ id: 'base', progress: { steps: [{ stepId: 's1', label: 'Новое', materialKind: 'priming', outcome: 'pending' }] } }]
+    const result = calcRoomMaterials(room, lines)
+    expect(result.lines).toHaveLength(1)
+    expect(result.lines[0].materialKind).toBe('priming')
+  })
+
   it('пустая комната (ничего не запланировано) — пустой результат, не падает', () => {
     const { room, lines } = squareRoom()
     const result = calcRoomMaterials(room, lines)

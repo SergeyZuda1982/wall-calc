@@ -14,8 +14,11 @@ import {
   resetStep,
   progressPercent,
   aggregateProgressPercent,
+  templatesForContext,
+  baseZoneProgress,
+  withBaseZoneProgress,
 } from '../workProgress'
-import type { WorkStageTemplate } from '../../types'
+import type { WorkStageTemplate, FinishZone } from '../../types'
 
 const gklTemplate: WorkStageTemplate = {
   id: 'gkl_partition',
@@ -317,5 +320,52 @@ describe('userId на StepProgress (кто подтвердил/отклонил
     p = rejectStep(p, 0, 'waiting_trades', undefined, 'user-2')
     expect(p.steps[0].userId).toBe('user-2')
     expect(p.steps[0].rejectReason).toBe('waiting_trades')
+  })
+})
+
+describe('templatesForContext (07.09.2026 — фильтрация шаблонов по контексту поверхности)', () => {
+  const masonry: WorkStageTemplate = { id: 'wall_paint', label: 'Стена под покраску', context: 'finish_masonry', steps: [] }
+  const gkl: WorkStageTemplate = { id: 'gkl_paint', label: 'ГКЛ под покраску', context: 'finish_gkl', steps: [] }
+  const floor: WorkStageTemplate = { id: 'floor_screed_tile', label: 'Пол — стяжка', context: 'floor', steps: [] }
+  const legacyCustom: WorkStageTemplate = { id: 'custom_1', label: 'Мой старый шаблон', steps: [] } // без context — сохранён до этого поля
+
+  it('отдаёт только шаблоны своего контекста', () => {
+    const all = [masonry, gkl, floor]
+    expect(templatesForContext(all, 'finish_masonry')).toEqual([masonry])
+    expect(templatesForContext(all, 'floor')).toEqual([floor])
+  })
+
+  it('шаблоны без context (старые пользовательские) проходят в ЛЮБОЙ контекст', () => {
+    const all = [masonry, floor, legacyCustom]
+    expect(templatesForContext(all, 'finish_masonry')).toEqual([masonry, legacyCustom])
+    expect(templatesForContext(all, 'floor')).toEqual([floor, legacyCustom])
+  })
+})
+
+describe('baseZoneProgress / withBaseZoneProgress (07.09.2026 — зоны отделки FinishZone)', () => {
+  it('baseZoneProgress находит зону без outline', () => {
+    const p = applyTemplate(gklTemplate)
+    const zones: FinishZone[] = [{ id: 'base', progress: p }]
+    expect(baseZoneProgress(zones)).toBe(p)
+  })
+
+  it('baseZoneProgress игнорирует зоны с outline, возвращает undefined если базовой нет', () => {
+    const drawn: FinishZone = { id: 'z1', outline: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }], progress: applyTemplate(gklTemplate) }
+    expect(baseZoneProgress([drawn])).toBeUndefined()
+    expect(baseZoneProgress(undefined)).toBeUndefined()
+  })
+
+  it('withBaseZoneProgress создаёт базовую зону с нуля, если зон ещё не было', () => {
+    const p = applyTemplate(gklTemplate)
+    const zones = withBaseZoneProgress(undefined, p)
+    expect(zones).toEqual([{ id: 'base', progress: p }])
+  })
+
+  it('withBaseZoneProgress заменяет базовую зону, не трогая зоны с outline', () => {
+    const drawn: FinishZone = { id: 'z1', outline: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }], progress: applyTemplate(gklTemplate) }
+    const oldBase: FinishZone = { id: 'base', progress: createWorkProgress([{ id: 'a', label: 'Старый шаг' }]) }
+    const newProgress = applyTemplate(gklTemplate)
+    const result = withBaseZoneProgress([oldBase, drawn], newProgress)
+    expect(result).toEqual([{ id: 'base', progress: newProgress }, drawn])
   })
 })

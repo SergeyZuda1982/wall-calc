@@ -74,3 +74,38 @@ describe('BUILTIN_WORK_STAGE_TEMPLATES — materialKind разметка (20.07.
     }
   })
 })
+
+describe('WorkStageTemplate.context — фильтрация по поверхности (07.09.2026)', () => {
+  it('каждый builtin-шаблон помечен ровно одним контекстом', () => {
+    for (const t of BUILTIN_WORK_STAGE_TEMPLATES) {
+      expect(t.context, `${t.id} без context`).toBeDefined()
+    }
+  })
+
+  it('masonry-отделка (wall_paint/wall_tile) — finish_masonry, ГКЛ-отделка — finish_gkl', () => {
+    expect(template('wall_paint').context).toBe('finish_masonry')
+    expect(template('wall_tile').context).toBe('finish_masonry')
+    expect(template('gkl_paint').context).toBe('finish_gkl')
+    expect(template('gkl_tile').context).toBe('finish_gkl')
+  })
+
+  it('gkl_partition — build_gkl (это строительство конструкции, не отделка)', () => {
+    expect(template('gkl_partition').context).toBe('build_gkl')
+  })
+
+  it('floor_screed_tile/floor_selfleveling — floor', () => {
+    expect(template('floor_screed_tile').context).toBe('floor')
+    expect(template('floor_selfleveling').context).toBe('floor')
+  })
+
+  it('gkl_paint: без штукатурки (это отличие от wall_paint) — сразу шпаклёвка швов', () => {
+    expect(template('gkl_paint').steps.some(s => s.label.toLowerCase().includes('штукатур'))).toBe(false)
+    expect(step('gkl_paint', 'Шпаклёвка швов').materialKind).toBe('putty')
+  })
+
+  it('gkl_tile: без штукатурки, Плитка/Затирка без materialKind (считает TileCalc)', () => {
+    expect(template('gkl_tile').steps.some(s => s.label.toLowerCase().includes('штукатур'))).toBe(false)
+    expect(step('gkl_tile', 'Плитка').materialKind).toBeUndefined()
+    expect(step('gkl_tile', 'Затирка').materialKind).toBeUndefined()
+  })
+})

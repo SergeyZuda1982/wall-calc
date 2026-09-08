@@ -624,6 +624,20 @@ export interface WorkStageTemplateStep {
 }
 
 /**
+ * Контекст поверхности, для которой применим шаблон (07.09.2026) —
+ * фильтрует список шаблонов в UI по тому, что физически возможно на данной
+ * поверхности (стена ≠ пол, кладка ≠ ГКЛ). См. data/workStageTemplates.ts
+ * и core/workProgress.ts (templatesForContext).
+ *  - 'build_gkl' — строительство самой конструкции (каркас+обшивка), сейчас
+ *    единственный build-контекст (только ГКЛ-перегородки имеют шаблон стройки)
+ *  - 'finish_masonry' — отделка стены из кладки/монолита (со штукатуркой)
+ *  - 'finish_gkl' — отделка уже зашитой ГКЛ-поверхности (без штукатурки,
+ *    сразу шпаклёвка швов)
+ *  - 'floor' / 'ceiling' — отделка пола/потолка комнаты (Room)
+ */
+export type WorkStageTemplateContext = 'build_gkl' | 'finish_masonry' | 'finish_gkl' | 'floor' | 'ceiling'
+
+/**
  * Именованный шаблон последовательности этапов — заготовка, из которой
  * можно "проштамповать" список на новую линию/поверхность. НЕ является
  * источником истины для уже применённого прогресса (WorkProgress копирует
@@ -633,6 +647,9 @@ export interface WorkStageTemplateStep {
 export interface WorkStageTemplate {
   id: string
   label: string                    // "Стена под покраску", "ГКЛ перегородка"...
+  /** Не задано — шаблон показывается в ЛЮБОМ контексте (совместимость со
+   *  старыми пользовательскими шаблонами, сохранёнными до появления этого поля). */
+  context?: WorkStageTemplateContext
   steps: WorkStageTemplateStep[]
 }
 
@@ -742,9 +759,37 @@ export interface PlanLine {
    * (заменяет finishA/finishB выше), тот же принцип: произвольный список
    * этапов вместо фиксированного naked/base_done/puttied. sideA/B — та же
    * семантика сторон, что и у finishA/finishB.
+   * ⚠️ DEPRECATED (07.09.2026) — заменяется на finishZonesA/B ниже (см. там
+   * причину). Старые данные не мигрируются насильно — читаются как fallback
+   * через finishResolver.ts resolveFinishZones(), если finishZonesA/B ещё
+   * не задано на линии.
    */
   finishProgressA?: WorkProgress
   finishProgressB?: WorkProgress
+  /**
+   * НОВОЕ (07.09.2026) — заменяет finishProgressA/B: одна сторона линии
+   * может состоять из НЕСКОЛЬКИХ зон с разной отделкой (например: кухонная
+   * стена — фартук плиткой произвольной формы, остальная площадь —
+   * малярка). Один элемент массива без outline — "базовая" зона на ВСЮ
+   * оставшуюся площадь стороны (ровно то же, чем раньше был единственный
+   * finishProgressA/B); элементы с outline — вырезы поверх базовой,
+   * контур в локальных мм-координатах развёртки стороны (x — вдоль стены
+   * от начала линии, y — высота от пола). Рисование outline — 3D-холст с
+   * фиксацией камеры анфас на грань (Фаза B, не реализовано на 07.09.2026 —
+   * см. TASKS.md/KONSPEKT.md); на эту дату массив либо пуст, либо содержит
+   * ровно один элемент без outline (создан через baseZoneProgress/
+   * withBaseZoneProgress в core/workProgress.ts).
+   */
+  finishZonesA?: FinishZone[]
+  finishZonesB?: FinishZone[]
+}
+
+/** См. PlanLine.finishZonesA/B выше — одна зона отделки на стороне линии. */
+export interface FinishZone {
+  id: string
+  /** Не задано — базовая зона (вся сторона за вычетом других зон с outline). */
+  outline?: { x: number; y: number }[]
+  progress: WorkProgress
 }
 
 /** Подложка — растровое изображение страницы PDF, по которому обводят план */

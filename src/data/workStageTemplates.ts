@@ -28,6 +28,7 @@ export const BUILTIN_WORK_STAGE_TEMPLATES: WorkStageTemplate[] = [
   {
     id: 'wall_paint',
     label: 'Существующая стена — под покраску/обои',
+    context: 'finish_masonry',
     steps: steps(
       ['Грунтовка', 'Штукатурка', 'Грунтовка', 'Шпаклёвка', 'Грунтовка', 'Покраска/обои'],
       {
@@ -41,6 +42,7 @@ export const BUILTIN_WORK_STAGE_TEMPLATES: WorkStageTemplate[] = [
   {
     id: 'wall_tile',
     label: 'Существующая стена — под плитку (санузел)',
+    context: 'finish_masonry',
     steps: steps(
       ['Грунтовка', 'Штукатурка цементная', 'Грунтовка', 'Плитка', 'Затирка'],
       {
@@ -53,8 +55,38 @@ export const BUILTIN_WORK_STAGE_TEMPLATES: WorkStageTemplate[] = [
     ),
   },
   {
+    id: 'gkl_paint',
+    label: 'ГКЛ — под покраску/обои',
+    context: 'finish_gkl',
+    steps: steps(
+      ['Шпаклёвка швов', 'Грунтовка', 'Шпаклёвка сплошная', 'Грунтовка', 'Покраска/обои'],
+      {
+        // Без штукатурки — она для кладки (см. wall_paint), готовая обшивка ГКЛ
+        // идёт сразу под шпаклёвку швов.
+        'Шпаклёвка швов': { materialKind: 'putty' },
+        'Грунтовка': { materialKind: 'priming' },
+        'Шпаклёвка сплошная': { materialKind: 'putty' },
+        'Покраска/обои': { materialKind: 'paint' },
+      },
+    ),
+  },
+  {
+    id: 'gkl_tile',
+    label: 'ГКЛ — под плитку (санузел, влагостойкий ГКЛ)',
+    context: 'finish_gkl',
+    steps: steps(
+      ['Шпаклёвка швов', 'Грунтовка', 'Плитка', 'Затирка'],
+      {
+        'Шпаклёвка швов': { materialKind: 'putty' },
+        'Грунтовка': { materialKind: 'priming' },
+        // Плитка/Затирка — без materialKind, см. комментарий у wall_tile выше.
+      },
+    ),
+  },
+  {
     id: 'gkl_partition',
     label: 'Перегородка ГКЛ',
+    context: 'build_gkl',
     steps: steps(
       ['Разметка', 'Каркас', 'Зашивка стороны 1', 'Минвата', 'Зашивка стороны 2', 'Готово'],
       {
@@ -69,6 +101,7 @@ export const BUILTIN_WORK_STAGE_TEMPLATES: WorkStageTemplate[] = [
   {
     id: 'floor_screed_tile',
     label: 'Пол — стяжка + плитка',
+    context: 'floor',
     steps: steps(
       ['Гидроизоляция', 'Стяжка', 'Грунтовка', 'Плитка', 'Затирка'],
       {
@@ -81,6 +114,7 @@ export const BUILTIN_WORK_STAGE_TEMPLATES: WorkStageTemplate[] = [
   {
     id: 'floor_selfleveling',
     label: 'Пол — наливной под ламинат/паркет',
+    context: 'floor',
     steps: steps(
       ['Гидроизоляция', 'Стяжка', 'Наливной пол', 'Ламинат/паркет'],
       {
