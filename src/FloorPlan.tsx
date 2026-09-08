@@ -21,7 +21,7 @@ import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { WorkProgressChecklist } from './components/WorkProgressChecklist'
 import { BUILTIN_WORK_STAGE_TEMPLATES } from './data/workStageTemplates'
 import { lineProgressColor, lineProgressSummary } from './core/lineProgress'
-import { aggregateProgressPercent } from './core/workProgress'
+import { aggregateProgressPercent, templatesForContext, baseZoneProgress, withBaseZoneProgress } from './core/workProgress'
 import { useTemplateStore } from './store/useTemplateStore'
 import {
   rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
@@ -33,7 +33,7 @@ import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFa
 import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrameEstimate'
 import { buildCeilingProfilesByLineId } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
-import { finishMaterialCategoryOf, finishSidesOf } from './core/finishResolver'
+import { finishMaterialCategoryOf, finishSidesOf, resolveFinishZones, finishTemplateContextOf } from './core/finishResolver'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout, buildCeilingSurfaceInputs } from './core/calcProjectSheetLayout'
@@ -5200,35 +5200,45 @@ export default function FloorPlan() {
                 <WorkProgressChecklist
                   label="Строительство"
                   progress={inspectorLine.buildProgress}
-                  templates={allWorkStageTemplates}
+                  templates={templatesForContext(allWorkStageTemplates, 'build_gkl')}
                   onChange={p => updatePlanLine(inspectorLine.id, { buildProgress: p })}
-                  onSaveTemplate={t => addCustomWorkStageTemplate(t)}
+                  onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'build_gkl' })}
                 />
               </div>
             )}
 
-            {/* Этапы отделки — независимо от прогресса строительства (та — построена ли конструкция) */}
+            {/* Этапы отделки — независимо от прогресса строительства (та — построена ли конструкция).
+                07.09.2026: список шаблонов фильтруется по контексту (masonry/gkl, см.
+                finishResolver.ts) — стена под кладку больше не предлагает ГКЛ-шаблоны
+                и наоборот. Прогресс читается/пишется через finishZonesA/B (FinishZone[]),
+                базовая (без outline) зона — единственная, что редактируется здесь; зоны
+                произвольной формы поверх неё — Фаза B, отдельный 3D-холст, не в этом чек-листе. */}
             {(() => {
               const category = finishMaterialCategoryOf(inspectorLine)
               const sides = finishSidesOf(inspectorLine)
               if (!category || sides === 0) return null
-              const sideDefs: Array<{ key: 'finishProgressA' | 'finishProgressB'; label: string }> = [
-                { key: 'finishProgressA', label: sides === 1 ? 'Отделка' : 'Сторона A' },
-                ...(sides === 2 ? [{ key: 'finishProgressB' as const, label: 'Сторона B' }] : []),
+              const finishContext = finishTemplateContextOf(category)
+              const sideDefs: Array<{ side: 'A' | 'B'; zonesKey: 'finishZonesA' | 'finishZonesB'; label: string }> = [
+                { side: 'A', zonesKey: 'finishZonesA', label: sides === 1 ? 'Отделка' : 'Сторона A' },
+                ...(sides === 2 ? [{ side: 'B' as const, zonesKey: 'finishZonesB' as const, label: 'Сторона B' }] : []),
               ]
               return (
                 <div style={{ padding: '6px 16px 10px', borderTop: '1px solid #f0f0f0' }}>
                   <div style={{ fontSize: 10, color: '#999', marginBottom: 6, textTransform: 'uppercase' }}>Этапы отделки</div>
-                  {sideDefs.map(({ key, label }) => (
-                    <WorkProgressChecklist
-                      key={key}
-                      label={label}
-                      progress={inspectorLine[key]}
-                      templates={allWorkStageTemplates}
-                      onChange={p => updatePlanLine(inspectorLine.id, { [key]: p } as Partial<PlanLine>)}
-                      onSaveTemplate={t => addCustomWorkStageTemplate(t)}
-                    />
-                  ))}
+                  {sideDefs.map(({ side, zonesKey, label }) => {
+                    const zones = resolveFinishZones(inspectorLine, side)
+                    const progress = baseZoneProgress(zones)
+                    return (
+                      <WorkProgressChecklist
+                        key={zonesKey}
+                        label={label}
+                        progress={progress}
+                        templates={templatesForContext(allWorkStageTemplates, finishContext)}
+                        onChange={p => updatePlanLine(inspectorLine.id, { [zonesKey]: withBaseZoneProgress(zones, p) } as Partial<PlanLine>)}
+                        onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: finishContext })}
+                      />
+                    )
+                  })}
                 </div>
               )
             })()}
@@ -5850,16 +5860,16 @@ export default function FloorPlan() {
                     <WorkProgressChecklist
                       label="Пол"
                       progress={room.floorProgress}
-                      templates={allWorkStageTemplates}
+                      templates={templatesForContext(allWorkStageTemplates, 'floor')}
                       onChange={p => updateRoom(room.id, { floorProgress: p })}
-                      onSaveTemplate={t => addCustomWorkStageTemplate(t)}
+                      onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'floor' })}
                     />
                     <WorkProgressChecklist
                       label="Потолок"
                       progress={room.ceilingProgress}
-                      templates={allWorkStageTemplates}
+                      templates={templatesForContext(allWorkStageTemplates, 'ceiling')}
                       onChange={p => updateRoom(room.id, { ceilingProgress: p })}
-                      onSaveTemplate={t => addCustomWorkStageTemplate(t)}
+                      onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'ceiling' })}
                     />
                   </div>
                 )}

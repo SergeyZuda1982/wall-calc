@@ -12,10 +12,12 @@ import type {
   WorkProgress,
   WorkStageTemplate,
   WorkStageTemplateStep,
+  WorkStageTemplateContext,
   StepProgress,
   StepOutcome,
   StepRejectReason,
   WorkStepMeaning3D,
+  FinishZone,
 } from '../types'
 
 /** Создаёт новый WorkProgress "с нуля" из произвольного списка шагов (свой список на линии) */
@@ -50,15 +52,46 @@ export function applyTemplate(template: WorkStageTemplate): WorkProgress {
  * как шаблон") — берёт только id/label шагов, без outcome/причин (шаблон —
  * это чистая заготовка списка, не история работ по конкретному объекту).
  */
-export function saveAsTemplate(progress: WorkProgress, templateId: string, label: string): WorkStageTemplate {
+export function saveAsTemplate(progress: WorkProgress, templateId: string, label: string, context?: WorkStageTemplateContext): WorkStageTemplate {
   return {
     id: templateId,
     label,
+    context,
     steps: progress.steps.map(s => ({
       id: s.stepId, label: s.label, meaning3D: s.meaning3D,
       materialKind: s.materialKind, materialThicknessMm: s.materialThicknessMm, materialLayers: s.materialLayers,
     })),
   }
+}
+
+/**
+ * Фильтрует список шаблонов по контексту поверхности (07.09.2026) — стена
+ * не должна предлагать шаблоны пола и наоборот. Шаблоны БЕЗ context (старые
+ * пользовательские, сохранённые до появления этого поля) проходят в ЛЮБОЙ
+ * контекст — иначе уже сохранённые Сергеем кастомные шаблоны молча исчезли
+ * бы из выпадающих списков после этого изменения.
+ */
+export function templatesForContext(templates: WorkStageTemplate[], context: WorkStageTemplateContext): WorkStageTemplate[] {
+  return templates.filter(t => !t.context || t.context === context)
+}
+
+/**
+ * Прогресс "базовой" зоны (без outline, вся сторона за вычетом других зон) —
+ * это ровно то, что раньше лежало напрямую в finishProgressA/B. См.
+ * PlanLine.finishZonesA/B в types/index.ts.
+ */
+export function baseZoneProgress(zones: FinishZone[] | undefined): WorkProgress | undefined {
+  return zones?.find(z => !z.outline)?.progress
+}
+
+/**
+ * Обновляет (или создаёт) базовую зону, сохраняя все остальные зоны с
+ * outline нетронутыми — используется при правке чек-листа этапов на всей
+ * стороне (без рисования отдельных зон, см. FloorPlan.tsx).
+ */
+export function withBaseZoneProgress(zones: FinishZone[] | undefined, progress: WorkProgress): FinishZone[] {
+  const drawnZones = (zones ?? []).filter(z => z.outline)
+  return [{ id: 'base', progress }, ...drawnZones]
 }
 
 /**

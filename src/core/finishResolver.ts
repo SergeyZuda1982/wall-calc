@@ -14,7 +14,7 @@
  * существуют параллельно. Решение отложено до отдельного разговора.
  */
 
-import type { PlanLine, FinishBaseStage } from '../types'
+import type { PlanLine, FinishBaseStage, FinishZone, WorkStageTemplateContext } from '../types'
 
 export type FinishMaterialCategory = 'masonry' | 'gkl'
 
@@ -77,4 +77,25 @@ export function finishBaseStageLabel(stage: FinishBaseStage, category: FinishMat
 export const FINISH_COVERING_LABEL: Record<string, string> = {
   paint: 'Покраска',
   tile: 'Плитка',
+}
+
+/**
+ * Читает зоны отделки стороны линии (07.09.2026, см. PlanLine.finishZonesA/B)
+ * с fallback на устаревшее finishProgressA/B, если finishZonesA/B ещё не
+ * задано — так уже сохранённые на реальных объектах данные не теряются при
+ * переходе на новую модель. Новые записи всегда идут в finishZonesA/B
+ * (см. core/workProgress.ts withBaseZoneProgress), finishProgressA/B задним
+ * числом не обновляется.
+ */
+export function resolveFinishZones(line: PlanLine, side: 'A' | 'B'): FinishZone[] {
+  const zones = side === 'A' ? line.finishZonesA : line.finishZonesB
+  if (zones && zones.length > 0) return zones
+  const legacy = side === 'A' ? line.finishProgressA : line.finishProgressB
+  if (legacy && legacy.steps.length > 0) return [{ id: 'base', progress: legacy }]
+  return []
+}
+
+/** 'masonry'/'gkl' → соответствующий контекст фильтрации шаблонов отделки (см. types WorkStageTemplateContext). */
+export function finishTemplateContextOf(category: FinishMaterialCategory): WorkStageTemplateContext {
+  return category === 'gkl' ? 'finish_gkl' : 'finish_masonry'
 }
