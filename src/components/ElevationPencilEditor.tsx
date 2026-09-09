@@ -53,7 +53,8 @@ const MIN_CELL_PX = 28
  * ортоснапом) для визуальной прикидки.
  *
  * Замыкание — клик рядом с первой точкой ИЛИ кнопка «Готово». ПКМ (через
- * mousedown) — отмена последней точки.
+ * mousedown) — отмена последней точки. Колесо мыши — зум к курсору (тот
+ * же принцип, что уже у карандаша Плиты на плане в FloorPlan.tsx).
  *
  * Система координат: ДО первой точки — фиксированный реалистичный диапазон
  * DEFAULT_W_MM×DEFAULT_H_MM (см. выше, letterbox допустим). ПОСЛЕ первой
@@ -158,6 +159,27 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   }
 
   const previewPoint = last && cursorMm ? (orthoSnap ? snapToOrtho(last, cursorMm) : cursorMm) : null
+
+  function handleWheel(e: KonvaEventObject<WheelEvent>) {
+    e.evt.preventDefault()
+    const stage = e.target.getStage()
+    const pos = stage?.getPointerPosition()
+    if (!pos) return
+    const SCALE_BY = 1.12
+    const MIN_SPAN = 300, MAX_SPAN = 100000
+    const baseSpan = frame ? frame.span : view.scale * plotW
+    const newSpan = e.evt.deltaY < 0
+      ? Math.max(baseSpan / SCALE_BY, MIN_SPAN)
+      : Math.min(baseSpan * SCALE_BY, MAX_SPAN)
+    const newScale = newSpan / plotW
+    // мировые координаты под курсором — по ТЕКУЩЕМУ виду (до зума), чтобы
+    // после масштабирования под курсором осталась та же точка (зум "к
+    // курсору", тот же принцип, что уже у Плиты на плане в FloorPlan.tsx)
+    const worldX = pxToX(pos.x), worldY = pxToY(pos.y)
+    const newX0 = worldX - newScale * (pos.x - PAD)
+    const newY0 = worldY - newScale * (PAD_TOP + plotH - pos.y)
+    setFrame({ x0: newX0, y0: newY0, span: newSpan })
+  }
 
   function handleMove(e: KonvaEventObject<MouseEvent | TouchEvent>) {
     const pos = e.target.getStage()?.getPointerPosition()
@@ -303,6 +325,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
           <Stage width={CANVAS_W} height={CANVAS_H}
             onMouseMove={handleMove} onTouchMove={handleMove}
             onClick={handleStageClick} onTap={handleStageClick}
+            onWheel={handleWheel}
             style={{ background: '#fff', border: '1px solid #eee', borderRadius: 4, cursor: 'crosshair' }}>
             <Layer>
               {gridLines.vs.map(x => (
