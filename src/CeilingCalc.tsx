@@ -159,6 +159,7 @@ export default function CeilingCalc() {
   // (см. ceilingEntityId в useCeilingSeedStore.ts) + флаг «уже сохранено».
   const [seedCeilingId, setSeedCeilingId] = useState<string | null>(null)
   const [savedToCeiling, setSavedToCeiling] = useState(false)
+  const [showOffcuts, setShowOffcuts] = useState(false)
   const floorPlanRooms = useProjectStore(s => s.floorPlan?.rooms ?? [])
   const updateRoom = useProjectStore(s => s.updateRoom)
   // Пункт 5 плана (KONSPEKT.md 10.07.2026): выбор стены начала раскладки
@@ -1002,6 +1003,75 @@ export default function CeilingCalc() {
                 )}
               </div>
             )}
+            {/* ── Панель остатков (05.09.2026, по аналогии с App.tsx/LiningCalc.tsx) ──
+                sheetLayout.offcuts — плоский список [w,h], без пула между
+                конструкциями (в отличие от полигонального пути ниже, у
+                которого уже есть настоящий sharedPool/finalOffcuts). Группируем
+                одинаковые размеры со счётчиком и умножаем на число слоёв. */}
+            {step === 4 && result?.sheetLayout && result.sheetLayout.offcuts.length > 0 && (() => {
+              const groups = new Map<string, { w: number; h: number; count: number }>()
+              for (const [w, h] of result.sheetLayout.offcuts) {
+                const key = `${w}x${h}`
+                const cur = groups.get(key)
+                if (cur) cur.count += form.layers
+                else groups.set(key, { w, h, count: form.layers })
+              }
+              const list = [...groups.values()].sort((a, b) => b.w * b.h * b.count - a.w * a.h * a.count)
+              const totalM2 = list.reduce((s, o) => s + o.w * o.h * o.count, 0) / 1e6
+              const totalCount = list.reduce((s, o) => s + o.count, 0)
+              return (
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    onClick={() => setShowOffcuts(v => !v)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      background: 'none', border: '1px solid #ddd', borderRadius: 6,
+                      padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                      color: '#555', width: '100%', textAlign: 'left',
+                    }}>
+                    <span>🪚 Остатки: <b>{totalCount} шт</b>, <b>{totalM2.toFixed(2)} м²</b></span>
+                    <span style={{ marginLeft: 'auto' }}>{showOffcuts ? '▲' : '▼'}</span>
+                  </button>
+                  {showOffcuts && (
+                    <div style={{ marginTop: 8, padding: 10, background: '#fafafa', border: '1px solid #eee', borderRadius: 6 }}>
+                      <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+                        Масштаб: 1px ≈ 15мм. Сортировка по суммарной площади.
+                        {form.layers === 2 && ' Число обрезков умножено на 2 слоя.'}
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-end' }}>
+                        {list.map((o, idx) => {
+                          const area = o.w * o.h
+                          const scale = Math.min(90 / o.h, 130 / o.w)
+                          const dw = Math.round(o.w * scale)
+                          const dh = Math.round(o.h * scale)
+                          const bg = area > 500000 ? '#4caf50' : area > 200000 ? '#26a69a' : area > 80000 ? '#42a5f5' : '#ff9800'
+                          return (
+                            <div key={idx} title={`${Math.round(o.w)}×${Math.round(o.h)}мм × ${o.count} шт — ${(area * o.count / 1e6).toFixed(3)} м²`}
+                              style={{
+                                width: dw, height: dh, background: bg, borderRadius: 3, opacity: 0.85,
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                                fontSize: Math.max(9, Math.min(11, dw / 6)), color: '#fff', fontWeight: 600,
+                                lineHeight: 1.2, cursor: 'default', flexShrink: 0, position: 'relative',
+                              }}>
+                              <span>{o.w}</span>
+                              <span>×</span>
+                              <span>{o.h}</span>
+                              {o.count > 1 && (
+                                <span style={{
+                                  position: 'absolute', top: -6, right: -6, background: '#333', color: '#fff',
+                                  borderRadius: '50%', width: 18, height: 18, fontSize: 10, fontWeight: 700,
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}>×{o.count}</span>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
             {step === 4 && hasPolygon && result?.polygonSheetLayout && (
               <div style={{ display: 'flex', gap: 8 }}>
                 <StatCard label="Купить листов" value={result.polygonSheetLayout.totalSheetsNeeded} unit="шт" />
@@ -1016,6 +1086,62 @@ export default function CeilingCalc() {
                 )}
               </div>
             )}
+            {/* ── Панель остатков, полигональный путь ── finalOffcuts уже
+                готовый пул (см. calcPolygonSheetLayout — sharedPool, тот же
+                механизм, что и у стен/облицовки), просто не был показан. */}
+            {step === 4 && hasPolygon && result?.polygonSheetLayout && result.polygonSheetLayout.finalOffcuts.length > 0 && (() => {
+              const offcuts = [...result.polygonSheetLayout.finalOffcuts].sort((a, b) => b.w * b.h - a.w * a.h)
+              const totalM2 = offcuts.reduce((s, o) => s + o.w * o.h, 0) / 1e6
+              return (
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    onClick={() => setShowOffcuts(v => !v)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      background: 'none', border: '1px solid #ddd', borderRadius: 6,
+                      padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                      color: '#555', width: '100%', textAlign: 'left',
+                    }}>
+                    <span>🪚 Остатки: <b>{offcuts.length} шт</b>, <b>{totalM2.toFixed(2)} м²</b></span>
+                    <span style={{ marginLeft: 'auto' }}>{showOffcuts ? '▲' : '▼'}</span>
+                  </button>
+                  {showOffcuts && (
+                    <div style={{ marginTop: 8, padding: 10, background: '#fafafa', border: '1px solid #eee', borderRadius: 6 }}>
+                      <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+                        Масштаб: 1px ≈ 15мм. Сортировка по площади.
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-end' }}>
+                        {offcuts.map((o, idx) => {
+                          const area = o.w * o.h
+                          const scale = Math.min(90 / o.h, 130 / o.w)
+                          const dw = Math.round(o.w * scale)
+                          const dh = Math.round(o.h * scale)
+                          const bg = area > 500000 ? '#4caf50' : area > 200000 ? '#26a69a' : area > 80000 ? '#42a5f5' : '#ff9800'
+                          return (
+                            <div key={idx} title={
+                              o.polygon
+                                ? `${Math.round(o.w)}×${Math.round(o.h)}мм (вписанный прямоугольник) — из отхода косого среза, ${(area / 1e6).toFixed(3)} м²`
+                                : `${Math.round(o.w)}×${Math.round(o.h)}мм — ${(area / 1e6).toFixed(3)} м²`
+                            }
+                              style={{
+                                width: dw, height: dh, background: bg, borderRadius: 3, opacity: 0.85,
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                                fontSize: Math.max(9, Math.min(11, dw / 6)), color: '#fff', fontWeight: 600,
+                                lineHeight: 1.2, cursor: 'default', flexShrink: 0,
+                                border: o.polygon ? '1.5px dashed #fff' : undefined,
+                              }}>
+                              <span>{o.w}</span>
+                              <span>×</span>
+                              <span>{o.h}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
             {step === 4 && hasPolygon && result?.polygonSheetLayout && (
               <div style={{ fontSize: 11, color: C.muted, padding: '0 2px' }}>
                 «Кусков» может быть больше, чем листов купить — один физический лист иногда делится на
