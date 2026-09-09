@@ -98,9 +98,10 @@ function SlabPlate({ lengthM, widthM }: { lengthM: number; widthM: number }) {
  * Теперь ось функции и то, какая из осей экрана (X=длина/Z=ширина) ей
  * соответствует, берутся из sheetLayout.rotated — 3D больше не может
  * разойтись со сметой/2D-схемой. */
-function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, sheetStartCorner, yM, thicknessM = 0.0125 }: {
+function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, sheetStartCorner, yM, thicknessM = 0.0125, layerOffsetXMm = 0, layerOffsetZMm = 0 }: {
   lengthMm: number; widthMm: number; sheetLayout: CeilingSheetLayout
   bearingPositionsMm?: number[]; sheetStartCorner?: 'tl' | 'tr' | 'bl' | 'br'; yM: number; thicknessM?: number
+  layerOffsetXMm?: number; layerOffsetZMm?: number
 }) {
   const rotated = !!sheetLayout.rotated
   const rects = useMemo(() => {
@@ -112,8 +113,8 @@ function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, s
     // которой считаны bearingPositionsMm).
     const bearingForSnap = rotated ? (bearingPositionsMm ?? []) : []
     const { flipX, flipZ } = resolveSheetStartFlips(sheetStartCorner, rotated)
-    return calcCeilingSheetRects(sheetAxisL, sheetAxisW, sheetLayout.sheetL, sheetLayout.sheetW, bearingForSnap, { flipX, flipZ })
-  }, [lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW, rotated, bearingPositionsMm, sheetStartCorner])
+    return calcCeilingSheetRects(sheetAxisL, sheetAxisW, sheetLayout.sheetL, sheetLayout.sheetW, bearingForSnap, { flipX, flipZ, layerOffsetXMm, layerOffsetZMm })
+  }, [lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW, rotated, bearingPositionsMm, sheetStartCorner, layerOffsetXMm, layerOffsetZMm])
   return (
     <group>
       {rects.map((r, i) => {
@@ -181,6 +182,10 @@ export default function CeilingCalc3DPreview({
           {hasDetailedGrid && sheetLayout && (() => {
             const gklType = ceilingType === 'p113' ? 'p113' : 'p112'
             const levels = calcGklLayerLevelsM(0, gklType, Array(layers).fill(thicknessMm))
+            // 05.09.2026 (репорт пользователя): 2-й слой просто дублировал
+            // 1-й — швы совпадали "лист на лист". Разбежка 2-го слоя:
+            // 600мм по длинной стороне листа, 500мм по короткой (кратно
+            // шагу несущего — шов попадает на профиль).
             return levels.map((levelM, i) => (
               <SheetLayoutMesh
                 key={i}
@@ -191,6 +196,8 @@ export default function CeilingCalc3DPreview({
                 sheetStartCorner={sheetStartCorner}
                 yM={levelM}
                 thicknessM={mmToM(thicknessMm)}
+                layerOffsetXMm={i === 1 ? 600 : 0}
+                layerOffsetZMm={i === 1 ? 500 : 0}
               />
             ))
           })()}

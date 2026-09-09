@@ -429,6 +429,53 @@ describe('calcCeilingSheetRects', () => {
       }
     })
   })
+
+  describe('разбежка 2-го слоя (layerOffsetXMm/layerOffsetZMm) — 05.09.2026, репорт пользователя: 2-й слой в 3D просто дублировал 1-й, швы совпадали', () => {
+    it('без сдвига (по умолчанию) — сетка совпадает с обычной раскладкой', () => {
+      const plain = calcCeilingSheetRects(5000, 2500, 2500, 1200)
+      const explicit0 = calcCeilingSheetRects(5000, 2500, 2500, 1200, [], { layerOffsetXMm: 0, layerOffsetZMm: 0 })
+      expect(explicit0).toEqual(plain)
+    })
+
+    it('сдвиг по длинной стороне (X): первый лист первого ряда укорочен ровно на сдвиг', () => {
+      const rects = calcCeilingSheetRects(5000, 1200, 2500, 1200, [], { layerOffsetXMm: 600 })
+      const row0 = rects.filter(r => r.z === 0).sort((a, b) => a.x - b.x)
+      expect(row0[0].x).toBe(0)
+      expect(row0[0].w).toBe(600)
+      expect(row0[0].isCut).toBe(true)
+    })
+
+    it('сдвиг по короткой стороне (Z): первый ряд укорочен ровно на сдвиг, дальше обычный шаг листа', () => {
+      const rects = calcCeilingSheetRects(2500, 3600, 2500, 1200, [], { layerOffsetZMm: 500 })
+      const rowsD = [...new Set(rects.map(r => r.z))].sort((a, b) => a - b).map(z => {
+        const piece = rects.find(r => r.z === z)!
+        return { z, d: piece.d }
+      })
+      expect(rowsD[0]).toEqual({ z: 0, d: 500 })
+      expect(rowsD[1]).toEqual({ z: 500, d: 1200 })
+    })
+
+    it('швы 2-го слоя не совпадают со швами 1-го слоя ни по X, ни по Z (нет общих внутренних границ)', () => {
+      const lengthMm = 5000, widthMm = 3600, sheetL = 2500, sheetW = 1200
+      const layer1 = calcCeilingSheetRects(lengthMm, widthMm, sheetL, sheetW)
+      const layer2 = calcCeilingSheetRects(lengthMm, widthMm, sheetL, sheetW, [], { layerOffsetXMm: 600, layerOffsetZMm: 500 })
+      const innerXsOf = (rects: typeof layer1) =>
+        new Set(rects.map(r => r.x).filter(x => x > 0 && x < lengthMm))
+      const innerZsOf = (rects: typeof layer1) =>
+        new Set(rects.map(r => r.z).filter(z => z > 0 && z < widthMm))
+      const l1Xs = innerXsOf(layer1), l2Xs = innerXsOf(layer2)
+      const l1Zs = innerZsOf(layer1), l2Zs = innerZsOf(layer2)
+      for (const x of l2Xs) expect(l1Xs.has(x)).toBe(false)
+      for (const z of l2Zs) expect(l1Zs.has(z)).toBe(false)
+    })
+
+    it('сдвиг не меняет сумму площадей (без нахлёстов/пробелов)', () => {
+      const lengthMm = 5000, widthMm = 3600, sheetL = 2500, sheetW = 1200
+      const rects = calcCeilingSheetRects(lengthMm, widthMm, sheetL, sheetW, [], { layerOffsetXMm: 600, layerOffsetZMm: 500 })
+      const totalArea = rects.reduce((sum, r) => sum + r.w * r.d, 0)
+      expect(totalArea).toBeCloseTo(lengthMm * widthMm, 3)
+    })
+  })
 })
 
 // 16.07.2026: раньше calcCeilingGrid/calcCeilingGridP113 всегда считали позиции
