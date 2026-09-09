@@ -515,11 +515,11 @@ export function resolveSheetStartFlips(
 export function calcCeilingSheetRects(
   lengthMm: number, widthMm: number, sheetL: number, sheetW: number,
   bearingPositionsMm: number[] = [],
-  opts: { flipX?: boolean; flipZ?: boolean } = {},
+  opts: { flipX?: boolean; flipZ?: boolean; layerOffsetXMm?: number; layerOffsetZMm?: number } = {},
 ): CeilingSheetRect[] {
-  const { flipX = false, flipZ = false } = opts
+  const { flipX = false, flipZ = false, layerOffsetXMm = 0, layerOffsetZMm = 0 } = opts
   const bearingLocal = flipX ? bearingPositionsMm.map(bp => lengthMm - bp) : bearingPositionsMm
-  const rects = calcCeilingSheetRectsLocal(lengthMm, widthMm, sheetL, sheetW, bearingLocal)
+  const rects = calcCeilingSheetRectsLocal(lengthMm, widthMm, sheetL, sheetW, bearingLocal, layerOffsetXMm, layerOffsetZMm)
   if (!flipX && !flipZ) return rects
   return rects.map(r => ({
     x: flipX ? lengthMm - r.x - r.w : r.x,
@@ -528,22 +528,35 @@ export function calcCeilingSheetRects(
   }))
 }
 
+/** 05.09.2026 (репорт пользователя: 2-й слой в 3D просто дублировал 1-й —
+ *  швы совпадали, "лист на лист"). layerOffsetXMm/layerOffsetZMm сдвигают
+ *  ВСЮ сетку целиком на заданное расстояние по каждой оси — так, чтобы швы
+ *  между листами 2-го слоя не совпадали со швами 1-го ни по длинной, ни по
+ *  короткой стороне (классическая "разбежка" двух слоёв ГКЛ). Первый
+ *  ряд/полоса при этом короче на величину сдвига (обрезок), дальше — обычный
+ *  шаг листа. По умолчанию оба 0 — обычная раскладка 1-го слоя, без сдвига. */
 function calcCeilingSheetRectsLocal(
   lengthMm: number, widthMm: number, sheetL: number, sheetW: number,
   bearingPositionsMm: number[] = [],
+  layerOffsetXMm = 0, layerOffsetZMm = 0,
 ): CeilingSheetRect[] {
   const rects: CeilingSheetRect[] = []
   if (lengthMm <= 0 || widthMm <= 0 || sheetL <= 0 || sheetW <= 0) return rects
+  const zShift = ((layerOffsetZMm % sheetW) + sheetW) % sheetW
+  const xShift = ((layerOffsetXMm % sheetL) + sheetL) % sheetL
   let z = 0
   let rowIndex = 0
   while (z < widthMm) {
-    const d = Math.min(sheetW, widthMm - z)
+    const rowStep = rowIndex === 0 && zShift > 0 ? zShift : sheetW
+    const d = Math.min(rowStep, widthMm - z)
 
-    let offset = 0
+    let offset = xShift
     if (lengthMm > sheetL && rowIndex > 0) {
       const target = STAGGER_TARGETS_MM[(rowIndex - 1) % STAGGER_TARGETS_MM.length]
-      offset = nearestBearingTo(target, bearingPositionsMm, Math.min(sheetL, lengthMm)) ?? target
+      const snapped = nearestBearingTo(target, bearingPositionsMm, Math.min(sheetL, lengthMm)) ?? target
+      offset = ((snapped + xShift) % sheetL + sheetL) % sheetL
     }
+    if (offset >= lengthMm) offset = 0
 
     let x = 0
     if (offset > 0) {
@@ -560,7 +573,7 @@ function calcCeilingSheetRectsLocal(
       if (w > 0) rects.push({ x, z, w, d, isCut })
       x += w
     }
-    z += sheetW
+    z += rowStep
     rowIndex++
   }
   return rects
