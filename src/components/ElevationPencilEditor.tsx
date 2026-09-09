@@ -10,9 +10,14 @@ interface ElevationPencilEditorProps {
   onCancel: () => void
 }
 
-interface ViewFrame { x0: number; y0: number; span: number } // мм: левый-нижний угол + ширина видимой области
+// Растущий (после первой точки) кадр — всегда совпадает с пропорциями
+// канваса (letterbox'а нет, см. ensureFrame).
+interface ViewFrame { x0: number; y0: number; span: number }
+// Унифицированное представление для рендера — и растущего кадра, и
+// дефолтного (letterboxed) состояния до первой точки.
+interface View { x0: number; y0: number; scale: number; offX: number; offY: number; usedH: number }
 
-const CANVAS_H = 520 // было 320 — увеличено вместе с шириной, чтобы холст не был "растянут вниз"
+const CANVAS_H = 520
 const CANVAS_W_MAX = 1400 // сильно больше обычного 820 у остальных canvas'ов проекта — это
   // единственное место, где холсту специально дают занять всю освободившуюся широкую область
   // (см. isFullBleedTab в App.tsx/использование в LiningCalc.tsx — снимает лимит 900px у страницы)
@@ -20,7 +25,14 @@ const PAD = 34
 const PAD_TOP = 20
 const PAD_BOTTOM = 20
 const CLOSE_PX = 14
-const DEFAULT_SPAN = 4000 // мм — ширина «чистого листа» до первой точки
+// Дефолтный диапазон ДО первой точки — фиксированные мм, НЕ подогнанные под
+// пропорции канваса (тот сейчас очень широкий, ~2.8:1) — иначе по высоте
+// влезало от силы ~1500мм, а мышь физически не может уйти выше видимой
+// области холста, чтобы дотянуться до реальных 3500-5500мм. Небольшой
+// letterbox по бокам — меньшее зло, чем невозможность начертить нужную
+// высоту сразу.
+const DEFAULT_W_MM = 8000
+const DEFAULT_H_MM = 5800
 const FRAME_MARGIN_RATIO = 0.1 // насколько близко к краю точка ещё считается "в кадре"
 const NICE_STEPS = [50, 100, 200, 250, 500, 1000, 2000, 2500, 5000] // мм, для клетки
 const MIN_CELL_PX = 28
@@ -29,32 +41,26 @@ const MIN_CELL_PX = 28
  * Рисование ВСЕГО периметра сечения стены (вид сбоку) с нуля — без
  * предварительно заданных длины/высоты.
  *
- * РАСКЛАДКА (05.09.2026, по фидбэку "холст втиснут в узкую колонку, а
- * справа полно свободного места, да ещё и растянут вниз"): узкая панель
- * управления слева (фиксированной ширины) + большой холст справа, во всю
- * оставшуюся ширину — вместо прежней колонки "холст сверху, поля снизу".
- * Работает только если родитель (App.tsx/LiningCalc.tsx) снял лимит
- * ширины 900px у страницы, пока этот компонент открыт (isFullBleedTab) —
- * иначе он всё равно упрётся в узкий контейнер, просто без лишнего
- * вертикального растягивания.
+ * РАСКЛАДКА: узкая панель управления слева (фиксированной ширины) +
+ * большой холст справа, во всю оставшуюся ширину (работает, когда родитель
+ * снял лимит 900px страницы на время рисования — isFullBleedTab).
  *
  * ГЛАВНЫЙ способ добавить точку — ввод АБСОЛЮТНЫХ координат X/Y числом
- * (как график: есть 0, есть оси, деления подписаны) — НЕ "отрезок от
- * последней точки по направлению курсора". Так и задумано специально:
- * пользователь по факту знает высоту в конкретных точках по длине стены
- * (из проекта или замера рулеткой/дальномером), а не относительные
- * смещения — и для наклонной/скошенной стены ему нужно ЗАДАТЬ известную
- * высоту во второй опорной точке, а не пытаться попасть туда мышкой.
- * Клик по холсту остаётся как ВТОРОЙ, черновой способ (с ортоснапом) —
- * для быстрой визуальной прикидки, а не для точных чисел.
+ * (как график: есть 0, есть оси, деления подписаны) — не "отрезок от
+ * последней точки по направлению курсора". Пользователь по факту знает
+ * высоту в конкретных точках по длине стены (из проекта или замера), а не
+ * относительные смещения. Клик по холсту — ВТОРОЙ, черновой способ (с
+ * ортоснапом) для визуальной прикидки.
  *
  * Замыкание — клик рядом с первой точкой ИЛИ кнопка «Готово». ПКМ (через
- * mousedown, см. handleStageClick) — отмена последней точки.
+ * mousedown) — отмена последней точки.
  *
- * Система координат (ViewFrame) не пересчитывается на каждую точку —
- * растёт только когда точка реально выходит за её пределы (с запасом),
- * всегда сохраняет пропорции канваса (letterbox'а нет). Оси подписаны
- * числами по краям — видно масштаб, даже не наводя курсор.
+ * Система координат: ДО первой точки — фиксированный реалистичный диапазон
+ * DEFAULT_W_MM×DEFAULT_H_MM (см. выше, letterbox допустим). ПОСЛЕ первой
+ * точки — растущий ViewFrame, который не пересчитывается на каждый клик
+ * (иначе точка визуально "прыгает"), а растёт только когда новая точка
+ * реально выходит за его пределы, и всегда без letterbox'а (сохраняет
+ * пропорции канваса).
  *
  * По завершении контур раскладывается на ceilingProfile/floorProfile/length
  * через decomposeElevationPerimeter (core/profileGeometry.ts) — торцы стены
@@ -73,25 +79,39 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   const plotW = Math.max(CANVAS_W - PAD * 2, 10)
   const plotH = CANVAS_H - PAD_TOP - PAD_BOTTOM
 
-  const defaultFrame: ViewFrame = useMemo(
-    () => ({ x0: -DEFAULT_SPAN * 0.1, y0: -(DEFAULT_SPAN * (plotH / plotW)) * 0.25, span: DEFAULT_SPAN }),
-    [plotW, plotH]
-  )
-  const activeFrame = frame ?? defaultFrame
-  const height = activeFrame.span * (plotH / plotW) // мм, высота видимой области — та же пропорция, что у канваса
-  const scale = activeFrame.span / plotW // мм на px, единый для X и Y — углы не искажаются
+  const view: View = useMemo(() => {
+    if (frame) {
+      // растущий кадр — всегда без letterbox'а (span/height уже совпадают
+      // с пропорциями канваса по построению, см. ensureFrame)
+      return { x0: frame.x0, y0: frame.y0, scale: frame.span / plotW, offX: 0, offY: 0, usedH: plotH }
+    }
+    // дефолтное состояние — фиксированные мм, letterbox допустим
+    const scale = Math.max(DEFAULT_W_MM / plotW, DEFAULT_H_MM / plotH)
+    const usedW = DEFAULT_W_MM / scale, usedH = DEFAULT_H_MM / scale
+    return {
+      x0: -DEFAULT_W_MM * 0.05, y0: -DEFAULT_H_MM * 0.05, scale,
+      offX: (plotW - usedW) / 2, offY: (plotH - usedH) / 2, usedH,
+    }
+  }, [frame, plotW, plotH])
 
-  const xToPx = (x: number) => PAD + (x - activeFrame.x0) / scale
-  const yToPx = (y: number) => PAD_TOP + plotH - (y - activeFrame.y0) / scale
-  const pxToX = (px: number) => activeFrame.x0 + (px - PAD) * scale
-  const pxToY = (py: number) => activeFrame.y0 + (plotH - (py - PAD_TOP)) * scale
+  const xToPx = (x: number) => PAD + view.offX + (x - view.x0) / view.scale
+  const yToPx = (y: number) => PAD_TOP + view.offY + view.usedH - (y - view.y0) / view.scale
+  const pxToX = (px: number) => view.x0 + (px - PAD - view.offX) * view.scale
+  const pxToY = (py: number) => view.y0 + (view.usedH - (py - PAD_TOP - view.offY)) * view.scale
 
   // Растим кадр, только если точка реально выходит за его пределы (с запасом
   // FRAME_MARGIN_RATIO) — иначе кадр не меняется вообще, никакого "прыжка".
-  // Работает одинаково и для точки с холста, и для введённой числом — после
-  // ввода абсолютных координат далеко за пределами текущего окна холст сам
-  // подстроится и покажет добавленную точку.
-  function ensureFrame(f: ViewFrame, p: ProfilePoint): ViewFrame {
+  function ensureFrame(f: ViewFrame | null, p: ProfilePoint): ViewFrame {
+    if (!f) {
+      // первая точка — стартуем растущий кадр, уже точно накрывающий саму
+      // точку с запасом
+      const pad = Math.max(DEFAULT_W_MM, DEFAULT_H_MM) * 0.1
+      const minX = p.x - pad, maxX = p.x + pad, minY = p.y - pad, maxY = p.y + pad
+      const span = Math.max(maxX - minX, (maxY - minY) * (plotW / plotH), DEFAULT_W_MM * 0.5)
+      const hNew = span * (plotH / plotW)
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+      return { x0: cx - span / 2, y0: cy - hNew / 2, span }
+    }
     const h = f.span * (plotH / plotW)
     const mx = f.span * FRAME_MARGIN_RATIO, my = h * FRAME_MARGIN_RATIO
     const inside = p.x >= f.x0 + mx && p.x <= f.x0 + f.span - mx && p.y >= f.y0 + my && p.y <= f.y0 + h - my
@@ -108,26 +128,27 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   }
 
   function addPoint(p: ProfilePoint) {
-    setFrame(ensureFrame(activeFrame, p))
+    setFrame(ensureFrame(frame, p))
     setPts(prev => [...prev, p])
     setError(null)
   }
 
   // Лист в клетку — шаг подбирается так, чтобы клетка была 28-56px на экране.
   const gridStep = useMemo(
-    () => NICE_STEPS.find(s => s / scale >= MIN_CELL_PX) ?? NICE_STEPS[NICE_STEPS.length - 1],
-    [scale]
+    () => NICE_STEPS.find(s => s / view.scale >= MIN_CELL_PX) ?? NICE_STEPS[NICE_STEPS.length - 1],
+    [view.scale]
   )
 
   const gridLines = useMemo(() => {
-    const leftMm = activeFrame.x0, rightMm = activeFrame.x0 + activeFrame.span
-    const bottomMm = activeFrame.y0, topMm = activeFrame.y0 + height
+    const leftMm = pxToX(PAD), rightMm = pxToX(PAD + plotW)
+    const bottomMm = pxToY(PAD_TOP + plotH), topMm = pxToY(PAD_TOP)
     const vs: number[] = []
     for (let x = Math.ceil(leftMm / gridStep) * gridStep; x <= rightMm; x += gridStep) vs.push(x)
     const hs: number[] = []
     for (let y = Math.ceil(bottomMm / gridStep) * gridStep; y <= topMm; y += gridStep) hs.push(y)
     return { vs, hs }
-  }, [gridStep, activeFrame, height])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gridStep, view, plotW, plotH])
 
   const last = pts[pts.length - 1] ?? null
 
@@ -187,6 +208,27 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   const previewLen = last && previewPoint
     ? Math.round(Math.hypot(previewPoint.x - last.x, previewPoint.y - last.y))
     : null
+
+  // Постоянные подписи длины каждого УЖЕ нарисованного отрезка — раньше
+  // подпись показывалась только у превью-линии под курсором и исчезала
+  // сразу после клика/ввода точки; теперь остаётся навсегда рядом с
+  // отрезком (смещена перпендикулярно линии, чтобы не перекрывать её).
+  const segmentLabels = useMemo(() => {
+    const out: { x: number; y: number; text: string }[] = []
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1]
+      const len = Math.round(Math.hypot(b.x - a.x, b.y - a.y))
+      const midXpx = (xToPx(a.x) + xToPx(b.x)) / 2
+      const midYpx = (yToPx(a.y) + yToPx(b.y)) / 2
+      const dxPx = xToPx(b.x) - xToPx(a.x), dyPx = yToPx(b.y) - yToPx(a.y)
+      const segLenPx = Math.hypot(dxPx, dyPx) || 1
+      // перпендикулярное смещение на 12px от середины отрезка
+      const offX = (-dyPx / segLenPx) * 12, offY = (dxPx / segLenPx) * 12
+      out.push({ x: midXpx + offX, y: midYpx + offY, text: `${len}` })
+    }
+    return out
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pts, view])
 
   return (
     <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: '10px 12px', marginTop: 6, background: '#fafafe' }}>
@@ -288,6 +330,10 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
                 <Line points={[xToPx(last.x), yToPx(last.y), xToPx(previewPoint.x), yToPx(previewPoint.y)]}
                   stroke="#4a7dff" strokeWidth={1.5} dash={[5, 4]} listening={false} />
               )}
+              {segmentLabels.map((l, i) => (
+                <Text key={`seg${i}`} x={l.x - 20} y={l.y - 6} width={40} align="center"
+                  text={l.text} fontSize={11} fill="#2a52c4" listening={false} />
+              ))}
               {pts.map((p, i) => (
                 <Circle key={i} x={xToPx(p.x)} y={yToPx(p.y)} radius={i === 0 ? 7 : 5.5}
                   fill={i === 0 ? '#1a9c4a' : '#4a7dff'} stroke="#fff" strokeWidth={1.5} listening={false} />
