@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { calcP113FrameGeometry } from '../calcP113Frame'
-import { KNAUF_WALL_OFFSET_MM } from '../calcP112Frame'
+import { KNAUF_WALL_OFFSET_MM, calcFrameRowPositions } from '../calcP112Frame'
 import { MAIN_PROFILE_WIDTH_MM } from '../../data/ceilingData'
 
 describe('calcP113FrameGeometry — базовая геометрия', () => {
@@ -80,28 +80,28 @@ describe('calcP113FrameGeometry — соединители (один на пер
   })
 })
 
-describe('calcP113FrameGeometry — подвесы на основном профиле, снэп к несущему', () => {
-  it('hangerPositions — подмножество bearingPositions', () => {
-    const geo = calcP113FrameGeometry(4000, 3000, 600, 500, 50, true)
-    for (const pos of geo.hangerPositions) {
-      expect(geo.bearingPositions).toContain(pos)
-    }
+describe('calcP113FrameGeometry — подвесы: собственная сетка вдоль A (05.09.2026, было — снэп к bearingPositions)', () => {
+  it('hangerPositions — НЕ подмножество bearingPositions, когда stepA не делит stepB', () => {
+    const geo = calcP113FrameGeometry(4000, 3000, 600, 500, 50, true, 'user', { stepA: 700 })
+    expect(geo.hangerPositions).not.toEqual(geo.bearingPositions)
   })
 
-  it('hangersTotal = mainCount * hangersPerMain', () => {
+  it('hangerPositions считается той же формулой, что и mainPositions вдоль A, но с шагом a', () => {
+    const geo = calcP113FrameGeometry(4000, 3000, 600, 500, 50, true, 'user', { stepA: 700 })
+    // A — пролёт, вдоль которого идёт основной профиль (mainAlongLength=true -> A=lengthMm=4000)
+    const expected = calcFrameRowPositions(4000, 700, { mode: 'user' })
+    expect(geo.hangerPositions).toEqual(expected)
+  })
+
+  it('hangersTotal = mainCount * hangersPerMain (подвес на КАЖДОМ ряду основного)', () => {
     const geo = calcP113FrameGeometry(4000, 3000, 600, 500, 50, true)
     expect(geo.hangersTotal).toBe(geo.mainCount * geo.hangersPerMain)
   })
 
-  it('без явного stepA — максимум подвесов = stepB (та же практика, что и П112)', () => {
+  it('без явного stepA — та же сетка, что и с явным stepA=stepB', () => {
     const withDefault = calcP113FrameGeometry(4000, 3000, 600, 950, 50, true)
     const withExplicit = calcP113FrameGeometry(4000, 3000, 600, 950, 50, true, 'user', { stepA: 950 })
     expect(withDefault.hangerPositions).toEqual(withExplicit.hangerPositions)
-  })
-
-  it('маленький stepA (реже позиций несущего) — подвес на каждом ряду несущего', () => {
-    const geo = calcP113FrameGeometry(4000, 3000, 600, 500, 50, true, 'user', { stepA: 500 })
-    expect(geo.hangerPositions).toEqual(geo.bearingPositions)
   })
 })
 

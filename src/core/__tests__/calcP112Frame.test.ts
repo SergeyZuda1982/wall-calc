@@ -269,7 +269,7 @@ describe('calcP112FrameGeometry', () => {
     expect(long.bearingExtenders).toBe(long.bearingCount * 2)
   })
 
-  it('подвесы: hangersTotal = mainCount * hangersPerMain', () => {
+  it('подвесы: hangersTotal = mainCount * hangersPerMain (05.09.2026 — независимая сетка на каждом ряду основного)', () => {
     const geo = calcP112FrameGeometry(4000, 3000, 600, 900, 50, true)
     expect(geo.hangersTotal).toBe(geo.mainCount * geo.hangersPerMain)
   })
@@ -473,19 +473,18 @@ describe('snapHangerPositionsToAxis', () => {
   })
 })
 
-describe('calcP112FrameGeometry — подвесы строго на оси, крепятся к основному профилю (12.07.2026, было наоборот)', () => {
-  it('hangerPositions — подмножество bearingPositions, не независимая сетка', () => {
-    const geo = calcP112FrameGeometry(4000, 4000, 600, 1150, 300, true, 'user')
-    for (const hp of geo.hangerPositions) {
-      expect(geo.bearingPositions).toContain(hp)
-    }
+describe('calcP112FrameGeometry — подвесы: собственная сетка вдоль B (05.09.2026, было — снэп к bearingPositions)', () => {
+  it('hangerPositions — НЕ подмножество bearingPositions, когда stepA не делит stepB', () => {
+    const geo = calcP112FrameGeometry(4000, 4000, 600, 1150, 300, true, 'user', { stepA: 700 })
+    expect(geo.hangerPositions).not.toEqual(geo.bearingPositions)
   })
 
-  it('реальный кейс (4000x4000, c=600, b=1150, user, stepA=stepB) — подвес на каждом несущем профиле', () => {
-    const geo = calcP112FrameGeometry(4000, 4000, 600, 1150, 300, true, 'user', { stepA: 1150 })
-    // stepA == stepB -> ни одну позицию несущего пропустить нельзя
-    expect(geo.hangerPositions).toEqual(geo.bearingPositions)
-    expect(geo.hangersPerMain).toBe(geo.bearingCount)
+  it('hangerPositions считается вдоль B (собственный пробег основного профиля) с шагом a', () => {
+    const geo = calcP112FrameGeometry(5000, 3500, 1000, 500, 300, true, 'knauf', { stepA: 950, wallOffsetMainMm: 100, wallOffsetBearingMm: 100 })
+    // bearingAlongLength=true -> A=roomLengthMm=5000, B=roomWidthMm=3500;
+    // основной профиль физически идёт вдоль B (mainLengthEachMm=B).
+    const expected = calcFrameRowPositions(3500, 950, { mode: 'knauf', wallOffsetMm: 100, profileKind: 'main' })
+    expect(geo.hangerPositions).toEqual(expected)
   })
 
   it('mainPositions/bearingPositions присутствуют и согласованы со счётчиками', () => {
@@ -495,7 +494,7 @@ describe('calcP112FrameGeometry — подвесы строго на оси, к�
     expect(geo.hangerPositions.length).toBe(geo.hangersPerMain)
   })
 
-  it('hangersTotal = hangersPerMain × mainCount', () => {
+  it('hangersTotal = hangersPerMain × mainCount (подвес ставится на КАЖДОМ ряду основного)', () => {
     const geo = calcP112FrameGeometry(5000, 3500, 1000, 500, 300, true, 'knauf', { stepA: 950, wallOffsetMainMm: 100, wallOffsetBearingMm: 100 })
     expect(geo.hangersTotal).toBe(geo.hangersPerMain * geo.mainCount)
   })

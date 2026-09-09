@@ -21,10 +21,9 @@
  *     splitSegmentAtCuts. Каждый получившийся кусок — отдельная физическая
  *     вставка со своими удлинителями (если длиннее 3м, на практике редкость).
  * Крабы/подвесы — соединитель ОДНОУРОВНЕВЫЙ (один на пересечение), подвес —
- *   на основном профиле, снэпается по позициям несущего вдоль U — та же
- *   логика (и тот же код), что и в calcPolygonP112Frame.ts, потому что после
- *   правки 12.07.2026 внешний цикл там уже идёт по mainRows независимо от
- *   типа системы (см. комментарий в calcP112Frame.ts, snapHangerPositionsToAxis).
+ *   на основном профиле, СОБСТВЕННАЯ независимая сетка вдоль U с шагом a
+ *   (05.09.2026, исправление) — та же логика (и тот же код), что и в
+ *   calcPolygonP112Frame.ts, см. комментарий в calcP112Frame.ts.
  */
 
 import type { Point2D } from './geometry2d'
@@ -32,7 +31,7 @@ import { insideSegments, pointInPolygon } from './geometry2d'
 import type { CeilingLoadClass, CeilingMountDirection } from '../data/ceilingData'
 import { KNAUF_WALL_OFFSET_MAIN_MM, KNAUF_WALL_OFFSET_BEARING_MM, MAIN_PROFILE_WIDTH_MM } from '../data/ceilingData'
 import {
-  calcFrameRowPositionsSigned, snapHangerPositionsToAxis, resolveHangerKind,
+  calcFrameRowPositionsSigned, resolveHangerKind,
   STANDARD_BAR_LENGTH_MM, type FrameLayoutMode, type HangerKind,
 } from './calcP112Frame'
 import {
@@ -190,14 +189,18 @@ export function calcPolygonP113Frame(
   const bearingExtenders = bearingRows.reduce((s, r) => s + r.segments.reduce((s2, [a, b]) => s2 + extendersForSegment(b - a), 0), 0)
 
   // ── Соединители (одноуровневые) и подвесы ────────────────────────────────
-  // Подвес — на основном профиле, снэп по позициям несущего вдоль U — та же
-  // логика, что и в calcPolygonP112Frame.ts (внешний цикл по mainRows).
+  // 05.09.2026 (проверка на объекте): подвес совпадал с точкой соединителя —
+  // неверно, см. исправление в calcP112Frame.ts (шапка файла) и
+  // calcPolygonP112Frame.ts (та же логика). Собственная сетка вдоль U с
+  // шагом stepA, фильтруется по контуру на каждом ряду отдельно.
+  const hangerUPositions = calcFrameRowPositionsSigned(uMin, uMax, stepA, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm })
   const crabPoints: Point2D[] = []
   const hangerPoints: Point2D[] = []
   for (const vRow of mainRows) {
     const validUs = bearingUPositions.filter(u => pointInPolygon({ x: u, y: vRow.pos }, loopsLocal))
     for (const u of validUs) crabPoints.push({ x: u, y: vRow.pos })
-    for (const u of snapHangerPositionsToAxis(validUs, stepA)) hangerPoints.push({ x: u, y: vRow.pos })
+    const validHangerUs = hangerUPositions.filter(u => pointInPolygon({ x: u, y: vRow.pos }, loopsLocal))
+    for (const u of validHangerUs) hangerPoints.push({ x: u, y: vRow.pos })
   }
   const connectorsTotal = crabPoints.length
   const hangersTotal = hangerPoints.length

@@ -51,36 +51,33 @@ describe('calcCeilingGrid', () => {
     expect(grid.crabPoints.length).toBe(grid.bearingSegments.length * grid.mainSegments.length)
   })
 
-  it('точки подвесов — подмножество позиций несущего профиля (строго на оси), не независимая сетка (12.07.2026: подвес крепится к ОСНОВНОМУ, снэп по несущему — было наоборот)', () => {
+  it('точки подвесов — собственная сетка вдоль основного профиля (05.09.2026: было — снэп по несущему, подвес совпадал с точкой краба)', () => {
     const grid = calcCeilingGrid({
       lengthMm: 4000, widthMm: 2800, stepB: 900, stepC: 600, bearingAlongLength: true,
     })
+    // подвес ставится на КАЖДОМ ряду основного профиля (mainSegments) —
+    // общее число делится нацело на число рядов основного.
     const hangersPerMain = grid.hangerPoints.length / grid.mainSegments.length
     expect(Number.isInteger(hangersPerMain)).toBe(true)
     expect(hangersPerMain).toBeGreaterThan(0)
-    // каждая Z-координата подвеса обязана совпадать с Z-координатой одной
-    // из линий несущего профиля (bearingSegments) — подвес физически стоит
-    // в точке пересечения основной/несущий, а не на своей отдельной сетке.
-    const bearingZs = new Set(grid.bearingSegments.map(s => s.z1))
-    const hangerZsForFirstMain = grid.hangerPoints
-      .slice(0, hangersPerMain)
-      .map(p => p.z)
-    for (const z of hangerZsForFirstMain) {
-      expect(bearingZs.has(z)).toBe(true)
-    }
+    // Y-координата подвеса — своя сетка вдоль B (собственный пробег
+    // основного профиля) с шагом stepA (по умолчанию = stepB), НЕ обязана
+    // совпадать с координатой линии несущего профиля.
   })
 
-  it('stepA задаёт максимально допустимый шаг подвесов, не обязательный — при мелком шаге b и крупном a подвес ставится не на КАЖДОМ несущем профиле', () => {
+  it('stepA задаёт шаг собственной сетки подвесов вдоль B, независимый от stepC', () => {
     const grid = calcCeilingGrid({
-      lengthMm: 2800, widthMm: 6000, stepB: 300, stepC: 900, bearingAlongLength: true, stepA: 900,
+      lengthMm: 6000, widthMm: 2800, stepB: 900, stepC: 300, bearingAlongLength: true, stepA: 900,
     })
-    const bearingCountAlongB = grid.bearingSegments.length
-    const hangersPerMain = grid.hangerPoints.length / grid.mainSegments.length
-    // при b=300 (частый несущий профиль) и a=900 (втрое реже) большинство
-    // узлов несущего профиля остаётся без своего подвеса — это ожидаемо:
-    // подвес лишь держит СЛЕДУЮЩИЙ узел в пределах допустимого шага a, не
-    // обязан стоять на каждом.
-    expect(hangersPerMain).toBeLessThan(bearingCountAlongB)
+    const mainCountAlongA = grid.mainSegments.length
+    const hangersPerMain = grid.hangerPoints.length / mainCountAlongA
+    // stepA не зависит от stepC (шага рядов основного, вдоль A) — при
+    // разном stepC, но том же stepA/B, число подвесов НА ОДНОМ ряду
+    // основного (вдоль B) должно остаться тем же.
+    const gridDenserC = calcCeilingGrid({
+      lengthMm: 6000, widthMm: 2800, stepB: 900, stepC: 150, bearingAlongLength: true, stepA: 900,
+    })
+    expect(gridDenserC.hangerPoints.length / gridDenserC.mainSegments.length).toBe(hangersPerMain)
   })
 
   it('нулевые размеры помещения -> пустая сетка, без исключений', () => {

@@ -45,20 +45,18 @@
  * обеих систем, а не была ошибочно взята из чужого листа для П112 —
  * см. TASKS.md, пункт "открытые вопросы" на 12.07.2026.
  *
- * Подвесы — крепятся к ОСНОВНОМУ профилю (он крепится к плите). По прямой
- * аналогии с правилом П112 (подвес обязан висеть строго в точке
- * пересечения/соединителя, snapHangerPositionsToAxis) — здесь подвес на
- * основном профиле снэпается к позициям НЕСУЩЕГО профиля (bearingPositions),
- * т.к. именно там стоит соединитель и узел жёсткий. Это ЭКСТРАПОЛЯЦИЯ
- * правила П112 на П113 по аналогии, отдельно с пользователем не сверялась —
- * если на объекте иначе, поправить здесь.
+ * Подвесы — крепятся к ОСНОВНОМУ профилю (он крепится к плите), с
+ * СОБСТВЕННОЙ независимой сеткой позиций вдоль A (шаг a), НЕ снэпаются к
+ * позициям несущего профиля. Подтверждено пользователем на объекте
+ * 05.09.2026 — до этой даты здесь (по аналогии с прежней ошибкой П112)
+ * подвесы совпадали с точками соединителя, это было неверно для обеих
+ * систем. См. исправление и подробности в calcP112Frame.ts (шапка файла).
  */
 
 import type { CeilingLoadClass, CeilingMountDirection } from '../data/ceilingData'
 import { MAIN_PROFILE_WIDTH_MM } from '../data/ceilingData'
 import {
   calcFrameRowPositions,
-  snapHangerPositionsToAxis,
   resolveHangerKind,
   KNAUF_WALL_OFFSET_MM,
   type FrameLayoutMode,
@@ -77,8 +75,8 @@ export interface P113FrameGeometry {
   /** Число подвесов на одном ряду основного профиля. */
   hangersPerMain: number
   hangersTotal: number
-  /** Позиции подвесов вдоль A, мм — подмножество bearingPositions (подвес
-   *  стоит строго в точке соединителя с несущим профилем). Одни и те же
+  /** Позиции подвесов вдоль A, мм — собственная сетка с шагом a
+   *  (calcFrameRowPositions), НЕ подмножество bearingPositions. Одни и те же
    *  для каждого ряда основного профиля. */
   hangerPositions: number[]
   /** Число рядов несущего профиля (поперёк, шаг b) — КАЖДЫЙ ряд состоит из
@@ -179,10 +177,15 @@ export function calcP113FrameGeometry(
   const bearingRowLengthMm = bearingSegmentLengthsMm.reduce((sum, len) => sum + len, 0)
   const bearingTotalLm = (bearingRowCount * bearingRowLengthMm) / 1000
 
-  // Подвесы — на основном профиле, снэпаются к позициям несущего профиля
-  // (там же соединитель, узел жёсткий) — см. предупреждение в шапке файла.
+  // 05.09.2026 (проверка на объекте): подвесы совпадали с точками
+  // одноуровневого соединителя — неверно, см. исправление в calcP112Frame.ts
+  // (шапка файла). Теперь hangerPositions — независимая сетка вдоль A
+  // (собственный пробег основного профиля, mainLengthEachMm=A) с шагом
+  // stepA, а не подмножество bearingPositions.
   const stepA = extra.stepA ?? stepB
-  const hangerPositions = snapHangerPositionsToAxis(bearingPositions, stepA)
+  const hangerPositions = calcFrameRowPositions(
+    A, stepA, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm },
+  )
   const hangersPerMain = hangerPositions.length
   const hangersTotal = mainCount * hangersPerMain
 

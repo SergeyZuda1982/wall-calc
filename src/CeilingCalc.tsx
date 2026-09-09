@@ -12,7 +12,7 @@ import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness
 import { calcCeiling } from './core/calcCeiling'
 import type { CeilingCalcResult, CeilingPolygonInput } from './core/calcCeiling'
 import { calcCeilingSheetRects, resolveSheetStartFlips } from './core/ceilingGridGeometry'
-import { calcFrameRowPositions, resolveFrameParams, snapHangerPositionsToAxis } from './core/calcP112Frame'
+import { calcFrameRowPositions, resolveFrameParams } from './core/calcP112Frame'
 import type { PolygonP112FrameResult } from './core/calcPolygonP112Frame'
 import { toWorld } from './core/calcPolygonP112Frame'
 import type { PolygonP113FrameResult } from './core/calcPolygonP113Frame'
@@ -1559,18 +1559,16 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   const bearingLabelFontSize = computeAutoFontSize(bearingPosY, 'v')
 
   // ── Подвесы ──
-  // 10.07.2026: подвес обязан висеть строго по оси профиля, на который он
-  // физически крепится — в точке пересечения основной/несущий (там же
-  // соединитель), а не независимой сеткой от стены.
-  // 12.07.2026, ИСПРАВЛЕНИЕ: подвес крепится к ОСНОВНОМУ профилю (вертикальные
-  // линии, mainPosX) — ОДИНАКОВО для П112 и П113 (см. calcP112Frame.ts, шапка
-  // файла — раньше для П112 здесь ошибочно считалось наоборот, на несущем;
-  // для П113 было верно с самого начала). Снэпается вдоль собственного
-  // пробега основного (Y) к позициям НЕСУЩЕГО профиля (bearingPosY) — один
-  // подвес на каждый (mainPosX × снэпнутый Y). Сдвиг гребёнки применяется к
-  // подвесам так же, как и к профилю, на котором они сидят.
+  // 05.09.2026, ИСПРАВЛЕНИЕ (проверка на объекте): подвес совпадал с точкой
+  // соединителя (краб/двухуровневый узел) — неверно, см. calcP112Frame.ts
+  // (шапка файла). У подвеса СОБСТВЕННАЯ независимая сетка позиций вдоль Y
+  // (собственный пробег основного профиля, как и mainLengthEachMm=B в
+  // calcP112Frame.ts) с шагом stepA — НЕ снэп к bearingPosYMm. X — та же
+  // сетка, что и у рядов основного (mainPosXMm): подвес ставится на КАЖДОМ
+  // ряду основного профиля. Сдвиг гребёнки применяется к подвесам так же,
+  // как и к профилю, на котором они сидят.
   const hangerPosXMm = mainPosXMm
-  const hangerPosYMm = snapHangerPositionsToAxis(bearingPosYMm, stepA)
+  const hangerPosYMm = calcFrameRowPositions(W_room, stepA, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetMainMm, profileKind: 'main' })
   const hangers: { x: number; y: number }[] = []
   // Рисуем подвесы только если их не слишком много (иначе каша)
   const hangerCount = hangerPosYMm.length * hangerPosXMm.length
