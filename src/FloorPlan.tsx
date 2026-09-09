@@ -21,7 +21,7 @@ import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { WorkProgressChecklist } from './components/WorkProgressChecklist'
 import { BUILTIN_WORK_STAGE_TEMPLATES } from './data/workStageTemplates'
 import { lineProgressColor, lineProgressSummary } from './core/lineProgress'
-import { aggregateProgressPercent, templatesForContext, baseZoneProgress, withBaseZoneProgress } from './core/workProgress'
+import { aggregateProgressPercent, templatesForContext, baseZoneProgress, withBaseZoneProgress, removeZone } from './core/workProgress'
 import { useTemplateStore } from './store/useTemplateStore'
 import {
   rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
@@ -44,6 +44,7 @@ import { slabToCeilingSeed } from './core/slabToCeilingSeed'
 import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
 import { roomToCeilingSeed } from './core/roomToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
+import { useZoneDrawStore } from './store/useZoneDrawStore'
 import { combineCeilingSeeds } from './core/combineCeilingSeeds'
 import { snapPoint, snapOrtho, getFlushCandidates } from './core/planSnap'
 
@@ -338,6 +339,7 @@ function pointInPolygon(px: number, py: number, pts: { x: number; y: number }[])
 
 export default function FloorPlan() {
   const setCeilingSeed = useCeilingSeedStore(s => s.setSeed)
+  const requestZoneDraw = useZoneDrawStore(s => s.requestDraw)
   const {
     floorPlan, addPlanLine, updatePlanLine, removePlanLine,
     setFloorPlanScale, clearFloorPlan, setFloorPlanDefaultHeight, applyHeightToAllConstructions,
@@ -5228,15 +5230,45 @@ export default function FloorPlan() {
                   {sideDefs.map(({ side, zonesKey, label }) => {
                     const zones = resolveFinishZones(inspectorLine, side)
                     const progress = baseZoneProgress(zones)
+                    const drawnZones = zones.filter(z => z.outline)
                     return (
-                      <WorkProgressChecklist
-                        key={zonesKey}
-                        label={label}
-                        progress={progress}
-                        templates={templatesForContext(allWorkStageTemplates, finishContext)}
-                        onChange={p => updatePlanLine(inspectorLine.id, { [zonesKey]: withBaseZoneProgress(zones, p) } as Partial<PlanLine>)}
-                        onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: finishContext })}
-                      />
+                      <div key={zonesKey} style={{ marginBottom: 8 }}>
+                        <WorkProgressChecklist
+                          label={label}
+                          progress={progress}
+                          templates={templatesForContext(allWorkStageTemplates, finishContext)}
+                          onChange={p => updatePlanLine(inspectorLine.id, { [zonesKey]: withBaseZoneProgress(zones, p) } as Partial<PlanLine>)}
+                          onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: finishContext })}
+                        />
+                        {/* Зоны произвольной формы поверх базовой (07.09.2026, Фаза B) — рисуются
+                            на 3D-виде (камера фиксируется анфас на эту грань), список здесь
+                            только показывает, что уже нарисовано, и даёт удалить зону. */}
+                        {drawnZones.length > 0 && (
+                          <div style={{ marginTop: 4, marginLeft: 4 }}>
+                            {drawnZones.map(z => (
+                              <div key={z.id} style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                fontSize: 11, color: '#666', padding: '3px 6px', background: '#f7f7fb',
+                                borderRadius: 4, marginBottom: 3,
+                              }}>
+                                <span>🖌 {z.progress.sourceTemplateLabel ?? 'Зона отделки'} — {z.outline!.length} точек контура</span>
+                                <button
+                                  onClick={() => updatePlanLine(inspectorLine.id, { [zonesKey]: removeZone(zones, z.id) } as Partial<PlanLine>)}
+                                  title="Удалить зону"
+                                  style={{ border: 'none', background: 'none', color: '#c0392b', cursor: 'pointer', fontSize: 13, padding: '0 2px' }}
+                                >✕</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <button
+                          onClick={() => requestZoneDraw(inspectorLine.id, side)}
+                          style={{
+                            marginTop: 4, marginLeft: 4, fontSize: 11, padding: '4px 8px', borderRadius: 5,
+                            border: '1px dashed #3a7bd5', background: '#fff', color: '#3a7bd5', cursor: 'pointer',
+                          }}
+                        >🖌 Нарисовать зону на 3D</button>
+                      </div>
                     )
                   })}
                 </div>

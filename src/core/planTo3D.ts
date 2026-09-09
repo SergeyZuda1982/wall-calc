@@ -46,6 +46,10 @@ export function mmToM(mm: number): number {
   return mm / 1000
 }
 
+export function mToMm(m: number): number {
+  return m * 1000
+}
+
 /** px плана → метры мира, с учётом масштаба (scaleMmPx = мм на 1px) */
 export function pxToM(px: number, scaleMmPx: number): number {
   return mmToM(px * scaleMmPx)
@@ -220,6 +224,66 @@ export function wallToBox3D(
     materialKind: wallMaterialKindOf(line.spec?.material),
     alongFromM: 0,
     alongToM: length,
+  }
+}
+
+/**
+ * Плоская система координат ОДНОЙ грани стены (07.09.2026, зоны отделки
+ * произвольной формы, см. types/index.ts FinishZone) — "развёртка" стороны
+ * A или B: center/normal/right заданы в тех же ЛОКАЛЬНЫХ метрах уровня
+ * (level-local, БЕЗ elevationMm/visualScale — их накладывает вызывающий
+ * код в Scene3D.tsx при переводе в/из мировых координат сцены), что и
+ * WallBox3D. Сторона A — нормаль в направлении локального +Z ПОСЛЕ
+ * поворота на box.rotationY (см. wallSideToRoom.ts, конвенция выведена
+ * оттуда, не придумана заново); сторона B — противоположная нормаль.
+ */
+export interface WallFaceFrame {
+  /** Точка на самой ПОВЕРХНОСТИ грани (не в середине толщины стены), level-local метры. */
+  center: { x: number; y: number; z: number }
+  /** Единичная нормаль грани наружу. */
+  normal: { x: number; y: number; z: number }
+  /** Единичный вектор "вдоль стены" (совпадает с направлением x1→x2 линии). */
+  right: { x: number; y: number; z: number }
+  widthM: number   // = box.size.sx (длина стены)
+  heightM: number  // = box.size.sy (высота стены)
+}
+
+export function wallFaceFrame(box: WallBox3D, side: 'A' | 'B'): WallFaceFrame {
+  const cos = Math.cos(box.rotationY), sin = Math.sin(box.rotationY)
+  const right = { x: cos, y: 0, z: -sin }        // локальный +X в мировых координатах
+  const localZWorld = { x: sin, y: 0, z: cos }   // локальный +Z в мировых координатах — сторона A
+  const sign = side === 'A' ? 1 : -1
+  const normal = { x: localZWorld.x * sign, y: 0, z: localZWorld.z * sign }
+  const halfThicknessM = box.size.sz / 2
+  return {
+    center: {
+      x: box.center.x + normal.x * halfThicknessM,
+      y: box.center.y,
+      z: box.center.z + normal.z * halfThicknessM,
+    },
+    normal, right,
+    widthM: box.size.sx,
+    heightM: box.size.sy,
+  }
+}
+
+/** Локальные мм на развёртке грани (x — вдоль стены от начала, y — высота от пола) → level-local метры мира. */
+export function faceMmToWorld(frame: WallFaceFrame, xMm: number, yMm: number): { x: number; y: number; z: number } {
+  const alongM = mmToM(xMm) - frame.widthM / 2
+  return {
+    x: frame.center.x + frame.right.x * alongM,
+    y: frame.center.y - frame.heightM / 2 + mmToM(yMm),
+    z: frame.center.z + frame.right.z * alongM,
+  }
+}
+
+/** Level-local точка мира → локальные мм на развёртке грани (обратное к faceMmToWorld). */
+export function worldToFaceMm(frame: WallFaceFrame, point: { x: number; y: number; z: number }): { xMm: number; yMm: number } {
+  const dx = point.x - frame.center.x, dz = point.z - frame.center.z
+  const alongM = dx * frame.right.x + dz * frame.right.z // right — единичный вектор, скалярное произведение = проекция
+  return {
+    xMm: mToMm(alongM + frame.widthM / 2),
+    yMm: mToMm(point.y - (frame.center.y - frame.heightM / 2)),
   }
 }
 

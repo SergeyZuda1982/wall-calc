@@ -95,6 +95,26 @@ export function withBaseZoneProgress(zones: FinishZone[] | undefined, progress: 
 }
 
 /**
+ * Добавляет новую зону с контуром произвольной формы (07.09.2026, Фаза B —
+ * рисование в 3D, см. Scene3D.tsx) поверх уже существующих зон. Базовая
+ * зона (если есть) остаётся первой без изменений — вырез просто добавляется
+ * в список; порядок остальных зон с outline тоже не трогается.
+ */
+export function withDrawnZone(zones: FinishZone[] | undefined, outline: { x: number; y: number }[], progress: WorkProgress): FinishZone[] {
+  const id = `zone_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  return [...(zones ?? []), { id, outline, progress }]
+}
+
+/**
+ * Убирает одну зону по id — базовую зону ('base') удалить нельзя (кнопка
+ * удаления в UI на неё не должна даже показываться, но и на уровне функции
+ * не даём случайно остаться без базовой зоны).
+ */
+export function removeZone(zones: FinishZone[] | undefined, zoneId: string): FinishZone[] {
+  return (zones ?? []).filter(z => !(z.id === zoneId && z.outline))
+}
+
+/**
  * Индекс первого НЕ подтверждённого шага (pending или rejected) — это и есть
  * "текущий этап", над которым сейчас реально работают. null, если все шаги
  * подтверждены (работа полностью завершена) или шагов нет вообще.
