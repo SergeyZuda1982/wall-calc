@@ -1570,20 +1570,32 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   const hangerPosXMm = mainPosXMm
   const hangerPosYMm = calcFrameRowPositions(W_room, stepA, { mode: layoutMode, wallOffsetMm: frameParams.wallOffsetMainMm, profileKind: 'main' })
   const hangers: { x: number; y: number }[] = []
-  // Рисуем подвесы только если их не слишком много (иначе каша)
-  const hangerCount = hangerPosYMm.length * hangerPosXMm.length
-  const showHangers = hangerCount <= 200
-  if (showHangers) {
-    for (const hyMm of hangerPosYMm) {
-      const hy = (hyMm + shiftBearingMm) * scale
-      if (hy < 0 || hy > W_room * scale) continue
-      for (const hxMm of hangerPosXMm) {
-        const hx = (hxMm + shiftMainMm) * scale
-        if (hx < 0 || hx > L * scale) continue
-        hangers.push({ x: hx, y: hy })
-      }
+  for (const hyMm of hangerPosYMm) {
+    const hy = (hyMm + shiftBearingMm) * scale
+    if (hy < 0 || hy > W_room * scale) continue
+    for (const hxMm of hangerPosXMm) {
+      const hx = (hxMm + shiftMainMm) * scale
+      if (hx < 0 || hx > L * scale) continue
+      hangers.push({ x: hx, y: hy })
     }
   }
+  // 05.09.2026, ИСПРАВЛЕНИЕ (репорт пользователя: "Подвесы: приблизьте
+  // чертёж" не пропадало ни при каком зуме на большом помещении, 25000×6100).
+  // Причина — showHangers раньше считался по ОБЩЕМУ числу подвесов на всё
+  // помещение (hangers.length), которое от зума/пана вообще не зависит —
+  // подсказка "приблизьте" была невыполнимым обещанием. Порог должен
+  // считаться по числу подвесов, реально попадающих в ВИДИМУЮ область
+  // холста (та же логика клипа по офсету пана, что уже применяется ниже к
+  // подписям шкалы — mainPosX/bearingPosY используют offX/offY тем же
+  // способом). offX/offY — тот же расчёт, что и перед return (JSX ниже),
+  // продублирован здесь пораньше, т.к. они нужны уже на этапе фильтрации.
+  const hangerOffX = Math.max(-(W * zoom), Math.min(drawW, pan.x))
+  const hangerOffY = Math.max(-(H * zoom), Math.min(CANVAS_H - PAD_T, pan.y))
+  const visibleHangerCount = hangers.filter(h =>
+    h.x + hangerOffX >= -20 && h.x + hangerOffX <= canvasW - PAD_L + 20 &&
+    h.y + hangerOffY >= -20 && h.y + hangerOffY <= CANVAS_H - PAD_T + 20,
+  ).length
+  const showHangers = visibleHangerCount <= 200
 
   // Известное упрощение (см. КОНСПЕКТ.md): эта иллюстрация всегда рисует
   // несущий вдоль длины — разворот каркаса (form.bearingAlongLength=false)
@@ -1777,7 +1789,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
         ))}
 
         {/* ── Шаг 2+: Подвесы ── */}
-        {step >= 2 && hangers.map((h, i) => (
+        {step >= 2 && showHangers && hangers.map((h, i) => (
           <Group key={`hg${i}`} x={h.x} y={h.y}>
             <Rect x={-HANGER_W / 2} y={-HANGER_H / 2 - HANGER_H / 4} width={HANGER_W} height={HANGER_H}
               fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1} cornerRadius={1} />
