@@ -29,6 +29,7 @@ import CeilingCalc from './CeilingCalc'
 import TileCalc from './TileCalc'
 import ClosingVolumesReport from './components/ClosingVolumesReport'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
+import { useZoneDrawStore } from './store/useZoneDrawStore'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
 import { calcProjectSheetLayout, buildSurfaceInputs } from './core/calcProjectSheetLayout'
@@ -228,6 +229,15 @@ export default function App() {
   useEffect(() => {
     if (ceilingSeedPending) setActiveTab('ceiling')
   }, [ceilingSeedPending])
+
+  // Запрос "Нарисовать зону на 3D" с карточки линии на плане (07.09.2026,
+  // Фаза B) — та же логика, что и ceilingSeedPending выше: переключаемся
+  // на вкладку 3D сразу, сам Scene3D подхватывает запрос из того же стора
+  // и входит в режим рисования (камера анфас на грань).
+  const zoneDrawRequest = useZoneDrawStore(s => s.request)
+  useEffect(() => {
+    if (zoneDrawRequest) setActiveTab('3d')
+  }, [zoneDrawRequest])
   const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
   const [sheetSideTab, setSheetSideTab] = useState<'A' | 'B'>('A')
   const [showOffcuts, setShowOffcuts] = useState(false)

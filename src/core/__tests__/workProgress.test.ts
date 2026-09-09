@@ -17,6 +17,8 @@ import {
   templatesForContext,
   baseZoneProgress,
   withBaseZoneProgress,
+  withDrawnZone,
+  removeZone,
 } from '../workProgress'
 import type { WorkStageTemplate, FinishZone } from '../../types'
 
@@ -367,5 +369,51 @@ describe('baseZoneProgress / withBaseZoneProgress (07.09.2026 — зоны от�
     const newProgress = applyTemplate(gklTemplate)
     const result = withBaseZoneProgress([oldBase, drawn], newProgress)
     expect(result).toEqual([{ id: 'base', progress: newProgress }, drawn])
+  })
+})
+
+describe('withDrawnZone / removeZone (07.09.2026, Фаза B — 3D-рисование зон)', () => {
+  const base: FinishZone = { id: 'base', progress: applyTemplate(gklTemplate) }
+  const outline = [{ x: 0, y: 850 }, { x: 600, y: 850 }, { x: 600, y: 1500 }, { x: 0, y: 1500 }]
+
+  it('withDrawnZone добавляет зону с outline поверх существующих, не трогая их', () => {
+    const tileProgress = applyTemplate(gklTemplate)
+    const result = withDrawnZone([base], outline, tileProgress)
+    expect(result).toHaveLength(2)
+    expect(result[0]).toBe(base)
+    expect(result[1].outline).toEqual(outline)
+    expect(result[1].progress).toBe(tileProgress)
+    expect(result[1].id).toMatch(/^zone_/)
+  })
+
+  it('withDrawnZone работает и без предыдущих зон (пустой список/undefined)', () => {
+    const result = withDrawnZone(undefined, outline, applyTemplate(gklTemplate))
+    expect(result).toHaveLength(1)
+    expect(result[0].outline).toEqual(outline)
+  })
+
+  it('каждый вызов withDrawnZone даёт уникальный id (не коллизия между двумя нарисованными зонами)', () => {
+    const p = applyTemplate(gklTemplate)
+    const afterFirst = withDrawnZone([base], outline, p)
+    const afterSecond = withDrawnZone(afterFirst, outline, p)
+    expect(afterSecond).toHaveLength(3)
+    expect(afterSecond[1].id).not.toBe(afterSecond[2].id)
+  })
+
+  it('removeZone убирает зону с outline по id, базовую зону не трогает даже с тем же id', () => {
+    const drawn: FinishZone = { id: 'z1', outline, progress: applyTemplate(gklTemplate) }
+    const result = removeZone([base, drawn], 'z1')
+    expect(result).toEqual([base])
+  })
+
+  it('removeZone НЕ удаляет базовую зону, даже если её id совпал бы с запрошенным (защита от outline===undefined)', () => {
+    const result = removeZone([base], 'base')
+    expect(result).toEqual([base])
+  })
+
+  it('removeZone с несуществующим id ничего не меняет', () => {
+    const drawn: FinishZone = { id: 'z1', outline, progress: applyTemplate(gklTemplate) }
+    const result = removeZone([base, drawn], 'nope')
+    expect(result).toEqual([base, drawn])
   })
 })

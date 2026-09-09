@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   wallThicknessMm, wallToBox3D, wallsToBoxes3D, estimateCeilingMm,
-  roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM,
+  roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM, mToMm,
   freeformStructuresToPrisms3D, wallMaterialKindOf, wallStudPositionsMm,
+  wallFaceFrame, worldToFaceMm, faceMmToWorld,
 } from '../planTo3D'
 import type { PlanLine, Room, Slab, Ceiling, RoundColumn, RectColumn, PlanOpening, FreeformStructure } from '../../types'
 
@@ -906,5 +907,50 @@ describe('wallsToBoxes3D — интеграция с колоннами (T-ст�
     // Длина не должна улетать в аномально большие значения (защита от
     // самопересекающегося отката на почти касательном угле — см. wallJoin.ts)
     expect(boxes[0].size.sx).toBeLessThan(20) // заведомо намного больше 1.2м исходной длины стены
+  })
+})
+
+describe('wallFaceFrame / worldToFaceMm / faceMmToWorld (07.09.2026 — развёртка грани для зон отделки)', () => {
+  it('прямая стена вдоль X (rotationY=0): сторона A — нормаль +Z, сторона B — -Z', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 300, y2: 0, type: 'wall_new', spec: { material: 'gkl', subtype: 'ps75' }, heightMm: 2700 })
+    const box = wallToBox3D(line, 10, 3000)! // 300px*10мм/px = 3000мм длина
+    const frameA = wallFaceFrame(box, 'A')
+    const frameB = wallFaceFrame(box, 'B')
+    expect(frameA.normal.z).toBeCloseTo(1, 6)
+    expect(frameB.normal.z).toBeCloseTo(-1, 6)
+    expect(frameA.widthM).toBeCloseTo(3, 6)   // 3000мм
+    expect(frameA.heightM).toBeCloseTo(2.7, 6) // 2700мм
+    // Центр грани A смещён от центра коробки на +halfThickness по Z
+    expect(frameA.center.z).toBeGreaterThan(box.center.z)
+    expect(frameB.center.z).toBeLessThan(box.center.z)
+  })
+
+  it('faceMmToWorld/worldToFaceMm — круговой проезд туда-обратно даёт исходные мм (с учётом погрешности округления)', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 500, y2: 200, type: 'wall_new', spec: { material: 'gkl', subtype: 'ps75' }, heightMm: 2700 })
+    const box = wallToBox3D(line, 10, 3000)!
+    const frame = wallFaceFrame(box, 'A')
+    for (const [xMm, yMm] of [[0, 0], [1000, 1500], [frame.widthM * 1000, frame.heightM * 1000], [2500, 900]]) {
+      const world = faceMmToWorld(frame, xMm, yMm)
+      const back = worldToFaceMm(frame, world)
+      expect(back.xMm).toBeCloseTo(xMm, 6)
+      expect(back.yMm).toBeCloseTo(yMm, 6)
+    }
+  })
+
+  it('угловой (0,0) на развёртке лежит на самой поверхности грани (нулевая проекция по нормали от центра грани)', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 400, y2: 0, type: 'wall_new', spec: { material: 'gkl', subtype: 'ps75' }, heightMm: 2700 })
+    const box = wallToBox3D(line, 10, 3000)!
+    const frame = wallFaceFrame(box, 'A')
+    const p0 = faceMmToWorld(frame, 0, 0)
+    // Проекция (p0 - center) на нормаль должна быть ~0 — p0 лежит В плоскости грани
+    const dot = (p0.x - frame.center.x) * frame.normal.x + (p0.z - frame.center.z) * frame.normal.z
+    expect(dot).toBeCloseTo(0, 6)
+    // Пол (y=0 на развёртке) совпадает с полом мира (y=0), т.к. wallToBox3D ставит стену на пол
+    expect(p0.y).toBeCloseTo(0, 6)
+  })
+
+  it('mToMm — обратная функция к mmToM', () => {
+    expect(mToMm(mmToM(1234))).toBeCloseTo(1234, 9)
+    expect(mToMm(1.5)).toBe(1500)
   })
 })

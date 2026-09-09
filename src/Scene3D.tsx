@@ -24,16 +24,20 @@ import { useProjectStore, type SelectedEntity } from './store/useProjectStore'
 import {
   wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM,
   freeformStructuresToPrisms3D, wallStudPositionsMm,
+  wallToBox3D, wallFaceFrame, worldToFaceMm,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
-  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D,
+  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame,
 } from './core/planTo3D'
-import type { PlanLineType, FloorPlan, PlanLine } from './types'
+import type { PlanLineType, FloorPlan, PlanLine, WorkStageTemplate } from './types'
 import CeilingGridMesh from './components/CeilingGridMesh'
 import CeilingEntityMesh from './components/CeilingEntityMesh'
 import { resolveFrameParams } from './core/calcP112Frame'
 import { formatDistanceM } from './core/formatDistance'
 import { lineProgressColor, lineProgressSummary, wallGklVisual3D } from './core/lineProgress'
-import { finishSidesOf } from './core/finishResolver'
+import { finishSidesOf, finishMaterialCategoryOf, finishTemplateContextOf, resolveFinishZones } from './core/finishResolver'
+import { applyTemplate, templatesForContext, withDrawnZone } from './core/workProgress'
+import { BUILTIN_WORK_STAGE_TEMPLATES } from './data/workStageTemplates'
+import { useZoneDrawStore } from './store/useZoneDrawStore'
 import { getWallTexture, tintOverTexture } from './textures3D'
 import { resolveWallProfileType } from './core/planLineToWallInput'
 import { parseDoubleFrameSubtype } from './data/constructionTaxonomy'
@@ -723,6 +727,31 @@ function MeasureOverlay({ points, visualScale }: { points: THREE.Vector3[]; visu
 }
 
 /**
+ * Полигон зоны отделки, который сейчас рисуют (07.09.2026, Фаза B) — тот же
+ * приём, что MeasureOverlay выше (рендерится СНАРУЖИ <group scale=...>,
+ * points уже мировые координаты «как есть», см. комментарий у
+ * handleMeasureClick). Пока точек меньше 3 — просто маркеры и открытая
+ * ломаная; от 3 точек — контур замыкается пунктиром до первой точки
+ * (превью того, что получится).
+ */
+function ZoneDrawOverlay({ points }: { points: THREE.Vector3[] }) {
+  if (points.length === 0) return null
+  const closed = points.length >= 3 ? [...points, points[0]] : points
+  return (
+    <>
+      {points.map((p, i) => (
+        <Sphere key={i} args={[0.03, 12, 12]} position={[p.x, p.y, p.z]}>
+          <meshBasicMaterial color="#00897b" depthTest={false} />
+        </Sphere>
+      ))}
+      {points.length >= 2 && (
+        <Line points={closed} color="#00897b" lineWidth={2} dashed={points.length >= 3} depthTest={false} />
+      )}
+    </>
+  )
+}
+
+/**
  * Геометрия ОДНОГО этажа — то, что раньше было прямо в теле Scene3D.
  * Обёрнута в <group position={[0, offsetY, 0]}> — offsetY = отметка этажа
  * (Level.elevationMm) в метрах, так все этажи проекта встают друг над
@@ -1174,6 +1203,112 @@ export default function Scene3D() {
   const [viewJump, setViewJump] = useState<{ nonce: number; pos: THREE.Vector3; target: THREE.Vector3 } | null>(null)
   const viewJumpNonceRef = useRef(0)
 
+  // Рисование зон отделки произвольной формы (07.09.2026, Фаза B, см.
+  // KONSPEKT.md) — запрос приходит из FloorPlan.tsx (кнопка «Нарисовать
+  // зону на 3D» в чек-листе отделки стороны) через транзитный
+  // useZoneDrawStore, App.tsx уже переключил вкладку на 3D к этому моменту.
+  const zoneDrawRequest = useZoneDrawStore(s => s.request)
+  const clearZoneDrawRequest = useZoneDrawStore(s => s.clearRequest)
+  const zoneDrawNonceRef = useRef(0)
+  const [zoneDraw, setZoneDraw] = useState<{
+    lineId: string
+    side: 'A' | 'B'
+    frame: WallFaceFrame
+    offsetYM: number
+    points: THREE.Vector3[] // мировые координаты клика (как measurePoints)
+  } | null>(null)
+  const [zoneTemplateId, setZoneTemplateId] = useState('')
+  const updatePlanLine = useProjectStore(s => s.updatePlanLine)
+  const customWorkStageTemplates = useProjectStore(s => s.customWorkStageTemplates)
+  const allWorkStageTemplates = useMemo(
+    () => [...BUILTIN_WORK_STAGE_TEMPLATES, ...(customWorkStageTemplates ?? [])],
+    [customWorkStageTemplates],
+  )
+
+  useEffect(() => {
+    if (!zoneDrawRequest || zoneDrawRequest.nonce === zoneDrawNonceRef.current) return
+    zoneDrawNonceRef.current = zoneDrawRequest.nonce
+    let targetLine: PlanLine | null = null
+    let offsetYM = 0
+    let scaleMmPx = 10
+    let ceilingMm = 3000
+    for (const lv of levels) {
+      const found = (lv.floorPlan.lines ?? []).find(l => l.id === zoneDrawRequest.lineId)
+      if (found) {
+        targetLine = found
+        offsetYM = mmToM(lv.elevationMm)
+        scaleMmPx = lv.floorPlan.scaleMmPerPx ?? 10
+        ceilingMm = estimateCeilingMm(lv.floorPlan.lines ?? [])
+        break
+      }
+    }
+    const box = targetLine ? wallToBox3D(targetLine, scaleMmPx, ceilingMm) : null
+    if (!box) return // линия не найдена или это не стеновая коробка (не должно случаться — кнопка есть только у линий с finishSidesOf>0)
+    const frame = wallFaceFrame(box, zoneDrawRequest.side)
+    setZoneDraw({ lineId: zoneDrawRequest.lineId, side: zoneDrawRequest.side, frame, offsetYM, points: [] })
+    setZoneTemplateId('')
+    setCameraMode('orbit')
+    // Камера анфас на грань (подтверждено Сергеем 07.09.2026) — позиция вдоль
+    // нормали грани от её центра, цель — сам центр грани. viewDistM подобран
+    // так, чтобы вся грань помещалась в кадр с небольшим запасом (fov=50).
+    const viewDistM = Math.max(frame.widthM, frame.heightM) * 0.9 + 0.6
+    viewJumpNonceRef.current += 1
+    setViewJump({
+      nonce: viewJumpNonceRef.current,
+      pos: new THREE.Vector3(
+        (frame.center.x + frame.normal.x * viewDistM) * visualScale,
+        (frame.center.y + offsetYM) * visualScale,
+        (frame.center.z + frame.normal.z * viewDistM) * visualScale,
+      ),
+      target: new THREE.Vector3(
+        frame.center.x * visualScale,
+        (frame.center.y + offsetYM) * visualScale,
+        frame.center.z * visualScale,
+      ),
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoneDrawRequest, levels])
+
+  function handleZoneDrawClick(e: ThreeEvent<MouseEvent>) {
+    if (!zoneDraw) return
+    e.stopPropagation()
+    const point = e.point.clone()
+    setZoneDraw(prev => (prev ? { ...prev, points: [...prev.points, point] } : prev))
+  }
+
+  function cancelZoneDraw() {
+    setZoneDraw(null)
+    setZoneTemplateId('')
+    clearZoneDrawRequest()
+  }
+
+  function applyZoneDraw() {
+    if (!zoneDraw || zoneDraw.points.length < 3) return
+    const tpl = allWorkStageTemplates.find(t => t.id === zoneTemplateId)
+    if (!tpl) return // кнопка "Применить" задизейблена без выбранного шаблона, сюда не дойдёт
+    const outline = zoneDraw.points.map(p => {
+      const { xMm, yMm } = worldToFaceMm(zoneDraw.frame, {
+        x: p.x / visualScale,
+        y: p.y / visualScale - zoneDraw.offsetYM,
+        z: p.z / visualScale,
+      })
+      return { x: xMm, y: yMm }
+    })
+    const line = levels.flatMap(lv => lv.floorPlan.lines ?? []).find(l => l.id === zoneDraw.lineId)
+    const currentZones = line ? resolveFinishZones(line, zoneDraw.side) : []
+    const zonesKey = zoneDraw.side === 'A' ? 'finishZonesA' : 'finishZonesB'
+    updatePlanLine(zoneDraw.lineId, { [zonesKey]: withDrawnZone(currentZones, outline, applyTemplate(tpl)) } as Partial<PlanLine>)
+    cancelZoneDraw()
+  }
+
+  const zoneDrawTemplates = useMemo(() => {
+    if (!zoneDraw) return [] as WorkStageTemplate[]
+    const line = levels.flatMap(lv => lv.floorPlan.lines ?? []).find(l => l.id === zoneDraw.lineId)
+    const category = line ? finishMaterialCategoryOf(line) : null
+    if (!category) return []
+    return templatesForContext(allWorkStageTemplates, finishTemplateContextOf(category))
+  }, [zoneDraw, levels, allWorkStageTemplates])
+
   // Читаем текущую камеру/цель через controlsRef.current.object — OrbitControls
   // (three-stdlib) хранит камеру, к которой привязан, в .object. Работает
   // только в режиме orbit (во fly controlsRef не заполняется — см. Canvas
@@ -1495,6 +1630,56 @@ export default function Scene3D() {
             )}
           </div>
         )}
+        {zoneDraw && (
+          <div style={{
+            padding: '10px 12px', fontSize: 12, color: '#00594c', background: '#e6f6f3',
+            border: '1px solid #8fd4c6', borderRadius: 6, maxWidth: 260, lineHeight: 1.4,
+            display: 'flex', flexDirection: 'column', gap: 8,
+          }}>
+            <div>
+              <strong>Рисование зоны отделки</strong> — камера зафиксирована анфас
+              на грань. Кликайте по грани, обводя контур зоны
+              {zoneDraw.points.length > 0 && ` (точек: ${zoneDraw.points.length})`}.
+              {zoneDraw.points.length < 3 && ' Минимум 3 точки.'}
+            </div>
+            {zoneDraw.points.length >= 3 && (
+              <select
+                value={zoneTemplateId}
+                onChange={e => setZoneTemplateId(e.target.value)}
+                style={{ padding: '5px 6px', fontSize: 12, borderRadius: 5, border: '1px solid #8fd4c6' }}
+              >
+                <option value="">Шаблон отделки для зоны...</option>
+                {zoneDrawTemplates.map(t => (
+                  <option key={t.id} value={t.id}>{t.label}</option>
+                ))}
+              </select>
+            )}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={cancelZoneDraw}
+                style={{
+                  flex: 1, padding: '5px 8px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  border: '1px solid #999', borderRadius: 5, background: '#fff', color: '#666',
+                }}>
+                Отмена
+              </button>
+              {zoneDraw.points.length >= 3 && (
+                <button
+                  onClick={applyZoneDraw}
+                  disabled={!zoneTemplateId}
+                  style={{
+                    flex: 1, padding: '5px 8px', fontSize: 12, fontWeight: 600,
+                    cursor: zoneTemplateId ? 'pointer' : 'not-allowed',
+                    border: '1px solid #00897b', borderRadius: 5,
+                    background: zoneTemplateId ? '#00897b' : '#f0f0f0',
+                    color: zoneTemplateId ? '#fff' : '#aaa',
+                  }}>
+                  Готово
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {cameraMode === 'fly' && (
           <div style={{
             padding: '6px 10px', fontSize: 12, color: '#444', background: '#fffbe6',
@@ -1517,11 +1702,11 @@ export default function Scene3D() {
       <Canvas
         shadows
         camera={{ position: [10, 10, 10], fov: 50 }}
-        onPointerMissed={() => { if (!measuring) setSelectedEntity(null) }}
+        onPointerMissed={() => { if (!measuring && !zoneDraw) setSelectedEntity(null) }}
       >
         <ambientLight intensity={0.6} />
         <directionalLight position={[8, 12, 6]} intensity={1} castShadow />
-        <group scale={[visualScale, visualScale, visualScale]} onClick={handleMeasureClick}>
+        <group scale={[visualScale, visualScale, visualScale]} onClick={e => { handleMeasureClick(e); handleZoneDrawClick(e) }}>
           <Grid args={[100, 100]} cellColor="#c9ccd6" sectionColor="#9aa0b0" fadeDistance={40} position={[0, -0.001, 0]} />
           {levels.map(lv => (
             <LevelGroup
@@ -1540,6 +1725,7 @@ export default function Scene3D() {
           ))}
         </group>
         <MeasureOverlay points={measurePoints} visualScale={visualScale} />
+        <ZoneDrawOverlay points={zoneDraw?.points ?? []} />
         <SectionPlaneController
           horizontalEnabled={horizontalSectionEnabled}
           horizontalM={effectiveHorizontalM}
@@ -1549,7 +1735,7 @@ export default function Scene3D() {
         />
         <CameraScaleSync scale={visualScale} controlsRef={controlsRef} />
         {cameraMode === 'orbit'
-          ? <OrbitControls ref={controlsRef} makeDefault />
+          ? <OrbitControls ref={controlsRef} makeDefault enableRotate={!zoneDraw} enablePan={!zoneDraw} />
           : <FlyControls makeDefault dragToLook movementSpeed={4} rollSpeed={0.6} />}
         {cameraMode === 'orbit' && <CameraRig focusTarget={focusTarget} controlsRef={controlsRef} />}
         {cameraMode === 'orbit' && <ViewJumpRig viewJump={viewJump} controlsRef={controlsRef} />}
