@@ -28,7 +28,7 @@ import { Suspense, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Html } from '@react-three/drei'
 import * as THREE from 'three'
-import CeilingGridMesh, { calcGklLevelM } from './CeilingGridMesh'
+import CeilingGridMesh, { calcGklLayerLevelsM } from './CeilingGridMesh'
 import CeilingEntityMesh from './CeilingEntityMesh'
 import type { CeilingPolygon3D } from '../core/planTo3D'
 import { mmToM } from '../core/planTo3D'
@@ -60,6 +60,12 @@ export interface CeilingCalc3DPreviewProps {
    *  скриншотами). Не задан/шаг < 4 → листы не рисуются вовсе (как и в 2D).
    */
   sheetLayout?: CeilingSheetLayout | null
+  /** 05.09.2026 (репорт пользователя): число слоёв ГКЛ (1|2) и реальная
+   *  толщина листа — раньше 3D-превью всегда рисовало один слой 12.5мм
+   *  независимо от выбора в форме. Не заданы -> 1 слой, 12.5мм (прежнее
+   *  поведение). */
+  layers?: 1 | 2
+  thicknessMm?: number
   /** 19.07.2026: реальные позиции несущего профиля (те же bearingPosY, что
    *  и в 2D CeilingCanvas) — для снэпа торцевых швов раскроя на несущий,
    *  см. calcCeilingSheetRects. Не задан → без снэпа (прежнее поведение). */
@@ -92,9 +98,9 @@ function SlabPlate({ lengthM, widthM }: { lengthM: number; widthM: number }) {
  * Теперь ось функции и то, какая из осей экрана (X=длина/Z=ширина) ей
  * соответствует, берутся из sheetLayout.rotated — 3D больше не может
  * разойтись со сметой/2D-схемой. */
-function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, sheetStartCorner, yM }: {
+function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, sheetStartCorner, yM, thicknessM = 0.0125 }: {
   lengthMm: number; widthMm: number; sheetLayout: CeilingSheetLayout
-  bearingPositionsMm?: number[]; sheetStartCorner?: 'tl' | 'tr' | 'bl' | 'br'; yM: number
+  bearingPositionsMm?: number[]; sheetStartCorner?: 'tl' | 'tr' | 'bl' | 'br'; yM: number; thicknessM?: number
 }) {
   const rotated = !!sheetLayout.rotated
   const rects = useMemo(() => {
@@ -124,7 +130,7 @@ function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, s
             position={[mmToM(screenX) + wM / 2, yM, mmToM(screenZ) + dM / 2]}
             castShadow receiveShadow
           >
-            <boxGeometry args={[wM, 0.0125, dM]} />
+            <boxGeometry args={[wM, thicknessM, dM]} />
             <meshStandardMaterial color={r.isCut ? SHEET_CUT_COLOR : SHEET_COLOR} roughness={0.85} />
           </mesh>
         )
@@ -136,7 +142,7 @@ function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, s
 export default function CeilingCalc3DPreview({
   lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength,
   layoutMode, wallOffsetMainMm, wallOffsetBearingMm, sheetLayout,
-  bearingPositionsMm, sheetStartCorner,
+  bearingPositionsMm, sheetStartCorner, layers = 1, thicknessMm = 12.5,
 }: CeilingCalc3DPreviewProps) {
   const lengthM = mmToM(lengthMm)
   const widthM = mmToM(widthMm)
@@ -172,16 +178,22 @@ export default function CeilingCalc3DPreview({
               showGkl={false}
             />
           )}
-          {hasDetailedGrid && sheetLayout && (
-            <SheetLayoutMesh
-              lengthMm={lengthMm}
-              widthMm={widthMm}
-              sheetLayout={sheetLayout}
-              bearingPositionsMm={bearingPositionsMm}
-              sheetStartCorner={sheetStartCorner}
-              yM={calcGklLevelM(0, ceilingType === 'p113' ? 'p113' : 'p112')}
-            />
-          )}
+          {hasDetailedGrid && sheetLayout && (() => {
+            const gklType = ceilingType === 'p113' ? 'p113' : 'p112'
+            const levels = calcGklLayerLevelsM(0, gklType, Array(layers).fill(thicknessMm))
+            return levels.map((levelM, i) => (
+              <SheetLayoutMesh
+                key={i}
+                lengthMm={lengthMm}
+                widthMm={widthMm}
+                sheetLayout={sheetLayout}
+                bearingPositionsMm={bearingPositionsMm}
+                sheetStartCorner={sheetStartCorner}
+                yM={levelM}
+                thicknessM={mmToM(thicknessMm)}
+              />
+            ))
+          })()}
           {!hasDetailedGrid && (
             <Html position={[lengthM / 2, -0.3, widthM / 2]} center style={{ pointerEvents: 'none' }}>
               <div style={{

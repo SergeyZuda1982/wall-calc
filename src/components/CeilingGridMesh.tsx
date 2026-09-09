@@ -85,6 +85,29 @@ export function calcGklLevelM(ceilingM: number, ceilingType: 'p112' | 'p113'): n
   return bearingY - mmToM(27 / 2 + 12.5 / 2)
 }
 
+/** 05.09.2026 (репорт пользователя: выбор "2 слоя" в калькуляторе потолка
+ *  никак не менял 3D-превью — всегда один слой 12.5мм). Центры Y для КАЖДОГО
+ *  слоя ГКЛ, зашитых один под другим (2-й слой ниже 1-го, ближе к комнате) —
+ *  реальная толщина каждого слоя, не захардкоженные 12.5мм, как у
+ *  calcGklLevelM выше (та осталась как есть — используется в другом месте,
+ *  где толщина всегда 12.5 не задавалась явно и это не приоритет сейчас). */
+export function calcGklLayerLevelsM(
+  ceilingM: number, ceilingType: 'p112' | 'p113', layerThicknessesMm: number[],
+): number[] {
+  const dropToMainM = 0.12
+  const mainY = ceilingM - dropToMainM
+  const bearingY = ceilingType === 'p113' ? mainY : mainY - mmToM(27) - 0.003
+  const topM = bearingY - mmToM(27 / 2)
+  const levels: number[] = []
+  let stackTopM = topM
+  for (const thicknessMm of layerThicknessesMm) {
+    const thicknessM = mmToM(thicknessMm)
+    levels.push(stackTopM - thicknessM / 2)
+    stackTopM -= thicknessM
+  }
+  return levels
+}
+
 
 // ─── Минимальная видимая толщина тонких элементов (см. KONSPEKT, идея №1 из
 // списка "3D-вид на объекте", 09.07.2026) ───────────────────────────────────
