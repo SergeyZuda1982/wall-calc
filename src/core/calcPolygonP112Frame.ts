@@ -30,11 +30,12 @@
  *    основного ряда одновременно (оба ряда — сечения ОДНОГО И ТОГО ЖЕ
  *    контура на пересекающихся линиях, поэтому проверка через контур
  *    эквивалентна проверке пересечения отрезков, но проще).
- * 5. Подвесы — 12.07.2026: подвес физически крепится к ОСНОВНОМУ профилю
- *    (см. исправление в calcP112Frame.ts, там было наоборот) — ОТДЕЛЬНО для
- *    каждого ряда основного профиля: берём U-позиции несущего профиля,
- *    которые физически пересекают ИМЕННО этот ряд основного (через
- *    pointInPolygon), и прогоняем через snapHangerPositionsToAxis.
+ * 5. Подвесы — крепятся к ОСНОВНОМУ профилю, СОБСТВЕННАЯ независимая сетка
+ *    вдоль U с шагом a (та же calcFrameRowPositionsSigned, что и для рядов
+ *    основного/несущего) — НЕ снэп к позициям несущего (05.09.2026,
+ *    исправление, см. calcP112Frame.ts). ОТДЕЛЬНО для каждого ряда основного
+ *    профиля: берём U-позиции сетки подвесов, которые физически пересекают
+ *    ИМЕННО этот ряд основного (через pointInPolygon).
  *    Для прямоугольника это давало один и тот же список для всех рядов —
  *    здесь список может отличаться от ряда к ряду (вогнутая форма).
  *
@@ -56,7 +57,7 @@ import { insideSegments, pointInPolygon } from './geometry2d'
 import type { CeilingLoadClass, CeilingMountDirection } from '../data/ceilingData'
 import { KNAUF_WALL_OFFSET_MAIN_MM, KNAUF_WALL_OFFSET_BEARING_MM } from '../data/ceilingData'
 import {
-  calcFrameRowPositionsSigned, snapHangerPositionsToAxis, resolveHangerKind,
+  calcFrameRowPositionsSigned, resolveHangerKind,
   STANDARD_BAR_LENGTH_MM, type FrameLayoutMode, type HangerKind,
 } from './calcP112Frame'
 
@@ -139,8 +140,8 @@ export interface PolygonP112FrameResult {
    *  координаты (u,v), мм — для 3D-рендера (CeilingGridMesh), пункт 7 плана
    *  (KONSPEKT.md 10.07.2026). connectorsTotal === crabPoints.length. */
   crabPoints: Point2D[]
-  /** Точки подвесов (подмножество crabPoints по snapHangerPositionsToAxis),
-   *  локальные (u,v), мм — для 3D. hangersTotal === hangerPoints.length. */
+  /** Точки подвесов — собственная сетка вдоль U с шагом a, НЕ подмножество
+   *  crabPoints, локальные (u,v), мм — для 3D. hangersTotal === hangerPoints.length. */
   hangerPoints: Point2D[]
   hangerKind: HangerKind
   warnings: string[]
@@ -235,15 +236,19 @@ export function calcPolygonP112Frame(
   const bearingExtenders = bearingRows.reduce((s, r) => s + r.segments.reduce((s2, [a, b]) => s2 + extendersForSegment(b - a), 0), 0)
 
   // ── Соединители-крабы и подвесы ──────────────────────────────────────────
-  // 12.07.2026: подвес — на основном профиле (см. исправление комментария
-  // выше), поэтому внешний цикл теперь по mainRows (не bearingRows), а
-  // снэпаются U-позиции несущего профиля.
+  // 05.09.2026 (проверка на объекте): подвес совпадал с точкой соединителя —
+  // неверно, см. исправление в calcP112Frame.ts (шапка файла). У подвеса
+  // собственная сетка позиций вдоль A (шаг stepA), не подмножество
+  // bearingUPositions — считаем её так же, как mainVPositions/bearingUPositions
+  // (calcFrameRowPositionsSigned), затем фильтруем по контуру на каждом ряду.
+  const hangerUPositions = calcFrameRowPositionsSigned(uMin, uMax, stepA, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm, profileKind: 'main' })
   const crabPoints: Point2D[] = []
   const hangerPoints: Point2D[] = []
   for (const vRow of mainRows) {
     const validUs = bearingUPositions.filter(u => pointInPolygon({ x: u, y: vRow.pos }, loopsLocal))
     for (const u of validUs) crabPoints.push({ x: u, y: vRow.pos })
-    for (const u of snapHangerPositionsToAxis(validUs, stepA)) hangerPoints.push({ x: u, y: vRow.pos })
+    const validHangerUs = hangerUPositions.filter(u => pointInPolygon({ x: u, y: vRow.pos }, loopsLocal))
+    for (const u of validHangerUs) hangerPoints.push({ x: u, y: vRow.pos })
   }
   const connectorsTotal = crabPoints.length
   const hangersTotal = hangerPoints.length

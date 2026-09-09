@@ -46,7 +46,7 @@
  * вызовы) поведение не меняется (mode='user', дефолтный отступ = шагу).
  */
 
-import { calcFrameRowPositions, snapHangerPositionsToAxis, type FrameLayoutMode } from './calcP112Frame'
+import { calcFrameRowPositions, type FrameLayoutMode } from './calcP112Frame'
 import type { CeilingStep } from '../data/ceilingData'
 import { insideSegments, pointInPolygon, type Point2D } from './geometry2d'
 
@@ -65,10 +65,9 @@ export interface CeilingGridInput {
   stepC: number
   /** несущий профиль идёт вдоль X (true) или вдоль Z (false) */
   bearingAlongLength: boolean
-  /** 10.07.2026: максимально допустимое расстояние между подвесами (шаг "a"
-   *  из таблицы КНАУФ) — подвес всегда ставится строго на оси основного
-   *  профиля (см. snapHangerPositionsToAxis), это лишь ограничение "не реже
-   *  чем". Не задан -> = stepB (та же практика, что и в calcP112Frame). */
+  /** шаг подвесов вдоль основного профиля, мм (собственная независимая
+   *  сетка, см. исправление 05.09.2026 в calcP112Frame.ts). Не задан ->
+   *  = stepB (та же практика, что и в calcP112Frame). */
   stepA?: number
   /** 16.07.2026: режим раскладки — та же семантика, что у calcFrameRowPositions/
    *  calcP112FrameGeometry. Не задан -> 'user' (прежнее поведение, дефолтный
@@ -180,13 +179,14 @@ export function calcCeilingGrid(input: CeilingGridInput): CeilingGridResult {
   const mainPositions = calcFrameRowPositions(
     A, stepC, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm, profileKind: 'main' },
   )
-  // 12.07.2026, ИСПРАВЛЕНИЕ: подвес физически крепится к ОСНОВНОМУ профилю,
-  // не к несущему (см. calcP112Frame.ts, шапка файла, — подтверждено
-  // официальными чертежами КНАУФ П112.1 и П113.1). Раньше здесь снэпались
-  // mainPositions и повторялись на каждом bearingPositions (то есть подвес
-  // считался закреплённым НА несущем) — теперь наоборот: снэпаем
-  // bearingPositions и повторяем на каждом mainPositions.
-  const hangerOffsets = snapHangerPositionsToAxis(bearingPositions, stepA ?? stepB)
+  // 05.09.2026 (проверка на объекте): подвес совпадал с точкой соединителя —
+  // неверно, см. исправление в calcP112Frame.ts (шапка файла). У подвеса
+  // собственная сетка позиций вдоль B (собственный пробег основного профиля,
+  // см. mainSegments — от 0 до B) с шагом stepA, ставится на КАЖДОМ ряду
+  // основного профиля (mainPositions), без снэпа/фильтрации по несущему.
+  const hangerOffsets = calcFrameRowPositions(
+    B, stepA ?? stepB, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm, profileKind: 'main' },
+  )
 
   // toXZ переводит (координата вдоль A, координата поперёк B) в мировые (x,z)
   // локали помещения — учитывая, куда реально смотрит несущий профиль.
@@ -290,8 +290,11 @@ export function calcCeilingGridP113(input: CeilingGridP113Input): CeilingGridRes
   const bearingPositions = calcFrameRowPositions(
     A, stepB, { mode: layoutMode, wallOffsetMm: wallOffsetBearingMm },
   )
-  // Подвес — на основном профиле, снэп по позициям несущего (см. calcP113Frame.ts).
-  const hangerOffsets = snapHangerPositionsToAxis(bearingPositions, stepA ?? stepB)
+  // Подвес — на основном профиле, СОБСТВЕННАЯ сетка вдоль A с шагом stepA,
+  // не снэп по позициям несущего (см. исправление 05.09.2026, calcP112Frame.ts).
+  const hangerOffsets = calcFrameRowPositions(
+    A, stepA ?? stepB, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm },
+  )
 
   const toXZ = (alongA: number, acrossB: number): CeilingGridPoint =>
     mainAlongLength ? { x: alongA, z: acrossB } : { x: acrossB, z: alongA }
@@ -325,7 +328,8 @@ export function calcCeilingGridP113(input: CeilingGridP113Input): CeilingGridRes
   }
 
   // Подвесы — на основном профиле (по одному ряду на каждую mainPosition),
-  // позиции вдоль A — подмножество bearingPositions (там же соединитель).
+  // позиции вдоль A — собственная сетка hangerOffsets с шагом stepA (не
+  // подмножество bearingPositions).
   const hangerPoints: CeilingGridPoint[] = []
   for (const acrossB of mainPositions) {
     for (const alongA of hangerOffsets) {

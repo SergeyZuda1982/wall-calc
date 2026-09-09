@@ -48,6 +48,25 @@
  *                   (~20-30см), а не встаёт строго по сетке
  * Тот же принцип применяется к подвесам вдоль несущего профиля (тот же шаг,
  * см. calcP112FrameGeometry). Для mode='knauf' — см. FrameLayoutMode ниже.
+ *
+ * ⚠️ 05.09.2026, ИСПРАВЛЕНИЕ (проверка на объекте, потолки): до этой правки
+ * подвесы снэпались к позициям несущего профиля (bearingPositions) — то есть
+ * физически совпадали с точками соединителя (двухуровневый краб). На объекте
+ * это неверно: подвес НЕ привязан к пересечению с несущим, у него
+ * СОБСТВЕННАЯ сетка позиций вдоль СВОЕГО пробега (основной профиль физически
+ * идёт вдоль B, см. mainLengthEachMm), с шагом a, независимая от того, где
+ * именно несущий его пересекает. Теперь hangerPositions — это
+ * calcFrameRowPositions(B, stepA, ...) (тем же алгоритмом отступа от стены,
+ * что и у рядов основного, profileKind='main', просто по другой оси), а не
+ * подмножество bearingPositions. Ставится на КАЖДОМ ряду основного профиля
+ * (mainPositions) — цикл (mainPos × hangerPos) не менялся, менялась только
+ * сама формула hangerPositions. То же исправлено в calcP113Frame.ts,
+ * ceilingGridGeometry.ts (2D/3D-отрисовка) и calcPolygonP112Frame.ts/
+ * calcPolygonP113Frame.ts (произвольный контур) — снэп к точкам пересечения
+ * был системной ошибкой, продублированной во всех пяти местах.
+ * snapHangerPositionsToAxis() больше НЕ используется для этой цели —
+ * оставлена в файле как есть на случай другого применения, но новый код её
+ * не вызывает.
  */
 
 import type { CeilingLoadClass, CeilingMountDirection, CeilingStep } from '../data/ceilingData'
@@ -618,10 +637,10 @@ export interface P112FrameGeometry {
   /** Число подвесов на одном основном профиле. */
   hangersPerMain: number
   hangersTotal: number
-  /** Позиции подвесов вдоль B, мм — ПОДМНОЖЕСТВО bearingPositions (подвес
-   *  крепится к основному профилю строго в точке пересечения с несущим,
-   *  см. snapHangerPositionsToAxis). Одни и те же для каждого ряда
-   *  основного профиля. */
+  /** Позиции подвесов вдоль B, мм — собственная сетка с шагом a
+   *  (calcFrameRowPositions), НЕ подмножество bearingPositions (см.
+   *  исправление 05.09.2026 в шапке файла). Одни и те же для каждого
+   *  ряда основного профиля. */
   hangerPositions: number[]
   /** Соединитель двухуровневый — по пересечениям (bearingCount × mainCount). */
   connectorsTotal: number
@@ -770,15 +789,19 @@ export function calcP112FrameGeometry(
   const mainLengthEachMm = B
   const mainTotalLm = (mainCount * mainLengthEachMm) / 1000
 
-  // 12.07.2026: подвес физически крепится к ОСНОВНОМУ профилю (см.
-  // исправление в шапке файла — было наоборот) — берём ТЕ ЖЕ bearingPositions
-  // как ось снэпа (это точки пересечения вдоль пробега основного профиля),
-  // не отдельную сетку. stepA здесь — это МАКСИМАЛЬНО допустимое расстояние
-  // между подвесами по таблице (не обязательный шаг), не задан явно -> = stepB
-  // (старое поведение 'user': на объекте это часто одно и то же расстояние
-  // по факту).
+  // 05.09.2026 (репорт пользователя, объект): подвесы точь-в-точь совпадали
+  // с точками соединителей (двухуровневый краб) — на объекте это неверно,
+  // подвес не привязан к пересечению с несущим, у него собственный шаг a
+  // вдоль СВОЕГО пробега (основной профиль физически идёт вдоль B, см.
+  // mainLengthEachMm выше), независимый от того, где именно несущий его
+  // пересекает. Раньше здесь снэпались bearingPositions (позиции несущего,
+  // тоже вдоль B, но с шагом b) — теперь отдельная сетка вдоль B с шагом a,
+  // тем же алгоритмом отступа от стены, что и у рядов основного (profileKind
+  // 'main'), просто по другой оси (там — поперёк A, здесь — вдоль B).
   const stepA = extra.stepA ?? stepB
-  const hangerPositions = snapHangerPositionsToAxis(bearingPositions, stepA)
+  const hangerPositions = calcFrameRowPositions(
+    B, stepA, { mode: layoutMode, wallOffsetMm: wallOffsetMainMm, profileKind: 'main' },
+  )
   const hangersPerMain = hangerPositions.length
   const hangersTotal = mainCount * hangersPerMain
 
