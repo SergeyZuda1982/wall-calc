@@ -899,6 +899,8 @@ export default function CeilingCalc() {
                     sheetLayout={step === 4 ? (result?.sheetLayout ?? null) : null}
                     bearingPositionsMm={bearingPosYMmUi}
                     sheetStartCorner={form.sheetStartCorner}
+                    layers={form.layers}
+                    thicknessMm={form.thickness}
                   />
                 ) : hasRoom ? (
                   <CeilingCanvas
