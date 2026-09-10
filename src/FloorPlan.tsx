@@ -13,7 +13,7 @@ import { Stage, Layer, Line, Circle, Text, Rect, Group, Shape, Image as KonvaIma
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { useProjectStore } from './store/useProjectStore'
 import { useIsMobile } from './hooks/useIsMobile'
-import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, WorkProgress, WorkStageTemplate, MepDiscipline, CeilingSlope } from './types'
+import type { PlanLine, PlanLineType, PlanLineSpec, PlanView, PlanContour, PlanOpening, LineCategory, WorkStatus, FastenerType, BoardSpec, RoundColumn, RectColumn, Room, WorkProgress, WorkStageTemplate, MepDiscipline, CeilingSlope, SlopePlane } from './types'
 import { DEFAULT_BOARD_SPEC } from './types'
 import { getLineVisual, getContourFill, TAXONOMY, isLiningLayersFixed, parseDoubleFrameSubtype, getDoubleFrameLayerCounts } from './data/constructionTaxonomy'
 import ConstructionSpecSelector from './components/ConstructionSpecSelector'
@@ -45,6 +45,7 @@ import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
 import { roomToCeilingSeed } from './core/roomToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { useZoneDrawStore } from './store/useZoneDrawStore'
+import { useSlopePickStore } from './store/useSlopePickStore'
 import { combineCeilingSeeds } from './core/combineCeilingSeeds'
 import { snapPoint, snapOrtho, getFlushCandidates } from './core/planSnap'
 
@@ -340,14 +341,15 @@ function pointInPolygon(px: number, py: number, pts: { x: number; y: number }[])
 export default function FloorPlan() {
   const setCeilingSeed = useCeilingSeedStore(s => s.setSeed)
   const requestZoneDraw = useZoneDrawStore(s => s.requestDraw)
+  const requestSlopePick = useSlopePickStore(s => s.requestPick)
   const {
     floorPlan, addPlanLine, updatePlanLine, removePlanLine,
     setFloorPlanScale, clearFloorPlan, setFloorPlanDefaultHeight, applyHeightToAllConstructions,
     addContour, addRoom, updateRoom, removeRoom, updateContour,
     setBackgroundImage, updateBackgroundImage,
     levels, activeLevelId, addLevel, duplicateLevel, removeLevel, renameLevel, setLevelElevation, selectLevel,
-    addSlab, addSlabHole, removeSlab, updateSlabOuter,
-    addCeiling, removeCeiling,
+    addSlab, addSlabHole, removeSlab, updateSlabOuter, updateSlab,
+    addCeiling, removeCeiling, updateCeiling,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
     addCeilingSlope, updateCeilingSlope, removeCeilingSlope,
@@ -453,6 +455,12 @@ export default function FloorPlan() {
   const [slopeLabel, setSlopeLabel] = useState('Уклон')
   const [slopeRoomId, setSlopeRoomId] = useState<string>('') // '' = весь план
   const [editingSlopeId, setEditingSlopeId] = useState<string | null>(null)
+  // 07.09.2026 — тот же режим 'slope'/slopePts переиспользуется для наклона
+  // конкретной Плиты/Потолка (Slab.slope/Ceiling.slope), не только для зоны
+  // уклона перегородок выше. Когда задан — saveSlope() пишет не в
+  // useCeilingSlope, а прямо в updateSlab/updateCeiling, и после сохранения
+  // выходит из режима (не остаётся ждать следующую зону).
+  const [slopeEntityTarget, setSlopeEntityTarget] = useState<{ kind: 'slab' | 'ceiling'; id: string } | null>(null)
   const [mepDrawDiameterMm, setMepDrawDiameterMm] = useState('160')  // сечение новой трассы: диаметр (круглый воздуховод/труба) ...
   const [mepDrawWidthMm, setMepDrawWidthMm] = useState('')            // ...ЛИБО прямоугольное сечение (короб) — ширина
   const [mepDrawHeightSectionMm, setMepDrawHeightSectionMm] = useState('') // ...и высота короба (заполняется вместе с шириной)
@@ -884,16 +892,31 @@ export default function FloorPlan() {
     if (m !== 'freeformOpening') setOpeningTargetFreeformId(null)
     if (m !== 'freeform' && m !== 'freeformOpening') setFreeformPts([])
     if (m !== 'mep_route') setMepRoutePts([])
-    if (m !== 'slope') { setSlopePts([]); setEditingSlopeId(null) }
+    if (m !== 'slope') { setSlopePts([]); setEditingSlopeId(null); setSlopeEntityTarget(null) }
     if (isMobile && m === 'draw') setMobileLeftOpen(false)
   }
 
   // Сохранить уклон плиты перекрытия по двум накопленным точкам slopePts
-  // (или обновить editingSlopeId, если открыт на редактирование).
+  // (или обновить editingSlopeId, если открыт на редактирование) — ЛИБО,
+  // если задан slopeEntityTarget (07.09.2026), записать наклон прямо в
+  // конкретную Плиту/Потолок (Slab.slope/Ceiling.slope) вместо зоны уклона.
   function saveSlope() {
     if (slopePts.length !== 2) return
     const h1 = parseFloat(slopeHeight1Mm) || 0
     const h2 = parseFloat(slopeHeight2Mm) || 0
+    if (slopeEntityTarget) {
+      const slope = {
+        x1: slopePts[0].x, y1: slopePts[0].y,
+        x2: slopePts[1].x, y2: slopePts[1].y,
+        height1Mm: h1, height2Mm: h2,
+      }
+      if (slopeEntityTarget.kind === 'slab') updateSlab(slopeEntityTarget.id, { slope })
+      else updateCeiling(slopeEntityTarget.id, { slope })
+      setSlopePts([])
+      setSlopeEntityTarget(null)
+      setMode('select')
+      return
+    }
     const payload = {
       label: slopeLabel || 'Уклон',
       x1: slopePts[0].x, y1: slopePts[0].y,
@@ -908,6 +931,23 @@ export default function FloorPlan() {
     }
     setSlopePts([])
     setEditingSlopeId(null)
+  }
+
+  // Начать/поправить наклон КОНКРЕТНОЙ Плиты или Потолка (кнопка «Задать
+  // уклон» в карточке инспектора, 07.09.2026) — та же механика клика по
+  // канве, что и у зоны уклона выше, но пишет прямо в объект, без label/
+  // roomId и без списка сохранённых зон.
+  function startEntitySlope(kind: 'slab' | 'ceiling', id: string, existing?: SlopePlane) {
+    setMode('slope')
+    setSlopeEntityTarget({ kind, id })
+    setSlopePts(existing ? [{ x: existing.x1, y: existing.y1 }, { x: existing.x2, y: existing.y2 }] : [])
+    setSlopeHeight1Mm(String(existing?.height1Mm ?? 3000))
+    setSlopeHeight2Mm(String(existing?.height2Mm ?? 3000))
+  }
+
+  function removeEntitySlope(kind: 'slab' | 'ceiling', id: string) {
+    if (kind === 'slab') updateSlab(id, { slope: undefined })
+    else updateCeiling(id, { slope: undefined })
   }
 
   function startEditSlope(s: CeilingSlope) {
@@ -1893,7 +1933,7 @@ export default function FloorPlan() {
         setCeilingPts([])
         setFreeformPts([])
         setMepRoutePts([])
-        setSlopePts([]); setEditingSlopeId(null)
+        setSlopePts([]); setEditingSlopeId(null); setSlopeEntityTarget(null)
         setSelectedOpening(null)
         if (mode === 'freeformOpening') { setOpeningTargetFreeformId(null); switchMode('select') }
       }
@@ -2802,6 +2842,43 @@ export default function FloorPlan() {
                           → Потолок
                         </button>
                         <button
+                          onClick={() => {
+                            if (slopeEntityTarget?.kind === 'slab' && slopeEntityTarget.id === sl.id) {
+                              setMode('select') // повторный клик — выйти из режима, не начинать заново
+                            } else {
+                              startEntitySlope('slab', sl.id, sl.slope)
+                            }
+                          }}
+                          title="Задать наклон плиты по двум опорным точкам с известной высотой (монолитное наклонное перекрытие)"
+                          style={{
+                            fontSize: 10, padding: '4px 8px', borderRadius: 3,
+                            border: '1px solid #3a6ea5',
+                            background: slopeEntityTarget?.kind === 'slab' && slopeEntityTarget.id === sl.id ? 'rgba(111,168,220,0.2)' : 'transparent',
+                            color: '#6fa8dc', cursor: 'pointer',
+                          }}>
+                          📐 {sl.slope ? 'уклон' : 'уклон...'}
+                        </button>
+                        <button
+                          onClick={() => requestSlopePick('slab', sl.id)}
+                          title="Указать те же 2 точки прямо на 3D-модели вместо плана"
+                          style={{
+                            fontSize: 10, padding: '4px 6px', borderRadius: 3,
+                            border: '1px dashed #3a6ea5', background: 'transparent', color: '#6fa8dc', cursor: 'pointer',
+                          }}>
+                          в 3D
+                        </button>
+                        {sl.slope && (
+                          <button
+                            onClick={() => removeEntitySlope('slab', sl.id)}
+                            title="Убрать наклон — плита снова станет плоской"
+                            style={{
+                              fontSize: 10, padding: '4px 6px', borderRadius: 3,
+                              border: '1px solid #7a3a3a', background: 'transparent', color: '#d98a8a', cursor: 'pointer',
+                            }}>
+                            ✕📐
+                          </button>
+                        )}
+                        <button
                           onClick={() => setSlabPointsOpenId(prev => prev === sl.id ? null : sl.id)}
                           title="Точный ввод координат вершин контура (x/y в мм)"
                           style={{
@@ -2939,6 +3016,43 @@ export default function FloorPlan() {
                           }}>
                           → Потолок
                         </button>
+                        <button
+                          onClick={() => {
+                            if (slopeEntityTarget?.kind === 'ceiling' && slopeEntityTarget.id === cl.id) {
+                              setMode('select')
+                            } else {
+                              startEntitySlope('ceiling', cl.id, cl.slope)
+                            }
+                          }}
+                          title="Задать наклон потолка по двум опорным точкам с известной высотой (монолитное наклонное перекрытие — без сохранённой раскладки каркаса высота потолка ставится ровно по этим точкам)"
+                          style={{
+                            fontSize: 10, padding: '4px 8px', borderRadius: 3,
+                            border: '1px solid #3a6ea5',
+                            background: slopeEntityTarget?.kind === 'ceiling' && slopeEntityTarget.id === cl.id ? 'rgba(111,168,220,0.2)' : 'transparent',
+                            color: '#6fa8dc', cursor: 'pointer',
+                          }}>
+                          📐 {cl.slope ? 'уклон' : 'уклон...'}
+                        </button>
+                        <button
+                          onClick={() => requestSlopePick('ceiling', cl.id)}
+                          title="Указать те же 2 точки прямо на 3D-модели вместо плана"
+                          style={{
+                            fontSize: 10, padding: '4px 6px', borderRadius: 3,
+                            border: '1px dashed #3a6ea5', background: 'transparent', color: '#6fa8dc', cursor: 'pointer',
+                          }}>
+                          в 3D
+                        </button>
+                        {cl.slope && (
+                          <button
+                            onClick={() => removeEntitySlope('ceiling', cl.id)}
+                            title="Убрать наклон — потолок снова станет плоским"
+                            style={{
+                              fontSize: 10, padding: '4px 6px', borderRadius: 3,
+                              border: '1px solid #7a3a3a', background: 'transparent', color: '#d98a8a', cursor: 'pointer',
+                            }}>
+                            ✕📐
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             if (window.confirm(`Удалить потолок «${cl.label}»?`)) {
@@ -3210,30 +3324,34 @@ export default function FloorPlan() {
           <div>
             <div style={{ ...sectionHeaderStyle, color: '#7fb3d5' }}>Уклон плиты перекрытия</div>
             <button
-              onClick={() => { setSlopePts([]); setEditingSlopeId(null); setMode('slope') }}
+              onClick={() => { setSlopePts([]); setEditingSlopeId(null); setSlopeEntityTarget(null); setMode('slope') }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10,
                 padding: '8px 14px', background: 'transparent', border: 'none',
                 cursor: 'pointer', width: '100%', textAlign: 'left',
-                borderLeft: mode === 'slope' ? '3px solid #7fb3d5' : '3px solid transparent',
-                color: mode === 'slope' ? '#fff' : '#8a9ac8', fontSize: 12,
+                borderLeft: mode === 'slope' && !slopeEntityTarget ? '3px solid #7fb3d5' : '3px solid transparent',
+                color: mode === 'slope' && !slopeEntityTarget ? '#fff' : '#8a9ac8', fontSize: 12,
               }}>
               <span style={{ fontSize: 14, minWidth: 16, textAlign: 'center' }}>⬊</span>
-              <span>{editingSlopeId ? 'Правка уклона' : 'Задать уклон'}</span>
+              <span>{editingSlopeId ? 'Правка уклона' : 'Задать уклон (зона для перегородок)'}</span>
             </button>
             {mode === 'slope' && (
               <div style={{ padding: '2px 14px 10px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
-                Клик — точка 1 (начало ската), клик — точка 2 (конец ската).
-                Высота — реальная высота плиты перекрытия в каждой точке.
-                Направление, перпендикулярное точкам, считается ровным (без
-                бокового уклона). Esc — отменить.
+                {slopeEntityTarget
+                  ? `Наклон ${slopeEntityTarget.kind === 'slab' ? 'плиты' : 'потолка'} — клик по плану: точка 1, точка 2. Esc — отменить.`
+                  : <>Клик — точка 1 (начало ската), клик — точка 2 (конец ската).
+                    Высота — реальная высота плиты перекрытия в каждой точке.
+                    Направление, перпендикулярное точкам, считается ровным (без
+                    бокового уклона). Esc — отменить.</>}
                 {slopePts.length > 0 && <div style={{ marginTop: 2 }}>Точек: {slopePts.length}/2</div>}
                 <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <span style={{ minWidth: 62 }}>Название</span>
-                    <input value={slopeLabel} onChange={e => setSlopeLabel(e.target.value)}
-                      style={{ flex: 1, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
-                  </div>
+                  {!slopeEntityTarget && (
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span style={{ minWidth: 62 }}>Название</span>
+                      <input value={slopeLabel} onChange={e => setSlopeLabel(e.target.value)}
+                        style={{ flex: 1, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     <span style={{ minWidth: 62 }}>Высота 1, мм</span>
                     <input type="number" value={slopeHeight1Mm} onChange={e => setSlopeHeight1Mm(e.target.value)}
@@ -3244,21 +3362,23 @@ export default function FloorPlan() {
                     <input type="number" value={slopeHeight2Mm} onChange={e => setSlopeHeight2Mm(e.target.value)}
                       style={{ width: 80, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
                   </div>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <span style={{ minWidth: 62 }}>Помещение</span>
-                    <select value={slopeRoomId} onChange={e => setSlopeRoomId(e.target.value)}
-                      style={{ flex: 1, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }}>
-                      <option value="">Весь план</option>
-                      {rooms.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
-                    </select>
-                  </div>
+                  {!slopeEntityTarget && (
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span style={{ minWidth: 62 }}>Помещение</span>
+                      <select value={slopeRoomId} onChange={e => setSlopeRoomId(e.target.value)}
+                        style={{ flex: 1, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }}>
+                        <option value="">Весь план</option>
+                        {rooms.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                      </select>
+                    </div>
+                  )}
                   <button onClick={saveSlope} disabled={slopePts.length !== 2}
                     style={{
                       marginTop: 2, fontSize: 11, padding: '5px 10px', borderRadius: 4, border: 'none',
                       background: slopePts.length !== 2 ? '#3a4060' : '#7fb3d5', color: '#0c1220',
                       fontWeight: 600, cursor: slopePts.length !== 2 ? 'default' : 'pointer',
                     }}>
-                    {editingSlopeId ? '✓ Сохранить правки' : '✓ Создать уклон'}
+                    {slopeEntityTarget ? '✓ Применить наклон' : editingSlopeId ? '✓ Сохранить правки' : '✓ Создать уклон'}
                   </button>
                 </div>
               </div>

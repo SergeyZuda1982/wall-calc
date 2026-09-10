@@ -201,6 +201,7 @@ export interface ProjectStore {
   updateCeilingOuter: (id: string, outer: { x: number; y: number }[]) => void
   updateCeiling: (id: string, patch: Partial<Ceiling>) => void
   updateSlabOuter: (id: string, outer: { x: number; y: number }[]) => void
+  updateSlab: (id: string, patch: Partial<import('../types').Slab>) => void
   addSlabHole: (id: string, hole: { x: number; y: number }[]) => void
   removeSlabHole: (id: string, holeIndex: number) => void
   // круглые колонны (штамп шаблона либо ручное создание)
@@ -1008,6 +1009,13 @@ export const useProjectStore = create<ProjectStore>()(
       updateSlabOuter: (id, outer) => {
         set(s => updateActiveFloorPlan(s, fp => ({
           ...fp, slabs: (fp.slabs ?? []).map(sl => sl.id === id ? { ...sl, outer } : sl),
+        })))
+      },
+
+      // 07.09.2026 — симметрично updateCeiling ниже (наклон плиты, Slab.slope).
+      updateSlab: (id, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, slabs: (fp.slabs ?? []).map(sl => sl.id === id ? { ...sl, ...patch } : sl),
         })))
       },
 

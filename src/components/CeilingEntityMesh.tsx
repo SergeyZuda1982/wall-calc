@@ -38,7 +38,7 @@
 import { useMemo } from 'react'
 import * as THREE from 'three'
 import type { CeilingPolygon3D } from '../core/planTo3D'
-import { mmToM } from '../core/planTo3D'
+import { mmToM, slopePlaneCoefficients } from '../core/planTo3D'
 import type { Point2D } from '../core/geometry2d'
 import { polygonSides } from '../core/geometry2d'
 import { resolveFrameParams } from '../core/calcP112Frame'
@@ -119,6 +119,12 @@ export interface CeilingEntityMeshProps {
   /** высота нижней плоскости плиты перекрытия этажа (та же, что и у
    *  остальной сцены, см. Scene3D.tsx — общий потолок этажа), метры */
   ceilingM: number
+  /** НОВОЕ (07.09.2026, наклон, см. Ceiling.slope) — нужен, только чтобы
+   *  перевести ceiling.slope (px/мм) в 3D-метры (slopePlaneCoefficients).
+   *  Необязателен (дефолт — как и везде в проекте, 10мм/px) — превью
+   *  калькулятора (CeilingCalc3DPreview.tsx) наклон не показывает и
+   *  реальный масштаб плана не знает. */
+  scaleMmPx?: number
   opacity?: number
   /** Тот же переключатель "показать сетку каркаса", что и у CeilingGridMesh
    *  (Room) — при true и сохранённой раскладке рисуются профиль/крабы/
@@ -126,7 +132,7 @@ export interface CeilingEntityMeshProps {
   showGrid?: boolean
 }
 
-export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, showGrid = true }: CeilingEntityMeshProps) {
+export default function CeilingEntityMesh({ ceiling, ceilingM, scaleMmPx = 10, opacity = 1, showGrid = true }: CeilingEntityMeshProps) {
   const frame = useFrameResult(ceiling)
   const sheetLayout = useSheetLayoutResult(ceiling)
   const ppShape = useMemo(() => ppProfileShape(), [])
@@ -140,8 +146,23 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
     const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, steps: 1 })
     g.rotateX(-Math.PI / 2)
     g.translate(0, -depth, 0)
+    // Наклон (07.09.2026, Ceiling.slope, тот же приём, что и у Slab в
+    // Scene3D.tsx — плоскость линейна по x,z, добавляется к Y напрямую) —
+    // применяется ТОЛЬКО к плоской плите-заглушке (фолбэк без сохранённой
+    // раскладки каркаса П112/П113); сама раскладка (профиль/крабы/подвесы/
+    // листы) наклон пока не учитывает — см. showDetailed ниже, отдельная,
+    // ещё не начатая задача.
+    if (ceiling.slope) {
+      const { a, b, c } = slopePlaneCoefficients(ceiling.slope, scaleMmPx)
+      const pos = g.attributes.position
+      for (let i = 0; i < pos.count; i++) {
+        pos.setY(i, pos.getY(i) + (a * pos.getX(i) + b * pos.getZ(i) + c))
+      }
+      pos.needsUpdate = true
+      g.computeVertexNormals()
+    }
     return g
-  }, [ceiling.outerM])
+  }, [ceiling, scaleMmPx])
 
   // Локальная (u,v) точка каркаса, мм → мировые координаты сцены, метры.
   function toWorldM(local: Point2D): [x: number, z: number] {
@@ -163,7 +184,7 @@ export default function CeilingEntityMesh({ ceiling, ceilingM, opacity = 1, show
   return (
     <group>
       {!showSheets && (
-        <mesh geometry={plateGeo} position={[0, ceilingM, 0]} receiveShadow castShadow>
+        <mesh geometry={plateGeo} position={[0, ceiling.slope ? 0 : ceilingM, 0]} receiveShadow castShadow>
           <meshStandardMaterial color={PLATE_COLOR} roughness={0.92} metalness={0}
             transparent={opacity < 1} opacity={opacity} />
         </mesh>

@@ -815,6 +815,17 @@ export interface Slab {
   outer: { x: number; y: number }[]      // внешний контур, px (как у линий)
   holes: { x: number; y: number }[][]    // вырезы — ноль или больше замкнутых контуров внутри outer
   label: string                           // "Плита 1", "Плита 2"...
+  /**
+   * НОВОЕ (07.09.2026, монолитный наклонный потолок/пол на объекте) — не
+   * задано = плита плоская на отметке пола этажа (Y=0 относительно
+   * Level.elevationMm, как было раньше, полностью обратная совместимость).
+   * Задано — height1Mm/height2Mm в опорных точках ПОЛНОСТЬЮ переопределяют
+   * высоту плиты (та самая "высота плиты перекрытия" из SlopePlane) —
+   * плоская Y=0 больше не участвует. Тем же полем можно представить и
+   * приподнятую плиту-перекрытие над этажом (не только пол) — просто
+   * height1Mm/height2Mm больше нуля.
+   */
+  slope?: SlopePlane
 }
 
 /**
@@ -849,6 +860,14 @@ export interface Ceiling {
    */
   ceilingSpec?: CeilingSpec
   startWallSideIndex?: number
+  /**
+   * НОВОЕ (07.09.2026, монолитный наклонный потолок на объекте) — не
+   * задано = потолок плоский на стандартной отметке (estimateCeilingMm/
+   * ceilingSpec, как было раньше). Задано — height1Mm/height2Mm в опорных
+   * точках ПОЛНОСТЬЮ переопределяют высоту потолка (см. Slab.slope выше —
+   * та же плоскость, тот же смысл полей).
+   */
+  slope?: SlopePlane
 }
 
 /**
@@ -1023,13 +1042,23 @@ export interface MepRoute {
  * arc-ограничениях, см. PlanLine.sagittaMm), такие линии остаются на
  * плоском heightMm.
  */
-export interface CeilingSlope {
+/**
+ * Минимальная плоскость уклона (07.09.2026, вынесена из CeilingSlope, чтобы
+ * её же переиспользовать для наклона Плиты/Потолка — см. Slab.slope/
+ * Ceiling.slope ниже) — две опорные точки ПЛАНА (px, мировые координаты,
+ * как у линий) с известной высотой в мм. Высота в произвольной точке —
+ * core/ceilingSlope.ts ceilingSlopeHeightAt(), ВЕРТИКАЛЬНАЯ (не перпендикуляр
+ * к плоскости) — та же конвенция, что уже проверена на реальном объекте для
+ * высоты перегородок под наклонным монолитным перекрытием.
+ */
+export interface SlopePlane {
+  x1: number; y1: number; height1Mm: number
+  x2: number; y2: number; height2Mm: number
+}
+
+export interface CeilingSlope extends SlopePlane {
   id: string
   label: string           // "Уклон зала" и т.п.
-  x1: number; y1: number  // опорная точка 1, px (мировые координаты плана)
-  x2: number; y2: number  // опорная точка 2, px
-  height1Mm: number       // высота плиты перекрытия в точке 1, мм
-  height2Mm: number       // высота плиты перекрытия в точке 2, мм
   roomId?: string         // область действия — конкретное помещение; не задано = весь план
 }
 

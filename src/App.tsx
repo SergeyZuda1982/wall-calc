@@ -30,6 +30,7 @@ import TileCalc from './TileCalc'
 import ClosingVolumesReport from './components/ClosingVolumesReport'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { useZoneDrawStore } from './store/useZoneDrawStore'
+import { useSlopePickStore } from './store/useSlopePickStore'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
 import { calcProjectSheetLayout, buildSurfaceInputs } from './core/calcProjectSheetLayout'
@@ -238,6 +239,12 @@ export default function App() {
   useEffect(() => {
     if (zoneDrawRequest) setActiveTab('3d')
   }, [zoneDrawRequest])
+
+  // Запрос "Задать уклон в 3D" (07.09.2026) — та же логика, что и выше.
+  const slopePickRequest = useSlopePickStore(s => s.request)
+  useEffect(() => {
+    if (slopePickRequest) setActiveTab('3d')
+  }, [slopePickRequest])
   const [sheetLayerTab, setSheetLayerTab] = useState<1 | 2>(1)
   const [sheetSideTab, setSheetSideTab] = useState<'A' | 'B'>('A')
   const [showOffcuts, setShowOffcuts] = useState(false)
