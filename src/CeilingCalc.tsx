@@ -1142,6 +1142,62 @@ export default function CeilingCalc() {
                 </div>
               )
             })()}
+            {/* ── Раскрой профиля (прутки 3000мм) — 05.09.2026, запрос пользователя,
+                по аналогии с App.tsx (стены/облицовка). Только прямоугольная
+                геометрия (result.profileCutList), для произвольного контура
+                пока не считается (отдельная задача при необходимости). */}
+            {step === 4 && result?.profileCutList && (() => {
+              const { main, bearing } = result.profileCutList
+              const renderBars = (cl: typeof main, title: string, color: string) => (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#444', marginBottom: 6 }}>
+                    {title} — {cl.totalBars} шт, остаток {cl.totalWaste}мм
+                  </div>
+                  {cl.bars.map((bar, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, color: '#888', minWidth: 60 }}>Прутoк {i + 1}:</span>
+                      <div style={{ display: 'flex', flex: 1, height: 22, border: '1px solid #ccc', borderRadius: 3, overflow: 'hidden' }}>
+                        {bar.pieces.map((p, j) => (
+                          <div key={j} title={p.piece.label}
+                            style={{
+                              width: `${(p.piece.length / 3000) * 100}%`,
+                              background: color, borderRight: '1px solid #bbb',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: 9, color: '#555', overflow: 'hidden', whiteSpace: 'nowrap',
+                            }}>
+                            {p.piece.length >= 200 ? `${p.piece.length}` : ''}
+                          </div>
+                        ))}
+                        {bar.waste > 0 && (
+                          <div style={{
+                            width: `${(bar.waste / 3000) * 100}%`, background: '#f5f5f5',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 9, color: '#aaa',
+                          }}>
+                            {bar.waste >= 200 ? `ост ${bar.waste}` : ''}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+              return (
+                <div style={{ marginTop: 16, padding: '12px 14px', background: '#fafafa', border: '1px solid #e0e0e0', borderRadius: 6 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#333', marginBottom: 4 }}>Раскрой профиля (прутки 3000мм)</div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, marginBottom: 8 }}>
+                    {[['Основной', '#e8f4ff'], ['Несущий', '#f0ffe8'], ['Остаток', '#f5f5f5']].map(([label, color]) => (
+                      <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ width: 12, height: 12, background: color, border: '1px solid #ccc', borderRadius: 2, display: 'inline-block' }} />
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                  {renderBars(main, 'Основной ПП 60×27', '#e8f4ff')}
+                  {renderBars(bearing, 'Несущий ПП 60×27', '#f0ffe8')}
+                </div>
+              )
+            })()}
             {step === 4 && hasPolygon && result?.polygonSheetLayout && (
               <div style={{ fontSize: 11, color: C.muted, padding: '0 2px' }}>
                 «Кусков» может быть больше, чем листов купить — один физический лист иногда делится на
