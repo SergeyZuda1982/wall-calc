@@ -17,7 +17,7 @@
  * линии p1→p2, экстраполируется на весь охват (не только между p1 и p2).
  */
 
-import type { CeilingSlope, SlopePlane, EdgeProfile, PlanLine, Room } from '../types'
+import type { CeilingSlope, SlopePlane, EdgeProfile, PlanLine, Room, Slab, Ceiling } from '../types'
 import { pointInPolygon, type Point2D } from './geometry2d'
 import { extractContourPoints } from './contour'
 
@@ -109,7 +109,7 @@ export function ceilingSlopeHeightAtPoint(
  * своей длины — поэтому двух точек (начало/конец) достаточно, это точный
  * результат, а не аппроксимация.
  */
-export function ceilingProfileForLine(line: PlanLine, slope: CeilingSlope | undefined): EdgeProfile | undefined {
+export function ceilingProfileForLine(line: PlanLine, slope: SlopePlane | undefined): EdgeProfile | undefined {
   if (!slope) return undefined
   if (line.customHeight) return undefined // высота зафиксирована пользователем — не до перекрытия, уклон не применяем
   if (line.sagittaMm) return undefined // дуга — известное ограничение, см. заголовок файла
@@ -120,18 +120,72 @@ export function ceilingProfileForLine(line: PlanLine, slope: CeilingSlope | unde
 }
 
 /**
+ * Наклон у реально нарисованной Плиты/Потолка (07.09.2026, Slab.slope/
+ * Ceiling.slope), контур которой(ого) геометрически содержит точку —
+ * фактическая нарисованная геометрия приоритетнее отдельно введённой
+ * зоны «Задать уклон» (см. buildEffectiveCeilingSlopeResolver ниже):
+ * Сергей решил, что если плита/потолок над помещением уже нарисованы —
+ * перегородки должны брать высоту из них, а зона уклона остаётся только
+ * запасным вариантом, пока плита ещё не нарисована. Плита проверяется
+ * раньше потолка (структурная плита перекрытия — то, до чего реально
+ * должна доходить перегородка; подвесной потолок ниже неё на высоту
+ * подвесов и не обязан совпадать).
+ */
+function slopeFromCoveringEntity(point: Point2D, slabs: Slab[], ceilings: Ceiling[]): SlopePlane | undefined {
+  for (const sl of slabs) {
+    if (sl.slope && sl.outer.length >= 3 && pointInPolygon(point, [sl.outer])) return sl.slope
+  }
+  for (const cl of ceilings) {
+    if (cl.slope && cl.outer.length >= 3 && pointInPolygon(point, [cl.outer])) return cl.slope
+  }
+  return undefined
+}
+
+/**
+ * Резолвер уклона для линии, объединяющий ОБА источника (07.09.2026,
+ * приоритет подтверждён Сергеем): сперва — наклон нарисованной Плиты/
+ * Потолка, накрывающей середину линии; если такой нет — старая зона
+ * «Задать уклон» (buildCeilingSlopeResolver). Возвращает SlopePlane
+ * (не обязательно CeilingSlope — у найденного через Плиту/Потолок нет
+ * id/label/roomId, это нормально, ceilingProfileForLine их не требует).
+ */
+export function buildEffectiveCeilingSlopeResolver(
+  allLines: PlanLine[], slabs: Slab[], ceilings: Ceiling[], slopes: CeilingSlope[], rooms: Room[],
+): (line: PlanLine) => SlopePlane | undefined {
+  const zoneResolve = buildCeilingSlopeResolver(allLines, slopes, rooms)
+  return (line: PlanLine) => {
+    const mid: Point2D = { x: (line.x1 + line.x2) / 2, y: (line.y1 + line.y2) / 2 }
+    return slopeFromCoveringEntity(mid, slabs, ceilings) ?? zoneResolve(line)
+  }
+}
+
+/** То же самое (Плита/Потолок → зона уклона), но для произвольной точки — см. ceilingSlopeHeightAtPoint выше (колонны). */
+export function effectiveCeilingSlopeHeightAtPoint(
+  point: Point2D, allLines: PlanLine[], slabs: Slab[], ceilings: Ceiling[], slopes: CeilingSlope[], rooms: Room[],
+): number | undefined {
+  const entitySlope = slopeFromCoveringEntity(point, slabs, ceilings)
+  if (entitySlope) return ceilingSlopeHeightAt(entitySlope, point.x, point.y)
+  return ceilingSlopeHeightAtPoint(point, allLines, slopes, rooms)
+}
+
+/**
  * Удобная пакетная обёртка: line.id → ceilingProfile (только для линий,
  * где уклон реально применим — остальные в карте отсутствуют, вызывающий
  * код должен трактовать отсутствие как "плоская линия", не как ошибку).
+ * 07.09.2026 — принимает slabs/ceilings и использует объединённый
+ * резолвер (см. buildEffectiveCeilingSlopeResolver) вместо только зон.
  */
 export function buildCeilingProfilesByLineId(
   lines: PlanLine[],
+  slabs: Slab[],
+  ceilings: Ceiling[],
   slopes: CeilingSlope[],
   rooms: Room[],
 ): Map<string, EdgeProfile> {
   const map = new Map<string, EdgeProfile>()
-  if (slopes.length === 0) return map
-  const resolve = buildCeilingSlopeResolver(lines, slopes, rooms)
+  const hasAnyEntitySlope = slabs.some(s => s.slope) || ceilings.some(c => c.slope)
+  if (slopes.length === 0 && !hasAnyEntitySlope) return map
+  const resolve = buildEffectiveCeilingSlopeResolver(lines, slabs, ceilings, slopes, rooms)
   for (const line of lines) {
     const slope = resolve(line)
     const profile = ceilingProfileForLine(line, slope)

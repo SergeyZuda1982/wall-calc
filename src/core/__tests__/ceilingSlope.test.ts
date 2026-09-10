@@ -5,8 +5,10 @@ import {
   buildCeilingSlopeResolver,
   buildCeilingProfilesByLineId,
   ceilingSlopeHeightAtPoint,
+  buildEffectiveCeilingSlopeResolver,
+  effectiveCeilingSlopeHeightAtPoint,
 } from '../ceilingSlope'
-import type { CeilingSlope, PlanLine, Room } from '../../types'
+import type { CeilingSlope, PlanLine, Room, Slab, Ceiling } from '../../types'
 
 function line(overrides: Partial<PlanLine> = {}): PlanLine {
   return {
@@ -87,14 +89,14 @@ describe('buildCeilingSlopeResolver / buildCeilingProfilesByLineId', () => {
   it('нет уклонов — резолвер всегда undefined, карта профилей пустая', () => {
     const resolve = buildCeilingSlopeResolver([line()], [], [])
     expect(resolve(line())).toBeUndefined()
-    expect(buildCeilingProfilesByLineId([line()], [], []).size).toBe(0)
+    expect(buildCeilingProfilesByLineId([line()], [], [], [], []).size).toBe(0)
   })
 
   it('глобальный уклон (без roomId) применяется ко всем линиям', () => {
     const l1 = line({ id: 'L1' })
     const l2 = line({ id: 'L2', x1: 0, y1: 500, x2: 1000, y2: 500 })
     const s = globalSlope()
-    const map = buildCeilingProfilesByLineId([l1, l2], [s], [])
+    const map = buildCeilingProfilesByLineId([l1, l2], [], [], [s], [])
     expect(map.get('L1')).toBeDefined()
     expect(map.get('L2')).toBeDefined()
   })
@@ -114,7 +116,7 @@ describe('buildCeilingSlopeResolver / buildCeilingProfilesByLineId', () => {
 
     const roomSlope = globalSlope({ id: 'S_ROOM', roomId: 'ROOM1', height1Mm: 2500, height2Mm: 3000 })
     const allLines = [...perim, inside, outside]
-    const map = buildCeilingProfilesByLineId(allLines, [roomSlope], [room])
+    const map = buildCeilingProfilesByLineId(allLines, [], [], [roomSlope], [room])
 
     expect(map.get('IN')).toBeDefined()
     expect(map.get('OUT')).toBeUndefined()
@@ -174,5 +176,61 @@ describe('ceilingSlopeHeightAtPoint', () => {
     const global = globalSlope({ id: 'S_GLOBAL', x1: 3000, y1: 3000, x2: 4000, y2: 3000, height1Mm: 3000, height2Mm: 3000 })
     const h = ceilingSlopeHeightAtPoint({ x: 3500, y: 3000 }, perim, [roomSlope, global], [room])
     expect(h).toBe(3000)
+  })
+})
+
+describe('buildEffectiveCeilingSlopeResolver / effectiveCeilingSlopeHeightAtPoint (07.09.2026 — наклон Плиты/Потолка приоритетнее зоны «Задать уклон»)', () => {
+  function slab(overrides: Partial<Slab> = {}): Slab {
+    return {
+      id: 'SLAB1', label: 'Плита', outer: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }], holes: [],
+      ...overrides,
+    }
+  }
+  function ceiling(overrides: Partial<Ceiling> = {}): Ceiling {
+    return {
+      id: 'CEIL1', label: 'Потолок', outer: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }],
+      ...overrides,
+    }
+  }
+  const zoneSlope = globalSlope({ height1Mm: 9999, height2Mm: 9999 }) // заведомо другое значение — легко отличить источник
+
+  it('нарисованная Плита с наклоном приоритетнее зоны «Задать уклон», даже если зона тоже покрывает линию', () => {
+    const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
+    const resolve = buildEffectiveCeilingSlopeResolver([line()], [sl], [], [zoneSlope], [])
+    const l = line({ x1: 0, y1: 0, x2: 1000, y2: 0 }) // середина x=500 -> высота Плиты, не 9999
+    expect(ceilingSlopeHeightAt(resolve(l)!, 500, 0)).toBe(3500)
+  })
+
+  it('Плита без наклона (slope не задан) НЕ считается источником — падает на зону уклона', () => {
+    const sl = slab() // без .slope
+    const resolve = buildEffectiveCeilingSlopeResolver([line()], [sl], [], [zoneSlope], [])
+    const l = line({ x1: 0, y1: 0, x2: 1000, y2: 0 })
+    expect(resolve(l)).toBe(zoneSlope)
+  })
+
+  it('нет ни Плиты/Потолка над линией, ни зоны — undefined', () => {
+    const resolve = buildEffectiveCeilingSlopeResolver([line()], [], [], [], [])
+    expect(resolve(line())).toBeUndefined()
+  })
+
+  it('Плита приоритетнее Потолка (структурная плита — то, до чего реально должна доходить перегородка)', () => {
+    const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 3000 } })
+    const cl = ceiling({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 2700, height2Mm: 2700 } })
+    const resolve = buildEffectiveCeilingSlopeResolver([line()], [sl], [cl], [], [])
+    const l = line({ x1: 0, y1: 0, x2: 1000, y2: 0 })
+    expect(ceilingSlopeHeightAt(resolve(l)!, 0, 0)).toBe(3000) // от Плиты, не от Потолка (2700)
+  })
+
+  it('линия ВНЕ контура Плиты — Плита не применяется, работает обычный резолвер по зоне', () => {
+    const sl = slab({ outer: [{ x: 5000, y: 5000 }, { x: 6000, y: 5000 }, { x: 6000, y: 6000 }, { x: 5000, y: 6000 }], slope: { x1: 5000, y1: 5000, x2: 6000, y2: 5000, height1Mm: 1000, height2Mm: 1000 } })
+    const resolve = buildEffectiveCeilingSlopeResolver([line()], [sl], [], [zoneSlope], [])
+    const l = line({ x1: 0, y1: 0, x2: 1000, y2: 0 }) // далеко от Плиты (5000..6000)
+    expect(resolve(l)).toBe(zoneSlope)
+  })
+
+  it('effectiveCeilingSlopeHeightAtPoint — та же приоритезация для точки (колонны)', () => {
+    const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
+    const h = effectiveCeilingSlopeHeightAtPoint({ x: 500, y: 500 }, [], [sl], [], [zoneSlope], [])
+    expect(h).toBe(3500)
   })
 })

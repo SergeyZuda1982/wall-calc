@@ -20,6 +20,8 @@ export default function ClosingVolumesReport() {
     lines: floorPlan.lines,
     roundColumns: floorPlan.roundColumns,
     rectColumns: floorPlan.rectColumns,
+    slabs: floorPlan.slabs,
+    ceilings: floorPlan.ceilings,
     ceilingSlopes: floorPlan.ceilingSlopes,
     rooms: floorPlan.rooms,
     defaultHeightMm: floorPlan.defaultHeightMm,
