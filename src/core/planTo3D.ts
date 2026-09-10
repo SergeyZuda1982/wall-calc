@@ -27,7 +27,7 @@
  *   было от чего повесить ригель
  */
 
-import type { PlanLine, PlanLineType, Room, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure } from '../types'
+import type { PlanLine, PlanLineType, Room, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, SlopePlane } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 import { isLineBuiltForRender } from './lineProgress'
@@ -434,6 +434,10 @@ export interface SlabPolygon3D {
   outer: { x: number; z: number }[]
   /** вырезы (лестницы/шахты) в метрах — ноль или больше замкнутых контуров */
   holes: { x: number; z: number }[][]
+  /** НОВОЕ (07.09.2026) — не пересчитан в метры здесь (нужен scaleMmPx ещё
+   *  раз в момент применения, см. slopePlaneCoefficients), передаётся как
+   *  есть из Slab.slope. */
+  slope?: SlopePlane
 }
 
 /**
@@ -450,7 +454,35 @@ export function slabsToPolygons3D(slabs: Slab[], scaleMmPx: number): SlabPolygon
       id: sl.id,
       outer: toM(sl.outer),
       holes: sl.holes.filter(h => h.length >= 3).map(toM),
+      slope: sl.slope,
     }))
+}
+
+/**
+ * Линейные коэффициенты плоскости уклона (07.09.2026, наклонная Плита/
+ * Потолок, см. Slab.slope/Ceiling.slope в types/index.ts) в МЕТРАХ 3D-сцены
+ * (level-local, БЕЗ elevationMm/visualScale — как и у WallFaceFrame выше):
+ * heightM(worldX, worldZ) = a*worldX + b*worldZ + c — та же плоскость, что
+ * даёт ceilingSlopeHeightAt() в мм на плане (core/ceilingSlope.ts),
+ * пересчитанная в линейную форму, потому что в 3D высоту нужно добавлять
+ * на КАЖДУЮ вершину уже построенной геометрии (плоскость линейна по
+ * определению — считать ceilingSlopeHeightAt() в цикле по вершинам дало бы
+ * тот же результат, но эта форма не пересчитывает проекцию на каждой
+ * вершине заново).
+ */
+export function slopePlaneCoefficients(slope: SlopePlane, scaleMmPx: number): { a: number; b: number; c: number } {
+  const x1 = pxToM(slope.x1, scaleMmPx), z1 = pxToM(slope.y1, scaleMmPx)
+  const x2 = pxToM(slope.x2, scaleMmPx), z2 = pxToM(slope.y2, scaleMmPx)
+  const dx = x2 - x1, dz = z2 - z1
+  const lenSq = dx * dx + dz * dz
+  const h1 = mmToM(slope.height1Mm), h2 = mmToM(slope.height2Mm)
+  if (lenSq === 0) return { a: 0, b: 0, c: h1 } // вырожденный случай — совпадающие точки, вся плита на height1Mm
+  const k = (h2 - h1) / lenSq
+  return {
+    a: dx * k,
+    b: dz * k,
+    c: h1 - (x1 * dx + z1 * dz) * k,
+  }
 }
 
 export interface CeilingPolygon3D {
@@ -467,6 +499,8 @@ export interface CeilingPolygon3D {
    *  только плоскость без сетки (как раньше, ceilings вообще не рисовались). */
   ceilingSpec?: Ceiling['ceilingSpec']
   startWallSideIndex?: number
+  /** НОВОЕ (07.09.2026) — см. SlabPolygon3D.slope выше, тот же смысл. */
+  slope?: SlopePlane
 }
 
 /**
@@ -485,6 +519,7 @@ export function ceilingsToPolygons3D(ceilings: Ceiling[], scaleMmPx: number): Ce
       outerMm: cl.outer.map(p => ({ x: p.x * scaleMmPx, y: p.y * scaleMmPx })),
       ceilingSpec: cl.ceilingSpec,
       startWallSideIndex: cl.startWallSideIndex,
+      slope: cl.slope,
     }))
 }
 export interface RoomPolygon3D {

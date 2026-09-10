@@ -4,7 +4,9 @@ import {
   roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM, mToMm,
   freeformStructuresToPrisms3D, wallMaterialKindOf, wallStudPositionsMm,
   wallFaceFrame, worldToFaceMm, faceMmToWorld,
+  slopePlaneCoefficients,
 } from '../planTo3D'
+import { ceilingSlopeHeightAt } from '../ceilingSlope'
 import type { PlanLine, Room, Slab, Ceiling, RoundColumn, RectColumn, PlanOpening, FreeformStructure } from '../../types'
 
 function baseLine(overrides: Partial<PlanLine>): PlanLine {
@@ -952,5 +954,34 @@ describe('wallFaceFrame / worldToFaceMm / faceMmToWorld (07.09.2026 — разв
   it('mToMm — обратная функция к mmToM', () => {
     expect(mToMm(mmToM(1234))).toBeCloseTo(1234, 9)
     expect(mToMm(1.5)).toBe(1500)
+  })
+})
+
+describe('slopePlaneCoefficients (07.09.2026 — наклон Плиты/Потолка в 3D)', () => {
+  it('вырожденный случай (совпадающие опорные точки) — плоская высота height1Mm, a=b=0', () => {
+    const { a, b, c } = slopePlaneCoefficients({ x1: 100, y1: 100, x2: 100, y2: 100, height1Mm: 3200, height2Mm: 4500 }, 10)
+    expect(a).toBe(0); expect(b).toBe(0)
+    expect(c).toBeCloseTo(mmToM(3200), 9)
+  })
+
+  it('совпадает с ceilingSlopeHeightAt() (core/ceilingSlope.ts) в опорных и промежуточных точках', () => {
+    const slope = { x1: 0, y1: 0, x2: 640, y2: 0, height1Mm: 4500, height2Mm: 5200 } // 6400мм при 10мм/px
+    const scaleMmPx = 10
+    const { a, b, c } = slopePlaneCoefficients(slope, scaleMmPx)
+    for (const [xPx, yPx] of [[0, 0], [640, 0], [320, 0], [320, 500], [-100, 200]]) {
+      const expectedMm = ceilingSlopeHeightAt(slope, xPx, yPx)
+      const xM = pxToM(xPx, scaleMmPx), zM = pxToM(yPx, scaleMmPx)
+      const gotMm = mToMm(a * xM + b * zM + c)
+      expect(gotMm).toBeCloseTo(expectedMm, 6)
+    }
+  })
+
+  it('плоскость постоянна вдоль направления, ПЕРПЕНДИКУЛЯРНОГО p1→p2 (наклон только вдоль линии)', () => {
+    const slope = { x1: 0, y1: 0, x2: 500, y2: 0, height1Mm: 3000, height2Mm: 3000 + 500 } // наклон строго по X
+    const { a, b, c } = slopePlaneCoefficients(slope, 10)
+    // Вдоль Z (перпендикулярно направлению уклона) высота не должна меняться
+    const h1 = a * 10 + b * 0 + c
+    const h2 = a * 10 + b * 5 + c
+    expect(h2).toBeCloseTo(h1, 9)
   })
 })

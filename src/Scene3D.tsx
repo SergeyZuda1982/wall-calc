@@ -22,9 +22,10 @@ import { OrbitControls, Grid, FlyControls, Html, Line, Sphere } from '@react-thr
 import * as THREE from 'three'
 import { useProjectStore, type SelectedEntity } from './store/useProjectStore'
 import {
-  wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM,
+  wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM, mToMm,
   freeformStructuresToPrisms3D, wallStudPositionsMm,
   wallToBox3D, wallFaceFrame, worldToFaceMm,
+  slopePlaneCoefficients,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame,
 } from './core/planTo3D'
@@ -38,6 +39,7 @@ import { finishSidesOf, finishMaterialCategoryOf, finishTemplateContextOf, resol
 import { applyTemplate, templatesForContext, withDrawnZone } from './core/workProgress'
 import { BUILTIN_WORK_STAGE_TEMPLATES } from './data/workStageTemplates'
 import { useZoneDrawStore } from './store/useZoneDrawStore'
+import { useSlopePickStore } from './store/useSlopePickStore'
 import { getWallTexture, tintOverTexture } from './textures3D'
 import { resolveWallProfileType } from './core/planLineToWallInput'
 import { parseDoubleFrameSubtype } from './data/constructionTaxonomy'
@@ -327,7 +329,7 @@ function SlabOrColumn({ room, ceilingMm, skipFloor, opacity = 1 }: { room: RoomP
  * низ и станет визуальным "потолком" этого этажа само собой, раз обе
  * сцены теперь показываются вместе (см. LevelGroup/Scene3D).
  */
-function HandDrawnSlabMesh({ slab, opacity = 1 }: { slab: SlabPolygon3D; opacity?: number }) {
+function HandDrawnSlabMesh({ slab, scaleMmPx, opacity = 1 }: { slab: SlabPolygon3D; scaleMmPx: number; opacity?: number }) {
   const bbox = useMemo(() => {
     if (slab.outer.length === 0) return { w: CONCRETE_DEFAULT_TILE_M, d: CONCRETE_DEFAULT_TILE_M }
     const xs = slab.outer.map(p => p.x), zs = slab.outer.map(p => p.z)
@@ -344,8 +346,25 @@ function HandDrawnSlabMesh({ slab, opacity = 1 }: { slab: SlabPolygon3D; opacity
     const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, steps: 1 })
     g.rotateX(-Math.PI / 2)
     g.translate(0, -depth, 0)
+    // Наклон (07.09.2026, Slab.slope) — плоскость линейна по x,z (см.
+    // slopePlaneCoefficients в core/planTo3D.ts), поэтому её можно просто
+    // ДОБАВИТЬ к Y каждой вершины уже построенной геометрии — после
+    // rotateX+translate выше вершина.x/вершина.z совпадают с
+    // slab.outer[i].x/.z без изменений (тот же level-local мировой кадр),
+    // так что слагаемое a*x+b*z+c корректно везде: и на верхней, и на
+    // нижней грани, и на боковых стенках извлечения — вся плита сдвигается
+    // как единое целое по вертикали в каждой (x,z)-колонке.
+    if (slab.slope) {
+      const { a, b, c } = slopePlaneCoefficients(slab.slope, scaleMmPx)
+      const pos = g.attributes.position
+      for (let i = 0; i < pos.count; i++) {
+        pos.setY(i, pos.getY(i) + (a * pos.getX(i) + b * pos.getZ(i) + c))
+      }
+      pos.needsUpdate = true
+      g.computeVertexNormals()
+    }
     return g
-  }, [slab])
+  }, [slab, scaleMmPx])
 
   return (
     <mesh geometry={geo} receiveShadow>
@@ -911,12 +930,13 @@ function LevelGroup({
           />
         )
       })}
-      {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} opacity={opacity} />)}
+      {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} scaleMmPx={scaleMmPx} opacity={opacity} />)}
       {ceilingPolygons.map(cl => (
         <CeilingEntityMesh
           key={`ceiling-${cl.id}`}
           ceiling={cl}
           ceilingM={mmToM(ceilingMm)}
+          scaleMmPx={scaleMmPx}
           opacity={opacity}
           showGrid={showCeilingGrid && !dimmed}
         />
@@ -1309,6 +1329,68 @@ export default function Scene3D() {
     return templatesForContext(allWorkStageTemplates, finishTemplateContextOf(category))
   }, [zoneDraw, levels, allWorkStageTemplates])
 
+  // Наклон Плиты/Потолка, задаваемый прямо в 3D (07.09.2026) — запрос из
+  // FloorPlan.tsx (кнопка «в 3D» рядом с плановым инструментом уклона) через
+  // useSlopePickStore. В отличие от рисования зон отделки выше, камера НЕ
+  // фиксируется (плита и так обычно видна целиком без специального
+  // ракурса) — просто 2 клика по самой плите/потолку дают опорные точки,
+  // высоты вводятся тут же в панели.
+  const slopePickRequest = useSlopePickStore(s => s.request)
+  const clearSlopePickRequest = useSlopePickStore(s => s.clearRequest)
+  const slopePickNonceRef = useRef(0)
+  const [slopePick, setSlopePick] = useState<{
+    kind: 'slab' | 'ceiling'
+    id: string
+    scaleMmPx: number
+    points: THREE.Vector3[] // мировые координаты клика, максимум 2
+  } | null>(null)
+  const [slopeH1, setSlopeH1] = useState('3000')
+  const [slopeH2, setSlopeH2] = useState('3000')
+  const updateSlab = useProjectStore(s => s.updateSlab)
+  const updateCeiling = useProjectStore(s => s.updateCeiling)
+
+  useEffect(() => {
+    if (!slopePickRequest || slopePickRequest.nonce === slopePickNonceRef.current) return
+    slopePickNonceRef.current = slopePickRequest.nonce
+    let scaleMmPx = 10
+    let existing: import('./types').SlopePlane | undefined
+    for (const lv of levels) {
+      const arr = slopePickRequest.kind === 'slab' ? lv.floorPlan.slabs : lv.floorPlan.ceilings
+      const found = (arr ?? []).find(x => x.id === slopePickRequest.id)
+      if (found) { scaleMmPx = lv.floorPlan.scaleMmPerPx ?? 10; existing = found.slope; break }
+    }
+    setSlopePick({ kind: slopePickRequest.kind, id: slopePickRequest.id, scaleMmPx, points: [] })
+    setSlopeH1(String(existing?.height1Mm ?? 3000))
+    setSlopeH2(String(existing?.height2Mm ?? 3000))
+  }, [slopePickRequest, levels])
+
+  function handleSlopePickClick(e: ThreeEvent<MouseEvent>) {
+    if (!slopePick || slopePick.points.length >= 2) return
+    e.stopPropagation()
+    const point = e.point.clone()
+    setSlopePick(prev => (prev ? { ...prev, points: [...prev.points, point] } : prev))
+  }
+
+  function cancelSlopePick() {
+    setSlopePick(null)
+    clearSlopePickRequest()
+  }
+
+  function applySlopePick() {
+    if (!slopePick || slopePick.points.length !== 2) return
+    const h1 = parseFloat(slopeH1) || 0
+    const h2 = parseFloat(slopeH2) || 0
+    const toPx = (p: THREE.Vector3) => ({
+      x: mToMm(p.x / visualScale) / slopePick.scaleMmPx,
+      y: mToMm(p.z / visualScale) / slopePick.scaleMmPx,
+    })
+    const p1 = toPx(slopePick.points[0]), p2 = toPx(slopePick.points[1])
+    const slope = { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, height1Mm: h1, height2Mm: h2 }
+    if (slopePick.kind === 'slab') updateSlab(slopePick.id, { slope })
+    else updateCeiling(slopePick.id, { slope })
+    cancelSlopePick()
+  }
+
   // Читаем текущую камеру/цель через controlsRef.current.object — OrbitControls
   // (three-stdlib) хранит камеру, к которой привязан, в .object. Работает
   // только в режиме orbit (во fly controlsRef не заполняется — см. Canvas
@@ -1680,6 +1762,52 @@ export default function Scene3D() {
             </div>
           </div>
         )}
+        {slopePick && (
+          <div style={{
+            padding: '10px 12px', fontSize: 12, color: '#7a5200', background: '#fff8e1',
+            border: '1px solid #e0c26a', borderRadius: 6, maxWidth: 260, lineHeight: 1.4,
+            display: 'flex', flexDirection: 'column', gap: 8,
+          }}>
+            <div>
+              <strong>Наклон {slopePick.kind === 'slab' ? 'плиты' : 'потолка'}</strong> — кликните
+              2 опорные точки прямо на модели{slopePick.points.length > 0 && ` (точек: ${slopePick.points.length}/2)`}.
+            </div>
+            {slopePick.points.length === 2 && (
+              <>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ minWidth: 70 }}>Высота 1, мм</span>
+                  <input type="number" value={slopeH1} onChange={e => setSlopeH1(e.target.value)}
+                    style={{ width: 80, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #e0c26a' }} />
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ minWidth: 70 }}>Высота 2, мм</span>
+                  <input type="number" value={slopeH2} onChange={e => setSlopeH2(e.target.value)}
+                    style={{ width: 80, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #e0c26a' }} />
+                </div>
+              </>
+            )}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={cancelSlopePick}
+                style={{
+                  flex: 1, padding: '5px 8px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  border: '1px solid #999', borderRadius: 5, background: '#fff', color: '#666',
+                }}>
+                Отмена
+              </button>
+              {slopePick.points.length === 2 && (
+                <button
+                  onClick={applySlopePick}
+                  style={{
+                    flex: 1, padding: '5px 8px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    border: '1px solid #b8860b', borderRadius: 5, background: '#b8860b', color: '#fff',
+                  }}>
+                  Применить
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {cameraMode === 'fly' && (
           <div style={{
             padding: '6px 10px', fontSize: 12, color: '#444', background: '#fffbe6',
@@ -1702,11 +1830,11 @@ export default function Scene3D() {
       <Canvas
         shadows
         camera={{ position: [10, 10, 10], fov: 50 }}
-        onPointerMissed={() => { if (!measuring && !zoneDraw) setSelectedEntity(null) }}
+        onPointerMissed={() => { if (!measuring && !zoneDraw && !slopePick) setSelectedEntity(null) }}
       >
         <ambientLight intensity={0.6} />
         <directionalLight position={[8, 12, 6]} intensity={1} castShadow />
-        <group scale={[visualScale, visualScale, visualScale]} onClick={e => { handleMeasureClick(e); handleZoneDrawClick(e) }}>
+        <group scale={[visualScale, visualScale, visualScale]} onClick={e => { handleMeasureClick(e); handleZoneDrawClick(e); handleSlopePickClick(e) }}>
           <Grid args={[100, 100]} cellColor="#c9ccd6" sectionColor="#9aa0b0" fadeDistance={40} position={[0, -0.001, 0]} />
           {levels.map(lv => (
             <LevelGroup
@@ -1726,6 +1854,7 @@ export default function Scene3D() {
         </group>
         <MeasureOverlay points={measurePoints} visualScale={visualScale} />
         <ZoneDrawOverlay points={zoneDraw?.points ?? []} />
+        <ZoneDrawOverlay points={slopePick?.points ?? []} />
         <SectionPlaneController
           horizontalEnabled={horizontalSectionEnabled}
           horizontalM={effectiveHorizontalM}

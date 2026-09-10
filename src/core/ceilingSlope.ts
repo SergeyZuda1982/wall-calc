@@ -17,18 +17,22 @@
  * линии p1→p2, экстраполируется на весь охват (не только между p1 и p2).
  */
 
-import type { CeilingSlope, EdgeProfile, PlanLine, Room } from '../types'
+import type { CeilingSlope, SlopePlane, EdgeProfile, PlanLine, Room } from '../types'
 import { pointInPolygon, type Point2D } from './geometry2d'
 import { extractContourPoints } from './contour'
 
 /**
- * Высота плоскости уклона в произвольной точке (x,y), мм.
+ * Высота плоскости уклона в произвольной точке (x,y), мм. Принимает
+ * минимальный SlopePlane (07.09.2026 — тот же расчёт переиспользуется для
+ * наклона Плиты/Потолка, см. types/index.ts Slab.slope/Ceiling.slope, и
+ * core/planTo3D.ts slopePlaneCoefficients для 3D-развёртки той же плоскости),
+ * CeilingSlope (id/label/roomId) подходит сюда же — она расширяет SlopePlane.
  * t — проекция (p−p1) на направление (p2−p1), НЕ клампится в [0,1]:
  * плоскость продолжается за пределы отрезка p1-p2 (иначе точки за
  * пределами отрезка остались бы без определённой высоты).
  * Вырожденный случай (p1 совпадает с p2) — возвращает height1Mm.
  */
-export function ceilingSlopeHeightAt(slope: CeilingSlope, x: number, y: number): number {
+export function ceilingSlopeHeightAt(slope: SlopePlane, x: number, y: number): number {
   const dx = slope.x2 - slope.x1
   const dy = slope.y2 - slope.y1
   const lenSq = dx * dx + dy * dy
