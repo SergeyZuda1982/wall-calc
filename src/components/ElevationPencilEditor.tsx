@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Stage, Layer, Line, Circle, Text } from 'react-konva'
+import type Konva from 'konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import type { ProfilePoint, EdgeProfile } from '../types'
 import { decomposeElevationPerimeter } from '../core/profileGeometry'
@@ -76,6 +77,16 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   const [typedY, setTypedY] = useState('')
   const [orthoSnap, setOrthoSnap] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Панорамирование средней кнопкой мыши (СКМ) — тот же принцип, что у
+  // карандаша Плиты на плане в FloorPlan.tsx, только тут двигаем не
+  // Konva Stage-transform, а свою mm-based систему координат (ViewFrame).
+  // panStartRef хранит пиксель начала драга + "мировой" x0/y0/span кадра
+  // НА МОМЕНТ начала драга (если кадра ещё не было — до первой точки —
+  // синтезируем эквивалентный кадр из текущего letterboxed view, чтобы
+  // картинка не прыгала в момент начала панорамирования).
+  const panStartRef = useRef<{ px: number; py: number; x0: number; y0: number; span: number } | null>(null)
+  const [isPanning, setIsPanning] = useState(false)
+  const stageRef = useRef<Konva.Stage>(null)
 
   const plotW = Math.max(CANVAS_W - PAD * 2, 10)
   const plotH = CANVAS_H - PAD_TOP - PAD_BOTTOM
@@ -184,8 +195,48 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   function handleMove(e: KonvaEventObject<MouseEvent | TouchEvent>) {
     const pos = e.target.getStage()?.getPointerPosition()
     if (!pos) return
+    if (panStartRef.current) {
+      const anchor = panStartRef.current
+      const dpx = pos.x - anchor.px, dpy = pos.y - anchor.py
+      // см. вывод знаков в handleStageMouseDown: мышь вправо/вниз двигает
+      // содержимое кадра вправо/вниз вслед за курсором (обычный grab-pan)
+      setFrame({ x0: anchor.x0 - dpx * view.scale, y0: anchor.y0 + dpy * view.scale, span: anchor.span })
+      return
+    }
     setCursorMm({ x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) })
   }
+
+  // ── Начало панорамирования средней кнопкой мыши ─────────────────────────
+  function handleStageMouseDown(e: KonvaEventObject<MouseEvent>) {
+    if (e.evt.button !== 1) return
+    e.evt.preventDefault() // гасим системный автоскролл браузера по СКМ
+    const pos = e.target.getStage()?.getPointerPosition()
+    if (!pos) return
+    // Синтезируем "эквивалентный" кадр из текущего view (важно ДО первой
+    // точки, когда реального frame ещё нет и видна letterboxed рамка
+    // DEFAULT_W_MM×DEFAULT_H_MM) — тот же приём, что уже у зума колесом
+    // (handleWheel), чтобы точка под курсором никуда не прыгнула в момент
+    // начала драга.
+    const worldX = pxToX(pos.x), worldY = pxToY(pos.y)
+    const x0 = worldX - view.scale * (pos.x - PAD)
+    const y0 = worldY - view.scale * (PAD_TOP + plotH - pos.y)
+    const span = frame ? frame.span : view.scale * plotW
+    panStartRef.current = { px: pos.x, py: pos.y, x0, y0, span }
+    setIsPanning(true)
+  }
+
+  function endPan() {
+    if (!panStartRef.current) return
+    panStartRef.current = null
+    setIsPanning(false)
+  }
+
+  // Подстраховка: если СКМ отпущена вне канваса, всё равно завершаем драг.
+  useEffect(() => {
+    if (!isPanning) return
+    window.addEventListener('mouseup', endPan)
+    return () => window.removeEventListener('mouseup', endPan)
+  }, [isPanning])
 
   function tryClose(): boolean {
     if (pts.length < 3) return false
@@ -322,11 +373,13 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
         <div ref={wrapRef} style={{ flex: '1 1 480px', minWidth: 320 }}
           onContextMenu={e => e.preventDefault()}
           onMouseDown={e => { if (e.button === 2) { e.preventDefault(); removeLast() } }}>
-          <Stage width={CANVAS_W} height={CANVAS_H}
+          <Stage ref={stageRef} width={CANVAS_W} height={CANVAS_H}
             onMouseMove={handleMove} onTouchMove={handleMove}
             onClick={handleStageClick} onTap={handleStageClick}
             onWheel={handleWheel}
-            style={{ background: '#fff', border: '1px solid #eee', borderRadius: 4, cursor: 'crosshair' }}>
+            onMouseDown={handleStageMouseDown} onMouseUp={endPan}
+            style={{ background: '#fff', border: '1px solid #eee', borderRadius: 4,
+              cursor: isPanning ? 'grabbing' : 'crosshair' }}>
             <Layer>
               {gridLines.vs.map(x => (
                 <Line key={`v${x}`} points={[xToPx(x), PAD_TOP, xToPx(x), PAD_TOP + plotH]}
