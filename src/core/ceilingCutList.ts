@@ -30,15 +30,42 @@ function splitIntoBarPieces(totalLen: number, count: number, label: string): Pie
   return pieces
 }
 
+/** Сырые (неупакованные) куски — для проектного пула (calcProjectCutList.ts),
+ *  где куски с разных потолков/стен/облицовок объединяются в один пул на
+ *  раскрой (та же логика, что уже даёт экономию у стен). */
+export function ceilingRawPiecesP112(
+  mainLengthEachMm: number, mainCount: number,
+  bearingLengthEachMm: number, bearingCount: number,
+): { main: Piece[]; bearing: Piece[] } {
+  return {
+    main: splitIntoBarPieces(mainLengthEachMm, mainCount, 'Основной'),
+    bearing: splitIntoBarPieces(bearingLengthEachMm, bearingCount, 'Несущий'),
+  }
+}
+
+export function ceilingRawPiecesP113(
+  mainLengthEachMm: number, mainCount: number,
+  bearingSegmentLengthsMm: number[], bearingRowCount: number,
+): { main: Piece[]; bearing: Piece[] } {
+  const bearingPieces: Piece[] = []
+  for (let r = 0; r < bearingRowCount; r++) {
+    for (const len of bearingSegmentLengthsMm) {
+      bearingPieces.push(...splitIntoBarPieces(len, 1, 'Несущий'))
+    }
+  }
+  return {
+    main: splitIntoBarPieces(mainLengthEachMm, mainCount, 'Основной'),
+    bearing: bearingPieces,
+  }
+}
+
 /** П112: основной и несущий — оба сплошные, одной длины на весь ряд. */
 export function calcCeilingProfileCutListP112(
   mainLengthEachMm: number, mainCount: number,
   bearingLengthEachMm: number, bearingCount: number,
 ): { main: CutListResult; bearing: CutListResult } {
-  return {
-    main: buildCutList(splitIntoBarPieces(mainLengthEachMm, mainCount, 'Основной')),
-    bearing: buildCutList(splitIntoBarPieces(bearingLengthEachMm, bearingCount, 'Несущий')),
-  }
+  const raw = ceilingRawPiecesP112(mainLengthEachMm, mainCount, bearingLengthEachMm, bearingCount)
+  return { main: buildCutList(raw.main), bearing: buildCutList(raw.bearing) }
 }
 
 /** П113: основной — сплошной (как у П112); несущий — короткие вставки
@@ -48,14 +75,6 @@ export function calcCeilingProfileCutListP113(
   mainLengthEachMm: number, mainCount: number,
   bearingSegmentLengthsMm: number[], bearingRowCount: number,
 ): { main: CutListResult; bearing: CutListResult } {
-  const bearingPieces: Piece[] = []
-  for (let r = 0; r < bearingRowCount; r++) {
-    for (const len of bearingSegmentLengthsMm) {
-      bearingPieces.push(...splitIntoBarPieces(len, 1, 'Несущий'))
-    }
-  }
-  return {
-    main: buildCutList(splitIntoBarPieces(mainLengthEachMm, mainCount, 'Основной')),
-    bearing: buildCutList(bearingPieces),
-  }
+  const raw = ceilingRawPiecesP113(mainLengthEachMm, mainCount, bearingSegmentLengthsMm, bearingRowCount)
+  return { main: buildCutList(raw.main), bearing: buildCutList(raw.bearing) }
 }

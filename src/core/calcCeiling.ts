@@ -12,8 +12,8 @@ import {
 } from '../data/ceilingData'
 import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL, type CeilingGapSpec } from './calcP112Frame'
 import { calcP113FrameGeometry } from './calcP113Frame'
-import { calcCeilingProfileCutListP112, calcCeilingProfileCutListP113 } from './ceilingCutList'
-import type { CutListResult } from './cutList'
+import { calcCeilingProfileCutListP112, calcCeilingProfileCutListP113, ceilingRawPiecesP112, ceilingRawPiecesP113 } from './ceilingCutList'
+import type { CutListResult, Piece } from './cutList'
 import { calcPolygonP112Frame, type PolygonP112FrameResult } from './calcPolygonP112Frame'
 import { calcPolygonP113Frame, type PolygonP113FrameResult } from './calcPolygonP113Frame'
 import { calcPolygonSheetLayout, type PolygonSheetLayoutResult } from './calcPolygonSheetLayout'
@@ -97,6 +97,10 @@ export interface CeilingCalcResult {
    *  для произвольного контура и fallback-режима (без размеров помещения) —
    *  null. 05.09.2026, запрос пользователя. */
   profileCutList: { main: CutListResult; bearing: CutListResult } | null
+  /** Сырые (неупакованные) куски профиля — для проектного пула
+   *  (calcProjectCutList.ts), тот же набор, что уже упакован в
+   *  profileCutList выше, просто до раскладки по пруткам. 05.09.2026. */
+  rawProfilePieces: { main: Piece[]; bearing: Piece[] } | null
   /** Предупреждения */
   warnings: string[]
 }
@@ -124,6 +128,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
   const materials: CeilingMaterialItem[] = []
   let polygonFrame: PolygonP112FrameResult | PolygonP113FrameResult | null = null
   let profileCutList: { main: CutListResult; bearing: CutListResult } | null = null
+  let rawProfilePieces: { main: Piece[]; bearing: Piece[] } | null = null
 
   if (type === 'p19') {
     return {
@@ -133,6 +138,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       polygonFrame: null,
       polygonSheetLayout: null,
       profileCutList: null,
+      rawProfilePieces: null,
       warnings: ['П19 (многоуровневый) — расчёт выполняется по индивидуальному проекту'],
     }
   }
@@ -263,6 +269,9 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       profileCutList = calcCeilingProfileCutListP112(
         geo.mainLengthEachMm, geo.mainCount, geo.bearingLengthEachMm, geo.bearingCount,
       )
+      rawProfilePieces = ceilingRawPiecesP112(
+        geo.mainLengthEachMm, geo.mainCount, geo.bearingLengthEachMm, geo.bearingCount,
+      )
       const extendersTotal = geo.bearingExtenders + geo.mainExtenders
       if (extendersTotal > 0) {
         materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotal })
@@ -307,6 +316,9 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       materials.push({ name: 'Профиль ПП 60×27 (основной, сплошной, с подвесами)', unit: 'пог.м', qty: ceil(geo113.mainTotalLm) })
       materials.push({ name: 'Профиль ПП 60×27 (несущий, вставки между рядами основного)', unit: 'пог.м', qty: ceil(geo113.bearingTotalLm) })
       profileCutList = calcCeilingProfileCutListP113(
+        geo113.mainLengthEachMm, geo113.mainCount, geo113.bearingSegmentLengthsMm, geo113.bearingRowCount,
+      )
+      rawProfilePieces = ceilingRawPiecesP113(
         geo113.mainLengthEachMm, geo113.mainCount, geo113.bearingSegmentLengthsMm, geo113.bearingRowCount,
       )
       const extendersTotal113 = geo113.bearingExtenders + geo113.mainExtenders
@@ -478,7 +490,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
     : null
   const sheetLayout = polygonInput ? null : calcCeilingSheetLayout(spec)
 
-  return { spec, areaSqm, perimeterM, materials, sheetLayout, polygonFrame, polygonSheetLayout, profileCutList, warnings }
+  return { spec, areaSqm, perimeterM, materials, sheetLayout, polygonFrame, polygonSheetLayout, profileCutList, rawProfilePieces, warnings }
 }
 
 /** Длина листа для раскроя — из spec, с тем же дефолтом 2500мм, что и

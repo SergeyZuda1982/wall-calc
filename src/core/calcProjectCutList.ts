@@ -1,6 +1,8 @@
 import type { WallEntry, LiningEntry } from '../store/useProjectStore'
+import type { Ceiling } from '../types'
 import { buildCutList } from './cutList'
 import type { Piece, CutListResult } from './cutList'
+import { calcCeiling } from './calcCeiling'
 
 export type ProfilePool =
   | 'pn_50' | 'pn_75' | 'pn_100'
@@ -66,11 +68,29 @@ function liningPieces(l: LiningEntry): Partial<Record<ProfilePool, Piece[]>> {
   }
 }
 
+// ─── Куски из потолка ────────────────────────────────────────────────────────
+
+/** 05.09.2026, запрос пользователя: тот же пул, что и у пп_60x27 из
+ *  облицовки С623 (см. liningPieces выше) — все куски ПП 60×27, откуда бы
+ *  они ни были нужны, делят один пул остатков. Только прямоугольная
+ *  геометрия (см. calcCeiling.ts/ceilingCutList.ts) — потолок без
+ *  сохранённых roomLengthMm/roomWidthMm (fallback-режим) пропускается,
+ *  пула нет для него, как и у панели на одном потолке. */
+function ceilingPieces(c: Ceiling): Partial<Record<ProfilePool, Piece[]>> {
+  if (!c.ceilingSpec) return {}
+  const result = calcCeiling(c.ceilingSpec)
+  if (!result.rawProfilePieces) return {}
+  return {
+    pp_60x27: [...result.rawProfilePieces.main, ...result.rawProfilePieces.bearing],
+  }
+}
+
 // ─── Объединение всех кусков и раскрой ───────────────────────────────────────
 
 export function calcProjectCutList(
   walls: WallEntry[],
-  linings: LiningEntry[]
+  linings: LiningEntry[],
+  ceilings: Ceiling[] = [],
 ): ProjectCutList {
   const allPieces: Partial<Record<ProfilePool, Piece[]>> = {}
 
@@ -83,6 +103,7 @@ export function calcProjectCutList(
 
   for (const w of walls) addPieces(wallPieces(w))
   for (const l of linings) addPieces(liningPieces(l))
+  for (const c of ceilings) addPieces(ceilingPieces(c))
 
   const pools: ProjectCutList['pools'] = {}
   for (const [key, pcs] of Object.entries(allPieces) as [ProfilePool, Piece[]][]) {
