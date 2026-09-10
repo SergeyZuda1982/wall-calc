@@ -12,6 +12,8 @@ import {
 } from '../data/ceilingData'
 import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL, type CeilingGapSpec } from './calcP112Frame'
 import { calcP113FrameGeometry } from './calcP113Frame'
+import { calcCeilingProfileCutListP112, calcCeilingProfileCutListP113 } from './ceilingCutList'
+import type { CutListResult } from './cutList'
 import { calcPolygonP112Frame, type PolygonP112FrameResult } from './calcPolygonP112Frame'
 import { calcPolygonP113Frame, type PolygonP113FrameResult } from './calcPolygonP113Frame'
 import { calcPolygonSheetLayout, type PolygonSheetLayoutResult } from './calcPolygonSheetLayout'
@@ -90,6 +92,11 @@ export interface CeilingCalcResult {
   polygonFrame: PolygonP112FrameResult | PolygonP113FrameResult | null
   /** Раскрой листов по контуру произвольной формы — см. polygonFrame. */
   polygonSheetLayout: PolygonSheetLayoutResult | null
+  /** Раскрой профиля (ПП 60×27) по пруткам 3000мм — остатки, как у
+   *  стен/облицовки. Только прямоугольная геометрия (см. ceilingCutList.ts);
+   *  для произвольного контура и fallback-режима (без размеров помещения) —
+   *  null. 05.09.2026, запрос пользователя. */
+  profileCutList: { main: CutListResult; bearing: CutListResult } | null
   /** Предупреждения */
   warnings: string[]
 }
@@ -116,6 +123,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
   const warnings: string[] = []
   const materials: CeilingMaterialItem[] = []
   let polygonFrame: PolygonP112FrameResult | PolygonP113FrameResult | null = null
+  let profileCutList: { main: CutListResult; bearing: CutListResult } | null = null
 
   if (type === 'p19') {
     return {
@@ -124,6 +132,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       sheetLayout: null,
       polygonFrame: null,
       polygonSheetLayout: null,
+      profileCutList: null,
       warnings: ['П19 (многоуровневый) — расчёт выполняется по индивидуальному проекту'],
     }
   }
@@ -251,6 +260,9 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
 
       materials.push({ name: 'Профиль ПП 60×27 (несущий, нижний уровень, без подвесов)', unit: 'пог.м', qty: ceil(geo.bearingTotalLm) })
       materials.push({ name: 'Профиль ПП 60×27 (основной, верхний уровень, с подвесами)', unit: 'пог.м', qty: ceil(geo.mainTotalLm) })
+      profileCutList = calcCeilingProfileCutListP112(
+        geo.mainLengthEachMm, geo.mainCount, geo.bearingLengthEachMm, geo.bearingCount,
+      )
       const extendersTotal = geo.bearingExtenders + geo.mainExtenders
       if (extendersTotal > 0) {
         materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotal })
@@ -294,6 +306,9 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
 
       materials.push({ name: 'Профиль ПП 60×27 (основной, сплошной, с подвесами)', unit: 'пог.м', qty: ceil(geo113.mainTotalLm) })
       materials.push({ name: 'Профиль ПП 60×27 (несущий, вставки между рядами основного)', unit: 'пог.м', qty: ceil(geo113.bearingTotalLm) })
+      profileCutList = calcCeilingProfileCutListP113(
+        geo113.mainLengthEachMm, geo113.mainCount, geo113.bearingSegmentLengthsMm, geo113.bearingRowCount,
+      )
       const extendersTotal113 = geo113.bearingExtenders + geo113.mainExtenders
       if (extendersTotal113 > 0) {
         materials.push({ name: 'Удлинитель ПП 60×27', unit: 'шт', qty: extendersTotal113 })
@@ -463,7 +478,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
     : null
   const sheetLayout = polygonInput ? null : calcCeilingSheetLayout(spec)
 
-  return { spec, areaSqm, perimeterM, materials, sheetLayout, polygonFrame, polygonSheetLayout, warnings }
+  return { spec, areaSqm, perimeterM, materials, sheetLayout, polygonFrame, polygonSheetLayout, profileCutList, warnings }
 }
 
 /** Длина листа для раскроя — из spec, с тем же дефолтом 2500мм, что и
