@@ -61,7 +61,13 @@
 
 ## В работе (не смержено в main)
 
-(пусто на момент этой записи)
+- `feat/partition-height-from-slab-ceiling` — новая/существующая
+  перегородка по умолчанию берёт высоту (в т.ч. наклонную) из
+  нарисованной Плиты/Потолка над ней, если такая нарисована; если нет —
+  падает на старую зону «Задать уклон» (приоритет подтверждён Сергеем).
+  `buildEffectiveCeilingSlopeResolver`/`effectiveCeilingSlopeHeightAtPoint`
+  в core/ceilingSlope.ts, используются в FloorPlan.tsx (ceilingProfilesById)
+  и closingVolumesReport.ts (перегородки + колонны).
 
 ---
 

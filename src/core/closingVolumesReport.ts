@@ -22,8 +22,8 @@
  * данных без нужды.
  */
 
-import type { PlanLine, RoundColumn, RectColumn, CeilingSlope, Room } from '../types'
-import { ceilingProfileForLine, ceilingSlopeHeightAtPoint, buildCeilingSlopeResolver } from './ceilingSlope'
+import type { PlanLine, RoundColumn, RectColumn, CeilingSlope, Room, Slab, Ceiling } from '../types'
+import { ceilingProfileForLine, effectiveCeilingSlopeHeightAtPoint, buildEffectiveCeilingSlopeResolver } from './ceilingSlope'
 import { areaByPriceTier, columnRunByPriceTier, flatEdgeProfile, sumTierSplits, tierSplitCost, PRICE_TIER_THRESHOLD_MM, type TierSplit } from './laborPriceTiers'
 import { progressPercent, isComplete } from './workProgress'
 
@@ -44,6 +44,10 @@ export interface ClosingVolumesReportInput {
   lines: PlanLine[]
   roundColumns: RoundColumn[]
   rectColumns: RectColumn[]
+  /** Необязательны (07.09.2026) — дефолт [], чтобы не переписывать все места
+   *  вызова/тесты, созданные до появления наклона Плиты/Потолка. */
+  slabs?: Slab[]
+  ceilings?: Ceiling[]
   ceilingSlopes: CeilingSlope[]
   rooms: Room[]
   defaultHeightMm: number
@@ -60,7 +64,7 @@ export interface ClosingVolumesReport {
 
 export function buildClosingVolumesReport(input: ClosingVolumesReportInput): ClosingVolumesReport {
   const T = input.thresholdMm ?? PRICE_TIER_THRESHOLD_MM
-  const resolveSlope = buildCeilingSlopeResolver(input.lines, input.ceilingSlopes, input.rooms)
+  const resolveSlope = buildEffectiveCeilingSlopeResolver(input.lines, input.slabs ?? [], input.ceilings ?? [], input.ceilingSlopes, input.rooms)
   const rows: ClosingVolumeRow[] = []
 
   for (const line of input.lines) {
@@ -80,7 +84,7 @@ export function buildClosingVolumesReport(input: ClosingVolumesReportInput): Clo
   }
 
   for (const col of input.roundColumns) {
-    const heightMm = ceilingSlopeHeightAtPoint({ x: col.cx, y: col.cy }, input.lines, input.ceilingSlopes, input.rooms) ?? input.defaultHeightMm
+    const heightMm = effectiveCeilingSlopeHeightAtPoint({ x: col.cx, y: col.cy }, input.lines, input.slabs ?? [], input.ceilings ?? [], input.ceilingSlopes, input.rooms) ?? input.defaultHeightMm
     const tiers = columnRunByPriceTier(heightMm, T)
     rows.push({
       id: col.id, label: col.label, kind: 'round_column', tiers,
@@ -91,7 +95,7 @@ export function buildClosingVolumesReport(input: ClosingVolumesReportInput): Clo
   }
 
   for (const col of input.rectColumns) {
-    const heightMm = ceilingSlopeHeightAtPoint({ x: col.cx, y: col.cy }, input.lines, input.ceilingSlopes, input.rooms) ?? input.defaultHeightMm
+    const heightMm = effectiveCeilingSlopeHeightAtPoint({ x: col.cx, y: col.cy }, input.lines, input.slabs ?? [], input.ceilings ?? [], input.ceilingSlopes, input.rooms) ?? input.defaultHeightMm
     const tiers = columnRunByPriceTier(heightMm, T)
     rows.push({
       id: col.id, label: col.label, kind: 'rect_column', tiers,

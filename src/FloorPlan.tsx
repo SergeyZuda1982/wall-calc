@@ -2340,12 +2340,15 @@ export default function FloorPlan() {
   // угловой стойки на 90°-примыканиях (короба/ниши/колонны, углы двух
   // перегородок) — см. TASKS.md/KONSPEKT.md "дедупликация угловой
   // стойки". Пересчитывается только при изменении линий/колонн/масштаба.
-  // ── Уклон плиты перекрытия (30.08.2026) — карта line.id → ceilingProfile,
-  // готовый к передаче в переводчики через calcPlanFrameEstimate. Пересчитывается
-  // только когда меняются линии/уклоны/комнаты — не на каждый рендер.
+  // ── Уклон плиты перекрытия (30.08.2026, расширено 07.09.2026 — теперь
+  // приоритетно читает наклон реально нарисованной Плиты/Потолка,
+  // зона «Задать уклон» — запасной источник) — карта line.id →
+  // ceilingProfile, готовый к передаче в переводчики через
+  // calcPlanFrameEstimate. Пересчитывается только когда меняются
+  // линии/плиты/потолки/уклоны/комнаты — не на каждый рендер.
   const ceilingProfilesById = useMemo(
-    () => buildCeilingProfilesByLineId(lines, ceilingSlopes, rooms),
-    [lines, ceilingSlopes, rooms],
+    () => buildCeilingProfilesByLineId(lines, slabs, ceilings, ceilingSlopes, rooms),
+    [lines, slabs, ceilings, ceilingSlopes, rooms],
   )
 
   // ── Смета каркаса ГКЛ (стойки ПС) по всему проекту, с дедупликацией

@@ -149,7 +149,7 @@ describe('calcPlanFrameEstimate — уклон плиты перекрытия (
       id: 'S1', label: 'Уклон', x1: 0, y1: 0, x2: 4000, y2: 0,
       height1Mm: 2600, height2Mm: 3400, // среднее 3000 — совпадает с плоским heightMm выше
     }
-    const profiles = buildCeilingProfilesByLineId(lines, [slope], [])
+    const profiles = buildCeilingProfilesByLineId(lines, [], [], [slope], [])
     const attachments = attachmentsFor(lines)
     const est = calcPlanFrameEstimate(lines, attachments, SCALE, [], profiles)
     // Линейный уклон → площадь трапеции = площади прямоугольника по среднему
@@ -163,7 +163,7 @@ describe('calcPlanFrameEstimate — уклон плиты перекрытия (
       id: 'S1', label: 'Уклон', x1: 0, y1: 0, x2: 4000, y2: 0,
       height1Mm: 2000, height2Mm: 4000,
     }
-    const profiles = buildCeilingProfilesByLineId(lines, [slope], [])
+    const profiles = buildCeilingProfilesByLineId(lines, [], [], [slope], [])
     const attachments = attachmentsFor(lines)
     const flat = calcPlanFrameEstimate(lines, attachments, SCALE)
     const sloped = calcPlanFrameEstimate(lines, attachments, SCALE, [], profiles)
