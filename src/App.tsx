@@ -329,7 +329,11 @@ export default function App() {
     projectName, walls, linings, activeWallId, activeLiningId,
     addWall, updateWall, removeWall, setActiveWall,
     removeLining, setActiveLining,
+    floorPlan,
   } = useProjectStore()
+  // 05.09.2026: потолки для проектного пула остатков профиля (calcProjectCutList)
+  // — тот же источник, что и в FloorPlan.tsx (buildCeilingSurfaceInputs).
+  const ceilings = floorPlan?.ceilings ?? []
 
   // ─── Объекты (localStorage) ───────────────────────────────────────────────
   const { projects, activeProjectId, createProject, deleteProject, selectProject, saveError, clearSaveError } = useProjectStore()
@@ -2231,7 +2235,7 @@ export default function App() {
 
             {/* ─── Общий раскрой объекта ─── */}
             {(() => {
-              const projectCut = calcProjectCutList(walls, linings)
+              const projectCut = calcProjectCutList(walls, linings, ceilings)
               const poolLabels: Record<string, string> = {
                 pn_50: 'ПН 50×40', pn_75: 'ПН 75×40', pn_100: 'ПН 100×40',
                 ps_50: 'ПС 50×50', ps_75: 'ПС 75×50', ps_100: 'ПС 100×50',
