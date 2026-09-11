@@ -31,7 +31,7 @@ import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentRe
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
 import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrameEstimate'
-import { buildCeilingProfilesByLineId } from './core/ceilingSlope'
+import { buildCeilingProfilesByLineId, areaUnderProfileM2 } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf, resolveFinishZones, finishTemplateContextOf } from './core/finishResolver'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
@@ -2369,9 +2369,19 @@ export default function FloorPlan() {
   // ── Подсчёт площади выбранной линии ───────────────────────────────────────
   function calcLineArea(l: PlanLine): number {
     // Площадь = длина × высота стены, минус площадь проёмов (двери/окна по их
-    // СОБСТВЕННОЙ высоте, не высоте стены) — материал на них не идёт
-    const h = l.heightMm ?? 3000
+    // СОБСТВЕННОЙ высоте, не высоте стены) — материал на них не идёт.
+    // 07.09.2026: если на линии действует профиль уклона (ceilingProfilesById,
+    // см. core/ceilingSlope.ts) и customHeight не включён — высота переменная
+    // вдоль линии, площадь считается интегралом под профилем, а не
+    // length×heightMm (та же формула, что уже в calcRoomMaterials/
+    // closingVolumesReport — раньше эта конкретная функция её не знала, отсюда
+    // была неверная площадь в сводной таблице «Конструкции на плане»).
     const openingsAreaM2 = (l.openings ?? []).reduce((s, op) => s + (op.widthMm * op.heightMm) / 1_000_000, 0)
+    const profile = !l.customHeight ? ceilingProfilesById.get(l.id) : undefined
+    if (profile && profile.length >= 2) {
+      return Math.round((areaUnderProfileM2(profile) - openingsAreaM2) * 100) / 100
+    }
+    const h = l.heightMm ?? 3000
     return Math.round((l.lengthMm * h / 1_000_000 - openingsAreaM2) * 100) / 100
   }
 
@@ -5192,13 +5202,28 @@ export default function FloorPlan() {
                           )}
                         </td>
                         <td style={tdS}>
-                          <input type="number" value={l.heightMm ?? 3000}
-                            onClick={e => e.stopPropagation()}
-                            onChange={e => {
-                              const v = parseFloat(e.target.value)
-                              if (v > 0) updatePlanLine(l.id, { heightMm: v })
-                            }}
-                            style={{ width: 64, fontSize: 11, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
+                          {(() => {
+                            const profile = !l.customHeight ? ceilingProfilesById.get(l.id) : undefined
+                            if (profile && profile.length >= 2) {
+                              const h1 = Math.round(profile[0].y), h2 = Math.round(profile[profile.length - 1].y)
+                              return (
+                                <span title="Высота переменная — берётся из уклона плиты перекрытия/зоны «Задать уклон». Чтобы задать свою фиксированную высоту, откройте линию и включите «своя высота»." style={{ color: '#b8860b' }}>
+                                  ⬊ {h1}→{h2} мм
+                                </span>
+                              )
+                            }
+                            return (
+                              <>
+                                <input type="number" value={l.heightMm ?? 3000}
+                                  onClick={e => e.stopPropagation()}
+                                  onChange={e => {
+                                    const v = parseFloat(e.target.value)
+                                    if (v > 0) updatePlanLine(l.id, { heightMm: v })
+                                  }}
+                                  style={{ width: 64, fontSize: 11, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
+                              </>
+                            )
+                          })()}
                         </td>
                         <td style={tdS}>{calcLineArea(l).toFixed(2)} м²</td>
                         <td style={tdS}>
