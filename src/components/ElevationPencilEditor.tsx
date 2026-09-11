@@ -27,6 +27,7 @@ const PAD_TOP = 20
 const PAD_BOTTOM = 20
 const CLOSE_PX = 14
 const SNAP_GUIDE_PX = 10 // радиус магнита (в экранных px) к ориентиру "известная длина стены"
+const SNAP_TARGET_PX = 14 // радиус магнита к точке-цели (длина+высота), чуть шире — цель двумерная
 // Дефолтный диапазон ДО первой точки — фиксированные мм, НЕ подогнанные под
 // пропорции канваса (тот сейчас очень широкий, ~2.8:1) — иначе по высоте
 // влезало от силы ~1500мм, а мышь физически не может уйти выше видимой
@@ -76,6 +77,12 @@ const MIN_CELL_PX = 28
  * от метки на полу до потолка). Рисует вертикальную линию-магнит на
  * X = (X первой точки) + длина; клик рядом с ней снапится по X с любым Y —
  * высоту точки потом можно поправить в ProfileEditor/ProfileCanvasEditor.
+ * Пока высота неизвестна, рядом с ориентиром при наведении показывается
+ * "живое" число h=<высота под курсором> — читать высоту "на глаз", не
+ * считая в уме. Как только высоту реально измерили — второе поле «Высота
+ * на этой длине» превращает ориентир в конкретную точку-цель (красный
+ * крестик на пересечении), магнитящую сразу по ОБЕИМ координатам, попасть
+ * в неё кликом — пиксель-в-пиксель.
  * Y первой точки по умолчанию предзаполнен нулём (`typedY` initial state) —
  * обычно первая точка это низ первой вертикали (пол), явно вводить 0 не
  * нужно, достаточно X + Enter.
@@ -97,6 +104,12 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   // не нужно попадать пикселем точно, стену можно "дотянуть" по высоте
   // позже, отредактировав Y у уже поставленной точки.
   const [wallLengthInput, setWallLengthInput] = useState('')
+  // "Известная высота на этой длине" — когда высоту в конце уже реально
+  // измерили (например, лазерным уровнем от метки на полу), можно вписать
+  // сюда точное значение. Тогда на ориентире появляется КОНКРЕТНАЯ
+  // точка-цель (X=длина, Y=высота), а не просто вертикальная линия, и клик
+  // рядом с ней магнитится сразу по ОБЕИМ координатам — попасть в неё легко.
+  const [knownHeightInput, setKnownHeightInput] = useState('')
   // Панорамирование средней кнопкой мыши (СКМ) — тот же принцип, что у
   // карандаша Плиты на плане в FloorPlan.tsx, только тут двигаем не
   // Konva Stage-transform, а свою mm-based систему координат (ViewFrame).
@@ -173,11 +186,23 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     return wallLengthInput.trim() !== '' && Number.isFinite(v) && v > 0 ? v : null
   })()
   const guideX = knownLengthMm !== null ? originX + knownLengthMm : null
+  const knownHeightMm = (() => {
+    const v = Number(knownHeightInput)
+    return knownHeightInput.trim() !== '' && Number.isFinite(v) ? v : null
+  })()
+  // Точка-цель на ориентире — когда известны И длина, И реально измеренная
+  // высота в этой точке (например, уже сходил с лазерным уровнем).
+  const guideTarget = guideX !== null && knownHeightMm !== null ? { x: guideX, y: knownHeightMm } : null
 
   function applyGuideSnap(p: ProfilePoint): ProfilePoint {
     if (guideX === null) return p
-    if (Math.abs(p.x - guideX) <= SNAP_GUIDE_PX * view.scale) return { x: Math.round(guideX), y: p.y }
-    return p
+    if (Math.abs(p.x - guideX) > SNAP_GUIDE_PX * view.scale) return p
+    // рядом с вертикалью ориентира — если знаем ещё и высоту-цель и мы
+    // рядом с ней по Y тоже, магнитим сразу в ОБЕ координаты точки-цели
+    if (guideTarget && Math.abs(p.y - guideTarget.y) <= SNAP_TARGET_PX * view.scale) {
+      return { x: Math.round(guideTarget.x), y: Math.round(guideTarget.y) }
+    }
+    return { x: Math.round(guideX), y: p.y }
   }
 
   // Лист в клетку — шаг подбирается так, чтобы клетка была 28-56px на экране.
@@ -282,7 +307,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     if (!res) { setError('Контур вырожден — нулевая ширина или все точки на одной вертикали.'); return false }
     setError(null)
     onFinish(res)
-    setPts([]); setFrame(null); setCursorMm(null); setTypedX(''); setTypedY('0'); setWallLengthInput('')
+    setPts([]); setFrame(null); setCursorMm(null); setTypedX(''); setTypedY('0'); setWallLengthInput(''); setKnownHeightInput('')
     return true
   }
 
@@ -346,13 +371,21 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pts, view])
 
+  // Суммарная длина уже нарисованного пути (по отрезкам) — для левой
+  // панели, чтобы не складывать в уме подписи отдельных отрезков на холсте.
+  const totalPathLen = useMemo(() => {
+    let s = 0
+    for (let i = 0; i < pts.length - 1; i++) s += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y)
+    return Math.round(s)
+  }, [pts])
+
   return (
     <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: '10px 12px', marginTop: 6, background: '#fafafe' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>
           Рисование периметра сечения — точки по координатам X/Y (слева), клик по холсту — черновой набросок
         </span>
-        <button type="button" onClick={() => { setPts([]); setFrame(null); setCursorMm(null); setError(null); setTypedX(''); setTypedY('0'); setWallLengthInput(''); onCancel() }}
+        <button type="button" onClick={() => { setPts([]); setFrame(null); setCursorMm(null); setError(null); setTypedX(''); setTypedY('0'); setWallLengthInput(''); setKnownHeightInput(''); onCancel() }}
           style={{ fontSize: 11, color: '#999', background: 'none', border: 'none', cursor: 'pointer' }}>
           ✕ отмена
         </button>
@@ -365,6 +398,12 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
           <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
             Точка по координатам, мм:
           </div>
+          {last && (
+            <div style={{ fontSize: 11, color: '#555', marginBottom: 8, padding: '4px 6px', background: '#f3f5fa', borderRadius: 4 }}>
+              Последняя точка: X={last.x}, высота Y={last.y} мм
+              {pts.length >= 2 && <><br />Путь по контуру: {totalPathLen} мм</>}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <div style={{ flex: 1 }}>
               <label style={{ fontSize: 10, color: '#888' }}>X (по стене)</label>
@@ -392,7 +431,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
             <label style={{ fontSize: 10, color: '#a06a20', display: 'block', marginBottom: 3 }}>
               Известная длина стены, мм (если знаешь заранее)
             </label>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
               <input type="number" value={wallLengthInput} onChange={e => setWallLengthInput(e.target.value)}
                 placeholder="напр. 6400" style={{ flex: 1, padding: '4px 6px', fontSize: 12, boxSizing: 'border-box' }} />
               {wallLengthInput !== '' && (
@@ -400,12 +439,23 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
                   style={{ padding: '4px 8px', fontSize: 12, cursor: 'pointer' }}>✕</button>
               )}
             </div>
+            <label style={{ fontSize: 10, color: '#a06a20', display: 'block', marginBottom: 3 }}>
+              Высота на этой длине, мм (когда уже измерил)
+            </label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input type="number" value={knownHeightInput} onChange={e => setKnownHeightInput(e.target.value)}
+                placeholder="напр. 5200" style={{ flex: 1, padding: '4px 6px', fontSize: 12, boxSizing: 'border-box' }} />
+              {knownHeightInput !== '' && (
+                <button type="button" onClick={() => setKnownHeightInput('')}
+                  style={{ padding: '4px 8px', fontSize: 12, cursor: 'pointer' }}>✕</button>
+              )}
+            </div>
             <p style={{ margin: '4px 0 0', fontSize: 9.5, color: '#a06a20', lineHeight: 1.3 }}>
-              Покажет оранжевый ориентир на этой длине от первой точки — клик
-              по холсту будет к нему магнититься. Удобно для диагонали, когда
-              высота в этой точке ещё не измерена (например, ждёшь лазерный
-              уровень от направляющей на полу) — ставь точку по X на
-              ориентире с любой Y, а высоту поправишь позже.
+              Только длина — оранжевый ориентир, клик по холсту рядом с ним
+              магнитится по X (высоту поправишь позже). Длина + высота —
+              на ориентире появляется точка-цель, магнитится сразу в обе
+              координаты, и рядом с курсором видно текущую высоту, пока
+              наводишься.
             </p>
           </div>
 
@@ -475,6 +525,29 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
                     text={`L=${Math.round(knownLengthMm ?? 0)}`} fontSize={11}
                     fontStyle="bold" fill="#e07b1a" listening={false} />
                 </>
+              )}
+              {/* Точка-цель (длина+высота уже известны обе) — конкретное
+                  место на ориентире, магнитится по обеим координатам сразу. */}
+              {guideTarget && (
+                <>
+                  <Line points={[PAD, yToPx(guideTarget.y), xToPx(guideTarget.x), yToPx(guideTarget.y)]}
+                    stroke="#c0392b" strokeWidth={1} dash={[3, 4]} listening={false} />
+                  <Circle x={xToPx(guideTarget.x)} y={yToPx(guideTarget.y)} radius={7}
+                    fill="#c0392b" stroke="#fff" strokeWidth={1.5} listening={false} />
+                  <Text x={xToPx(guideTarget.x) + 10} y={yToPx(guideTarget.y) - 7}
+                    text={`h=${Math.round(guideTarget.y)}`} fontSize={11}
+                    fontStyle="bold" fill="#c0392b" listening={false} />
+                </>
+              )}
+              {/* Живой индикатор высоты прямо на ориентире — обновляется,
+                  пока наводишься рядом с ним (magnет по X сработал), даже
+                  если точная высота-цель ещё не введена. Позволяет
+                  подобрать высоту "на глаз", глядя на число, а не считая
+                  в уме. */}
+              {guideX !== null && guideSnapActive && previewPoint && !guideTarget && (
+                <Text x={xToPx(guideX) + 10} y={yToPx(previewPoint.y) - 7}
+                  text={`h=${Math.round(previewPoint.y)}`} fontSize={12}
+                  fontStyle="bold" fill="#e07b1a" listening={false} />
               )}
               {pts.length >= 2 && (
                 <Line points={pts.flatMap(p => [xToPx(p.x), yToPx(p.y)])} stroke="#4a7dff" strokeWidth={2.5} listening={false} />
