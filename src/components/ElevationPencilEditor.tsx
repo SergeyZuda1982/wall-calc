@@ -148,10 +148,19 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   // FRAME_MARGIN_RATIO) — иначе кадр не меняется вообще, никакого "прыжка".
   function ensureFrame(f: ViewFrame | null, p: ProfilePoint): ViewFrame {
     if (!f) {
-      // первая точка — стартуем растущий кадр, уже точно накрывающий саму
-      // точку с запасом
+      // первая точка — стартуем растущий кадр. Если уже задан ориентир
+      // (известная длина/высота), сразу включаем его в кадр вместе с
+      // точкой — иначе кадр схлопывался ТОЛЬКО вокруг первой точки
+      // (±800мм), ориентир пропадал из вида, и это выглядело как резкий
+      // "прыжок" зума в момент постановки самой первой точки.
       const pad = Math.max(DEFAULT_W_MM, DEFAULT_H_MM) * 0.1
-      const minX = p.x - pad, maxX = p.x + pad, minY = p.y - pad, maxY = p.y + pad
+      const anchors: ProfilePoint[] = [p]
+      if (guideTarget) anchors.push(guideTarget)
+      else if (guideX !== null) anchors.push({ x: guideX, y: p.y })
+      const minX = Math.min(...anchors.map(a => a.x)) - pad
+      const maxX = Math.max(...anchors.map(a => a.x)) + pad
+      const minY = Math.min(...anchors.map(a => a.y)) - pad
+      const maxY = Math.max(...anchors.map(a => a.y)) + pad
       const span = Math.max(maxX - minX, (maxY - minY) * (plotW / plotH), DEFAULT_W_MM * 0.5)
       const hNew = span * (plotH / plotW)
       const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
