@@ -26,6 +26,7 @@ const PAD = 34
 const PAD_TOP = 20
 const PAD_BOTTOM = 20
 const CLOSE_PX = 14
+const SNAP_GUIDE_PX = 10 // радиус магнита (в экранных px) к ориентиру "известная длина стены"
 // Дефолтный диапазон ДО первой точки — фиксированные мм, НЕ подогнанные под
 // пропорции канваса (тот сейчас очень широкий, ~2.8:1) — иначе по высоте
 // влезало от силы ~1500мм, а мышь физически не может уйти выше видимой
@@ -67,6 +68,17 @@ const MIN_CELL_PX = 28
  * По завершении контур раскладывается на ceilingProfile/floorProfile/length
  * через decomposeElevationPerimeter (core/profileGeometry.ts) — торцы стены
  * не обязаны быть вертикальными (мансардная геометрия поддерживается).
+ *
+ * «Известная длина стены» (необязательное поле слева) — ориентир для
+ * случая, когда общая длина известна заранее (например, на полу уже
+ * стоит направляющий профиль конкретной длины), а высота в точке, где
+ * диагональ должна закончиться, ещё не измерена (нужен лазерный уровень
+ * от метки на полу до потолка). Рисует вертикальную линию-магнит на
+ * X = (X первой точки) + длина; клик рядом с ней снапится по X с любым Y —
+ * высоту точки потом можно поправить в ProfileEditor/ProfileCanvasEditor.
+ * Y первой точки по умолчанию предзаполнен нулём (`typedY` initial state) —
+ * обычно первая точка это низ первой вертикали (пол), явно вводить 0 не
+ * нужно, достаточно X + Enter.
  */
 export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationPencilEditorProps) {
   const [wrapRef, CANVAS_W] = useContainerWidth(CANVAS_W_MAX, 20)
@@ -74,9 +86,17 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   const [frame, setFrame] = useState<ViewFrame | null>(null)
   const [cursorMm, setCursorMm] = useState<ProfilePoint | null>(null)
   const [typedX, setTypedX] = useState('')
-  const [typedY, setTypedY] = useState('')
+  const [typedY, setTypedY] = useState('0') // первая точка обычно на полу (Y=0) — жать Enter сразу после X
   const [orthoSnap, setOrthoSnap] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // "Известная длина стены" — необязательный ориентир для случая, когда
+  // высота в конкретной точке диагонали ещё не измерена (например, ждём
+  // лазерный уровень от направляющего профиля на полу), но общая длина
+  // стены уже известна заранее. Рисуется как вертикальная линия на
+  // X = (X первой точки) + длина, и клик по холсту к ней магнитится —
+  // не нужно попадать пикселем точно, стену можно "дотянуть" по высоте
+  // позже, отредактировав Y у уже поставленной точки.
+  const [wallLengthInput, setWallLengthInput] = useState('')
   // Панорамирование средней кнопкой мыши (СКМ) — тот же принцип, что у
   // карандаша Плиты на плане в FloorPlan.tsx, только тут двигаем не
   // Konva Stage-transform, а свою mm-based систему координат (ViewFrame).
@@ -145,6 +165,21 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     setError(null)
   }
 
+  // Ориентир "известная длина стены" — X отсчитывается от X первой
+  // поставленной точки (обычно это низ первой вертикали, пол).
+  const originX = pts[0]?.x ?? 0
+  const knownLengthMm = (() => {
+    const v = Number(wallLengthInput)
+    return wallLengthInput.trim() !== '' && Number.isFinite(v) && v > 0 ? v : null
+  })()
+  const guideX = knownLengthMm !== null ? originX + knownLengthMm : null
+
+  function applyGuideSnap(p: ProfilePoint): ProfilePoint {
+    if (guideX === null) return p
+    if (Math.abs(p.x - guideX) <= SNAP_GUIDE_PX * view.scale) return { x: Math.round(guideX), y: p.y }
+    return p
+  }
+
   // Лист в клетку — шаг подбирается так, чтобы клетка была 28-56px на экране.
   const gridStep = useMemo(
     () => NICE_STEPS.find(s => s / view.scale >= MIN_CELL_PX) ?? NICE_STEPS[NICE_STEPS.length - 1],
@@ -169,7 +204,10 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     return Math.abs(dx) >= Math.abs(dy) ? { x: to.x, y: from.y } : { x: from.x, y: to.y }
   }
 
-  const previewPoint = last && cursorMm ? (orthoSnap ? snapToOrtho(last, cursorMm) : cursorMm) : null
+  const previewPoint = last && cursorMm
+    ? applyGuideSnap(orthoSnap ? snapToOrtho(last, cursorMm) : cursorMm)
+    : (cursorMm ? applyGuideSnap(cursorMm) : null)
+  const guideSnapActive = guideX !== null && previewPoint !== null && Math.round(previewPoint.x) === Math.round(guideX)
 
   function handleWheel(e: KonvaEventObject<WheelEvent>) {
     e.evt.preventDefault()
@@ -244,7 +282,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     if (!res) { setError('Контур вырожден — нулевая ширина или все точки на одной вертикали.'); return false }
     setError(null)
     onFinish(res)
-    setPts([]); setFrame(null); setCursorMm(null); setTypedX(''); setTypedY('')
+    setPts([]); setFrame(null); setCursorMm(null); setTypedX(''); setTypedY('0'); setWallLengthInput('')
     return true
   }
 
@@ -263,7 +301,8 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
     // Клик — черновое (визуальное) размещение точки, для точных чисел
     // используется поле X/Y слева.
     const raw = { x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) }
-    addPoint(last ? (orthoSnap ? snapToOrtho(last, raw) : raw) : raw)
+    const snapped = last ? (orthoSnap ? snapToOrtho(last, raw) : raw) : raw
+    addPoint(applyGuideSnap(snapped))
   }
 
   function commitAbsolute() {
@@ -274,7 +313,11 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   }
 
   function removeLast() {
-    setPts(prev => prev.slice(0, -1))
+    setPts(prev => {
+      const next = prev.slice(0, -1)
+      if (next.length === 0) setTypedY('0') // вернулись к пустому контуру — снова предлагаем начать с пола
+      return next
+    })
     setError(null)
   }
 
@@ -309,7 +352,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
         <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>
           Рисование периметра сечения — точки по координатам X/Y (слева), клик по холсту — черновой набросок
         </span>
-        <button type="button" onClick={() => { setPts([]); setFrame(null); setCursorMm(null); setError(null); onCancel() }}
+        <button type="button" onClick={() => { setPts([]); setFrame(null); setCursorMm(null); setError(null); setTypedX(''); setTypedY('0'); setWallLengthInput(''); onCancel() }}
           style={{ fontSize: 11, color: '#999', background: 'none', border: 'none', cursor: 'pointer' }}>
           ✕ отмена
         </button>
@@ -344,6 +387,27 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
             style={{ width: '100%', padding: '6px 10px', fontSize: 12, cursor: pts.length ? 'pointer' : 'default', marginBottom: 10 }}>
             ↩ убрать последнюю (или ПКМ)
           </button>
+
+          <div style={{ marginBottom: 10, padding: '6px 8px', background: '#fff7ec', border: '1px solid #f0d9b5', borderRadius: 4 }}>
+            <label style={{ fontSize: 10, color: '#a06a20', display: 'block', marginBottom: 3 }}>
+              Известная длина стены, мм (если знаешь заранее)
+            </label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input type="number" value={wallLengthInput} onChange={e => setWallLengthInput(e.target.value)}
+                placeholder="напр. 6400" style={{ flex: 1, padding: '4px 6px', fontSize: 12, boxSizing: 'border-box' }} />
+              {wallLengthInput !== '' && (
+                <button type="button" onClick={() => setWallLengthInput('')}
+                  style={{ padding: '4px 8px', fontSize: 12, cursor: 'pointer' }}>✕</button>
+              )}
+            </div>
+            <p style={{ margin: '4px 0 0', fontSize: 9.5, color: '#a06a20', lineHeight: 1.3 }}>
+              Покажет оранжевый ориентир на этой длине от первой точки — клик
+              по холсту будет к нему магнититься. Удобно для диагонали, когда
+              высота в этой точке ещё не измерена (например, ждёшь лазерный
+              уровень от направляющей на полу) — ставь точку по X на
+              ориентире с любой Y, а высоту поправишь позже.
+            </p>
+          </div>
 
           <label style={{ fontSize: 11, color: '#555', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', marginBottom: 10 }}>
             <input type="checkbox" checked={orthoSnap} onChange={e => setOrthoSnap(e.target.checked)} />
@@ -399,6 +463,19 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
                 <Text key={`ht${y}`} x={2} y={yToPx(y) - 6} width={PAD - 6} align="right"
                   text={String(y)} fontSize={10} fill="#99a" listening={false} />
               ))}
+              {/* Ориентир "известная длина стены" — магнит для клика по
+                  холсту, подсвечивается ярче, когда курсор рядом с ним
+                  (см. guideSnapActive). */}
+              {guideX !== null && (
+                <>
+                  <Line points={[xToPx(guideX), PAD_TOP, xToPx(guideX), PAD_TOP + plotH]}
+                    stroke="#e07b1a" strokeWidth={guideSnapActive ? 2.5 : 1.5}
+                    dash={guideSnapActive ? undefined : [6, 4]} listening={false} />
+                  <Text x={xToPx(guideX) - 40} y={PAD_TOP + 2} width={80} align="center"
+                    text={`L=${Math.round(knownLengthMm ?? 0)}`} fontSize={11}
+                    fontStyle="bold" fill="#e07b1a" listening={false} />
+                </>
+              )}
               {pts.length >= 2 && (
                 <Line points={pts.flatMap(p => [xToPx(p.x), yToPx(p.y)])} stroke="#4a7dff" strokeWidth={2.5} listening={false} />
               )}
