@@ -28,6 +28,7 @@ const PAD_BOTTOM = 20
 const CLOSE_PX = 14
 const SNAP_GUIDE_PX = 10 // радиус магнита (в экранных px) к ориентиру "известная длина стены"
 const SNAP_TARGET_PX = 14 // радиус магнита к точке-цели (длина+высота), чуть шире — цель двумерная
+const PRECISE_FACTOR = 0.2 // "точный режим" (Shift) — мышь двигает мм в 5 раз медленнее экрана
 // Дефолтный диапазон ДО первой точки — фиксированные мм, НЕ подогнанные под
 // пропорции канваса (тот сейчас очень широкий, ~2.8:1) — иначе по высоте
 // влезало от силы ~1500мм, а мышь физически не может уйти выше видимой
@@ -86,6 +87,13 @@ const MIN_CELL_PX = 28
  * Y первой точки по умолчанию предзаполнен нулём (`typedY` initial state) —
  * обычно первая точка это низ первой вертикали (пол), явно вводить 0 не
  * нужно, достаточно X + Enter.
+ *
+ * «Точный режим» (зажатый Shift) — курсор двигает мм-позицию в
+ * PRECISE_FACTOR раз медленнее экрана (относительный драг от "виртуальной"
+ * накопленной позиции, а не абсолютная привязка к сырым px мыши) — нужен,
+ * когда обычной чувствительности мыши не хватает попасть в конкретный мм
+ * даже на максимальном зуме (у мыши есть физический предел точности,
+ * который зум сам по себе не лечит). См. preciseAnchorRef/handleMove.
  */
 export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationPencilEditorProps) {
   const [wrapRef, CANVAS_W] = useContainerWidth(CANVAS_W_MAX, 20)
@@ -120,6 +128,42 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
   const panStartRef = useRef<{ px: number; py: number; x0: number; y0: number; span: number } | null>(null)
   const [isPanning, setIsPanning] = useState(false)
   const stageRef = useRef<Konva.Stage>(null)
+  // "Точный режим" (зажатый Shift) — курсор двигает мышь-мм МЕДЛЕННЕЕ
+  // экрана (см. PRECISE_FACTOR), для случаев, когда обычная чувствительность
+  // мыши/дрожь руки не даёт точно попасть в конкретный миллиметр даже на
+  // максимальном зуме (зум и так уменьшает мм/px, но у мыши есть физический
+  // предел точности). Работает как "относительный" драг: копим накопленную
+  // "виртуальную" мм-позицию отдельно от сырых пиксельных координат мыши,
+  // и на каждый мышемув добавляем ТОЛЬКО долю (PRECISE_FACTOR) реального
+  // пиксельного смещения — а не абсолютную позицию курсора. Поэтому при
+  // включении/выключении виртуальный курсор может "отстать" от реального
+  // системного указателя — это ожидаемо (тот же паттерн, что и в
+  // "точных" режимах перемещения других редакторов).
+  const [preciseMode, setPreciseMode] = useState(false)
+  const preciseAnchorRef = useRef<{ rawPx: { x: number; y: number }; virtualMm: ProfilePoint } | null>(null)
+
+  useEffect(() => {
+    function isTypingTarget() {
+      const el = document.activeElement
+      return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Shift' && !isTypingTarget()) setPreciseMode(true)
+    }
+    function exitPrecise() {
+      setPreciseMode(false)
+      preciseAnchorRef.current = null // следующее включение стартует заново с актуальной позиции курсора
+    }
+    function onKeyUp(e: KeyboardEvent) { if (e.key === 'Shift') exitPrecise() }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', exitPrecise) // alt-tab с зажатым Shift не должен "залипать"
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', exitPrecise)
+    }
+  }, [])
 
   const plotW = Math.max(CANVAS_W - PAD * 2, 10)
   const plotH = CANVAS_H - PAD_TOP - PAD_BOTTOM
@@ -275,6 +319,27 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       setFrame({ x0: anchor.x0 - dpx * view.scale, y0: anchor.y0 + dpy * view.scale, span: anchor.span })
       return
     }
+    if (preciseMode) {
+      const anchor = preciseAnchorRef.current
+      if (!anchor) {
+        // первый мышемув после включения точного режима — стартуем от уже
+        // показанной позиции курсора, без прыжка к сырым px
+        const startMm = cursorMm ?? { x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) }
+        preciseAnchorRef.current = { rawPx: pos, virtualMm: startMm }
+        setCursorMm(startMm)
+        return
+      }
+      const dxPx = pos.x - anchor.rawPx.x, dyPx = pos.y - anchor.rawPx.y
+      // знаки как у xToPx/yToPx: вправо по экрану = +X мира, вниз по
+      // экрану = −Y мира (высота); PRECISE_FACTOR режет реальное смещение
+      const virtualMm = {
+        x: anchor.virtualMm.x + dxPx * view.scale * PRECISE_FACTOR,
+        y: anchor.virtualMm.y - dyPx * view.scale * PRECISE_FACTOR,
+      }
+      preciseAnchorRef.current = { rawPx: pos, virtualMm }
+      setCursorMm({ x: Math.round(virtualMm.x), y: Math.round(virtualMm.y) })
+      return
+    }
     setCursorMm({ x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) })
   }
 
@@ -333,8 +398,12 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
       if (Math.sqrt(dx * dx + dy * dy) < CLOSE_PX) { tryClose(); return }
     }
     // Клик — черновое (визуальное) размещение точки, для точных чисел
-    // используется поле X/Y слева.
-    const raw = { x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) }
+    // используется поле X/Y слева. В точном режиме (Shift) курсор мыши и
+    // "виртуальная" мм-позиция могут разойтись — берём именно виртуальную,
+    // ту же, что отражена в превью-линии/подписи на холсте.
+    const raw = preciseMode && preciseAnchorRef.current
+      ? { x: Math.round(preciseAnchorRef.current.virtualMm.x), y: Math.round(preciseAnchorRef.current.virtualMm.y) }
+      : { x: Math.round(pxToX(pos.x)), y: Math.round(pxToY(pos.y)) }
     const snapped = last ? (orthoSnap ? snapToOrtho(last, raw) : raw) : raw
     addPoint(applyGuideSnap(snapped))
   }
@@ -481,11 +550,18 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
           </button>
 
           {error && <p style={{ margin: '0 0 8px', fontSize: 11, color: '#c0392b' }}>{error}</p>}
+          {preciseMode && (
+            <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 600, color: '#8e44ad' }}>
+              🎯 Точный режим (Shift) — курсор в 5× медленнее экрана
+            </p>
+          )}
           <p style={{ margin: 0, fontSize: 10, color: '#aaa', lineHeight: 1.4 }}>
             Вводи точки по координатам в порядке обхода периметра (низ → торец
             → верх → торец или наоборот) — главное, чтобы получился один
             замкнутый контур. Торец необязательно вертикальный. Клик по
-            холсту — черновой набросок (не обязателен). Клетка — {gridStep} мм.
+            холсту — черновой набросок (не обязателен). Зажми Shift, чтобы
+            курсор двигался медленнее экрана — удобно подгонять миллиметры
+            на максимальном зуме. Клетка — {gridStep} мм.
           </p>
         </div>
 
@@ -563,7 +639,7 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
               )}
               {last && previewPoint && (
                 <Line points={[xToPx(last.x), yToPx(last.y), xToPx(previewPoint.x), yToPx(previewPoint.y)]}
-                  stroke="#4a7dff" strokeWidth={1.5} dash={[5, 4]} listening={false} />
+                  stroke={preciseMode ? '#8e44ad' : '#4a7dff'} strokeWidth={1.5} dash={[5, 4]} listening={false} />
               )}
               {segmentLabels.map((l, i) => (
                 <Text key={`seg${i}`} x={l.x - 20} y={l.y - 6} width={40} align="center"
@@ -573,6 +649,10 @@ export default function ElevationPencilEditor({ onFinish, onCancel }: ElevationP
                 <Circle key={i} x={xToPx(p.x)} y={yToPx(p.y)} radius={i === 0 ? 7 : 5.5}
                   fill={i === 0 ? '#1a9c4a' : '#4a7dff'} stroke="#fff" strokeWidth={1.5} listening={false} />
               ))}
+              {last && previewPoint && (
+                <Circle x={xToPx(previewPoint.x)} y={yToPx(previewPoint.y)} radius={5.5}
+                  fill={preciseMode ? '#8e44ad' : '#4a7dff'} opacity={0.5} listening={false} />
+              )}
               {last && previewPoint && previewLen !== null && (
                 <Text x={Math.min(xToPx(previewPoint.x) + 10, CANVAS_W - 90)} y={Math.max(yToPx(previewPoint.y) - 18, PAD_TOP)}
                   text={`${previewLen} мм`} fontSize={12} fill="#333" />
