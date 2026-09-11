@@ -7,6 +7,7 @@ import {
   ceilingSlopeHeightAtPoint,
   buildEffectiveCeilingSlopeResolver,
   effectiveCeilingSlopeHeightAtPoint,
+  areaUnderProfileM2,
 } from '../ceilingSlope'
 import type { CeilingSlope, PlanLine, Room, Slab, Ceiling } from '../../types'
 
@@ -232,5 +233,29 @@ describe('buildEffectiveCeilingSlopeResolver / effectiveCeilingSlopeHeightAtPoin
     const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
     const h = effectiveCeilingSlopeHeightAtPoint({ x: 500, y: 500 }, [], [sl], [], [zoneSlope], [])
     expect(h).toBe(3500)
+  })
+})
+
+describe('areaUnderProfileM2 (07.09.2026 — площадь под наклонным профилем, была ошибка в сводной таблице плана)', () => {
+  it('2-точечный линейный профиль — площадь трапеции = length × средняя высота', () => {
+    // 6970мм длина, 4500→5200мм (тот самый случай из скриншота Сергея)
+    const areaM2 = areaUnderProfileM2([{ x: 0, y: 4500 }, { x: 6970, y: 5200 }])
+    expect(areaM2).toBeCloseTo(6.97 * ((4500 + 5200) / 2) / 1000, 5)
+  })
+
+  it('плоский профиль (h1===h2) — обычный прямоугольник, length × height', () => {
+    const areaM2 = areaUnderProfileM2([{ x: 0, y: 3000 }, { x: 5000, y: 3000 }])
+    expect(areaM2).toBeCloseTo(5 * 3, 6)
+  })
+
+  it('профиль из 3+ точек — сумма трапеций по сегментам', () => {
+    const areaM2 = areaUnderProfileM2([{ x: 0, y: 3000 }, { x: 1000, y: 4000 }, { x: 2000, y: 3000 }])
+    // (0-1000: (3000+4000)/2*1000) + (1000-2000: (4000+3000)/2*1000) = 3.5+3.5 = 7 м²
+    expect(areaM2).toBeCloseTo(7, 6)
+  })
+
+  it('вырожденный профиль (1 точка или пусто) — площадь 0, не падает', () => {
+    expect(areaUnderProfileM2([])).toBe(0)
+    expect(areaUnderProfileM2([{ x: 0, y: 3000 }])).toBe(0)
   })
 })
