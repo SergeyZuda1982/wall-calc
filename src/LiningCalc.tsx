@@ -6,6 +6,7 @@ import { calcSheetLayout } from './core/calcSheetLayout'
 import SheetLayoutCanvas from './components/SheetLayoutCanvas'
 import { BoardSpecSelector } from './components/BoardSpecSelector'
 import { calcLining } from './core/calcLining'
+import { groupBars } from './core/cutList'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { getLiningMaxHeight } from './data/liningMaxHeight'
 import { useProjectStore } from './store/useProjectStore'
@@ -786,9 +787,9 @@ export default function LiningCalc({ canvasW = 820, drawingElevation = false, on
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#444', marginBottom: 6 }}>
                   {title} — {cl.totalBars} шт, остаток {cl.totalWaste}мм
                 </div>
-                {cl.bars.map((bar, i) => (
+                {groupBars(cl.bars).map(({ bar, count }, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 4 }}>
-                    <span style={{ fontSize: 11, color: '#888', minWidth: 52 }}>Профиль {i + 1}:</span>
+                    <span style={{ fontSize: 11, color: '#888', minWidth: 52 }}>×{count}:</span>
                     <div style={{ display: 'flex', flex: 1, height: 22, border: '1px solid #ccc', borderRadius: 3, overflow: 'hidden' }}>
                       {bar.pieces.map((p, j) => (
                         <div key={j}
