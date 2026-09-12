@@ -6,6 +6,7 @@ import {
   wallFaceFrame, worldToFaceMm, faceMmToWorld,
   slopePlaneCoefficients,
 } from '../planTo3D'
+import { roundColumnPolygonPx } from '../columnStamp'
 import { ceilingSlopeHeightAt } from '../ceilingSlope'
 import type { PlanLine, Room, Slab, Ceiling, RoundColumn, RectColumn, PlanOpening, FreeformStructure } from '../../types'
 
@@ -909,6 +910,95 @@ describe('wallsToBoxes3D — интеграция с колоннами (T-ст�
     // Длина не должна улетать в аномально большие значения (защита от
     // самопересекающегося отката на почти касательном угле — см. wallJoin.ts)
     expect(boxes[0].size.sx).toBeLessThan(20) // заведомо намного больше 1.2м исходной длины стены
+  })
+})
+
+describe('wallsToBoxes3D — интеграция с КРУГЛЫМИ колоннами (11.09.2026, объект в Ростове, ∅550 мм)', () => {
+  it('стена, упирающаяся в круглую колонну по радиусу — футпринт доходит примерно до грани окружности (не проходит насквозь)', () => {
+    // Колонна ∅300мм с центром в (0,0) px при scaleMmPx=10 — радиус 15px.
+    // Стена должна упираться в СЕРЕДИНУ одного из 24 рёбер многоугольника
+    // (не в вершину — вершина принадлежит сразу двум рёбрам, там T-стык не
+    // распознаётся, см. wallJoin.test.ts) и идти от неё наружу вдоль того
+    // же радиального направления. Без join прошла бы сквозь колонну
+    // неизменной длины (расстояние mid→конец, см. ниже).
+    const col: RoundColumn = { id: 'rc1', cx: 0, cy: 0, diameterMm: 300, label: 'Колонна 1' }
+    const poly = roundColumnPolygonPx(0, 0, 300, 10)
+    const mid = { x: (poly[0].x + poly[1].x) / 2, y: (poly[0].y + poly[1].y) / 2 }
+    const dirLen = Math.hypot(mid.x, mid.y)
+    const ux = mid.x / dirLen, uy = mid.y / dirLen
+    const wallLenPx = 200
+    const line = baseLine({
+      id: 'w1', x1: mid.x, y1: mid.y,
+      x2: mid.x + wallLenPx * ux, y2: mid.y + wallLenPx * uy,
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10, [], [col])
+    expect(boxes).toHaveLength(1)
+    // Длина близка к исходным 200px=2000мм=2м — T-стык лишь слегка
+    // "дотягивает" ось до грани, без значительного нахлёста/сокращения.
+    expect(boxes[0].size.sx).toBeGreaterThanOrEqual(1.95)
+    expect(boxes[0].size.sx).toBeLessThan(2.05)
+  })
+
+  it('без круглых колонн в списке — та же стена строится немодифицированной (обратная совместимость)', () => {
+    const line = baseLine({
+      id: 'w1', x1: 0, y1: 0, x2: 200, y2: 0,
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10) // ни rectColumns, ни roundColumns не переданы
+    expect(boxes).toHaveLength(1)
+    expect(boxes[0].size.sx).toBeCloseTo(2)
+  })
+
+  it('стена подходит к круглой колонне под произвольным (не осевым) углом — не падает, не даёт NaN/бесконечность', () => {
+    const col: RoundColumn = { id: 'rc1', cx: 0, cy: 0, diameterMm: 550, label: 'Колонна 1' } // объект в Ростове
+    const angle = 37 * Math.PI / 180
+    const len = 1500 // px
+    const line = baseLine({
+      id: 'w1', x1: 0, y1: 0,
+      x2: len * Math.cos(angle), y2: len * Math.sin(angle),
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10, [], [col])
+    expect(boxes).toHaveLength(1)
+    expect(Number.isFinite(boxes[0].size.sx)).toBe(true)
+    expect(Number.isFinite(boxes[0].center.x)).toBe(true)
+    expect(Number.isFinite(boxes[0].rotationY)).toBe(true)
+    expect(boxes[0].size.sx).toBeLessThan(20) // без аномального отката/растяжения
+  })
+
+  it('прямоугольная и круглая колонны одновременно — обе участвуют в стыковке, не мешая друг другу', () => {
+    const rect: RectColumn = { id: 'rect1', cx: -100, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'Колонна прям.' }
+    const round: RoundColumn = { id: 'round1', cx: 100, cy: 0, diameterMm: 300, label: 'Колонна кругл.' }
+    // Стена к прямоугольной колонне — упирается в середину её правой грани
+    // (x=-85, между y=-15 и y=15), как и в остальных rect-column тестах.
+    const lineToRect = baseLine({ id: 'w1', x1: -85, y1: 0, x2: -285, y2: 0, spec: { material: 'brick', subtype: '200' } })
+    // Стена к круглой колонне — упирается в середину одного из 24 рёбер
+    // многоугольника (не в вершину, см. комментарий в тесте выше).
+    const poly = roundColumnPolygonPx(100, 0, 300, 10)
+    const mid = { x: (poly[0].x + poly[1].x) / 2, y: (poly[0].y + poly[1].y) / 2 }
+    const dirLen = Math.hypot(mid.x - 100, mid.y)
+    const ux = (mid.x - 100) / dirLen, uy = mid.y / dirLen
+    const lineToRound = baseLine({
+      id: 'w2', x1: mid.x, y1: mid.y,
+      x2: mid.x + 200 * ux, y2: mid.y + 200 * uy,
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([lineToRect, lineToRound], 10, [rect], [round])
+    expect(boxes).toHaveLength(2)
+    boxes.forEach(b => {
+      expect(Number.isFinite(b.size.sx)).toBe(true)
+      expect(Number.isFinite(b.center.x)).toBe(true)
+    })
+    // Обе стены должны быть реально СТЫКОВАНЫ (T-стык), а не просто
+    // "не упасть" — длина близка к исходным 200px=2м для round, и к
+    // исходным (285-85)=200px=2м для rect, без сквозного прохода.
+    const rectBox = boxes.find(b => b.id === 'w1')!
+    const roundBox = boxes.find(b => b.id === 'w2')!
+    expect(rectBox.size.sx).toBeGreaterThanOrEqual(1.95)
+    expect(rectBox.size.sx).toBeLessThan(2.05)
+    expect(roundBox.size.sx).toBeGreaterThanOrEqual(1.95)
+    expect(roundBox.size.sx).toBeLessThan(2.05)
   })
 })
 

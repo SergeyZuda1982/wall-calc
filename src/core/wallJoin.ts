@@ -9,9 +9,9 @@
  *   Продолжение — коллинеарные (обрабатываются автоматически через L с нулевым cross).
  */
 
-import type { PlanLine, PlanLineType, LineCategory, RectColumn } from '../types'
+import type { PlanLine, PlanLineType, LineCategory, RectColumn, RoundColumn } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
-import { rectColumnCornersPx } from './columnStamp'
+import { rectColumnCornersPx, roundColumnPolygonPx } from './columnStamp'
 
 const JOIN_EPS = 3 // допуск совпадения точек, px
 
@@ -436,13 +436,24 @@ export const COLUMN_EDGE_HALF_PX = 0.01
  * этого колонны вообще не участвовали в computeWallJoins — линия, упирающаяся
  * в колонну под углом, не обрезалась НИКАК (см. КОНСПЕКТ, 08.07.2026).
  *
- * rectColumns — необязательный параметр (дефолт []) для мест, где колонны
- * ещё не подключены к вызову (обратная совместимость).
+ * rectColumns/roundColumns — необязательные параметры (дефолт []) для мест,
+ * где колонны ещё не подключены к вызову (обратная совместимость).
+ *
+ * roundColumns (11.09.2026, объект в Ростове с круглыми монолитными
+ * колоннами ∅550 мм) — та же идея, что и у rectColumns выше, но грань
+ * колонны не плоская, а аппроксимируется правильным 24-угольником
+ * (roundColumnPolygonPx, то же число сегментов, что у 3D-цилиндра) —
+ * прямая стена, упирающаяся в круглую колонну под любым углом, обрезается/
+ * удлиняется по ближайшей грани многоугольника, а не проходит колонну
+ * насквозь без обработки, как было раньше (круглые колонны вообще не
+ * участвовали в computeWallJoins — та же исходная проблема, что когда-то
+ * была у прямоугольных, см. комментарий выше).
  */
 export function buildWallsForJoin(
   lines: PlanLine[],
   scaleMmPx: number,
   rectColumns: RectColumn[] = [],
+  roundColumns: RoundColumn[] = [],
 ): WallForJoin[] {
   const walls: WallForJoin[] = []
   lines.forEach((l, idx) => {
@@ -470,6 +481,22 @@ export function buildWallsForJoin(
         x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y,
         halfPx: COLUMN_EDGE_HALF_PX,
         createdIndex: -1000 - rcIdx * 4 - e,
+        category: rc.category ?? 'capital',
+      })
+    }
+  })
+  roundColumns.forEach((rc, rcIdx) => {
+    const poly = roundColumnPolygonPx(rc.cx, rc.cy, rc.diameterMm, scaleMmPx)
+    const n = poly.length
+    for (let e = 0; e < n; e++) {
+      const p0 = poly[e], p1 = poly[(e + 1) % n]
+      walls.push({
+        id: `__roundcol_${rc.id}_edge${e}`,
+        x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y,
+        halfPx: COLUMN_EDGE_HALF_PX,
+        // индексы после rectColumns, чтобы не пересекаться с их диапазоном
+        // (-1000 - rcIdx*4 - e при любом реалистичном числе rectColumns)
+        createdIndex: -100000 - rcIdx * n - e,
         category: rc.category ?? 'capital',
       })
     }

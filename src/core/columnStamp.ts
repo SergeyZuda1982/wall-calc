@@ -51,6 +51,31 @@ export function rectColumnCornersPx(
   })) as [Point2D, Point2D, Point2D, Point2D]
 }
 
+/**
+ * Точки правильного N-угольника, аппроксимирующего окружность круглой
+ * колонны (px) — для стыковки прямых стен с ней в buildWallsForJoin (см.
+ * wallJoin.ts), тем же принципом, что и rectColumnCornersPx выше: рёбра
+ * многоугольника становятся "стенами" почти нулевой толщины, к которым
+ * применяется обычная T-стыковка под ЛЮБЫМ углом (не только 90°, как у
+ * прямоугольной колонны). 24 сегмента — то же число, что и у 3D-цилиндра
+ * (RoundColumnMesh, Scene3D.tsx), чтобы гладкость колонны в 3D и точность
+ * стыковки на плане были согласованы.
+ */
+export function roundColumnPolygonPx(
+  cx: number, cy: number,
+  diameterMm: number,
+  scaleMmPx: number,
+  segments = 24,
+): Point2D[] {
+  const r = mmToPx(diameterMm, scaleMmPx) / 2
+  const pts: Point2D[] = []
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2
+    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) })
+  }
+  return pts
+}
+
 /** Угол (радианы) от центра к точке — как в handleStageClick/atan2 (Y вниз, стандартный screen-space atan2) */
 export function angleTo(cx: number, cy: number, x: number, y: number): number {
   return Math.atan2(y - cy, x - cx)

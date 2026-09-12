@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   mmToPx, rectColumnCornersPx, angleTo, snapAngleToStep, rectPerimeterMm, rectAreaM2,
-  snapToColumnRow,
+  snapToColumnRow, roundColumnPolygonPx,
 } from '../columnStamp'
 
 describe('mmToPx', () => {
@@ -118,5 +118,33 @@ describe('snapToColumnRow', () => {
   it('равное расстояние по X и Y — прилипает по X (детерминированный тай-брейк)', () => {
     const r = snapToColumnRow(150, 250, [{ cx: 100, cy: 200 }]) // dx=50, dy=50
     expect(r).toEqual({ x: 100, y: 250 })
+  })
+})
+
+describe('roundColumnPolygonPx (11.09.2026 — аппроксимация окружности для стыковки стен)', () => {
+  it('возвращает 24 точки по умолчанию, все на нужном радиусе от центра', () => {
+    const pts = roundColumnPolygonPx(0, 0, 300, 10) // ∅300мм / 10мм-на-px = радиус 15px
+    expect(pts).toHaveLength(24)
+    pts.forEach(p => {
+      expect(Math.hypot(p.x, p.y)).toBeCloseTo(15, 6)
+    })
+  })
+
+  it('центр колонны смещён — точки смещаются вместе с ним', () => {
+    const pts = roundColumnPolygonPx(50, -20, 300, 10)
+    pts.forEach(p => {
+      expect(Math.hypot(p.x - 50, p.y + 20)).toBeCloseTo(15, 6)
+    })
+  })
+
+  it('произвольное число сегментов — уважает параметр', () => {
+    const pts = roundColumnPolygonPx(0, 0, 300, 10, 8)
+    expect(pts).toHaveLength(8)
+  })
+
+  it('первая точка лежит на угле 0 (вдоль +X от центра) — детерминированная ориентация', () => {
+    const pts = roundColumnPolygonPx(0, 0, 300, 10)
+    expect(pts[0].x).toBeCloseTo(15, 6)
+    expect(pts[0].y).toBeCloseTo(0, 6)
   })
 })
