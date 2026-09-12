@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { buildCutList, pnPieces, psPieces, BAR_LENGTH } from '../cutList'
+import { buildCutList, groupBars, pnPieces, psPieces, BAR_LENGTH } from '../cutList'
 import { calcStudMaterial } from '../calcStudMaterial'
-import type { Piece } from '../cutList'
+import type { Bar, Piece } from '../cutList'
 
 // ─── buildCutList ─────────────────────────────────────────────────────────────
 
@@ -381,5 +381,75 @@ describe('psPieces', () => {
     const placed = pieces.reduce((s, p) => s + p.length, 0)
     // Инвариант: ни один кусок не потерян молча
     expect(cutResult.totalBars * BAR_LENGTH).toBe(placed + cutResult.totalWaste)
+  })
+})
+
+// ─── groupBars ──────────────────────────────────────────────────────────────
+// Схлопывание одинаковых прутков в список раскроя (не выводить 500 строк
+// "Профиль N" там, где по факту 10-15 уникальных вариантов раскроя).
+
+describe('groupBars', () => {
+  it('пустой список прутков → пустой список групп', () => {
+    expect(groupBars([])).toEqual([])
+  })
+
+  it('все прутки одинаковые (один кусок 3000мм, без остатка) → одна группа с count = N', () => {
+    const pieces: Piece[] = Array(120).fill(null).map(() => ({
+      length: BAR_LENGTH, role: 'ceiling' as const, label: `Потолок ${BAR_LENGTH}мм`, mustBeWhole: false,
+    }))
+    const { bars } = buildCutList(pieces)
+    const groups = groupBars(bars)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].count).toBe(120)
+  })
+
+  it('разные паттерны раскроя → отдельные группы, суммарный count = число прутков', () => {
+    // 50 стоек по 3000 (без остатка) + 30 стоек по 1500+1500 (без остатка)
+    const pieces: Piece[] = [
+      ...Array(50).fill(null).map(() => ({ length: 3000, role: 'stud' as const, label: '3000', mustBeWhole: false })),
+      ...Array(60).fill(null).map(() => ({ length: 1500, role: 'stud' as const, label: '1500', mustBeWhole: false })),
+    ]
+    const { bars, totalBars } = buildCutList(pieces)
+    const groups = groupBars(bars)
+    // Не больше 2 уникальных паттернов (целый кусок 3000 / пара 1500+1500)
+    expect(groups.length).toBeLessThanOrEqual(2)
+    expect(groups.reduce((s, g) => s + g.count, 0)).toBe(totalBars)
+  })
+
+  it('прутки с разным остатком не схлопываются в одну группу', () => {
+    const barA: Bar = { pieces: [{ piece: { length: 2700, role: 'stud', label: 'A', mustBeWhole: false }, from: 0 }], waste: 300 }
+    const barB: Bar = { pieces: [{ piece: { length: 2600, role: 'stud', label: 'B', mustBeWhole: false }, from: 0 }], waste: 400 }
+    const groups = groupBars([barA, barB])
+    expect(groups).toHaveLength(2)
+    expect(groups.every(g => g.count === 1)).toBe(true)
+  })
+
+  it('группы отсортированы по убыванию count (самый частый паттерн — первый)', () => {
+    const common: Bar = { pieces: [{ piece: { length: 3000, role: 'ceiling', label: 'C', mustBeWhole: false }, from: 0 }], waste: 0 }
+    const rare: Bar = { pieces: [{ piece: { length: 500, role: 'floor', label: 'F', mustBeWhole: false }, from: 0 }], waste: 2500 }
+    const groups = groupBars([rare, common, common, common])
+    expect(groups[0].count).toBe(3)
+    expect(groups[1].count).toBe(1)
+  })
+
+  it('порядок кусков внутри прутка учитывается — разный порядок не считается тем же паттерном', () => {
+    // Проверяем, что группировка честная по последовательности, а не по мультимножеству —
+    // на практике FFD всегда кладёт в одном порядке, но функция не должна на этом молча полагаться.
+    const barA: Bar = {
+      pieces: [
+        { piece: { length: 1000, role: 'floor', label: 'a', mustBeWhole: false }, from: 0 },
+        { piece: { length: 2000, role: 'ceiling', label: 'b', mustBeWhole: false }, from: 1000 },
+      ],
+      waste: 0,
+    }
+    const barB: Bar = {
+      pieces: [
+        { piece: { length: 2000, role: 'ceiling', label: 'b', mustBeWhole: false }, from: 0 },
+        { piece: { length: 1000, role: 'floor', label: 'a', mustBeWhole: false }, from: 2000 },
+      ],
+      waste: 0,
+    }
+    const groups = groupBars([barA, barB])
+    expect(groups).toHaveLength(2)
   })
 })

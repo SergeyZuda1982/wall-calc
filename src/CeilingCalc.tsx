@@ -10,6 +10,7 @@ import type { CeilingSpecFull, CeilingSpec } from './data/ceilingData'
 import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS, P112_HANGER_STEP, P113_HANGER_STEP, CEILING_LOAD_CLASS_OPTIONS } from './data/ceilingData'
 import type { CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep, CeilingLoadClass } from './data/ceilingData'
 import { calcCeiling } from './core/calcCeiling'
+import { groupBars } from './core/cutList'
 import type { CeilingCalcResult, CeilingPolygonInput } from './core/calcCeiling'
 import { calcCeilingSheetRects, resolveSheetStartFlips } from './core/ceilingGridGeometry'
 import { calcFrameRowPositions, resolveFrameParams } from './core/calcP112Frame'
@@ -1309,9 +1310,9 @@ export default function CeilingCalc() {
                   <div style={{ fontSize: 13, fontWeight: 600, color: '#444', marginBottom: 6 }}>
                     {title} — {cl.totalBars} шт, остаток {cl.totalWaste}мм
                   </div>
-                  {cl.bars.map((bar, i) => (
+                  {groupBars(cl.bars).map(({ bar, count }, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 4 }}>
-                      <span style={{ fontSize: 11, color: '#888', minWidth: 60 }}>Прутoк {i + 1}:</span>
+                      <span style={{ fontSize: 11, color: '#888', minWidth: 60 }}>×{count}:</span>
                       <div style={{ display: 'flex', flex: 1, height: 22, border: '1px solid #ccc', borderRadius: 3, overflow: 'hidden' }}>
                         {bar.pieces.map((p, j) => (
                           <div key={j} title={p.piece.label}
