@@ -25,6 +25,12 @@ import CeilingCalc3DPreview, { CeilingCalcPolygon3DPreview } from './components/
 import { mmToM } from './core/planTo3D'
 import type { CeilingPolygon3D } from './core/planTo3D'
 import type { CeilingSeedZone } from './store/useCeilingSeedStore'
+import {
+  findHangerBeamConflicts, countConflictingHangers,
+  suggestConflictFreeHangerStep, suggestConflictFreeStepGeneric,
+  type BeamObstacle, type StepSuggestion,
+} from './core/hangerBeamConflict'
+import { ribBeamsToBeamObstacles } from './core/ribBeamsToBeamObstacles'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
 
@@ -433,6 +439,85 @@ export default function CeilingCalc() {
         { mode: layoutModeUi, wallOffsetMm: frameParamsUi.wallOffsetBearingMm, profileKind: 'bearing' })
     : []
 
+  // ── Ригели/препятствия для подвеса (11.09.2026, репорт с объекта) ──
+  // Ригель бетонный, крепиться к нему МОЖНО, но между верхом каркаса и
+  // низом ригеля мало места под штатную тягу с зажимом — узел пришлось бы
+  // менять на прямой подвес, неудобно. Проще увести подвес мимо ригеля
+  // целиком. Источник ригелей — ДВА варианта одновременно (ригели не
+  // всегда нарисованы на плане, по прямому подтверждению пользователя):
+  // автоматически с плана (rib_beam рядом с этим потолком) + ручной список.
+  // См. core/hangerBeamConflict.ts, core/ribBeamsToBeamObstacles.ts.
+  const floorPlanLines = useProjectStore(s => s.floorPlan?.lines ?? [])
+  const floorPlanScaleMmPerPx = useProjectStore(s => s.floorPlan?.scaleMmPerPx ?? 1)
+
+  const autoBeams: BeamObstacle[] = hasPolygon
+    ? ribBeamsToBeamObstacles(
+        floorPlanLines, polygonInputForPreview!.outerMm, polygonInputForPreview!.startSide, floorPlanScaleMmPerPx,
+      )
+    : []
+  const manualBeams = form.manualBeams ?? []
+  const allBeams = [...autoBeams, ...manualBeams]
+  const beamClearanceMm = form.beamClearanceMm ?? 50
+
+  // Прямоугольный расчёт (hasRoom) не хранит hangerPositions в
+  // CeilingCalcResult (см. calcCeiling.ts) — считаем той же функцией, что
+  // и CeilingCanvas (hangerPosYMm), чтобы не разойтись с превью. Для
+  // полигонального (hasPolygon) — result.polygonFrame.hangerPoints уже в
+  // ЛОКАЛЬНЫХ (u,v), той же системе координат, что и ribBeamsToBeamObstacles
+  // (обе используют buildLocalFrame из calcPolygonP112Frame.ts) — совпадение
+  // осей не случайное, u↔length, v↔width.
+  const beamConflicts = allBeams.length === 0 ? [] : hasPolygon && result?.polygonFrame
+    ? findHangerBeamConflicts(
+        result.polygonFrame.hangerPoints.map(p => ({ lengthMm: p.x, widthMm: p.y })), allBeams, beamClearanceMm,
+      )
+    : hasRoom
+    ? findHangerBeamConflicts(
+        calcFrameRowPositions(form.roomWidthMm, frameParamsUi.stepA,
+          { mode: layoutModeUi, wallOffsetMm: frameParamsUi.wallOffsetMainMm, profileKind: 'main' })
+          .map(p => ({ lengthMm: 0, widthMm: p })),
+        allBeams, beamClearanceMm,
+      )
+    : []
+  const conflictingHangerCount = countConflictingHangers(beamConflicts)
+
+  const [stepSuggestion, setStepSuggestion] = useState<StepSuggestion | null>(null)
+  // Подсказка не пересчитывается сама на каждый рендер (перебор шагов для
+  // полигонального контура гоняет calcCeiling ~30 раз — дорого на каждое
+  // нажатие клавиши) — только по кнопке. Сбрасываем при изменении входных
+  // данных, чтобы не показывать подсказку, посчитанную для уже устаревших
+  // ригелей/шага.
+  useEffect(() => { setStepSuggestion(null) }, [allBeams.length, frameParamsUi.stepA, beamClearanceMm])
+
+  function computeStepSuggestion() {
+    if (allBeams.length === 0) return
+    if (hasPolygon && polygonInputForPreview) {
+      const { outerMm, holesMm, startSide } = polygonInputForPreview
+      setStepSuggestion(suggestConflictFreeStepGeneric(frameParamsUi.stepA, step => {
+        const res = calcCeiling({ ...form, stepA: step }, { outerMm, holesMm, startSide })
+        const geo = res.polygonFrame
+        if (!geo) return 0
+        return countConflictingHangers(
+          findHangerBeamConflicts(geo.hangerPoints.map(p => ({ lengthMm: p.x, widthMm: p.y })), allBeams, beamClearanceMm),
+        )
+      }))
+    } else if (hasRoom) {
+      setStepSuggestion(suggestConflictFreeHangerStep(
+        form.roomWidthMm, frameParamsUi.stepA, allBeams, 'width', beamClearanceMm,
+        { mode: layoutModeUi, wallOffsetMm: frameParamsUi.wallOffsetMainMm },
+      ))
+    }
+  }
+
+  function addManualBeam() {
+    setField('manualBeams', [...manualBeams, { axis: 'width', posMm: 0, widthMm: 300 }])
+  }
+  function updateManualBeam(i: number, patch: Partial<BeamObstacle>) {
+    setField('manualBeams', manualBeams.map((b, idx) => idx === i ? { ...b, ...patch } : b))
+  }
+  function removeManualBeam(i: number) {
+    setField('manualBeams', manualBeams.filter((_, idx) => idx !== i))
+  }
+
   return (
     <div style={{ display: 'flex', gap: 14, minHeight: 600, background: C.bg, padding: 14 }}>
 
@@ -732,6 +817,77 @@ export default function CeilingCalc() {
                 </div>
               </div>
             )}
+
+            {/* Ригели/препятствия для подвеса — 11.09.2026, репорт с объекта.
+                Показываем независимо от layoutMode (knauf/user), т.к.
+                конфликт физический, а не про то, как считался шаг. */}
+            <div style={{ marginBottom: 8, padding: 8, borderRadius: 8, background: '#f8fafc', border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Ригели / препятствия для подвеса</div>
+              {autoBeams.length > 0 && (
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>
+                  С плана: {autoBeams.map(b => b.label).join(', ')}
+                </div>
+              )}
+              {manualBeams.map((b, i) => (
+                <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
+                  <select style={{ ...inp, flex: 1, fontSize: 11 }} value={b.axis}
+                    onChange={e => updateManualBeam(i, { axis: e.target.value as 'length' | 'width' })}>
+                    <option value="length">Поперёк длины</option>
+                    <option value="width">Поперёк ширины</option>
+                  </select>
+                  <input style={{ ...inp, width: 64 }} type="number" placeholder="Позиция, мм"
+                    value={b.posMm || ''} onChange={e => updateManualBeam(i, { posMm: +e.target.value || 0 })} />
+                  <input style={{ ...inp, width: 56 }} type="number" placeholder="Сечение"
+                    value={b.widthMm || ''} onChange={e => updateManualBeam(i, { widthMm: +e.target.value || 0 })} />
+                  <button onClick={() => removeManualBeam(i)}
+                    style={{ border: 'none', background: 'none', color: C.warning, cursor: 'pointer', fontSize: 14, padding: '0 4px' }}>✕</button>
+                </div>
+              ))}
+              <button onClick={addManualBeam} style={{
+                padding: '4px 10px', borderRadius: 6, border: `1px dashed ${C.border}`,
+                background: 'none', color: C.muted, fontSize: 11, cursor: 'pointer',
+              }}>+ Добавить ригель вручную</button>
+              <div style={{ marginTop: 6 }}>
+                <label style={lbl}>Зазор под тягу у ригеля, мм</label>
+                <input style={inp} type="number" min={0} step={10} placeholder="50"
+                  value={form.beamClearanceMm ?? ''} onChange={e => setField('beamClearanceMm', +e.target.value || undefined)} />
+              </div>
+
+              {allBeams.length > 0 && (
+                <div style={{
+                  marginTop: 8, padding: 6, borderRadius: 6,
+                  background: conflictingHangerCount > 0 ? '#fef3c7' : '#f0fdf4',
+                  border: `1px solid ${conflictingHangerCount > 0 ? '#fbbf24' : '#86efac'}`,
+                }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: conflictingHangerCount > 0 ? '#92400e' : '#166534' }}>
+                    {conflictingHangerCount > 0
+                      ? `⚠ ${conflictingHangerCount} подвес(ов) попадает в запретную полосу ригеля`
+                      : '✓ Конфликтов с ригелями нет'}
+                  </div>
+                  {conflictingHangerCount > 0 && (hasPolygon || hasRoom) && (
+                    <button onClick={computeStepSuggestion} style={{
+                      marginTop: 6, padding: '4px 10px', borderRadius: 6, border: 'none',
+                      background: C.accent, color: '#fff', fontSize: 11, cursor: 'pointer',
+                    }}>Предложить шаг без конфликтов</button>
+                  )}
+                  {stepSuggestion && (
+                    stepSuggestion.conflictingHangers === 0 ? (
+                      <div style={{ marginTop: 6, fontSize: 11 }}>
+                        Шаг {stepSuggestion.stepMm}мм — без конфликтов.{' '}
+                        <button onClick={() => { setField('stepA', stepSuggestion.stepMm); setStepSuggestion(null) }} style={{
+                          padding: '2px 8px', borderRadius: 6, border: 'none',
+                          background: C.success, color: '#fff', fontSize: 11, cursor: 'pointer',
+                        }}>Применить</button>
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: 6, fontSize: 11, color: C.muted }}>
+                        Без конфликтов в диапазоне ±150мм не нашлось. Ближе всего — {stepSuggestion.stepMm}мм ({stepSuggestion.conflictingHangers} конфликт(ов)).
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
 
             <div style={{ marginBottom: 8 }}>
               <label style={lbl}>Зазор плита→каркас, мм</label>
