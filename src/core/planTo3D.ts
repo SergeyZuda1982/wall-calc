@@ -295,14 +295,18 @@ export function worldToFaceMm(frame: WallFaceFrame, point: { x: number; y: numbe
  * estimateCeilingMm намеренно считается по ПОЛНОМУ списку линий (высота
  * потолка — не то, что должно "пропадать" вместе с ещё не начатой стеной).
  *
- * rectColumns — прямоугольные колонны этого этажа (необязательно, дефолт
+ * rectColumns/roundColumns — колонны этого этажа (необязательно, дефолт
  * []): участвуют в расчёте стыков (buildWallsForJoin/computeWallJoins), их
  * грани обрезают/удлиняют примыкающие стены под ЛЮБЫМ углом, не только 90°
- * (см. wallJoin.ts). Сама колонна рисуется отдельно, см. rectColumnsToBoxes3D.
+ * (см. wallJoin.ts, roundColumns — 11.09.2026). Сама колонна рисуется
+ * отдельно, см. rectColumnsToBoxes3D/roundColumnsToCylinders3D.
  */
-export function wallsToBoxes3D(lines: PlanLine[], scaleMmPx: number, rectColumns: RectColumn[] = []): WallBox3D[] {
+export function wallsToBoxes3D(
+  lines: PlanLine[], scaleMmPx: number,
+  rectColumns: RectColumn[] = [], roundColumns: RoundColumn[] = [],
+): WallBox3D[] {
   const ceilingMm = estimateCeilingMm(lines)
-  const joins = computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns))
+  const joins = computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns))
   return lines.filter(isLineBuiltForRender).flatMap(l => {
     const jw: JoinedWall | undefined = joins.get(l.id)
     const axisOverride = jw ? { x1: jw.ax1, y1: jw.ay1, x2: jw.ax2, y2: jw.ay2 } : undefined

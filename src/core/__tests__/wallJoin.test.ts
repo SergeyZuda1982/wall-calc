@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory, type WallForJoin } from '../wallJoin'
-import type { PlanLine, RectColumn } from '../../types'
+import { roundColumnPolygonPx } from '../columnStamp'
+import type { PlanLine, RectColumn, RoundColumn } from '../../types'
 
 // scaleMmPx = 10 (как дефолт в FloorPlan), т.е. 1px = 10мм
 // B — капитальная стена 200мм толщиной (halfPx=10), горизонтальная, ось y=50, x: 0..200
@@ -319,6 +320,79 @@ describe('buildWallsForJoin — сборка входа для computeWallJoins 
     // Стена должна идти ПЕРПЕНДИКУЛЯРНО этой грани — горизонтально, наружу (+X) от (15,0).
     const wall = line({ id: 'W1', x1: 15, y1: 0, x2: 215, y2: 0 })
     const walls = buildWallsForJoin([wall], 10, [col])
+    const res = computeWallJoins(walls)
+    const jw = res.get('W1')!
+    expect(jw.cap1).toBe(false) // T-стык распознан, торец не рисуется
+  })
+})
+
+describe('buildWallsForJoin — КРУГЛЫЕ колонны (11.09.2026, объект в Ростове, ∅550мм)', () => {
+  function line(overrides: Partial<PlanLine> = {}): PlanLine {
+    return {
+      id: 'L1', x1: 0, y1: 0, x2: 300, y2: 0,
+      type: 'wall_new', lengthMm: 3000, label: 'П-1',
+      spec: { material: 'gkl', subtype: 'ps75' },
+      ...overrides,
+    } as PlanLine
+  }
+
+  it('круглая колонна добавляет 24 грани (аппроксимация многоугольником), капитальные, почти нулевой толщины', () => {
+    const col: RoundColumn = { id: 'rc1', cx: 500, cy: 500, diameterMm: 300, label: 'Колонна 1' }
+    const walls = buildWallsForJoin([], 10, [], [col])
+    expect(walls).toHaveLength(24)
+    walls.forEach(w => {
+      expect(w.id).toContain('rc1')
+      expect(w.category).toBe('capital')
+      expect(w.halfPx).toBeCloseTo(0.01)
+    })
+  })
+
+  it('без круглых колонн (дефолт []) — тот же результат, что и раньше (обратная совместимость)', () => {
+    const walls = buildWallsForJoin([line()], 10)
+    expect(walls).toHaveLength(1)
+  })
+
+  it('круглая колонна с явной category — пробрасывается как есть', () => {
+    const col: RoundColumn = { id: 'rc1', cx: 0, cy: 0, diameterMm: 300, label: 'К1', category: 'mutable' }
+    const walls = buildWallsForJoin([], 10, [], [col])
+    expect(walls.every(w => w.category === 'mutable')).toBe(true)
+  })
+
+  it('несколько круглых колонн — id граней не пересекаются между колоннами', () => {
+    const cols: RoundColumn[] = [
+      { id: 'rcA', cx: 0, cy: 0, diameterMm: 300, label: 'A' },
+      { id: 'rcB', cx: 1000, cy: 0, diameterMm: 300, label: 'B' },
+    ]
+    const walls = buildWallsForJoin([], 10, [], cols)
+    expect(walls).toHaveLength(48)
+    const ids = new Set(walls.map(w => w.id))
+    expect(ids.size).toBe(48)
+  })
+
+  it('прямоугольная и круглая колонна одновременно — id граней не пересекаются между ними', () => {
+    const rect: RectColumn = { id: 'rect1', cx: -500, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'Прям.' }
+    const round: RoundColumn = { id: 'round1', cx: 500, cy: 0, diameterMm: 300, label: 'Кругл.' }
+    const walls = buildWallsForJoin([], 10, [rect], [round])
+    expect(walls).toHaveLength(4 + 24)
+    const ids = new Set(walls.map(w => w.id))
+    expect(ids.size).toBe(4 + 24)
+  })
+
+  it('линия и круглая колонна вместе — стена реально стыкуется через computeWallJoins (не проходит насквозь)', () => {
+    const col: RoundColumn = { id: 'rc1', cx: 0, cy: 0, diameterMm: 300, label: 'Колонна 1' } // радиус 15px при scale=10
+    // Стена должна упираться в СЕРЕДИНУ одного из 24 рёбер многоугольника
+    // (не в вершину — вершина одновременно принадлежит двум рёбрам и там
+    // T-стык не распознаётся, см. границы t в computeWallJoins), и идти от
+    // неё наружу вдоль того же радиального направления.
+    const poly = roundColumnPolygonPx(0, 0, 300, 10)
+    const mid = { x: (poly[0].x + poly[1].x) / 2, y: (poly[0].y + poly[1].y) / 2 }
+    const dirLen = Math.hypot(mid.x, mid.y)
+    const ux = mid.x / dirLen, uy = mid.y / dirLen
+    const wall = line({
+      id: 'W1', x1: mid.x, y1: mid.y,
+      x2: mid.x + 200 * ux, y2: mid.y + 200 * uy,
+    })
+    const walls = buildWallsForJoin([wall], 10, [], [col])
     const res = computeWallJoins(walls)
     const jw = res.get('W1')!
     expect(jw.cap1).toBe(false) // T-стык распознан, торец не рисуется

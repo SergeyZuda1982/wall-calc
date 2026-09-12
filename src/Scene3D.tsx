@@ -800,7 +800,10 @@ function LevelGroup({
   const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
   const opacity = dimmed ? 0.35 : 1
 
-  const boxes = useMemo(() => wallsToBoxes3D(lines, scaleMmPx, rectColumns), [lines, scaleMmPx, rectColumns])
+  const boxes = useMemo(
+    () => wallsToBoxes3D(lines, scaleMmPx, rectColumns, roundColumns),
+    [lines, scaleMmPx, rectColumns, roundColumns],
+  )
   const linesById = useMemo(() => new Map(lines.map(l => [l.id, l])), [lines])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
   const slabPolygons = useMemo(() => slabsToPolygons3D(slabs, scaleMmPx), [slabs, scaleMmPx])
@@ -1003,7 +1006,7 @@ function levelHasGeometry(floorPlan: FloorPlan): boolean {
   const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
   const ceilingMm = estimateCeilingMm(lines)
   return (
-    wallsToBoxes3D(lines, scaleMmPx, floorPlan.rectColumns ?? []).length > 0 ||
+    wallsToBoxes3D(lines, scaleMmPx, floorPlan.rectColumns ?? [], floorPlan.roundColumns ?? []).length > 0 ||
     roomsToPolygons3D(floorPlan.rooms ?? [], lines, scaleMmPx).length > 0 ||
     slabsToPolygons3D(floorPlan.slabs ?? [], scaleMmPx).length > 0 ||
     roundColumnsToCylinders3D(floorPlan.roundColumns ?? [], scaleMmPx, ceilingMm).length > 0 ||
@@ -1197,7 +1200,7 @@ export default function Scene3D() {
           minZ = Math.min(minZ, pt.z); maxZ = Math.max(maxZ, pt.z)
         }
       }
-      for (const box of wallsToBoxes3D(lines, scaleMmPx, lv.floorPlan.rectColumns ?? [])) {
+      for (const box of wallsToBoxes3D(lines, scaleMmPx, lv.floorPlan.rectColumns ?? [], lv.floorPlan.roundColumns ?? [])) {
         const half = Math.max(box.size.sx, box.size.sz) / 2
         minX = Math.min(minX, box.center.x - half); maxX = Math.max(maxX, box.center.x + half)
         minZ = Math.min(minZ, box.center.z - half); maxZ = Math.max(maxZ, box.center.z + half)
