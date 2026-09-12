@@ -4,7 +4,7 @@ import {
   roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM, mToMm,
   freeformStructuresToPrisms3D, wallMaterialKindOf, wallStudPositionsMm,
   wallFaceFrame, worldToFaceMm, faceMmToWorld,
-  slopePlaneCoefficients,
+  slopePlaneCoefficients, slabStepRisers3D,
 } from '../planTo3D'
 import { roundColumnPolygonPx } from '../columnStamp'
 import { ceilingSlopeHeightAt } from '../ceilingSlope'
@@ -1073,5 +1073,99 @@ describe('slopePlaneCoefficients (07.09.2026 — наклон Плиты/Пот�
     const h1 = a * 10 + b * 0 + c
     const h2 = a * 10 + b * 5 + c
     expect(h2).toBeCloseTo(h1, 9)
+  })
+})
+
+describe('slabStepRisers3D (11.09.2026 — разноуровневые перекрытия, объект в Ростове: сцена/карман сцены/зал)', () => {
+  function rectSlab(overrides: Partial<Slab> & { id: string; x0: number; y0: number; w: number; h: number }): Slab {
+    const { id, x0, y0, w, h, ...rest } = overrides
+    return {
+      id, label: id, holes: [],
+      outer: [
+        { x: x0, y: y0 }, { x: x0 + w, y: y0 },
+        { x: x0 + w, y: y0 + h }, { x: x0, y: y0 + h },
+      ],
+      ...rest,
+    }
+  }
+
+  it('две соседние плоские плиты с общим ребром и РАЗНОЙ высотой — даёт ровно один risер по общему ребру', () => {
+    // A: (0,0)-(100,100), B: (100,0)-(200,100) — общее ребро x=100, y от 0 до 100.
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 }) // плоская, Y=0 (slope не задан)
+    const b = rectSlab({
+      id: 'B', x0: 100, y0: 0, w: 100, h: 100,
+      slope: { x1: 100, y1: 0, x2: 200, y2: 0, height1Mm: 500, height2Mm: 500 }, // плоская, приподнята на 500мм
+    })
+    const risers = slabStepRisers3D([a, b], 10)
+    expect(risers).toHaveLength(1)
+    const r = risers[0]
+    // Оба конца ребра A на Y=0, оба конца ребра B на Y=0.5м (500мм)
+    expect(r.p0.y).toBeCloseTo(0, 6)
+    expect(r.p1.y).toBeCloseTo(0, 6)
+    expect(r.p2.y).toBeCloseTo(0.5, 6)
+    expect(r.p3.y).toBeCloseTo(0.5, 6)
+  })
+
+  it('две соседние плиты ОДНОЙ высоты — риser не строится (нет видимой ступени)', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 })
+    const b = rectSlab({ id: 'B', x0: 100, y0: 0, w: 100, h: 100 })
+    expect(slabStepRisers3D([a, b], 10)).toHaveLength(0)
+  })
+
+  it('плиты НЕ соприкасаются (нет общего ребра) — риser не строится, даже при разной высоте', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 })
+    const b = rectSlab({
+      id: 'B', x0: 500, y0: 0, w: 100, h: 100,
+      slope: { x1: 500, y1: 0, x2: 600, y2: 0, height1Mm: 500, height2Mm: 500 },
+    })
+    expect(slabStepRisers3D([a, b], 10)).toHaveLength(0)
+  })
+
+  it('общее ребро обойдено в обратном порядке (разная ориентация полигонов) — всё равно распознаётся', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 }) // обход по часовой: ...,(100,0),(100,100),...
+    const b: Slab = {
+      id: 'B', label: 'B', holes: [],
+      // Обход в обратную сторону — общее ребро идёт (100,100)→(100,0), а не (100,0)→(100,100)
+      outer: [{ x: 100, y: 100 }, { x: 100, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 100 }],
+      slope: { x1: 100, y1: 0, x2: 200, y2: 0, height1Mm: 300, height2Mm: 300 },
+    }
+    expect(slabStepRisers3D([a, b], 10)).toHaveLength(1)
+  })
+
+  it('наклонная плита встречается с плоской — риser отражает высоты в ОБОИХ концах ребра (не констрейнится к вертикали)', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 }) // плоская, Y=0
+    const b = rectSlab({
+      id: 'B', x0: 100, y0: 0, w: 100, h: 100,
+      // Наклон ВДОЛЬ общего ребра (x=100): 0мм при y=0, 300мм при y=100
+      slope: { x1: 100, y1: 0, x2: 100, y2: 100, height1Mm: 0, height2Mm: 300 },
+    })
+    const risers = slabStepRisers3D([a, b], 10)
+    expect(risers).toHaveLength(1)
+    const r = risers[0]
+    // Сторона A (плоская) — оба конца на Y=0
+    expect(r.p0.y).toBeCloseTo(0, 6)
+    expect(r.p1.y).toBeCloseTo(0, 6)
+    // Сторона B (наклонная вдоль ребра) — концы РАЗНЫЕ: 0 и 0.3м
+    const bHeights = [r.p2.y, r.p3.y].sort((x, y) => x - y)
+    expect(bHeights[0]).toBeCloseTo(0, 6)
+    expect(bHeights[1]).toBeCloseTo(0.3, 6)
+  })
+
+  it('дырки (holes) не участвуют — общий контур выреза одной плиты не считается ступенью относительно другой (v1 упрощение)', () => {
+    const a: Slab = {
+      id: 'A', label: 'A', holes: [[{ x: 40, y: 40 }, { x: 60, y: 40 }, { x: 60, y: 60 }, { x: 40, y: 60 }]],
+      outer: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+    }
+    const b = rectSlab({
+      id: 'B', x0: 40, y0: 40, w: 20, h: 20,
+      slope: { x1: 40, y1: 40, x2: 60, y2: 40, height1Mm: 500, height2Mm: 500 },
+    })
+    expect(slabStepRisers3D([a, b], 10)).toHaveLength(0)
+  })
+
+  it('меньше двух плит — риser не строится', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 })
+    expect(slabStepRisers3D([a], 10)).toHaveLength(0)
+    expect(slabStepRisers3D([], 10)).toHaveLength(0)
   })
 })

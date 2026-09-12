@@ -489,6 +489,103 @@ export function slopePlaneCoefficients(slope: SlopePlane, scaleMmPx: number): { 
   }
 }
 
+/** Высота ВЕРХА плиты (метры, level-local Y) в данной точке контура (px) —
+ *  0, если у плиты не задан slope (плоская на Y=0, как раньше), иначе по
+ *  плоскости slopePlaneCoefficients (см. выше). Общая точка входа для
+ *  slabStepRisers3D — так же, как HandDrawnSlabMesh считает Y для вершин
+ *  своей геометрии, просто применённая напрямую к точке в px, а не к уже
+ *  построенной ExtrudeGeometry. */
+function slabTopHeightAtPx(slab: Slab, xPx: number, yPx: number, scaleMmPx: number): number {
+  if (!slab.slope) return 0
+  const { a, b, c } = slopePlaneCoefficients(slab.slope, scaleMmPx)
+  return a * pxToM(xPx, scaleMmPx) + b * pxToM(yPx, scaleMmPx) + c
+}
+
+/**
+ * Допуск совпадения точек контуров (px) — то же значение и тот же смысл,
+ * что и JOIN_EPS в core/wallJoin.ts (endpoint-снап стен): считаем края двух
+ * контуров "тем же самым ребром", если их концы совпадают в пределах этого
+ * допуска. Не импортируется оттуда напрямую — JOIN_EPS там не экспортирован,
+ * а смысл достаточно локален, чтобы держать отдельную константу.
+ */
+const SLAB_EDGE_EPS_PX = 3
+
+function pxClose(ax: number, ay: number, bx: number, by: number): boolean {
+  const dx = ax - bx, dy = ay - by
+  return dx * dx + dy * dy <= SLAB_EDGE_EPS_PX * SLAB_EDGE_EPS_PX
+}
+
+/** Рёбра контура (замкнутый обход, включая ребро от последней точки к первой). */
+function contourEdges(outer: { x: number; y: number }[]): [{ x: number; y: number }, { x: number; y: number }][] {
+  const edges: [{ x: number; y: number }, { x: number; y: number }][] = []
+  for (let i = 0; i < outer.length; i++) {
+    edges.push([outer[i], outer[(i + 1) % outer.length]])
+  }
+  return edges
+}
+
+/**
+ * Вертикальная (или, если высоты плит вдоль ребра не совпадают на обоих
+ * концах — наклонная) грань-"подступёнок" между двумя Плитами разного
+ * уровня, у которых совпадает ребро внешнего контура (11.09.2026, объект
+ * в Ростове — разноуровневые перекрытия сцена/карман сцены/зал).
+ *
+ * ⚠️ Сознательное упрощение v1: только рёбра ВНЕШНЕГО контура (outer),
+ * дырки (holes) не участвуют — на реальных объектах ступень между двумя
+ * соседними плитами всегда проходит по внешней границе, а не по краю
+ * выреза внутри одной плиты. Тем же путём НЕ идёт полноценная булева
+ * геометрия (см. комментарий про CSG у HandDrawnSlabMesh) — только точное
+ * совпадение концов ребра в пределах SLAB_EDGE_EPS_PX, тот же приём, что
+ * уже применяется для стыковки стен (wallJoin.ts, JOIN_EPS).
+ */
+export interface SlabStepRiser3D {
+  id: string
+  /** 4 угла грани по обходу (двумя треугольниками рисуется в Scene3D) — p0,p1 на высоте плиты A вдоль ребра, p2,p3 на высоте плиты B (в обратном порядке, чтобы контур не самопересекался) */
+  p0: { x: number; y: number; z: number }
+  p1: { x: number; y: number; z: number }
+  p2: { x: number; y: number; z: number }
+  p3: { x: number; y: number; z: number }
+}
+
+export function slabStepRisers3D(slabs: Slab[], scaleMmPx: number): SlabStepRiser3D[] {
+  const risers: SlabStepRiser3D[] = []
+  const eligible = slabs.filter(sl => sl.outer.length >= 3)
+  for (let i = 0; i < eligible.length; i++) {
+    for (let j = i + 1; j < eligible.length; j++) {
+      const a = eligible[i], b = eligible[j]
+      const edgesA = contourEdges(a.outer)
+      const edgesB = contourEdges(b.outer)
+      let edgeIdx = 0
+      for (const [a0, a1] of edgesA) {
+        for (const [b0, b1] of edgesB) {
+          // Совпадение ребра — концы совпадают в любом порядке (полигоны
+          // могут быть обойдены в разные стороны).
+          const sameOrder = pxClose(a0.x, a0.y, b0.x, b0.y) && pxClose(a1.x, a1.y, b1.x, b1.y)
+          const revOrder = pxClose(a0.x, a0.y, b1.x, b1.y) && pxClose(a1.x, a1.y, b0.x, b0.y)
+          if (!sameOrder && !revOrder) continue
+          edgeIdx++
+          const heightA0 = slabTopHeightAtPx(a, a0.x, a0.y, scaleMmPx)
+          const heightA1 = slabTopHeightAtPx(a, a1.x, a1.y, scaleMmPx)
+          const heightB0 = slabTopHeightAtPx(b, a0.x, a0.y, scaleMmPx) // считаем по точкам A — совпадают с B в пределах эпсилон
+          const heightB1 = slabTopHeightAtPx(b, a1.x, a1.y, scaleMmPx)
+          // Высоты совпадают на обоих концах — нет видимой ступени, риser не нужен.
+          if (Math.abs(heightA0 - heightB0) < 1e-6 && Math.abs(heightA1 - heightB1) < 1e-6) continue
+          const x0 = pxToM(a0.x, scaleMmPx), z0 = pxToM(a0.y, scaleMmPx)
+          const x1 = pxToM(a1.x, scaleMmPx), z1 = pxToM(a1.y, scaleMmPx)
+          risers.push({
+            id: `__step_${a.id}_${b.id}_${edgeIdx}`,
+            p0: { x: x0, y: heightA0, z: z0 },
+            p1: { x: x1, y: heightA1, z: z1 },
+            p2: { x: x1, y: heightB1, z: z1 },
+            p3: { x: x0, y: heightB0, z: z0 },
+          })
+        }
+      }
+    }
+  }
+  return risers
+}
+
 export interface CeilingPolygon3D {
   id: string
   label: string

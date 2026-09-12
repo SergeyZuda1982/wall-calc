@@ -25,9 +25,9 @@ import {
   wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM, mToMm,
   freeformStructuresToPrisms3D, wallStudPositionsMm,
   wallToBox3D, wallFaceFrame, worldToFaceMm,
-  slopePlaneCoefficients,
+  slopePlaneCoefficients, slabStepRisers3D,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
-  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame,
+  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame, type SlabStepRiser3D,
 } from './core/planTo3D'
 import type { PlanLineType, FloorPlan, PlanLine, WorkStageTemplate } from './types'
 import CeilingGridMesh from './components/CeilingGridMesh'
@@ -369,6 +369,37 @@ function HandDrawnSlabMesh({ slab, scaleMmPx, opacity = 1 }: { slab: SlabPolygon
   return (
     <mesh geometry={geo} receiveShadow>
       <meshStandardMaterial map={tex} color={tint} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
+    </mesh>
+  )
+}
+
+/**
+ * Подступёнок между двумя разноуровневыми Плитами (11.09.2026, объект в
+ * Ростове) — плоский четырёхугольник (2 треугольника) по 4 углам из
+ * slabStepRisers3D. Свой плоский материал (не текстура бетона, как у самой
+ * плиты) — риser часто виден лишь узкой полоской, текстура на ней либо не
+ * успевает развернуться заметно, либо тайлится странно на нестандартных
+ * пропорциях (высота ступени обычно << её длины).
+ */
+function SlabStepRiserMesh({ riser, opacity = 1 }: { riser: SlabStepRiser3D; opacity?: number }) {
+  const geo = useMemo(() => {
+    const g = new THREE.BufferGeometry()
+    const { p0, p1, p2, p3 } = riser
+    const positions = new Float32Array([
+      p0.x, p0.y, p0.z,
+      p1.x, p1.y, p1.z,
+      p2.x, p2.y, p2.z,
+      p0.x, p0.y, p0.z,
+      p2.x, p2.y, p2.z,
+      p3.x, p3.y, p3.z,
+    ])
+    g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    g.computeVertexNormals()
+    return g
+  }, [riser])
+  return (
+    <mesh geometry={geo} receiveShadow castShadow>
+      <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} side={THREE.DoubleSide} transparent={opacity < 1} opacity={opacity} />
     </mesh>
   )
 }
@@ -807,6 +838,7 @@ function LevelGroup({
   const linesById = useMemo(() => new Map(lines.map(l => [l.id, l])), [lines])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
   const slabPolygons = useMemo(() => slabsToPolygons3D(slabs, scaleMmPx), [slabs, scaleMmPx])
+  const slabStepRisers = useMemo(() => slabStepRisers3D(slabs, scaleMmPx), [slabs, scaleMmPx])
   const ceilingPolygons = useMemo(() => ceilingsToPolygons3D(ceilings, scaleMmPx), [ceilings, scaleMmPx])
   const ceilingMm = useMemo(() => estimateCeilingMm(lines), [lines])
   const columnCylinders = useMemo(
@@ -934,6 +966,7 @@ function LevelGroup({
         )
       })}
       {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} scaleMmPx={scaleMmPx} opacity={opacity} />)}
+      {slabStepRisers.map(riser => <SlabStepRiserMesh key={riser.id} riser={riser} opacity={opacity} />)}
       {ceilingPolygons.map(cl => (
         <CeilingEntityMesh
           key={`ceiling-${cl.id}`}
