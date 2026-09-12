@@ -45,6 +45,7 @@ import { resolveWallProfileType } from './core/planLineToWallInput'
 import { parseDoubleFrameSubtype } from './data/constructionTaxonomy'
 import { resolveLiningProfileType } from './core/planLineToLiningInput'
 import { wallProfileGeometryM, STUD_FLANGE_MM, TRACK_FLANGE_MM } from './components/wallProfileGeometry'
+import { slantedTopBoxGeometry } from './components/slantedTopBoxGeometry'
 
 const TYPE_COLOR_3D: Record<PlanLineType, string> = {
   wall_new:      '#e57373',
@@ -179,6 +180,32 @@ function WallMesh({ box, line, opacity = 1, selected = false, measuring = false,
     [showFrame, box.size.sy, depthMm],
   )
 
+  // 12.09.2026: стена/облицовка под наклонным потолком (Ceiling.slope, см.
+  // core/ceilingSlope.ts + wallToBoxesWithOpenings3D) — topYAtFromM/topYAtToM
+  // заданы, только если для этой коробки реально применим уклон (иначе оба
+  // undefined и всё ниже работает как раньше, обычным boxGeometry). Верх
+  // короба режется ОДНОЙ наклонной плоскостью — см. slantedTopBoxGeometry.
+  // Каркас (направляющие/стойки, trackGeo/studGeo выше) сознательно ОСТАЁТСЯ
+  // приближённым плоским боксом — известное упрощение (как и раньше со
+  // схематичным сечением до 14.07.2026): для сплошной облицовки и обшивки
+  // (то, что реально видно снаружи) верх уже режется правильно, а стойки на
+  // объекте всё равно подрезают по месту при монтаже.
+  const bottomY = box.center.y - box.size.sy / 2
+  const slantHeights = useMemo(
+    () => (box.topYAtFromM !== undefined && box.topYAtToM !== undefined
+      ? { hLeft: box.topYAtFromM - bottomY, hRight: box.topYAtToM - bottomY }
+      : null),
+    [box.topYAtFromM, box.topYAtToM, bottomY],
+  )
+  const solidGeo = useMemo(
+    () => (slantHeights ? slantedTopBoxGeometry(box.size.sx, box.size.sz, slantHeights.hLeft, slantHeights.hRight) : null),
+    [slantHeights, box.size.sx, box.size.sz],
+  )
+  const sheetGeo = useMemo(
+    () => (slantHeights ? slantedTopBoxGeometry(box.size.sx, GKL_SHEET_THICKNESS_M, slantHeights.hLeft, slantHeights.hRight) : null),
+    [slantHeights, box.size.sx],
+  )
+
   function handleClick(e: ThreeEvent<MouseEvent>) {
     if (measuring || !onSelect) return
     e.stopPropagation()
@@ -197,7 +224,7 @@ function WallMesh({ box, line, opacity = 1, selected = false, measuring = false,
     >
       {!showFrame && (
         <mesh castShadow receiveShadow>
-          <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
+          {solidGeo ? <primitive object={solidGeo} attach="geometry" /> : <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />}
           <meshStandardMaterial
             map={texture}
             color={texture ? tint : color}
@@ -226,13 +253,13 @@ function WallMesh({ box, line, opacity = 1, selected = false, measuring = false,
           {/* обшивка стороны А/Б — тонкий лист поверх каркаса, только если подтверждена */}
           {gklVisual!.sheetA && (
             <mesh position={[0, 0, box.size.sz / 2 - GKL_SHEET_THICKNESS_M / 2]} castShadow receiveShadow>
-              <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />
+              {sheetGeo ? <primitive object={sheetGeo} attach="geometry" /> : <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />}
               <meshStandardMaterial color={GKL_SHEET_COLOR} roughness={0.85} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
             </mesh>
           )}
           {gklVisual!.sheetB && sides === 2 && (
             <mesh position={[0, 0, -(box.size.sz / 2 - GKL_SHEET_THICKNESS_M / 2)]} castShadow receiveShadow>
-              <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />
+              {sheetGeo ? <primitive object={sheetGeo} attach="geometry" /> : <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />}
               <meshStandardMaterial color={GKL_SHEET_COLOR} roughness={0.85} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
             </mesh>
           )}
@@ -800,9 +827,10 @@ function LevelGroup({
   const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
   const opacity = dimmed ? 0.35 : 1
 
+  const ceilingSlopes = floorPlan.ceilingSlopes ?? []
   const boxes = useMemo(
-    () => wallsToBoxes3D(lines, scaleMmPx, rectColumns, roundColumns),
-    [lines, scaleMmPx, rectColumns, roundColumns],
+    () => wallsToBoxes3D(lines, scaleMmPx, rectColumns, roundColumns, slabs, ceilings, ceilingSlopes, rooms),
+    [lines, scaleMmPx, rectColumns, roundColumns, slabs, ceilings, ceilingSlopes, rooms],
   )
   const linesById = useMemo(() => new Map(lines.map(l => [l.id, l])), [lines])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
