@@ -870,12 +870,12 @@ function LevelGroup({
   const ceilingPolygons = useMemo(() => ceilingsToPolygons3D(ceilings, scaleMmPx), [ceilings, scaleMmPx])
   const ceilingMm = useMemo(() => estimateCeilingMm(lines), [lines])
   const columnCylinders = useMemo(
-    () => roundColumnsToCylinders3D(roundColumns, scaleMmPx, ceilingMm),
-    [roundColumns, scaleMmPx, ceilingMm],
+    () => roundColumnsToCylinders3D(roundColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms),
+    [roundColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms],
   )
   const rectColumnBoxes = useMemo(
-    () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm),
-    [rectColumns, scaleMmPx, ceilingMm],
+    () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms),
+    [rectColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms],
   )
   const freeformPrisms = useMemo(
     () => freeformStructuresToPrisms3D(freeformStructures, scaleMmPx, ceilingMm),
