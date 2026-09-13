@@ -347,6 +347,85 @@ describe('wallsToBoxes3D', () => {
   })
 })
 
+describe('wallsToBoxes3D — ДУГОВЫЕ стены (11.09.2026, Фаза 3 объекта в Ростове — радиусные стены зала)', () => {
+  it('дуговая стена (sagittaMm) — даёт 24 коротких короб-сегмента, не один прямой по хорде', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150,
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    expect(boxes).toHaveLength(24)
+    boxes.forEach(b => {
+      expect(b.lineId).toBe('arc1') // выбор стены кликом по любому сегменту — целиком
+      expect(b.id).toContain('arc1__arc')
+      expect(Number.isFinite(b.center.x)).toBe(true)
+      expect(Number.isFinite(b.center.z)).toBe(true)
+      expect(Number.isFinite(b.rotationY)).toBe(true)
+    })
+  })
+
+  it('сегменты идут ПО ДУГЕ — суммарная длина сегментов близка к длине дуги (не хорды), апекс дуги смещён от прямой линии между концами', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150, // стрела заметная, не вырожденная
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    const totalLenM = boxes.reduce((s, b) => s + b.size.sx, 0)
+    // Длина дуги ВСЕГДА больше длины хорды (1000px=10000мм=10м) — есть кривизна
+    expect(totalLenM).toBeGreaterThan(10.0)
+    // Средний сегмент (примерно апекс дуги) должен быть смещён по Z от 0
+    // (хорда идёт строго по оси X, z=0 у обоих концов)
+    const midBox = boxes[Math.floor(boxes.length / 2)]
+    expect(Math.abs(midBox.center.z)).toBeGreaterThan(0.001)
+  })
+
+  it('alongFromM/alongToM НАКАПЛИВАЮТСЯ вдоль всей дуги, а не сбрасываются на каждом сегменте', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150,
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    // Монотонно возрастают, конец предыдущего = начало следующего (с точностью)
+    for (let i = 0; i < boxes.length; i++) {
+      expect(boxes[i].alongFromM).toBeCloseTo(i === 0 ? 0 : boxes[i - 1].alongToM, 5)
+      expect(boxes[i].alongToM).toBeGreaterThan(boxes[i].alongFromM)
+    }
+    // Последний alongToM — суммарная длина дуги (близко к периметру всех сегментов)
+    const totalLenM = boxes.reduce((s, b) => s + b.size.sx, 0)
+    expect(boxes[boxes.length - 1].alongToM).toBeCloseTo(totalLenM, 5)
+  })
+
+  it('вырожденная дуга (sagittaMm≈0) — ведёт себя как обычная прямая стена, один короб', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 0, // 0 → arcFromChordAndSagitta вернёт null
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    expect(boxes).toHaveLength(1)
+    expect(boxes[0].id).toBe('arc1')
+    expect(boxes[0].size.sx).toBeCloseTo(10, 5)
+  })
+
+  it('дуговая стена наследует толщину/высоту/материал линии на каждом сегменте', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150, heightMm: 4500,
+      spec: { material: 'brick', subtype: '380' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    const expectedThicknessM = wallThicknessMm(line) / 1000
+    boxes.forEach(b => {
+      expect(b.size.sy).toBeCloseTo(4.5, 5)
+      expect(b.size.sz).toBeCloseTo(expectedThicknessM, 5)
+      expect(b.materialKind).toBe('brick')
+    })
+  })
+
+  it('дуга без толщины (нет spec) — не строится вообще, как и обычная стена', () => {
+    const line = baseLine({ id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150 })
+    expect(wallsToBoxes3D([line], 10)).toEqual([])
+  })
+})
+
 describe('estimateCeilingMm', () => {
   it('без wall_existing — дефолт 3000', () => {
     expect(estimateCeilingMm([baseLine({ type: 'wall_new', heightMm: 2500 })])).toBe(3000)
