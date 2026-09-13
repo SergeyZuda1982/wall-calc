@@ -666,6 +666,34 @@ describe('roundColumnsToCylinders3D', () => {
     )
     expect(cyls.map(c => c.id)).toEqual(['a', 'b'])
   })
+
+  it('12.09.2026 — колонна ПОД наклонной Плитой берёт высоту из уклона, а не из плоской ceilingMm (объект в Ростове: раньше колонна зависала ниже наклонной плиты, виден зазор)', () => {
+    const slab: Slab = {
+      id: 's1', label: 'Плита', holes: [],
+      outer: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
+      slope: { x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 4000 },
+    }
+    // Колонна в центре по X (x=500) — высота уклона линейно между 3000 и 4000 = 3500мм
+    const col = baseColumn({ cx: 500, cy: 500 })
+    const cyls = roundColumnsToCylinders3D([col], 10, 3000 /* плоский потолок — должен быть ПЕРЕБИТ уклоном */, [], [slab])
+    expect(cyls[0].heightM).toBeCloseTo(3.5, 5) // НЕ 3.0 (плоский ceilingMm)
+  })
+
+  it('колонна ВНЕ контура наклонной Плиты — берёт обычную плоскую ceilingMm (уклон не применяется к чужой точке)', () => {
+    const slab: Slab = {
+      id: 's1', label: 'Плита', holes: [],
+      outer: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
+      slope: { x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 4000 },
+    }
+    const col = baseColumn({ cx: 5000, cy: 5000 }) // далеко за пределами контура плиты
+    const cyls = roundColumnsToCylinders3D([col], 10, 3000, [], [slab])
+    expect(cyls[0].heightM).toBeCloseTo(3.0, 5)
+  })
+
+  it('без slabs/ceilings/slopes/rooms (дефолт []) — обычная плоская высота, как раньше (обратная совместимость)', () => {
+    const cyls = roundColumnsToCylinders3D([baseColumn({})], 10, 2850)
+    expect(cyls[0].heightM).toBeCloseTo(2.85, 5)
+  })
 })
 
 describe('wallToBoxesWithOpenings3D', () => {
@@ -821,6 +849,23 @@ describe('rectColumnsToBoxes3D', () => {
       [baseRectColumn({ id: 'a' }), baseRectColumn({ id: 'b', cx: 300 })], 10, 2700,
     )
     expect(boxes.map(b => b.id)).toEqual(['a', 'b'])
+  })
+
+  it('12.09.2026 — колонна ПОД наклонной Плитой берёт высоту из уклона, центр по Y пересчитывается на половину НОВОЙ высоты', () => {
+    const slab: Slab = {
+      id: 's1', label: 'Плита', holes: [],
+      outer: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
+      slope: { x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 4000 },
+    }
+    const col = baseRectColumn({ cx: 500, cy: 500 })
+    const boxes = rectColumnsToBoxes3D([col], 10, 3000, [], [slab])
+    expect(boxes[0].size.sy).toBeCloseTo(3.5, 5)  // НЕ 3.0
+    expect(boxes[0].center.y).toBeCloseTo(1.75, 5) // половина от 3.5, не от 3.0
+  })
+
+  it('без slabs/ceilings/slopes/rooms (дефолт []) — обычная плоская высота, как раньше (обратная совместимость)', () => {
+    const boxes = rectColumnsToBoxes3D([baseRectColumn({})], 10, 2850)
+    expect(boxes[0].size.sy).toBeCloseTo(2.85, 5)
   })
 })
 

@@ -35,7 +35,7 @@ import { computeWallJoins, buildWallsForJoin, type JoinedWall } from './wallJoin
 import { resolveWallProfileType, mapOpenings, DEFAULT_STEP_MM } from './planLineToWallInput'
 import { buildPositions } from './buildPositions'
 import { parseDoubleFrameSubtype } from '../data/constructionTaxonomy'
-import { ceilingSlopeHeightAt, buildEffectiveCeilingSlopeResolver } from './ceilingSlope'
+import { ceilingSlopeHeightAt, buildEffectiveCeilingSlopeResolver, effectiveCeilingSlopeHeightAtPoint } from './ceilingSlope'
 import { arcFromChordAndSagitta, sampleArcPoints } from './geometry2d'
 
 export const DEFAULT_HEIGHT_MM = 3000
@@ -785,21 +785,32 @@ export interface ColumnCylinder3D {
 
 /**
  * Круглые колонны → цилиндры в метрах, для Scene3D (CylinderGeometry).
- * Высота — до общей отметки потолка этажа (estimateCeilingMm), как и у
- * прямоугольной колонны (Room с isColumn: true, extrude на всю высоту потолка).
+ * Высота — до общей отметки потолка этажа (estimateCeilingMm) ПО
+ * УМОЛЧАНИЮ, как и у прямоугольной колонны, но если над центром колонны
+ * есть Плита/Потолок с уклоном (или зона «Задать уклон») — высота берётся
+ * оттуда через effectiveCeilingSlopeHeightAtPoint (12.09.2026, замечено
+ * на объекте в Ростове: под наклонной плитой перегородки уже доходят до
+ * неё, а колонны — нет, зависают на плоской высоте, виден зазор под
+ * плитой). lines/slabs/ceilings/slopes/rooms — необязательные параметры
+ * (дефолт []), обратная совместимость для мест, где уклон ещё не
+ * подключён к вызову.
  */
 export function roundColumnsToCylinders3D(
   roundColumns: RoundColumn[], scaleMmPx: number, ceilingMm: number,
+  lines: PlanLine[] = [], slabs: Slab[] = [], ceilings: Ceiling[] = [], slopes: CeilingSlope[] = [], rooms: Room[] = [],
 ): ColumnCylinder3D[] {
   return roundColumns
     .filter(rc => rc.diameterMm > 0)
-    .map(rc => ({
-      id: rc.id,
-      cx: pxToM(rc.cx, scaleMmPx),
-      cz: pxToM(rc.cy, scaleMmPx),
-      radius: mmToM(rc.diameterMm) / 2,
-      heightM: mmToM(ceilingMm),
-    }))
+    .map(rc => {
+      const slopeHeightMm = effectiveCeilingSlopeHeightAtPoint({ x: rc.cx, y: rc.cy }, lines, slabs, ceilings, slopes, rooms)
+      return {
+        id: rc.id,
+        cx: pxToM(rc.cx, scaleMmPx),
+        cz: pxToM(rc.cy, scaleMmPx),
+        radius: mmToM(rc.diameterMm) / 2,
+        heightM: mmToM(slopeHeightMm ?? ceilingMm),
+      }
+    })
 }
 
 export interface RectColumnBox3D {
@@ -823,18 +834,28 @@ export interface RectColumnBox3D {
  * направленной как (cos θ, sin θ) в px-пространстве (θ = angleRad плана),
  * dz берётся БЕЗ инверсии (z = pxToM(y) впрямую), так что то же направление
  * даёт rotationY = atan2(-sin θ, cos θ) = -θ.
+ *
+ * Высота — та же логика уклона, что и у roundColumnsToCylinders3D выше
+ * (12.09.2026): по умолчанию estimateCeilingMm, но если над центром
+ * колонны есть Плита/Потолок с уклоном (или зона «Задать уклон») — высота
+ * берётся оттуда через effectiveCeilingSlopeHeightAtPoint.
  */
 export function rectColumnsToBoxes3D(
   rectColumns: RectColumn[], scaleMmPx: number, ceilingMm: number,
+  lines: PlanLine[] = [], slabs: Slab[] = [], ceilings: Ceiling[] = [], slopes: CeilingSlope[] = [], rooms: Room[] = [],
 ): RectColumnBox3D[] {
   return rectColumns
     .filter(rc => rc.widthMm > 0 && rc.depthMm > 0)
-    .map(rc => ({
-      id: rc.id,
-      center: { x: pxToM(rc.cx, scaleMmPx), y: mmToM(ceilingMm) / 2, z: pxToM(rc.cy, scaleMmPx) },
-      size: { sx: mmToM(rc.widthMm), sy: mmToM(ceilingMm), sz: mmToM(rc.depthMm) },
-      rotationY: -rc.angleRad,
-    }))
+    .map(rc => {
+      const slopeHeightMm = effectiveCeilingSlopeHeightAtPoint({ x: rc.cx, y: rc.cy }, lines, slabs, ceilings, slopes, rooms)
+      const heightM = mmToM(slopeHeightMm ?? ceilingMm)
+      return {
+        id: rc.id,
+        center: { x: pxToM(rc.cx, scaleMmPx), y: heightM / 2, z: pxToM(rc.cy, scaleMmPx) },
+        size: { sx: mmToM(rc.widthMm), sy: heightM, sz: mmToM(rc.depthMm) },
+        rotationY: -rc.angleRad,
+      }
+    })
 }
 
 
