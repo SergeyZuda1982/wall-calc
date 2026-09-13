@@ -125,6 +125,23 @@ export const BUILTIN_WORK_STAGE_TEMPLATES: WorkStageTemplate[] = [
       },
     ),
   },
+  {
+    id: 'ceiling_gkl',
+    label: 'Подвесной потолок ГКЛ (П112/П113)',
+    context: 'ceiling',
+    steps: steps(
+      ['Разметка', 'Каркас', 'Минвата', 'Зашивка ГКЛ', 'Готово'],
+      {
+        // Без materialKind — материал (профиль/листы/крепёж/минвата) уже точно
+        // считается calcCeiling.ts, не этим справочником (тот же принцип, что
+        // и у gkl_partition выше). Зашивка ГКЛ — ОДНА сторона (снизу), в
+        // отличие от стены (sheet_a/sheet_b) у потолка нет второй стороны —
+        // см. core/ceilingProgress3D.ts, ceilingGklVisual3D.
+        'Каркас': { meaning3D: 'frame' },
+        'Зашивка ГКЛ': { meaning3D: 'sheet_a' },
+      },
+    ),
+  },
 ]
 
 export function findBuiltinTemplate(id: string): WorkStageTemplate | undefined {
