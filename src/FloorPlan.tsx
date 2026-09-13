@@ -34,6 +34,7 @@ import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrame
 import { buildCeilingProfilesByLineId, areaUnderProfileM2 } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf, resolveFinishZones, finishTemplateContextOf } from './core/finishResolver'
+import { reverseLineDirection } from './core/lineReverse'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout, buildCeilingSurfaceInputs } from './core/calcProjectSheetLayout'
@@ -1818,8 +1819,22 @@ export default function FloorPlan() {
           ...(sagittaMm ? { sagittaMm } : {}),
         })
         setChainLineIds(prev => [...prev, newId])
-        // Конец линии — НЕ автостарт следующей, ждём нового клика пользователя
-        setDrawing(null)
+        // 13.09.2026: автопродолжение цепочки — конец этого отрезка сразу
+        // становится началом следующего (тем же кликом, без повторного
+        // наведения и без applySnap). Раньше здесь стояло setDrawing(null),
+        // и пользователю приходилось кликать ЗАНОВО рядом с концом — а раз
+        // это новый клик, он идёт через applySnap()/snapPoint(), который на
+        // повороте (особенно T/флюш-кандидаты у соседних стен) мог зацепить
+        // НЕ ту же самую точку, а близкую — отсюда систематические зазоры
+        // 30-50мм между "визуально сошедшимися" стенами и wallJoin не
+        // находил стык (см. консольный дамп "БЛИЗКИЕ, НО НЕ СОВПАВШИЕ концы"
+        // от пользователя, кейс с обшивкой колонны). Теперь x1/y1 следующего
+        // отрезка берутся буквально из x2/y2 (pt.x/pt.y) только что
+        // добавленной линии — бит в бит, без прохода через снап заново,
+        // поворот — это просто клик в новом направлении. Явный конец
+        // цепочки — как раньше: ПКМ (см. handleStageContextMenu) или клик
+        // рядом с chainStartPt (closingChain, замыкание контура выше).
+        setDrawing({ x1: pt.x, y1: pt.y })
       }
       return
     }
@@ -3776,9 +3791,22 @@ export default function FloorPlan() {
             )
           })}
 
-          {/* Кнопка удалить */}
+          {/* Кнопки: развернуть направление / удалить */}
           {selectedLine && (
-            <div style={{ marginTop: 'auto', padding: '10px 14px', borderTop: '1px solid #2a3045' }}>
+            <div style={{ marginTop: 'auto', padding: '10px 14px', borderTop: '1px solid #2a3045', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                onClick={() => updatePlanLine(selectedLine.id, reverseLineDirection(selectedLine))}
+                title={selectedLine.type === 'wall_lining'
+                  ? 'Меняет местами начало/конец линии — у облицовки лист ГКЛ в 3D перекладывается на противоположную сторону'
+                  : 'Меняет местами начало/конец линии (и стороны A/Б отделки/прогресса вместе с ним)'}
+                style={{
+                  width: '100%', padding: '7px 14px', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: 6, fontSize: 12, fontWeight: 600,
+                  border: '1px solid #2a3045', borderRadius: 6,
+                  background: '#1c2333', color: '#cdd6f4', cursor: 'pointer',
+                }}>
+                ⇄ Развернуть направление
+              </button>
               <button onClick={() => { removePlanLine(selectedLine.id); setSelected(null) }}
                 style={{
                   width: '100%', padding: '7px 14px', display: 'flex', alignItems: 'center',
@@ -5295,6 +5323,11 @@ export default function FloorPlan() {
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button title="Дублировать" style={iconBtnStyle2} onClick={() => {}}>⧉</button>
+                <button title={inspectorLine.type === 'wall_lining'
+                    ? 'Развернуть направление — у облицовки лист ГКЛ в 3D перекладывается на противоположную сторону'
+                    : 'Развернуть направление (начало/конец линии меняются местами)'}
+                  style={iconBtnStyle2}
+                  onClick={() => updatePlanLine(inspectorLine.id, reverseLineDirection(inspectorLine))}>⇄</button>
                 <button title="Удалить" style={{ ...iconBtnStyle2, color: '#e53935' }}
                   onClick={() => { removePlanLine(inspectorLine.id); setInspectorId(null); setSelected(null) }}>🗑</button>
                 <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorId(null)}>✕</button>
