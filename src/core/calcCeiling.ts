@@ -12,7 +12,7 @@ import {
 } from '../data/ceilingData'
 import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL, type CeilingGapSpec } from './calcP112Frame'
 import { calcP113FrameGeometry } from './calcP113Frame'
-import { calcP131FrameGeometry } from './calcP131Frame'
+import { calcP131FrameGeometry, type P131ProfileSelection } from './calcP131Frame'
 import {
   calcCeilingProfileCutListP112, calcCeilingProfileCutListP113, calcCeilingProfileCutListP131,
   ceilingRawPiecesP112, ceilingRawPiecesP113, ceilingRawPiecesP131,
@@ -105,6 +105,13 @@ export interface CeilingCalcResult {
    *  (calcProjectCutList.ts), тот же набор, что уже упакован в
    *  profileCutList выше, просто до раскладки по пруткам. 05.09.2026. */
   rawProfilePieces: { main: Piece[]; bearing: Piece[] } | null
+  /** 11.09.2026 — подобранное сечение ПС/ПН и одинарный/спаренный для типа
+   *  П131 (см. calcP131Frame.ts selectP131ProfileConfig), для UI (показать
+   *  пользователю, что было выбрано и с каким запасом по пролёту). null —
+   *  не П131 или fallback-режим без размеров помещения (сечение неизвестно
+   *  без пролёта); undefined-подобное «пролёт превышает предел даже для
+   *  ПС100 спаренного» — тоже null, смотри warnings для текста в этом случае. */
+  p131ProfileSelection: P131ProfileSelection | null
   /** Предупреждения */
   warnings: string[]
 }
@@ -133,6 +140,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
   let polygonFrame: PolygonP112FrameResult | PolygonP113FrameResult | null = null
   let profileCutList: { main: CutListResult; bearing: CutListResult } | null = null
   let rawProfilePieces: { main: Piece[]; bearing: Piece[] } | null = null
+  let p131ProfileSelection: P131ProfileSelection | null = null
 
   if (type === 'p19') {
     return {
@@ -143,6 +151,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       polygonSheetLayout: null,
       profileCutList: null,
       rawProfilePieces: null,
+      p131ProfileSelection: null,
       warnings: ['П19 (многоуровневый) — расчёт выполняется по индивидуальному проекту'],
     }
   }
@@ -444,11 +453,21 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
         full.roomLengthMm, full.roomWidthMm, stepC, pnAlongLength, layers, full.layoutMode ?? 'user',
       )
       const pnRailLengthMm = pnAlongLength ? full.roomLengthMm : full.roomWidthMm
-      const psPieceCount = geo131.psCount * (layers === 2 ? 2 : 1)
+      // 11.09.2026 (офиц. таблица Кнауф, фото пользователя): сечение ПС/ПН
+      // и одинарный/спаренный подбираются автоматически как минимально
+      // достаточные под пролёт (geo131.profileSelection) — НЕ привязаны к
+      // layers напрямую (число слоёв ГКЛ и спаривание — независимые оси,
+      // см. calcP131Frame.ts). null (пролёт превышает предел даже для
+      // ПС100 спаренного) — считаем по самому прочному варианту с явным
+      // предупреждением (geo131.spanWarning уже это отражает).
+      const widthMm = geo131.profileSelection?.widthMm ?? 100
+      const paired = geo131.profileSelection?.paired ?? true
+      const psPieceCount = geo131.psCount * (paired ? 2 : 1)
+      p131ProfileSelection = geo131.profileSelection
 
-      materials.push({ name: 'Профиль ПН 50(75,100)/40', unit: 'пог.м', qty: ceil(geo131.pnTotalLm) })
+      materials.push({ name: `Профиль ПН ${widthMm}/40`, unit: 'пог.м', qty: ceil(geo131.pnTotalLm) })
       materials.push({
-        name: layers === 2 ? 'Профиль ПС (спаренный)' : 'Профиль ПС несущий',
+        name: `Профиль ПС ${widthMm} ${paired ? 'спаренный' : 'одинарный'}`,
         unit: 'пог.м',
         qty: ceil(geo131.psTotalLm),
       })
@@ -463,11 +482,11 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       warnings.push(
         'П131: нет размеров помещения (длина/ширина) — расчёт каркаса по ' +
         'среднему расходу на м², может отличаться от факта. Заполните ' +
-        'размеры для точного расчёта.',
+        'размеры для точного расчёта (в т.ч. для автоподбора сечения ПС/ПН).',
       )
       materials.push({ name: 'Профиль ПН 50(75,100)/40', unit: 'пог.м', qty: ceil(r.pn_profile_lm * areaSqm), ratePerSqm: r.pn_profile_lm })
       materials.push({
-        name: layers === 2 ? 'Профиль ПС (спаренный)' : 'Профиль ПС несущий',
+        name: 'Профиль ПС несущий (сечение уточняется по пролёту — заполните размеры)',
         unit: 'пог.м',
         qty: ceil(r.ps_profile_lm * areaSqm),
         ratePerSqm: r.ps_profile_lm,
@@ -534,7 +553,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
     : null
   const sheetLayout = polygonInput ? null : calcCeilingSheetLayout(spec)
 
-  return { spec, areaSqm, perimeterM, materials, sheetLayout, polygonFrame, polygonSheetLayout, profileCutList, rawProfilePieces, warnings }
+  return { spec, areaSqm, perimeterM, materials, sheetLayout, polygonFrame, polygonSheetLayout, profileCutList, rawProfilePieces, p131ProfileSelection, warnings }
 }
 
 /** Длина листа для раскроя — из spec, с тем же дефолтом 2500мм, что и

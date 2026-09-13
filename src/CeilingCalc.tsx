@@ -981,11 +981,18 @@ export default function CeilingCalc() {
             </label>
             <div style={{ marginTop: 6, fontSize: 11, color: C.muted }}>
               ПН крепится только к двум выбранным (длинным по умолчанию) стенам — ПС перекрывает пролёт между ними.
-              Официальный лимит пролёта на одинарном ПС — 4250мм; при 2 слоях ГКЛ (спаренный ПС) лимит не задокументирован.
+              Сечение ПС/ПН (50/75/100) и одинарный/спаренный подбираются автоматически как минимально
+              достаточные под пролёт — по официальной таблице Кнауф (зависит и от числа слоёв ГКЛ).
             </div>
+            {result?.p131ProfileSelection && (
+              <div style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, background: '#f0fdf4', border: '1px solid #86efac', fontSize: 11 }}>
+                Подобрано: <b>ПС{result.p131ProfileSelection.widthMm} {result.p131ProfileSelection.paired ? 'спаренный' : 'одинарный'}</b>
+                {' '}(предел {result.p131ProfileSelection.maxSpanMm}мм для этой конфигурации)
+              </div>
+            )}
             {!hasRoom && (
               <div style={{ marginTop: 6, fontSize: 11, color: C.warning }}>
-                Без размеров помещения каркас считается по среднему расходу на м² (менее точно).
+                Без размеров помещения каркас считается по среднему расходу на м² (менее точно, сечение не подбирается).
               </div>
             )}
           </Card>
