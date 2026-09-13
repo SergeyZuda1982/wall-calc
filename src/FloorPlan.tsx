@@ -5323,6 +5323,11 @@ export default function FloorPlan() {
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button title="Дублировать" style={iconBtnStyle2} onClick={() => {}}>⧉</button>
+                <button title={inspectorLine.type === 'wall_lining'
+                    ? 'Развернуть направление — у облицовки лист ГКЛ в 3D перекладывается на противоположную сторону'
+                    : 'Развернуть направление (начало/конец линии меняются местами)'}
+                  style={iconBtnStyle2}
+                  onClick={() => updatePlanLine(inspectorLine.id, reverseLineDirection(inspectorLine))}>⇄</button>
                 <button title="Удалить" style={{ ...iconBtnStyle2, color: '#e53935' }}
                   onClick={() => { removePlanLine(inspectorLine.id); setInspectorId(null); setSelected(null) }}>🗑</button>
                 <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorId(null)}>✕</button>
