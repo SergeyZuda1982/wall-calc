@@ -36,6 +36,7 @@ import { resolveWallProfileType, mapOpenings, DEFAULT_STEP_MM } from './planLine
 import { buildPositions } from './buildPositions'
 import { parseDoubleFrameSubtype } from '../data/constructionTaxonomy'
 import { ceilingSlopeHeightAt, buildEffectiveCeilingSlopeResolver } from './ceilingSlope'
+import { arcFromChordAndSagitta, sampleArcPoints } from './geometry2d'
 
 export const DEFAULT_HEIGHT_MM = 3000
 export const DEFAULT_RIB_SECTION_MM = 300
@@ -361,10 +362,62 @@ export function wallsToBoxes3D(
   const joins = computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns))
   const resolveSlope = buildEffectiveCeilingSlopeResolver(lines, slabs, ceilings, slopes, rooms)
   return lines.filter(isLineBuiltForRender).flatMap(l => {
+    if (l.sagittaMm) return arcWallToBoxes3D(l, scaleMmPx, ceilingMm)
     const jw: JoinedWall | undefined = joins.get(l.id)
     const axisOverride = jw ? { x1: jw.ax1, y1: jw.ay1, x2: jw.ax2, y2: jw.ay2 } : undefined
     return wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm, axisOverride, resolveSlope(l))
   })
+}
+
+/** Число прямых сегментов, которыми аппроксимируется дуговая стена в 3D
+ *  (11.09.2026, Фаза 3 объекта в Ростове — радиусные стены зала) — то же
+ *  число, что и у аппроксимации круглой колонны (roundColumnPolygonPx,
+ *  columnStamp.ts), тот же компромисс гладкость/число мешей. */
+const ARC_WALL_3D_SEGMENTS = 24
+
+/**
+ * Дуговая стена (PlanLine.sagittaMm, см. types/index.ts — известное
+ * ограничение "дуга не участвует в wallJoin... T-снап... раскрой листов")
+ * в 3D. Раньше рисовалась ОДНОЙ прямой коробкой по хорде (x1,y1)-(x2,y2) —
+ * sagittaMm нигде в planTo3D.ts не читался, кривизна полностью терялась.
+ *
+ * Аппроксимируется ARC_WALL_3D_SEGMENTS прямыми короб-сегментами вдоль
+ * дуги (sampleArcPoints — тот же приём, что уже рисует дугу на 2D-плане,
+ * FloorPlan.tsx) — каждый сегмент строится через wallToBox3D с
+ * axisOverride на свою пару точек, наследуя толщину/высоту/материал линии
+ * как обычно. alongFromM/alongToM у каждого сегмента — НЕ его собственная
+ * длина (0..segLen), а НАКОПЛЕННОЕ расстояние вдоль всей дуги: позиции
+ * стоек каркаса (wallStudPositionsMm, считает от line.lengthMm — длины
+ * ДУГИ, см. комментарий у sagittaMm) фильтруются в Scene3D.tsx именно по
+ * этим полям в абсолютных координатах вдоль линии — локальная длина
+ * сегмента дала бы стойки от начала стены на каждом сегменте повторно.
+ *
+ * ⚠️ Сознательно НЕ обрабатывает line.openings — проёмы на дуговых стенах
+ * не поддерживаются нигде в проекте (ни на плане, ни здесь), тот же
+ * документированный пробел, не регресс. Стыковка с другими стенами
+ * (wallJoin) на дуге тоже по-прежнему не считается — используются СЫРЫЕ
+ * концы хорды, а не расширенная join-ось (то же ограничение, что и
+ * раньше, wallJoin.ts явно пропускает линии с sagittaMm).
+ */
+function arcWallToBoxes3D(line: PlanLine, scaleMmPx: number, ceilingMm: number): WallBox3D[] {
+  const arc = arcFromChordAndSagitta(line.x1, line.y1, line.x2, line.y2, line.sagittaMm ?? 0)
+  if (!arc) {
+    // Вырожденная дуга (см. arcFromChordAndSagitta) — ведём себя как прямая стена.
+    const box = wallToBox3D(line, scaleMmPx, ceilingMm)
+    return box ? [box] : []
+  }
+  const pts = sampleArcPoints(arc, ARC_WALL_3D_SEGMENTS)
+  const boxes: WallBox3D[] = []
+  let cumMm = 0
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i], p1 = pts[i + 1]
+    const box = wallToBox3D(line, scaleMmPx, ceilingMm, { x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y })
+    if (!box) continue
+    const segLenMm = mToMm(box.size.sx)
+    boxes.push({ ...box, id: `${line.id}__arc${i}`, alongFromM: mmToM(cumMm), alongToM: mmToM(cumMm + segLenMm) })
+    cumMm += segLenMm
+  }
+  return boxes
 }
 
 /**
