@@ -966,6 +966,31 @@ export default function CeilingCalc() {
           </Card>
         )}
 
+        {/* 11.09.2026: точный расчёт каркаса П131 (см. calcP131Frame.ts) —
+            система проще П112/П113 (нет подвесов, нет зазора до плиты,
+            нет отдельного шага несущего/подвесов — только шаг ПС, общее
+            поле form.stepC уже выше в карточке "ПАРАМЕТРЫ"), поэтому
+            отдельная карточка не дублирует поля П112/П113, только то, что
+            специфично: с какой парой стен работает ПН. */}
+        {form.type === 'p131' && (
+          <Card title="ТОЧНЫЙ РАСЧЁТ КАРКАСА">
+            <label style={{ ...lbl, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={form.bearingAlongLength ?? true}
+                onChange={e => setField('bearingAlongLength', e.target.checked)} />
+              ПН вдоль длины (снять — вдоль ширины)
+            </label>
+            <div style={{ marginTop: 6, fontSize: 11, color: C.muted }}>
+              ПН крепится только к двум выбранным (длинным по умолчанию) стенам — ПС перекрывает пролёт между ними.
+              Официальный лимит пролёта на одинарном ПС — 4250мм; при 2 слоях ГКЛ (спаренный ПС) лимит не задокументирован.
+            </div>
+            {!hasRoom && (
+              <div style={{ marginTop: 6, fontSize: 11, color: C.warning }}>
+                Без размеров помещения каркас считается по среднему расходу на м² (менее точно).
+              </div>
+            )}
+          </Card>
+        )}
+
         {/* Управление сдвигом — появляется на шаге 2 и 3 */}
         {hasRoom && step >= 2 && (
           <Card title="СДВИГ ГРЕБЁНКИ">
@@ -1302,7 +1327,10 @@ export default function CeilingCalc() {
             {/* ── Раскрой профиля (прутки 3000мм) — 05.09.2026, запрос пользователя,
                 по аналогии с App.tsx (стены/облицовка). Только прямоугольная
                 геометрия (result.profileCutList), для произвольного контура
-                пока не считается (отдельная задача при необходимости). */}
+                пока не считается (отдельная задача при необходимости).
+                11.09.2026: подключён и П131 (main=ПС несущий, bearing=ПН
+                направляющий — те же ключи структуры, что у П112/П113, но
+                физика другая, см. calcP131Frame.ts). */}
             {step === 4 && result?.profileCutList && (() => {
               const { main, bearing } = result.profileCutList
               const renderBars = (cl: typeof main, title: string, color: string) => (
@@ -1339,19 +1367,22 @@ export default function CeilingCalc() {
                   ))}
                 </div>
               )
+              const isP131 = form.type === 'p131'
+              const mainLabel = isP131 ? 'ПС несущий' : 'Основной'
+              const bearingLabel = isP131 ? 'ПН направляющий' : 'Несущий'
               return (
                 <div style={{ marginTop: 16, padding: '12px 14px', background: '#fafafa', border: '1px solid #e0e0e0', borderRadius: 6 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#333', marginBottom: 4 }}>Раскрой профиля (прутки 3000мм)</div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, marginBottom: 8 }}>
-                    {[['Основной', '#e8f4ff'], ['Несущий', '#f0ffe8'], ['Остаток', '#f5f5f5']].map(([label, color]) => (
+                    {[[mainLabel, '#e8f4ff'], [bearingLabel, '#f0ffe8'], ['Остаток', '#f5f5f5']].map(([label, color]) => (
                       <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <span style={{ width: 12, height: 12, background: color, border: '1px solid #ccc', borderRadius: 2, display: 'inline-block' }} />
                         {label}
                       </span>
                     ))}
                   </div>
-                  {renderBars(main, 'Основной ПП 60×27', '#e8f4ff')}
-                  {renderBars(bearing, 'Несущий ПП 60×27', '#f0ffe8')}
+                  {renderBars(main, isP131 ? mainLabel : `${mainLabel} ПП 60×27`, '#e8f4ff')}
+                  {renderBars(bearing, isP131 ? bearingLabel : `${bearingLabel} ПП 60×27`, '#f0ffe8')}
                 </div>
               )
             })()}
