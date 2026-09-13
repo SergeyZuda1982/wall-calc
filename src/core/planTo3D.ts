@@ -27,7 +27,7 @@
  *   было от чего повесить ригель
  */
 
-import type { PlanLine, PlanLineType, Room, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, SlopePlane } from '../types'
+import type { PlanLine, PlanLineType, Room, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, SlopePlane, CeilingSlope } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 import { isLineBuiltForRender } from './lineProgress'
@@ -35,6 +35,7 @@ import { computeWallJoins, buildWallsForJoin, type JoinedWall } from './wallJoin
 import { resolveWallProfileType, mapOpenings, DEFAULT_STEP_MM } from './planLineToWallInput'
 import { buildPositions } from './buildPositions'
 import { parseDoubleFrameSubtype } from '../data/constructionTaxonomy'
+import { ceilingSlopeHeightAt, buildEffectiveCeilingSlopeResolver } from './ceilingSlope'
 
 export const DEFAULT_HEIGHT_MM = 3000
 export const DEFAULT_RIB_SECTION_MM = 300
@@ -178,6 +179,28 @@ export interface WallBox3D {
    */
   alongFromM: number
   alongToM: number
+  /**
+   * НОВОЕ (12.09.2026, стены/облицовки под наклонным потолком) — если задано,
+   * верх ЭТОЙ коробки не горизонтален: линейно меняется от topYAtFromM (при
+   * alongFromM) до topYAtToM (при alongToM), метры мира (level-local, та же
+   * система координат, что и center). Не задано — верх плоский, на
+   * center.y + size.sy/2, как раньше (обратная совместимость: старые сцены
+   * без уклона этих полей вообще не видят). Заполняется в
+   * wallToBoxesWithOpenings3D через slopeH1Mm/slopeH2Mm ниже (см. там же,
+   * почему нельзя посчитать сразу в wallToBox3D — нужен shiftM, который
+   * известен только после учёта axisOverride/проёмов). Рендер — см.
+   * Scene3D.tsx WallMesh, slantedTopBoxGeometry.
+   */
+  topYAtFromM?: number
+  topYAtToM?: number
+  /**
+   * Внутреннее (не для чтения снаружи core/planTo3D.ts — используйте
+   * topYAtFromM/topYAtToM выше): высота уклона (мм) в исходных концах
+   * ЛИНИИ (line.x1/y1 и line.x2/y2), если уклон применим — до пересчёта в
+   * координаты вдоль (расширенной) оси коробки.
+   */
+  slopeH1Mm?: number
+  slopeH2Mm?: number
 }
 
 /**
@@ -190,10 +213,23 @@ export interface WallBox3D {
  * коробки (см. wallsToBoxes3D) — та же ось, что 2D-план использует для
  * заливки без дыр в углах. Проёмы (wallToBoxesWithOpenings3D) по ней НЕ
  * мерятся — только сам футпринт целиком (длина/центр/поворот).
+ *
+ * slope — плоскость уклона потолка (12.09.2026, найдено на объекте:
+ * "потолок с уклоном" настроен и верно считается в 2D-таблице
+ * "Конструкции на плане", но игнорировался в 3D — стены/облицовки всегда
+ * рисовались плоским коробом на всю высоту line.heightMm/DEFAULT_HEIGHT_MM),
+ * см. core/ceilingSlope.ts. Применяется теми же условиями, что и
+ * ceilingProfileForLine там же (не арка, нет customHeight): height —
+ * максимум высоты в двух концах ИСХОДНОЙ линии (line.x1/y1, line.x2/y2,
+ * НЕ axisOverride — уклон плана всегда мерится от исходных точек, так же,
+ * как и в 2D), верх коробки получится наклонным (см. slopeH1Mm/slopeH2Mm
+ * на WallBox3D — окончательный пересчёт в topYAtFromM/topYAtToM происходит
+ * в wallToBoxesWithOpenings3D, где уже известен shiftM).
  */
 export function wallToBox3D(
   line: PlanLine, scaleMmPx: number, ceilingMm: number,
   axisOverride?: { x1: number; y1: number; x2: number; y2: number },
+  slope?: SlopePlane,
 ): WallBox3D | null {
   const tMm = wallThicknessMm(line)
   if (tMm <= 0) return null
@@ -207,9 +243,14 @@ export function wallToBox3D(
   if (length < 0.001) return null
 
   const isRib = line.type === 'rib_beam'
+  const slopeApplicable = !isRib && !!slope && !line.customHeight && !line.sagittaMm && line.lengthMm > 0
+  const slopeH1Mm = slopeApplicable ? ceilingSlopeHeightAt(slope!, line.x1, line.y1) : undefined
+  const slopeH2Mm = slopeApplicable ? ceilingSlopeHeightAt(slope!, line.x2, line.y2) : undefined
   const heightM = isRib
     ? mmToM(line.dropMm ?? DEFAULT_RIB_DROP_MM)
-    : mmToM(line.heightMm ?? DEFAULT_HEIGHT_MM)
+    : slopeH1Mm !== undefined && slopeH2Mm !== undefined
+      ? mmToM(Math.max(slopeH1Mm, slopeH2Mm))
+      : mmToM(line.heightMm ?? DEFAULT_HEIGHT_MM)
   const centerY = isRib
     ? mmToM(ceilingMm) - heightM / 2   // висит под плитой
     : heightM / 2                       // стоит на полу (y=0)
@@ -224,6 +265,8 @@ export function wallToBox3D(
     materialKind: wallMaterialKindOf(line.spec?.material),
     alongFromM: 0,
     alongToM: length,
+    slopeH1Mm,
+    slopeH2Mm,
   }
 }
 
@@ -300,17 +343,33 @@ export function worldToFaceMm(frame: WallFaceFrame, point: { x: number; y: numbe
  * грани обрезают/удлиняют примыкающие стены под ЛЮБЫМ углом, не только 90°
  * (см. wallJoin.ts, roundColumns — 11.09.2026). Сама колонна рисуется
  * отдельно, см. rectColumnsToBoxes3D/roundColumnsToCylinders3D.
+ *
+ * slabs/ceilings/slopes/rooms (12.09.2026, стены под наклонным потолком в
+ * 3D — см. wallToBox3D) — необязательные, дефолт [] сохраняет старое
+ * поведение (нет данных об уклоне → все стены плоские, как раньше) для
+ * вызывающих мест, которым высота стен не важна (levelHasGeometry, подгонка
+ * камеры по bounding box — см. Scene3D.tsx). Резолвер (см. ceilingSlope.ts
+ * buildEffectiveCeilingSlopeResolver) строится один раз на весь список
+ * линий, не на каждую линию отдельно — та же оптимизация, что и joins выше.
  */
 export function wallsToBoxes3D(
   lines: PlanLine[], scaleMmPx: number,
   rectColumns: RectColumn[] = [], roundColumns: RoundColumn[] = [],
+  slabs: Slab[] = [], ceilings: Ceiling[] = [], slopes: CeilingSlope[] = [], rooms: Room[] = [],
 ): WallBox3D[] {
   const ceilingMm = estimateCeilingMm(lines)
   const joins = computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns))
+  const resolveSlope = buildEffectiveCeilingSlopeResolver(lines, slabs, ceilings, slopes, rooms)
   return lines.filter(isLineBuiltForRender).flatMap(l => {
     const jw: JoinedWall | undefined = joins.get(l.id)
     const axisOverride = jw ? { x1: jw.ax1, y1: jw.ay1, x2: jw.ax2, y2: jw.ay2 } : undefined
-    return wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm, axisOverride)
+    return wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm, axisOverride, resolveSlope(l))
+  })
+}
+  return lines.filter(isLineBuiltForRender).flatMap(l => {
+    const jw: JoinedWall | undefined = joins.get(l.id)
+    const axisOverride = jw ? { x1: jw.ax1, y1: jw.ay1, x2: jw.ax2, y2: jw.ay2 } : undefined
+    return wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm, axisOverride, resolveSlope(l))
   })
 }
 
@@ -334,12 +393,23 @@ export function wallsToBoxes3D(
  * T-стыке с колонной/соседней стеной проёмы "уехали" бы вместе с
  * расширением. Ровно тот же приём, что computeOpeningSegments в 2D
  * (fax1/fay1 для тела стены, origX1/origY1 для позиций проёмов).
+ *
+ * slope — см. wallToBox3D. Уклон линеен вдоль ИСХОДНОЙ линии
+ * (slopeH1Mm/slopeH2Mm на базовой коробке, посчитаны в её концах); здесь
+ * пересчитываем в функцию высоты topYAt(alongM) вдоль (возможно
+ * расширенной осью T-стыка) оси коробки 0..lengthM — используя тот же
+ * shiftM, что и для проёмов ниже, ведь это тот же самый перенос системы
+ * отсчёта "от исходной линии" → "вдоль футпринта". Прикладывается ко ВСЕМ
+ * кускам, у которых верх — это реально верх стены (целая стена/сегмент
+ * между проёмами/хвост/перемычка над проёмом); подоконник (низкий, от
+ * пола, высота не зависит от линии кровли/потолка) остаётся плоским.
  */
 export function wallToBoxesWithOpenings3D(
   line: PlanLine, scaleMmPx: number, ceilingMm: number,
   axisOverride?: { x1: number; y1: number; x2: number; y2: number },
+  slope?: SlopePlane,
 ): WallBox3D[] {
-  const baseOrNull = wallToBox3D(line, scaleMmPx, ceilingMm, axisOverride)
+  const baseOrNull = wallToBox3D(line, scaleMmPx, ceilingMm, axisOverride, slope)
   if (!baseOrNull) return []
   const base: WallBox3D = baseOrNull
 
@@ -356,6 +426,16 @@ export function wallToBoxesWithOpenings3D(
   const origX1M = pxToM(line.x1, scaleMmPx), origZ1M = pxToM(line.y1, scaleMmPx)
   const shiftM = (origX1M - startX) * ux + (origZ1M - startZ) * uz
 
+  const origLenM = mmToM(line.lengthMm)
+  const topYAt = base.slopeH1Mm !== undefined && base.slopeH2Mm !== undefined && origLenM > 0.0001
+    ? (alongM: number): number => {
+        const h1M = mmToM(base.slopeH1Mm as number)
+        const h2M = mmToM(base.slopeH2Mm as number)
+        const t = (alongM - shiftM) / origLenM
+        return h1M + t * (h2M - h1M)
+      }
+    : undefined
+
   const openings = (line.openings ?? [])
     .filter(o => o.widthMm > 0 && o.heightMm > 0)
     .map(o => ({
@@ -371,7 +451,10 @@ export function wallToBoxesWithOpenings3D(
     .filter(o => o.endM > o.startM)
     .sort((a, b) => a.startM - b.startM)
 
-  if (openings.length === 0) return [base]
+  if (openings.length === 0) {
+    if (!topYAt) return [base]
+    return [{ ...base, topYAtFromM: topYAt(0), topYAtToM: topYAt(lengthM) }]
+  }
 
   const wallHeightM = base.size.sy
   const bottomY = base.center.y - wallHeightM / 2   // низ стены (обычно 0, стена стоит на полу)
@@ -392,10 +475,14 @@ export function wallToBoxesWithOpenings3D(
       materialKind: base.materialKind,
       alongFromM: fromM,
       alongToM: toM,
+      ...(topYAt ? { topYAtFromM: topYAt(fromM), topYAtToM: topYAt(toM) } : {}),
     })
   }
 
-  function pushVertical(fromM: number, toM: number, yFrom: number, yTo: number, suffix: string) {
+  // sloped — верх ЭТОГО куска реально является верхом стены (перемычка над
+  // проёмом), поэтому режется по уклону; подоконник (см. вызов ниже) верх
+  // не режет — он всегда передаётся с sloped=false.
+  function pushVertical(fromM: number, toM: number, yFrom: number, yTo: number, suffix: string, sloped: boolean) {
     const segLen = toM - fromM
     const h = yTo - yFrom
     if (segLen <= 0.001 || h <= 0.001) return
@@ -410,6 +497,7 @@ export function wallToBoxesWithOpenings3D(
       materialKind: base.materialKind,
       alongFromM: fromM,
       alongToM: toM,
+      ...(sloped && topYAt ? { topYAtFromM: topYAt(fromM), topYAtToM: topYAt(toM) } : {}),
     })
   }
 
@@ -423,8 +511,8 @@ export function wallToBoxesWithOpenings3D(
 
     pushAlong(curM, op.startM, `seg_${op.id}`)
     const topM = Math.min(wallHeightM, op.sillM + op.heightM)
-    pushVertical(cutStartM, op.endM, bottomY, bottomY + op.sillM, `sill_${op.id}`)          // подоконник (если есть)
-    pushVertical(cutStartM, op.endM, bottomY + topM, bottomY + wallHeightM, `lintel_${op.id}`) // перемычка (если есть)
+    pushVertical(cutStartM, op.endM, bottomY, bottomY + op.sillM, `sill_${op.id}`, false)          // подоконник (если есть)
+    pushVertical(cutStartM, op.endM, bottomY + topM, bottomY + wallHeightM, `lintel_${op.id}`, true) // перемычка (если есть)
     curM = Math.max(curM, op.endM)
   }
   pushAlong(curM, lengthM, 'tail')

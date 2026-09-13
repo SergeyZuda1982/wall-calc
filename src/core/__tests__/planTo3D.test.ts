@@ -244,6 +244,120 @@ describe('wallToBox3D', () => {
   })
 })
 
+describe('wallToBox3D / wallToBoxesWithOpenings3D — уклон потолка режет верх стены (12.09.2026)', () => {
+  // scaleMmPx=1 — px и мм совпадают, чтобы не путаться в масштабе в тестах.
+  const slope = { x1: 0, y1: 0, height1Mm: 2500, x2: 1000, y2: 0, height2Mm: 3200 }
+
+  it('wallToBox3D: без slope — старое плоское поведение, slopeH1Mm/slopeH2Mm не заданы', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' }, heightMm: 2700 })
+    const box = wallToBox3D(line, 1, 3000)
+    expect(box!.size.sy).toBeCloseTo(2.7)
+    expect(box!.slopeH1Mm).toBeUndefined()
+    expect(box!.slopeH2Mm).toBeUndefined()
+  })
+
+  it('wallToBox3D: со slope — высота короба (size.sy) = максимум из двух концов, slopeH1Mm/slopeH2Mm посчитаны', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' } })
+    const box = wallToBox3D(line, 1, 3000, undefined, slope)
+    expect(box!.slopeH1Mm).toBeCloseTo(2500)
+    expect(box!.slopeH2Mm).toBeCloseTo(3200)
+    expect(box!.size.sy).toBeCloseTo(3.2) // максимум — под самой высокой точкой уклона
+  })
+
+  it('wallToBox3D: line.customHeight — уклон НЕ применяется (та же гарантия, что и ceilingProfileForLine в 2D)', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' }, heightMm: 2700, customHeight: true })
+    const box = wallToBox3D(line, 1, 3000, undefined, slope)
+    expect(box!.slopeH1Mm).toBeUndefined()
+    expect(box!.size.sy).toBeCloseTo(2.7)
+  })
+
+  it('wallToBox3D: ригель — уклон потолка не при чём, не применяется', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, type: 'rib_beam', sectionWidthMm: 300, dropMm: 200 })
+    const box = wallToBox3D(line, 1, 3000, undefined, slope)
+    expect(box!.slopeH1Mm).toBeUndefined()
+    expect(box!.size.sy).toBeCloseTo(0.2)
+  })
+
+  it('wallToBoxesWithOpenings3D без проёмов: topYAtFromM/topYAtToM = высота уклона в концах линии, метры', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' } })
+    const boxes = wallToBoxesWithOpenings3D(line, 1, 3000, undefined, slope)
+    expect(boxes.length).toBe(1)
+    expect(boxes[0].topYAtFromM).toBeCloseTo(2.5)
+    expect(boxes[0].topYAtToM).toBeCloseTo(3.2)
+  })
+
+  it('wallToBoxesWithOpenings3D без slope вообще — topYAtFromM/topYAtToM не заданы (плоский верх, старое поведение)', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' } })
+    const boxes = wallToBoxesWithOpenings3D(line, 1, 3000)
+    expect(boxes[0].topYAtFromM).toBeUndefined()
+    expect(boxes[0].topYAtToM).toBeUndefined()
+  })
+
+  it('wallToBoxesWithOpenings3D с проёмом: seg/tail/перемычка режутся по уклону в СВОЕЙ точке alongM, подоконник — нет (плоский)', () => {
+    const line: PlanLine = {
+      id: 'w-slope-win', x1: 0, y1: 0, x2: 1000, y2: 0,
+      type: 'wall_existing', lengthMm: 1000, label: 'С-1',
+      spec: { material: 'brick', subtype: '200' },
+      openings: [{ id: 'op1', type: 'window', offsetMm: 400, widthMm: 200, heightMm: 800, sillHeightMm: 900, label: 'О-1' }],
+    }
+    const boxes = wallToBoxesWithOpenings3D(line, 1, 3000, undefined, slope)
+    const seg = boxes.find(b => b.id.includes('__seg_'))!
+    const sill = boxes.find(b => b.id.includes('__sill_'))!
+    const lintel = boxes.find(b => b.id.includes('__lintel_'))!
+    const tail = boxes.find(b => b.id.includes('__tail'))!
+
+    // seg занимает alongM 0..0.4 (400мм), уклон линейный: h(alongM) = 2500 + alongM*700 (мм на метр => в метрах: 2.5 + alongM*0.7)
+    expect(seg.topYAtFromM).toBeCloseTo(2.5)
+    expect(seg.topYAtToM).toBeCloseTo(2.5 + 0.4 * 0.7)
+    // перемычка над проёмом (0.4..0.6) — тоже режется по уклону
+    expect(lintel.topYAtFromM).toBeCloseTo(2.5 + 0.4 * 0.7)
+    expect(lintel.topYAtToM).toBeCloseTo(2.5 + 0.6 * 0.7)
+    // хвост (0.6..1.0)
+    expect(tail.topYAtFromM).toBeCloseTo(2.5 + 0.6 * 0.7)
+    expect(tail.topYAtToM).toBeCloseTo(3.2)
+    // подоконник — плоский, уклон его не касается
+    expect(sill.topYAtFromM).toBeUndefined()
+    expect(sill.topYAtToM).toBeUndefined()
+  })
+})
+
+describe('wallsToBoxes3D — резолвер уклона из Ceiling.slope (12.09.2026)', () => {
+  it('без slabs/ceilings/slopes (старый вызов с 3 аргументами) — стены остаются плоскими, обратная совместимость', () => {
+    const lines: PlanLine[] = [
+      { id: 'w1', x1: 0, y1: 0, x2: 1000, y2: 0, type: 'wall_existing', lengthMm: 1000, label: 'С-1', spec: { material: 'brick', subtype: '200' } },
+    ]
+    const boxes = wallsToBoxes3D(lines, 1, [])
+    expect(boxes[0].topYAtFromM).toBeUndefined()
+  })
+
+  it('Ceiling.slope, накрывающий стену контуром — стена реально режется по уклону в 3D', () => {
+    const lines: PlanLine[] = [
+      { id: 'w1', x1: 0, y1: 0, x2: 1000, y2: 0, type: 'wall_existing', lengthMm: 1000, label: 'С-1', spec: { material: 'brick', subtype: '200' } },
+    ]
+    const ceilings: Ceiling[] = [{
+      id: 'c1', label: 'Потолок 1',
+      outer: [{ x: -100, y: -500 }, { x: 1100, y: -500 }, { x: 1100, y: 500 }, { x: -100, y: 500 }],
+      slope: { x1: 0, y1: 0, height1Mm: 2500, x2: 1000, y2: 0, height2Mm: 3200 },
+    }]
+    const boxes = wallsToBoxes3D(lines, 1, [], [], [], ceilings, [], [])
+    expect(boxes[0].topYAtFromM).toBeCloseTo(2.5)
+    expect(boxes[0].topYAtToM).toBeCloseTo(3.2)
+  })
+
+  it('Ceiling БЕЗ slope, накрывающий стену — стена остаётся плоской (уклон не задан — не с чем резать)', () => {
+    const lines: PlanLine[] = [
+      { id: 'w1', x1: 0, y1: 0, x2: 1000, y2: 0, type: 'wall_existing', lengthMm: 1000, label: 'С-1', spec: { material: 'brick', subtype: '200' }, heightMm: 2700 },
+    ]
+    const ceilings: Ceiling[] = [{
+      id: 'c1', label: 'Потолок 1',
+      outer: [{ x: -100, y: -500 }, { x: 1100, y: -500 }, { x: 1100, y: 500 }, { x: -100, y: 500 }],
+    }]
+    const boxes = wallsToBoxes3D(lines, 1, [], [], [], ceilings, [], [])
+    expect(boxes[0].topYAtFromM).toBeUndefined()
+    expect(boxes[0].size.sy).toBeCloseTo(2.7)
+  })
+})
+
 describe('lineId (10.07.2026, выбор стены кликом в 3D)', () => {
   it('wallToBox3D: lineId совпадает с id и с id самой линии', () => {
     const line = baseLine({ id: 'w-42', spec: { material: 'brick', subtype: '200' } })
