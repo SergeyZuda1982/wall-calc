@@ -34,6 +34,7 @@ import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrame
 import { buildCeilingProfilesByLineId, areaUnderProfileM2 } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf, resolveFinishZones, finishTemplateContextOf } from './core/finishResolver'
+import { reverseLineDirection } from './core/lineReverse'
 import { renderPdfPageToImage, getPdfPageCount } from './core/pdfBackground'
 import { planLinesToSurfaceInputs } from './core/planLineToSurfaceInput'
 import { calcProjectSheetLayout, buildCeilingSurfaceInputs } from './core/calcProjectSheetLayout'
@@ -3790,9 +3791,22 @@ export default function FloorPlan() {
             )
           })}
 
-          {/* Кнопка удалить */}
+          {/* Кнопки: развернуть направление / удалить */}
           {selectedLine && (
-            <div style={{ marginTop: 'auto', padding: '10px 14px', borderTop: '1px solid #2a3045' }}>
+            <div style={{ marginTop: 'auto', padding: '10px 14px', borderTop: '1px solid #2a3045', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                onClick={() => updatePlanLine(selectedLine.id, reverseLineDirection(selectedLine))}
+                title={selectedLine.type === 'wall_lining'
+                  ? 'Меняет местами начало/конец линии — у облицовки лист ГКЛ в 3D перекладывается на противоположную сторону'
+                  : 'Меняет местами начало/конец линии (и стороны A/Б отделки/прогресса вместе с ним)'}
+                style={{
+                  width: '100%', padding: '7px 14px', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: 6, fontSize: 12, fontWeight: 600,
+                  border: '1px solid #2a3045', borderRadius: 6,
+                  background: '#1c2333', color: '#cdd6f4', cursor: 'pointer',
+                }}>
+                ⇄ Развернуть направление
+              </button>
               <button onClick={() => { removePlanLine(selectedLine.id); setSelected(null) }}
                 style={{
                   width: '100%', padding: '7px 14px', display: 'flex', alignItems: 'center',
