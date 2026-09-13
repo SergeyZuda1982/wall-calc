@@ -259,9 +259,49 @@ describe('buildWallsForJoin — сборка входа для computeWallJoins 
     expect(walls).toHaveLength(0)
   })
 
-  it('линия с дугой (sagittaMm) — пропускается (join для дуг пока не считаем)', () => {
+  it('линия с дугой (sagittaMm) — тело дуги НЕ добавляется, но два тонких "уса" по касательным в концах добавляются', () => {
     const walls = buildWallsForJoin([line({ sagittaMm: 50 })], 10)
-    expect(walls).toHaveLength(0)
+    expect(walls).toHaveLength(2)
+    expect(walls.map(w => w.id).sort()).toEqual(['__arctan_L1_end', '__arctan_L1_start'])
+    walls.forEach(w => {
+      expect(w.halfPx).toBeCloseTo(0.01) // COLUMN_EDGE_HALF_PX — почти нулевая толщина
+      expect(w.category).toBe(defaultCategory('wall_new'))
+    })
+  })
+
+  it('"ус" в начале дуги содержит ТОЧНО точку (x1,y1) хорды — прямая стена может к ней приложиться', () => {
+    const walls = buildWallsForJoin([line({ x1: 0, y1: 0, x2: 300, y2: 0, sagittaMm: 50 })], 10)
+    const start = walls.find(w => w.id === '__arctan_L1_start')!
+    const hitsChordStart = (w: WallForJoin) =>
+      (Math.abs(w.x1 - 0) < 0.5 && Math.abs(w.y1 - 0) < 0.5) ||
+      (Math.abs(w.x2 - 0) < 0.5 && Math.abs(w.y2 - 0) < 0.5)
+    expect(hitsChordStart(start)).toBe(true)
+  })
+
+  it('"ус" в конце дуги содержит ТОЧНО точку (x2,y2) хорды', () => {
+    const walls = buildWallsForJoin([line({ x1: 0, y1: 0, x2: 300, y2: 0, sagittaMm: 50 })], 10)
+    const end = walls.find(w => w.id === '__arctan_L1_end')!
+    const hitsChordEnd = (w: WallForJoin) =>
+      (Math.abs(w.x1 - 300) < 0.5 && Math.abs(w.y1 - 0) < 0.5) ||
+      (Math.abs(w.x2 - 300) < 0.5 && Math.abs(w.y2 - 0) < 0.5)
+    expect(hitsChordEnd(end)).toBe(true)
+  })
+
+  it('дуга с ВЫРОЖДЕННОЙ (нулевой) стрелой — ведёт себя как обычная прямая стена (один WallForJoin, не "усы")', () => {
+    const walls = buildWallsForJoin([line({ sagittaMm: 0 })], 10)
+    expect(walls).toHaveLength(1)
+    expect(walls[0].id).toBe('L1')
+  })
+
+  it('прямая стена, встречающая дугу РОВНО в её начале — получает T/L-стык (не плоский торец)', () => {
+    // Прямая стена начинается точно в (0,0) — конце хорды дуговой стены — и
+    // уходит в сторону, перпендикулярно касательной в этой точке.
+    const arc = line({ id: 'ARC', x1: 0, y1: 0, x2: 300, y2: 0, sagittaMm: 50 })
+    const straight = line({ id: 'STR', x1: 0, y1: 0, x2: 0, y2: -200 })
+    const walls = buildWallsForJoin([arc, straight], 10)
+    const res = computeWallJoins(walls)
+    const jw = res.get('STR')!
+    expect(jw.cap1).toBe(false) // стык распознан — торец не рисуется
   })
 
   it('нулевая длина линии — пропускается', () => {
