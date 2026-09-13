@@ -12,6 +12,7 @@
 import type { PlanLine, PlanLineType, LineCategory, RectColumn, RoundColumn } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { rectColumnCornersPx, roundColumnPolygonPx } from './columnStamp'
+import { arcEndTangents } from './geometry2d'
 
 const JOIN_EPS = 3 // допуск совпадения точек, px
 
@@ -461,7 +462,40 @@ export function buildWallsForJoin(
     const hasSpec = !!(l.spec?.material)
     const thicknessPx = hasSpec && vis.thicknessMm > 0 ? vis.thicknessMm / scaleMmPx : 0
     if (thicknessPx <= 3) return
-    if (l.sagittaMm) return // дуга — join со стенами пока не считаем (см. KONSPEKT.md)
+    if (l.sagittaMm) {
+      // Дуга (11.09.2026, Фаза 3 — радиусные стены объекта в Ростове).
+      // Тело дуги по-прежнему НЕ участвует в join целиком (T-стык куда-то
+      // в середину кривой — отдельная нерешённая задача, см. комментарий
+      // у arcWallToBoxes3D в planTo3D.ts). Но добавляем два тонких "уса"
+      // вдоль КАСАТЕЛЬНОЙ в начале и конце дуги — капитальные псевдо-стены
+      // почти нулевой толщины (тот же приём, что и у граней колонн ниже),
+      // чтобы прямая стена, встречающая дуговую РОВНО в одном из её двух
+      // концов (частый реальный случай — переход радиусной стены зала в
+      // прямую стену коридора), получала нормальный L/T-стык по касательной,
+      // а не оставалась с плоским торцом.
+      const tangents = arcEndTangents(l.x1, l.y1, l.x2, l.y2, l.sagittaMm)
+      if (tangents) {
+        const cat = l.category ?? defaultCategory(l.type)
+        walls.push({
+          id: `__arctan_${l.id}_start`,
+          x1: tangents.start.x1, y1: tangents.start.y1, x2: tangents.start.x2, y2: tangents.start.y2,
+          halfPx: COLUMN_EDGE_HALF_PX,
+          createdIndex: -200000 - idx * 2,
+          category: cat,
+        })
+        walls.push({
+          id: `__arctan_${l.id}_end`,
+          x1: tangents.end.x1, y1: tangents.end.y1, x2: tangents.end.x2, y2: tangents.end.y2,
+          halfPx: COLUMN_EDGE_HALF_PX,
+          createdIndex: -200000 - idx * 2 - 1,
+          category: cat,
+        })
+        return
+      }
+      // sagittaMm задан, но дуга вырожденная (arcEndTangents вернул null,
+      // см. arcFromChordAndSagitta) — падаем ниже, считаем как обычную
+      // прямую стену по сырым x1,y1,x2,y2.
+    }
     const dx = l.x2 - l.x1, dy = l.y2 - l.y1
     if (Math.sqrt(dx * dx + dy * dy) < 1) return
     walls.push({

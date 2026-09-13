@@ -49,6 +49,16 @@ describe('BUILTIN_WORK_STAGE_TEMPLATES — materialKind разметка (20.07.
     expect(step('floor_selfleveling', 'Стяжка').materialThicknessMm).toBe(50)
   })
 
+  it('ceiling_gkl: meaning3D-теги — Каркас→frame, Зашивка ГКЛ→sheet_a, БЕЗ sheet_b (у потолка одна сторона)', () => {
+    expect(step('ceiling_gkl', 'Каркас').meaning3D).toBe('frame')
+    expect(step('ceiling_gkl', 'Зашивка ГКЛ').meaning3D).toBe('sheet_a')
+    expect(template('ceiling_gkl').steps.some(s => s.meaning3D === 'sheet_b')).toBe(false)
+  })
+
+  it('ceiling_gkl: НИ ОДИН шаг не имеет materialKind (материал уже точно считается calcCeiling.ts)', () => {
+    expect(template('ceiling_gkl').steps.every(s => s.materialKind === undefined)).toBe(true)
+  })
+
   it('floor_selfleveling: полная цепочка гидроизоляция→стяжка→наливной→ламинат размечена', () => {
     expect(step('floor_selfleveling', 'Гидроизоляция').materialKind).toBe('waterproofing')
     expect(step('floor_selfleveling', 'Наливной пол').materialKind).toBe('self_leveling')
@@ -96,6 +106,10 @@ describe('WorkStageTemplate.context — фильтрация по поверхн
   it('floor_screed_tile/floor_selfleveling — floor', () => {
     expect(template('floor_screed_tile').context).toBe('floor')
     expect(template('floor_selfleveling').context).toBe('floor')
+  })
+
+  it('ceiling_gkl — ceiling', () => {
+    expect(template('ceiling_gkl').context).toBe('ceiling')
   })
 
   it('gkl_paint: без штукатурки (это отличие от wall_paint) — сразу шпаклёвка швов', () => {

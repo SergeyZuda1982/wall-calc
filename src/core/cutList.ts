@@ -44,6 +44,37 @@ export interface CutListResult {
   totalWaste: number  // мм
 }
 
+export interface GroupedBar {
+  bar: Bar       // один представитель паттерна (для отрисовки полоски)
+  count: number  // сколько одинаковых прутков в этой группе
+}
+
+/**
+ * Группирует одинаковые прутки (совпадает последовательность кусков
+ * по роли+длине и остаток) в одну строку с количеством — иначе список
+ * раскроя на объекте с сотнями прутков превращается в такую же по длине
+ * простыню, что и сам список кусков до упаковки (не нужно писать 500
+ * строк "Профиль N", как не пишем 3000 саморезов списком по одному).
+ *
+ * Порядок групп — по убыванию count, чтобы наверху были самые массовые
+ * (типовые) варианты раскроя, а редкие/одиночные — внизу.
+ */
+export function groupBars(bars: Bar[]): GroupedBar[] {
+  const groups = new Map<string, GroupedBar>()
+
+  for (const bar of bars) {
+    const key = bar.pieces.map(p => `${p.piece.role}:${p.piece.length}`).join('|') + `#${bar.waste}`
+    const existing = groups.get(key)
+    if (existing) {
+      existing.count += 1
+    } else {
+      groups.set(key, { bar, count: 1 })
+    }
+  }
+
+  return [...groups.values()].sort((a, b) => b.count - a.count)
+}
+
 /**
  * Раскраивает список кусков по пруткам 3000мм.
  * Куски сортируются по убыванию длины (FFD).

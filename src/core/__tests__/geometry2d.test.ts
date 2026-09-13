@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clipRectBySlopedTop, polygonArea, polygonPerimeter, polygonSides, insideSegments, pointInPolygon, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick, unionOfTwoQuads, type Point2D } from '../geometry2d'
+import { clipRectBySlopedTop, polygonArea, polygonPerimeter, polygonSides, insideSegments, pointInPolygon, arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, arcEndTangents, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick, unionOfTwoQuads, type Point2D, type ArcTangentStub } from '../geometry2d'
 
 describe('polygonArea', () => {
   it('площадь прямоугольника', () => {
@@ -185,6 +185,53 @@ describe('arcFromChordAndSagitta', () => {
     expect(pts[0].y).toBeCloseTo(20, 3)
     expect(pts[pts.length - 1].x).toBeCloseTo(130, 3)
     expect(pts[pts.length - 1].y).toBeCloseTo(45, 3)
+  })
+})
+
+describe('arcEndTangents (11.09.2026 — усы для стыковки прямых стен с дуговыми, wallJoin.ts)', () => {
+  it('start-ус начинается точно в (x1,y1) хорды', () => {
+    const t = arcEndTangents(10, 20, 130, 45, 37)!
+    expect(t.start.x1).toBeCloseTo(10, 6)
+    expect(t.start.y1).toBeCloseTo(20, 6)
+  })
+
+  it('end-ус начинается точно в (x2,y2) хорды', () => {
+    const t = arcEndTangents(10, 20, 130, 45, 37)!
+    expect(t.end.x1).toBeCloseTo(130, 6)
+    expect(t.end.y1).toBeCloseTo(45, 6)
+  })
+
+  it('оба уса лежат НА окружности дуги (не вылетают за неё, не внутри хорды)', () => {
+    const arc = arcFromChordAndSagitta(10, 20, 130, 45, 37)!
+    const t = arcEndTangents(10, 20, 130, 45, 37)!
+    const onCircle = (p: Point2D) => Math.abs(Math.hypot(p.x - arc.cx, p.y - arc.cy) - arc.radius) < 0.01
+    expect(onCircle({ x: t.start.x2, y: t.start.y2 })).toBe(true)
+    expect(onCircle({ x: t.end.x2, y: t.end.y2 })).toBe(true)
+  })
+
+  it('плоская хорда вдоль оси X с заметной стрелой — усы НЕ параллельны хорде (касательная отклонена кривизной, не идёт вдоль самой хорды)', () => {
+    const t = arcEndTangents(0, 0, 1000, 0, 150)!
+    const angleStart = Math.atan2(t.start.y2 - t.start.y1, t.start.x2 - t.start.x1)
+    const angleEnd = Math.atan2(t.end.y2 - t.end.y1, t.end.x2 - t.end.x1)
+    // Хорда идёт строго по оси X (угол 0 или π) — усы должны заметно отклоняться от этого
+    expect(Math.min(Math.abs(angleStart), Math.abs(Math.PI - Math.abs(angleStart)))).toBeGreaterThan(0.1)
+    expect(Math.min(Math.abs(angleEnd), Math.abs(Math.PI - Math.abs(angleEnd)))).toBeGreaterThan(0.1)
+  })
+
+  it('вырожденная дуга (sagittaMm=0) — возвращает null', () => {
+    expect(arcEndTangents(0, 0, 1000, 0, 0)).toBeNull()
+  })
+
+  it('вырожденная дуга (совпадающие концы хорды) — возвращает null', () => {
+    expect(arcEndTangents(50, 50, 50, 50, 37)).toBeNull()
+  })
+
+  it('произвольное число сегментов — усы остаются корректными (не зависят от точного N)', () => {
+    const t8 = arcEndTangents(0, 0, 1000, 0, 150, 8)!
+    const t40 = arcEndTangents(0, 0, 1000, 0, 150, 40)!
+    // Направление близко при разном N (сходится к истинной касательной)
+    const angle = (t: ArcTangentStub) => Math.atan2(t.y2 - t.y1, t.x2 - t.x1)
+    expect(Math.abs(angle(t8.start) - angle(t40.start))).toBeLessThan(0.1)
   })
 })
 

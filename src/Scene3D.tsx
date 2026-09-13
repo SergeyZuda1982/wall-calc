@@ -25,9 +25,9 @@ import {
   wallsToBoxes3D, roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, estimateCeilingMm, mmToM, mToMm,
   freeformStructuresToPrisms3D, wallStudPositionsMm,
   wallToBox3D, wallFaceFrame, worldToFaceMm,
-  slopePlaneCoefficients,
+  slopePlaneCoefficients, slabStepRisers3D,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
-  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame,
+  type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame, type SlabStepRiser3D,
 } from './core/planTo3D'
 import type { PlanLineType, FloorPlan, PlanLine, WorkStageTemplate } from './types'
 import CeilingGridMesh from './components/CeilingGridMesh'
@@ -35,6 +35,7 @@ import CeilingEntityMesh from './components/CeilingEntityMesh'
 import { resolveFrameParams } from './core/calcP112Frame'
 import { formatDistanceM } from './core/formatDistance'
 import { lineProgressColor, lineProgressSummary, wallGklVisual3D } from './core/lineProgress'
+import { isCeilingBuiltForRender, ceilingGklVisual3D } from './core/ceilingProgress3D'
 import { finishSidesOf, finishMaterialCategoryOf, finishTemplateContextOf, resolveFinishZones } from './core/finishResolver'
 import { applyTemplate, templatesForContext, withDrawnZone } from './core/workProgress'
 import { BUILTIN_WORK_STAGE_TEMPLATES } from './data/workStageTemplates'
@@ -45,6 +46,7 @@ import { resolveWallProfileType } from './core/planLineToWallInput'
 import { parseDoubleFrameSubtype } from './data/constructionTaxonomy'
 import { resolveLiningProfileType } from './core/planLineToLiningInput'
 import { wallProfileGeometryM, STUD_FLANGE_MM, TRACK_FLANGE_MM } from './components/wallProfileGeometry'
+import { slantedTopBoxGeometry } from './components/slantedTopBoxGeometry'
 
 const TYPE_COLOR_3D: Record<PlanLineType, string> = {
   wall_new:      '#e57373',
@@ -179,6 +181,32 @@ function WallMesh({ box, line, opacity = 1, selected = false, measuring = false,
     [showFrame, box.size.sy, depthMm],
   )
 
+  // 12.09.2026: стена/облицовка под наклонным потолком (Ceiling.slope, см.
+  // core/ceilingSlope.ts + wallToBoxesWithOpenings3D) — topYAtFromM/topYAtToM
+  // заданы, только если для этой коробки реально применим уклон (иначе оба
+  // undefined и всё ниже работает как раньше, обычным boxGeometry). Верх
+  // короба режется ОДНОЙ наклонной плоскостью — см. slantedTopBoxGeometry.
+  // Каркас (направляющие/стойки, trackGeo/studGeo выше) сознательно ОСТАЁТСЯ
+  // приближённым плоским боксом — известное упрощение (как и раньше со
+  // схематичным сечением до 14.07.2026): для сплошной облицовки и обшивки
+  // (то, что реально видно снаружи) верх уже режется правильно, а стойки на
+  // объекте всё равно подрезают по месту при монтаже.
+  const bottomY = box.center.y - box.size.sy / 2
+  const slantHeights = useMemo(
+    () => (box.topYAtFromM !== undefined && box.topYAtToM !== undefined
+      ? { hLeft: box.topYAtFromM - bottomY, hRight: box.topYAtToM - bottomY }
+      : null),
+    [box.topYAtFromM, box.topYAtToM, bottomY],
+  )
+  const solidGeo = useMemo(
+    () => (slantHeights ? slantedTopBoxGeometry(box.size.sx, box.size.sz, slantHeights.hLeft, slantHeights.hRight) : null),
+    [slantHeights, box.size.sx, box.size.sz],
+  )
+  const sheetGeo = useMemo(
+    () => (slantHeights ? slantedTopBoxGeometry(box.size.sx, GKL_SHEET_THICKNESS_M, slantHeights.hLeft, slantHeights.hRight) : null),
+    [slantHeights, box.size.sx],
+  )
+
   function handleClick(e: ThreeEvent<MouseEvent>) {
     if (measuring || !onSelect) return
     e.stopPropagation()
@@ -197,7 +225,7 @@ function WallMesh({ box, line, opacity = 1, selected = false, measuring = false,
     >
       {!showFrame && (
         <mesh castShadow receiveShadow>
-          <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />
+          {solidGeo ? <primitive object={solidGeo} attach="geometry" /> : <boxGeometry args={[box.size.sx, box.size.sy, box.size.sz]} />}
           <meshStandardMaterial
             map={texture}
             color={texture ? tint : color}
@@ -226,13 +254,13 @@ function WallMesh({ box, line, opacity = 1, selected = false, measuring = false,
           {/* обшивка стороны А/Б — тонкий лист поверх каркаса, только если подтверждена */}
           {gklVisual!.sheetA && (
             <mesh position={[0, 0, box.size.sz / 2 - GKL_SHEET_THICKNESS_M / 2]} castShadow receiveShadow>
-              <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />
+              {sheetGeo ? <primitive object={sheetGeo} attach="geometry" /> : <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />}
               <meshStandardMaterial color={GKL_SHEET_COLOR} roughness={0.85} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
             </mesh>
           )}
           {gklVisual!.sheetB && sides === 2 && (
             <mesh position={[0, 0, -(box.size.sz / 2 - GKL_SHEET_THICKNESS_M / 2)]} castShadow receiveShadow>
-              <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />
+              {sheetGeo ? <primitive object={sheetGeo} attach="geometry" /> : <boxGeometry args={[box.size.sx, box.size.sy, GKL_SHEET_THICKNESS_M]} />}
               <meshStandardMaterial color={GKL_SHEET_COLOR} roughness={0.85} emissive={emissive} emissiveIntensity={emissiveIntensity} transparent={transparent} opacity={opacity} />
             </mesh>
           )}
@@ -369,6 +397,37 @@ function HandDrawnSlabMesh({ slab, scaleMmPx, opacity = 1 }: { slab: SlabPolygon
   return (
     <mesh geometry={geo} receiveShadow>
       <meshStandardMaterial map={tex} color={tint} roughness={0.9} transparent={opacity < 1} opacity={opacity} />
+    </mesh>
+  )
+}
+
+/**
+ * Подступёнок между двумя разноуровневыми Плитами (11.09.2026, объект в
+ * Ростове) — плоский четырёхугольник (2 треугольника) по 4 углам из
+ * slabStepRisers3D. Свой плоский материал (не текстура бетона, как у самой
+ * плиты) — риser часто виден лишь узкой полоской, текстура на ней либо не
+ * успевает развернуться заметно, либо тайлится странно на нестандартных
+ * пропорциях (высота ступени обычно << её длины).
+ */
+function SlabStepRiserMesh({ riser, opacity = 1 }: { riser: SlabStepRiser3D; opacity?: number }) {
+  const geo = useMemo(() => {
+    const g = new THREE.BufferGeometry()
+    const { p0, p1, p2, p3 } = riser
+    const positions = new Float32Array([
+      p0.x, p0.y, p0.z,
+      p1.x, p1.y, p1.z,
+      p2.x, p2.y, p2.z,
+      p0.x, p0.y, p0.z,
+      p2.x, p2.y, p2.z,
+      p3.x, p3.y, p3.z,
+    ])
+    g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    g.computeVertexNormals()
+    return g
+  }, [riser])
+  return (
+    <mesh geometry={geo} receiveShadow castShadow>
+      <meshStandardMaterial color={FLOOR_COLOR} roughness={0.9} side={THREE.DoubleSide} transparent={opacity < 1} opacity={opacity} />
     </mesh>
   )
 }
@@ -800,22 +859,24 @@ function LevelGroup({
   const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
   const opacity = dimmed ? 0.35 : 1
 
+  const ceilingSlopes = floorPlan.ceilingSlopes ?? []
   const boxes = useMemo(
-    () => wallsToBoxes3D(lines, scaleMmPx, rectColumns, roundColumns),
-    [lines, scaleMmPx, rectColumns, roundColumns],
+    () => wallsToBoxes3D(lines, scaleMmPx, rectColumns, roundColumns, slabs, ceilings, ceilingSlopes, rooms),
+    [lines, scaleMmPx, rectColumns, roundColumns, slabs, ceilings, ceilingSlopes, rooms],
   )
   const linesById = useMemo(() => new Map(lines.map(l => [l.id, l])), [lines])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
   const slabPolygons = useMemo(() => slabsToPolygons3D(slabs, scaleMmPx), [slabs, scaleMmPx])
+  const slabStepRisers = useMemo(() => slabStepRisers3D(slabs, scaleMmPx), [slabs, scaleMmPx])
   const ceilingPolygons = useMemo(() => ceilingsToPolygons3D(ceilings, scaleMmPx), [ceilings, scaleMmPx])
   const ceilingMm = useMemo(() => estimateCeilingMm(lines), [lines])
   const columnCylinders = useMemo(
-    () => roundColumnsToCylinders3D(roundColumns, scaleMmPx, ceilingMm),
-    [roundColumns, scaleMmPx, ceilingMm],
+    () => roundColumnsToCylinders3D(roundColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms),
+    [roundColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms],
   )
   const rectColumnBoxes = useMemo(
-    () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm),
-    [rectColumns, scaleMmPx, ceilingMm],
+    () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms),
+    [rectColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms],
   )
   const freeformPrisms = useMemo(
     () => freeformStructuresToPrisms3D(freeformStructures, scaleMmPx, ceilingMm),
@@ -901,7 +962,7 @@ function LevelGroup({
         />
       ))}
       {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} opacity={opacity} />)}
-      {showCeilingGrid && !dimmed && polygons.filter(r => !r.isColumn).map(room => {
+      {showCeilingGrid && !dimmed && polygons.filter(r => !r.isColumn && isCeilingBuiltForRender(r.ceilingProgress)).map(room => {
         // 10.07.2026: если для этого Room сохранён ceilingSpec (CeilingCalc.tsx
         // → «Сохранить в 3D», см. KONSPEKT.md), считаем реальный шаг несущего/
         // подвесов через тот же resolveFrameParams, что и сам калькулятор —
@@ -928,12 +989,14 @@ function LevelGroup({
             layoutMode={spec?.layoutMode ?? 'user'}
             wallOffsetMainMm={frameParams?.wallOffsetMainMm}
             wallOffsetBearingMm={frameParams?.wallOffsetBearingMm}
+            showGkl={ceilingGklVisual3D(room.ceilingProgress).showGkl}
             onFocusElement={onFocusElement}
             measuring={measuring}
           />
         )
       })}
       {slabPolygons.map(slab => <HandDrawnSlabMesh key={slab.id} slab={slab} scaleMmPx={scaleMmPx} opacity={opacity} />)}
+      {slabStepRisers.map(riser => <SlabStepRiserMesh key={riser.id} riser={riser} opacity={opacity} />)}
       {ceilingPolygons.map(cl => (
         <CeilingEntityMesh
           key={`ceiling-${cl.id}`}

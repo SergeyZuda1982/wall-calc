@@ -4,7 +4,7 @@ import {
   roomsToPolygons3D, slabsToPolygons3D, ceilingsToPolygons3D, roundColumnsToCylinders3D, rectColumnsToBoxes3D, wallToBoxesWithOpenings3D, pxToM, mmToM, mToMm,
   freeformStructuresToPrisms3D, wallMaterialKindOf, wallStudPositionsMm,
   wallFaceFrame, worldToFaceMm, faceMmToWorld,
-  slopePlaneCoefficients,
+  slopePlaneCoefficients, slabStepRisers3D,
 } from '../planTo3D'
 import { roundColumnPolygonPx } from '../columnStamp'
 import { ceilingSlopeHeightAt } from '../ceilingSlope'
@@ -244,6 +244,120 @@ describe('wallToBox3D', () => {
   })
 })
 
+describe('wallToBox3D / wallToBoxesWithOpenings3D — уклон потолка режет верх стены (12.09.2026)', () => {
+  // scaleMmPx=1 — px и мм совпадают, чтобы не путаться в масштабе в тестах.
+  const slope = { x1: 0, y1: 0, height1Mm: 2500, x2: 1000, y2: 0, height2Mm: 3200 }
+
+  it('wallToBox3D: без slope — старое плоское поведение, slopeH1Mm/slopeH2Mm не заданы', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' }, heightMm: 2700 })
+    const box = wallToBox3D(line, 1, 3000)
+    expect(box!.size.sy).toBeCloseTo(2.7)
+    expect(box!.slopeH1Mm).toBeUndefined()
+    expect(box!.slopeH2Mm).toBeUndefined()
+  })
+
+  it('wallToBox3D: со slope — высота короба (size.sy) = максимум из двух концов, slopeH1Mm/slopeH2Mm посчитаны', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' } })
+    const box = wallToBox3D(line, 1, 3000, undefined, slope)
+    expect(box!.slopeH1Mm).toBeCloseTo(2500)
+    expect(box!.slopeH2Mm).toBeCloseTo(3200)
+    expect(box!.size.sy).toBeCloseTo(3.2) // максимум — под самой высокой точкой уклона
+  })
+
+  it('wallToBox3D: line.customHeight — уклон НЕ применяется (та же гарантия, что и ceilingProfileForLine в 2D)', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' }, heightMm: 2700, customHeight: true })
+    const box = wallToBox3D(line, 1, 3000, undefined, slope)
+    expect(box!.slopeH1Mm).toBeUndefined()
+    expect(box!.size.sy).toBeCloseTo(2.7)
+  })
+
+  it('wallToBox3D: ригель — уклон потолка не при чём, не применяется', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, type: 'rib_beam', sectionWidthMm: 300, dropMm: 200 })
+    const box = wallToBox3D(line, 1, 3000, undefined, slope)
+    expect(box!.slopeH1Mm).toBeUndefined()
+    expect(box!.size.sy).toBeCloseTo(0.2)
+  })
+
+  it('wallToBoxesWithOpenings3D без проёмов: topYAtFromM/topYAtToM = высота уклона в концах линии, метры', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' } })
+    const boxes = wallToBoxesWithOpenings3D(line, 1, 3000, undefined, slope)
+    expect(boxes.length).toBe(1)
+    expect(boxes[0].topYAtFromM).toBeCloseTo(2.5)
+    expect(boxes[0].topYAtToM).toBeCloseTo(3.2)
+  })
+
+  it('wallToBoxesWithOpenings3D без slope вообще — topYAtFromM/topYAtToM не заданы (плоский верх, старое поведение)', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, spec: { material: 'brick', subtype: '200' } })
+    const boxes = wallToBoxesWithOpenings3D(line, 1, 3000)
+    expect(boxes[0].topYAtFromM).toBeUndefined()
+    expect(boxes[0].topYAtToM).toBeUndefined()
+  })
+
+  it('wallToBoxesWithOpenings3D с проёмом: seg/tail/перемычка режутся по уклону в СВОЕЙ точке alongM, подоконник — нет (плоский)', () => {
+    const line: PlanLine = {
+      id: 'w-slope-win', x1: 0, y1: 0, x2: 1000, y2: 0,
+      type: 'wall_existing', lengthMm: 1000, label: 'С-1',
+      spec: { material: 'brick', subtype: '200' },
+      openings: [{ id: 'op1', type: 'window', offsetMm: 400, widthMm: 200, heightMm: 800, sillHeightMm: 900, label: 'О-1' }],
+    }
+    const boxes = wallToBoxesWithOpenings3D(line, 1, 3000, undefined, slope)
+    const seg = boxes.find(b => b.id.includes('__seg_'))!
+    const sill = boxes.find(b => b.id.includes('__sill_'))!
+    const lintel = boxes.find(b => b.id.includes('__lintel_'))!
+    const tail = boxes.find(b => b.id.includes('__tail'))!
+
+    // seg занимает alongM 0..0.4 (400мм), уклон линейный: h(alongM) = 2500 + alongM*700 (мм на метр => в метрах: 2.5 + alongM*0.7)
+    expect(seg.topYAtFromM).toBeCloseTo(2.5)
+    expect(seg.topYAtToM).toBeCloseTo(2.5 + 0.4 * 0.7)
+    // перемычка над проёмом (0.4..0.6) — тоже режется по уклону
+    expect(lintel.topYAtFromM).toBeCloseTo(2.5 + 0.4 * 0.7)
+    expect(lintel.topYAtToM).toBeCloseTo(2.5 + 0.6 * 0.7)
+    // хвост (0.6..1.0)
+    expect(tail.topYAtFromM).toBeCloseTo(2.5 + 0.6 * 0.7)
+    expect(tail.topYAtToM).toBeCloseTo(3.2)
+    // подоконник — плоский, уклон его не касается
+    expect(sill.topYAtFromM).toBeUndefined()
+    expect(sill.topYAtToM).toBeUndefined()
+  })
+})
+
+describe('wallsToBoxes3D — резолвер уклона из Ceiling.slope (12.09.2026)', () => {
+  it('без slabs/ceilings/slopes (старый вызов с 3 аргументами) — стены остаются плоскими, обратная совместимость', () => {
+    const lines: PlanLine[] = [
+      { id: 'w1', x1: 0, y1: 0, x2: 1000, y2: 0, type: 'wall_existing', lengthMm: 1000, label: 'С-1', spec: { material: 'brick', subtype: '200' } },
+    ]
+    const boxes = wallsToBoxes3D(lines, 1, [])
+    expect(boxes[0].topYAtFromM).toBeUndefined()
+  })
+
+  it('Ceiling.slope, накрывающий стену контуром — стена реально режется по уклону в 3D', () => {
+    const lines: PlanLine[] = [
+      { id: 'w1', x1: 0, y1: 0, x2: 1000, y2: 0, type: 'wall_existing', lengthMm: 1000, label: 'С-1', spec: { material: 'brick', subtype: '200' } },
+    ]
+    const ceilings: Ceiling[] = [{
+      id: 'c1', label: 'Потолок 1',
+      outer: [{ x: -100, y: -500 }, { x: 1100, y: -500 }, { x: 1100, y: 500 }, { x: -100, y: 500 }],
+      slope: { x1: 0, y1: 0, height1Mm: 2500, x2: 1000, y2: 0, height2Mm: 3200 },
+    }]
+    const boxes = wallsToBoxes3D(lines, 1, [], [], [], ceilings, [], [])
+    expect(boxes[0].topYAtFromM).toBeCloseTo(2.5)
+    expect(boxes[0].topYAtToM).toBeCloseTo(3.2)
+  })
+
+  it('Ceiling БЕЗ slope, накрывающий стену — стена остаётся плоской (уклон не задан — не с чем резать)', () => {
+    const lines: PlanLine[] = [
+      { id: 'w1', x1: 0, y1: 0, x2: 1000, y2: 0, type: 'wall_existing', lengthMm: 1000, label: 'С-1', spec: { material: 'brick', subtype: '200' }, heightMm: 2700 },
+    ]
+    const ceilings: Ceiling[] = [{
+      id: 'c1', label: 'Потолок 1',
+      outer: [{ x: -100, y: -500 }, { x: 1100, y: -500 }, { x: 1100, y: 500 }, { x: -100, y: 500 }],
+    }]
+    const boxes = wallsToBoxes3D(lines, 1, [], [], [], ceilings, [], [])
+    expect(boxes[0].topYAtFromM).toBeUndefined()
+    expect(boxes[0].size.sy).toBeCloseTo(2.7)
+  })
+})
+
 describe('lineId (10.07.2026, выбор стены кликом в 3D)', () => {
   it('wallToBox3D: lineId совпадает с id и с id самой линии', () => {
     const line = baseLine({ id: 'w-42', spec: { material: 'brick', subtype: '200' } })
@@ -347,6 +461,85 @@ describe('wallsToBoxes3D', () => {
   })
 })
 
+describe('wallsToBoxes3D — ДУГОВЫЕ стены (11.09.2026, Фаза 3 объекта в Ростове — радиусные стены зала)', () => {
+  it('дуговая стена (sagittaMm) — даёт 24 коротких короб-сегмента, не один прямой по хорде', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150,
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    expect(boxes).toHaveLength(24)
+    boxes.forEach(b => {
+      expect(b.lineId).toBe('arc1') // выбор стены кликом по любому сегменту — целиком
+      expect(b.id).toContain('arc1__arc')
+      expect(Number.isFinite(b.center.x)).toBe(true)
+      expect(Number.isFinite(b.center.z)).toBe(true)
+      expect(Number.isFinite(b.rotationY)).toBe(true)
+    })
+  })
+
+  it('сегменты идут ПО ДУГЕ — суммарная длина сегментов близка к длине дуги (не хорды), апекс дуги смещён от прямой линии между концами', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150, // стрела заметная, не вырожденная
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    const totalLenM = boxes.reduce((s, b) => s + b.size.sx, 0)
+    // Длина дуги ВСЕГДА больше длины хорды (1000px=10000мм=10м) — есть кривизна
+    expect(totalLenM).toBeGreaterThan(10.0)
+    // Средний сегмент (примерно апекс дуги) должен быть смещён по Z от 0
+    // (хорда идёт строго по оси X, z=0 у обоих концов)
+    const midBox = boxes[Math.floor(boxes.length / 2)]
+    expect(Math.abs(midBox.center.z)).toBeGreaterThan(0.001)
+  })
+
+  it('alongFromM/alongToM НАКАПЛИВАЮТСЯ вдоль всей дуги, а не сбрасываются на каждом сегменте', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150,
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    // Монотонно возрастают, конец предыдущего = начало следующего (с точностью)
+    for (let i = 0; i < boxes.length; i++) {
+      expect(boxes[i].alongFromM).toBeCloseTo(i === 0 ? 0 : boxes[i - 1].alongToM, 5)
+      expect(boxes[i].alongToM).toBeGreaterThan(boxes[i].alongFromM)
+    }
+    // Последний alongToM — суммарная длина дуги (близко к периметру всех сегментов)
+    const totalLenM = boxes.reduce((s, b) => s + b.size.sx, 0)
+    expect(boxes[boxes.length - 1].alongToM).toBeCloseTo(totalLenM, 5)
+  })
+
+  it('вырожденная дуга (sagittaMm≈0) — ведёт себя как обычная прямая стена, один короб', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 0, // 0 → arcFromChordAndSagitta вернёт null
+      spec: { material: 'brick', subtype: '200' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    expect(boxes).toHaveLength(1)
+    expect(boxes[0].id).toBe('arc1')
+    expect(boxes[0].size.sx).toBeCloseTo(10, 5)
+  })
+
+  it('дуговая стена наследует толщину/высоту/материал линии на каждом сегменте', () => {
+    const line = baseLine({
+      id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150, heightMm: 4500,
+      spec: { material: 'brick', subtype: '380' },
+    })
+    const boxes = wallsToBoxes3D([line], 10)
+    const expectedThicknessM = wallThicknessMm(line) / 1000
+    boxes.forEach(b => {
+      expect(b.size.sy).toBeCloseTo(4.5, 5)
+      expect(b.size.sz).toBeCloseTo(expectedThicknessM, 5)
+      expect(b.materialKind).toBe('brick')
+    })
+  })
+
+  it('дуга без толщины (нет spec) — не строится вообще, как и обычная стена', () => {
+    const line = baseLine({ id: 'arc1', x1: 0, y1: 0, x2: 1000, y2: 0, sagittaMm: 150 })
+    expect(wallsToBoxes3D([line], 10)).toEqual([])
+  })
+})
+
 describe('estimateCeilingMm', () => {
   it('без wall_existing — дефолт 3000', () => {
     expect(estimateCeilingMm([baseLine({ type: 'wall_new', heightMm: 2500 })])).toBe(3000)
@@ -446,6 +639,31 @@ describe('roomsToPolygons3D', () => {
     const rooms: Room[] = [{ id: 'r1', lineIds: ['a'], areaM2: 0, perimeterMm: 0, label: 'X' }]
     expect(roomsToPolygons3D(rooms, lines, 10)).toHaveLength(0)
   })
+
+  it('ceilingProgress (13.09.2026, Этап 3) прокидывается в RoomPolygon3D, если задан', () => {
+    const lines: PlanLine[] = [
+      baseLine({ id: 'a', x1: 0, y1: 0, x2: 100, y2: 0 }),
+      baseLine({ id: 'b', x1: 100, y1: 0, x2: 100, y2: 100 }),
+      baseLine({ id: 'c', x1: 100, y1: 100, x2: 0, y2: 0 }),
+    ]
+    const progress = { steps: [{ stepId: 's1', label: 'Каркас', meaning3D: 'frame' as const, outcome: 'pending' as const }] }
+    const rooms: Room[] = [
+      { id: 'r1', lineIds: ['a', 'b', 'c'], areaM2: 5, perimeterMm: 300, label: 'Комната', ceilingProgress: progress },
+    ]
+    const polys = roomsToPolygons3D(rooms, lines, 10)
+    expect(polys[0].ceilingProgress).toEqual(progress)
+  })
+
+  it('ceilingProgress не задан — поле отсутствует в RoomPolygon3D (не undefined-заглушка, а реально отсутствует)', () => {
+    const lines: PlanLine[] = [
+      baseLine({ id: 'a', x1: 0, y1: 0, x2: 100, y2: 0 }),
+      baseLine({ id: 'b', x1: 100, y1: 0, x2: 100, y2: 100 }),
+      baseLine({ id: 'c', x1: 100, y1: 100, x2: 0, y2: 0 }),
+    ]
+    const rooms: Room[] = [{ id: 'r1', lineIds: ['a', 'b', 'c'], areaM2: 5, perimeterMm: 300, label: 'Комната' }]
+    const polys = roomsToPolygons3D(rooms, lines, 10)
+    expect('ceilingProgress' in polys[0]).toBe(false)
+  })
 })
 
 describe('roundColumnsToCylinders3D', () => {
@@ -472,6 +690,34 @@ describe('roundColumnsToCylinders3D', () => {
       [baseColumn({ id: 'a' }), baseColumn({ id: 'b', cx: 300 })], 10, 2700,
     )
     expect(cyls.map(c => c.id)).toEqual(['a', 'b'])
+  })
+
+  it('12.09.2026 — колонна ПОД наклонной Плитой берёт высоту из уклона, а не из плоской ceilingMm (объект в Ростове: раньше колонна зависала ниже наклонной плиты, виден зазор)', () => {
+    const slab: Slab = {
+      id: 's1', label: 'Плита', holes: [],
+      outer: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
+      slope: { x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 4000 },
+    }
+    // Колонна в центре по X (x=500) — высота уклона линейно между 3000 и 4000 = 3500мм
+    const col = baseColumn({ cx: 500, cy: 500 })
+    const cyls = roundColumnsToCylinders3D([col], 10, 3000 /* плоский потолок — должен быть ПЕРЕБИТ уклоном */, [], [slab])
+    expect(cyls[0].heightM).toBeCloseTo(3.5, 5) // НЕ 3.0 (плоский ceilingMm)
+  })
+
+  it('колонна ВНЕ контура наклонной Плиты — берёт обычную плоскую ceilingMm (уклон не применяется к чужой точке)', () => {
+    const slab: Slab = {
+      id: 's1', label: 'Плита', holes: [],
+      outer: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
+      slope: { x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 4000 },
+    }
+    const col = baseColumn({ cx: 5000, cy: 5000 }) // далеко за пределами контура плиты
+    const cyls = roundColumnsToCylinders3D([col], 10, 3000, [], [slab])
+    expect(cyls[0].heightM).toBeCloseTo(3.0, 5)
+  })
+
+  it('без slabs/ceilings/slopes/rooms (дефолт []) — обычная плоская высота, как раньше (обратная совместимость)', () => {
+    const cyls = roundColumnsToCylinders3D([baseColumn({})], 10, 2850)
+    expect(cyls[0].heightM).toBeCloseTo(2.85, 5)
   })
 })
 
@@ -628,6 +874,23 @@ describe('rectColumnsToBoxes3D', () => {
       [baseRectColumn({ id: 'a' }), baseRectColumn({ id: 'b', cx: 300 })], 10, 2700,
     )
     expect(boxes.map(b => b.id)).toEqual(['a', 'b'])
+  })
+
+  it('12.09.2026 — колонна ПОД наклонной Плитой берёт высоту из уклона, центр по Y пересчитывается на половину НОВОЙ высоты', () => {
+    const slab: Slab = {
+      id: 's1', label: 'Плита', holes: [],
+      outer: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
+      slope: { x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 4000 },
+    }
+    const col = baseRectColumn({ cx: 500, cy: 500 })
+    const boxes = rectColumnsToBoxes3D([col], 10, 3000, [], [slab])
+    expect(boxes[0].size.sy).toBeCloseTo(3.5, 5)  // НЕ 3.0
+    expect(boxes[0].center.y).toBeCloseTo(1.75, 5) // половина от 3.5, не от 3.0
+  })
+
+  it('без slabs/ceilings/slopes/rooms (дефолт []) — обычная плоская высота, как раньше (обратная совместимость)', () => {
+    const boxes = rectColumnsToBoxes3D([baseRectColumn({})], 10, 2850)
+    expect(boxes[0].size.sy).toBeCloseTo(2.85, 5)
   })
 })
 
@@ -1073,5 +1336,99 @@ describe('slopePlaneCoefficients (07.09.2026 — наклон Плиты/Пот�
     const h1 = a * 10 + b * 0 + c
     const h2 = a * 10 + b * 5 + c
     expect(h2).toBeCloseTo(h1, 9)
+  })
+})
+
+describe('slabStepRisers3D (11.09.2026 — разноуровневые перекрытия, объект в Ростове: сцена/карман сцены/зал)', () => {
+  function rectSlab(overrides: Partial<Slab> & { id: string; x0: number; y0: number; w: number; h: number }): Slab {
+    const { id, x0, y0, w, h, ...rest } = overrides
+    return {
+      id, label: id, holes: [],
+      outer: [
+        { x: x0, y: y0 }, { x: x0 + w, y: y0 },
+        { x: x0 + w, y: y0 + h }, { x: x0, y: y0 + h },
+      ],
+      ...rest,
+    }
+  }
+
+  it('две соседние плоские плиты с общим ребром и РАЗНОЙ высотой — даёт ровно один risер по общему ребру', () => {
+    // A: (0,0)-(100,100), B: (100,0)-(200,100) — общее ребро x=100, y от 0 до 100.
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 }) // плоская, Y=0 (slope не задан)
+    const b = rectSlab({
+      id: 'B', x0: 100, y0: 0, w: 100, h: 100,
+      slope: { x1: 100, y1: 0, x2: 200, y2: 0, height1Mm: 500, height2Mm: 500 }, // плоская, приподнята на 500мм
+    })
+    const risers = slabStepRisers3D([a, b], 10)
+    expect(risers).toHaveLength(1)
+    const r = risers[0]
+    // Оба конца ребра A на Y=0, оба конца ребра B на Y=0.5м (500мм)
+    expect(r.p0.y).toBeCloseTo(0, 6)
+    expect(r.p1.y).toBeCloseTo(0, 6)
+    expect(r.p2.y).toBeCloseTo(0.5, 6)
+    expect(r.p3.y).toBeCloseTo(0.5, 6)
+  })
+
+  it('две соседние плиты ОДНОЙ высоты — риser не строится (нет видимой ступени)', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 })
+    const b = rectSlab({ id: 'B', x0: 100, y0: 0, w: 100, h: 100 })
+    expect(slabStepRisers3D([a, b], 10)).toHaveLength(0)
+  })
+
+  it('плиты НЕ соприкасаются (нет общего ребра) — риser не строится, даже при разной высоте', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 })
+    const b = rectSlab({
+      id: 'B', x0: 500, y0: 0, w: 100, h: 100,
+      slope: { x1: 500, y1: 0, x2: 600, y2: 0, height1Mm: 500, height2Mm: 500 },
+    })
+    expect(slabStepRisers3D([a, b], 10)).toHaveLength(0)
+  })
+
+  it('общее ребро обойдено в обратном порядке (разная ориентация полигонов) — всё равно распознаётся', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 }) // обход по часовой: ...,(100,0),(100,100),...
+    const b: Slab = {
+      id: 'B', label: 'B', holes: [],
+      // Обход в обратную сторону — общее ребро идёт (100,100)→(100,0), а не (100,0)→(100,100)
+      outer: [{ x: 100, y: 100 }, { x: 100, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 100 }],
+      slope: { x1: 100, y1: 0, x2: 200, y2: 0, height1Mm: 300, height2Mm: 300 },
+    }
+    expect(slabStepRisers3D([a, b], 10)).toHaveLength(1)
+  })
+
+  it('наклонная плита встречается с плоской — риser отражает высоты в ОБОИХ концах ребра (не констрейнится к вертикали)', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 }) // плоская, Y=0
+    const b = rectSlab({
+      id: 'B', x0: 100, y0: 0, w: 100, h: 100,
+      // Наклон ВДОЛЬ общего ребра (x=100): 0мм при y=0, 300мм при y=100
+      slope: { x1: 100, y1: 0, x2: 100, y2: 100, height1Mm: 0, height2Mm: 300 },
+    })
+    const risers = slabStepRisers3D([a, b], 10)
+    expect(risers).toHaveLength(1)
+    const r = risers[0]
+    // Сторона A (плоская) — оба конца на Y=0
+    expect(r.p0.y).toBeCloseTo(0, 6)
+    expect(r.p1.y).toBeCloseTo(0, 6)
+    // Сторона B (наклонная вдоль ребра) — концы РАЗНЫЕ: 0 и 0.3м
+    const bHeights = [r.p2.y, r.p3.y].sort((x, y) => x - y)
+    expect(bHeights[0]).toBeCloseTo(0, 6)
+    expect(bHeights[1]).toBeCloseTo(0.3, 6)
+  })
+
+  it('дырки (holes) не участвуют — общий контур выреза одной плиты не считается ступенью относительно другой (v1 упрощение)', () => {
+    const a: Slab = {
+      id: 'A', label: 'A', holes: [[{ x: 40, y: 40 }, { x: 60, y: 40 }, { x: 60, y: 60 }, { x: 40, y: 60 }]],
+      outer: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+    }
+    const b = rectSlab({
+      id: 'B', x0: 40, y0: 40, w: 20, h: 20,
+      slope: { x1: 40, y1: 40, x2: 60, y2: 40, height1Mm: 500, height2Mm: 500 },
+    })
+    expect(slabStepRisers3D([a, b], 10)).toHaveLength(0)
+  })
+
+  it('меньше двух плит — риser не строится', () => {
+    const a = rectSlab({ id: 'A', x0: 0, y0: 0, w: 100, h: 100 })
+    expect(slabStepRisers3D([a], 10)).toHaveLength(0)
+    expect(slabStepRisers3D([], 10)).toHaveLength(0)
   })
 })

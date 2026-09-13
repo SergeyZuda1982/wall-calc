@@ -78,3 +78,33 @@ export function calcCeilingProfileCutListP113(
   const raw = ceilingRawPiecesP113(mainLengthEachMm, mainCount, bearingSegmentLengthsMm, bearingRowCount)
   return { main: buildCutList(raw.main), bearing: buildCutList(raw.bearing) }
 }
+
+/**
+ * П131: топология проще П112/П113 — один ряд профиля (ПС), без второго
+ * перпендикулярного уровня (см. calcP131Frame.ts). Здесь переиспользуем ту
+ * же пару ключей {main, bearing}, что и у П112/П113 (та же структура,
+ * что уже потребляет CeilingCalc.tsx/App.tsx), но по факту:
+ *   main    = ПС несущий (psPieceCount физических кусков длиной psLengthEachMm;
+ *             при спаренном ПС psPieceCount уже включает оба профиля пары)
+ *   bearing = ПН направляющий (ровно 2 рейки — по одной на каждую из двух
+ *             длинных стен, длиной pnLengthEachMm)
+ * 11.09.2026, запрос пользователя (сессия «П131.1» — точная геометрия
+ * каркаса вместо только нормы на м²).
+ */
+export function ceilingRawPiecesP131(
+  psLengthEachMm: number, psPieceCount: number,
+  pnLengthEachMm: number,
+): { main: Piece[]; bearing: Piece[] } {
+  return {
+    main: splitIntoBarPieces(psLengthEachMm, psPieceCount, 'Несущий ПС'),
+    bearing: splitIntoBarPieces(pnLengthEachMm, 2, 'Направляющий ПН'),
+  }
+}
+
+export function calcCeilingProfileCutListP131(
+  psLengthEachMm: number, psPieceCount: number,
+  pnLengthEachMm: number,
+): { main: CutListResult; bearing: CutListResult } {
+  const raw = ceilingRawPiecesP131(psLengthEachMm, psPieceCount, pnLengthEachMm)
+  return { main: buildCutList(raw.main), bearing: buildCutList(raw.bearing) }
+}

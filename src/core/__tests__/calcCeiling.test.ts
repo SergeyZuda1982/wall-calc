@@ -205,8 +205,98 @@ describe('calcCeiling — П113.1 (одноуровневый)', () => {
   })
 })
 
-describe('calcCeiling — П131.1', () => {
+// 11.09.2026: BASE уже содержит roomLengthMm/roomWidthMm (5000×4000) — для
+// П131 (в отличие от П112, которому ещё нужен slabGapMm) этого достаточно,
+// чтобы считать точную геометрию каркаса вместо старой нормы на м²
+// (см. calcP131Frame.ts). Fallback на норму м² теперь проверяется отдельным
+// блоком ниже, со спецификацией БЕЗ размеров помещения.
+//
+// ⚠️ Сечение ПС/ПН подбирается автоматически по офиц. таблице Кнауф
+// (P131_MAX_SPAN_MM) — НЕ привязано к layers напрямую. Для пролёта
+// B=4000мм (roomWidthMm) при layers=1: ПС50 (до 3000 спар.) и ПС75
+// (до 3750 спар.) недостаточно, первое подходящее — ПС100 спаренный
+// (до 4250мм) — см. selectP131ProfileConfig.
+describe('calcCeiling — П131, точная геометрия каркаса (roomLengthMm/roomWidthMm заданы)', () => {
   const res = calcCeiling({ ...BASE, type: 'p131', stepC: 500 })
+  // pnAlongLength по умолчанию true -> A = roomLengthMm = 5000 (ПН вдоль
+  // длины, 2 рейки), B = roomWidthMm = 4000 (пролёт, который перекрывает ПС).
+  // psRunningPositions вдоль A=5000 с шагом 500: 500,1000,...,4500 -> 9
+  // несущих + 2 замыкающих (короткие стены) = 11 позиций всего (psCount).
+  // B=4000 -> подобран ПС100 спаренный (см. шапку блока).
+
+  it('подобрано ПС100 спаренный (пролёт 4000мм требует его — 50 и 75 не хватает)', () => {
+    expect(res.p131ProfileSelection).toEqual({ widthMm: 100, paired: true, maxSpanMm: 4250 })
+  })
+
+  it('ПН профиль — 10 пог.м (2 рейки × 5000мм), сечение 100мм по подбору', () => {
+    const item = res.materials.find(m => m.name.includes('Профиль ПН'))
+    expect(item).toBeDefined()
+    expect(item!.name).toContain('100')
+    expect(item!.qty).toBe(10)
+  })
+
+  it('ПС несущий — 88 пог.м (9 несущих + 2 замыкающих = 11 профилей × 4000мм × 2, спаренный)', () => {
+    const item = res.materials.find(m => m.name.includes('Профиль ПС'))
+    expect(item).toBeDefined()
+    expect(item!.name).toContain('спаренный')
+    expect(item!.qty).toBe(88)
+  })
+
+  it('удлинитель профиля — 24 шт (11 ПС × 2 × 1 + 2 ПН × 1, пролёты длиннее хлыста 3000мм)', () => {
+    const item = res.materials.find(m => m.name.includes('Удлинитель'))
+    expect(item).toBeDefined()
+    expect(item!.qty).toBe(24)
+  })
+
+  it('нет предупреждения о превышении предела (4000мм ≤ 4250мм для ПС100 спаренного)', () => {
+    expect(res.warnings.some(w => w.includes('превышает максимально допустимый'))).toBe(false)
+  })
+
+  it('нет подвесов', () => {
+    const item = res.materials.find(m => m.name.includes('Подвес'))
+    expect(item).toBeUndefined()
+  })
+
+  it('раскрой профиля заполнен (main = ПС, bearing = ПН)', () => {
+    expect(res.profileCutList).not.toBeNull()
+    expect(res.profileCutList!.main.totalBars).toBeGreaterThan(0)
+    expect(res.profileCutList!.bearing.totalBars).toBeGreaterThan(0)
+  })
+})
+
+describe('calcCeiling — П131, предупреждение при пролёте вне таблицы (даже ПС100 спаренный не тянет)', () => {
+  it('layers=1, пролёт 4251мм (на 1мм больше максимума 4250) — предупреждение есть', () => {
+    const res = calcCeiling({ ...BASE, type: 'p131', stepC: 500, roomWidthMm: 4251 } as CeilingSpecFull)
+    expect(res.warnings.some(w => w.includes('4250'))).toBe(true)
+    expect(res.p131ProfileSelection).toBeNull()
+  })
+
+  it('layers=1, пролёт 4250мм (ровно максимум) — предупреждения нет', () => {
+    const res = calcCeiling({ ...BASE, type: 'p131', stepC: 500, roomWidthMm: 4250 } as CeilingSpecFull)
+    expect(res.warnings.some(w => w.includes('превышает максимально допустимый'))).toBe(false)
+    expect(res.p131ProfileSelection).not.toBeNull()
+  })
+
+  it('layers=2 — предел ниже, чем layers=1 (тяжелее обшивка): пролёт 3751мм уже превышает', () => {
+    const res = calcCeiling({ ...BASE, type: 'p131', stepC: 500, roomWidthMm: 3751, layers: 2 } as CeilingSpecFull)
+    expect(res.warnings.some(w => w.includes('3750'))).toBe(true)
+    expect(res.p131ProfileSelection).toBeNull()
+  })
+
+  it('layers=2, тот же пролёт 3751мм при layers=1 — ещё в пределах (предупреждения нет)', () => {
+    const res = calcCeiling({ ...BASE, type: 'p131', stepC: 500, roomWidthMm: 3751, layers: 1 } as CeilingSpecFull)
+    expect(res.warnings.some(w => w.includes('превышает максимально допустимый'))).toBe(false)
+    expect(res.p131ProfileSelection).not.toBeNull()
+  })
+})
+
+describe('calcCeiling — П131, fallback без размеров помещения (норма на м²)', () => {
+  const { roomLengthMm: _l, roomWidthMm: _w, ...baseNoRoom } = BASE
+  const res = calcCeiling({ ...baseNoRoom, type: 'p131', stepC: 500 } as CeilingSpecFull)
+
+  it('есть предупреждение — нет размеров помещения, расчёт по среднему расходу', () => {
+    expect(res.warnings.some(w => w.includes('среднему расходу'))).toBe(true)
+  })
 
   it('ПН профиль — 16 пог.м (0.8 × 20)', () => {
     const item = res.materials.find(m => m.name.includes('ПН 50'))
@@ -223,6 +313,10 @@ describe('calcCeiling — П131.1', () => {
   it('нет подвесов', () => {
     const item = res.materials.find(m => m.name.includes('Подвес'))
     expect(item).toBeUndefined()
+  })
+
+  it('раскрой профиля не считается в fallback-режиме (нет размеров для геометрии)', () => {
+    expect(res.profileCutList).toBeNull()
   })
 })
 

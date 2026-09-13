@@ -12,7 +12,11 @@ import {
 } from '../data/ceilingData'
 import { calcP112FrameGeometry, resolveFrameParams, HANGER_LABEL, type CeilingGapSpec } from './calcP112Frame'
 import { calcP113FrameGeometry } from './calcP113Frame'
-import { calcCeilingProfileCutListP112, calcCeilingProfileCutListP113, ceilingRawPiecesP112, ceilingRawPiecesP113 } from './ceilingCutList'
+import { calcP131FrameGeometry, type P131ProfileSelection } from './calcP131Frame'
+import {
+  calcCeilingProfileCutListP112, calcCeilingProfileCutListP113, calcCeilingProfileCutListP131,
+  ceilingRawPiecesP112, ceilingRawPiecesP113, ceilingRawPiecesP131,
+} from './ceilingCutList'
 import type { CutListResult, Piece } from './cutList'
 import { calcPolygonP112Frame, type PolygonP112FrameResult } from './calcPolygonP112Frame'
 import { calcPolygonP113Frame, type PolygonP113FrameResult } from './calcPolygonP113Frame'
@@ -101,6 +105,13 @@ export interface CeilingCalcResult {
    *  (calcProjectCutList.ts), тот же набор, что уже упакован в
    *  profileCutList выше, просто до раскладки по пруткам. 05.09.2026. */
   rawProfilePieces: { main: Piece[]; bearing: Piece[] } | null
+  /** 11.09.2026 — подобранное сечение ПС/ПН и одинарный/спаренный для типа
+   *  П131 (см. calcP131Frame.ts selectP131ProfileConfig), для UI (показать
+   *  пользователю, что было выбрано и с каким запасом по пролёту). null —
+   *  не П131 или fallback-режим без размеров помещения (сечение неизвестно
+   *  без пролёта); undefined-подобное «пролёт превышает предел даже для
+   *  ПС100 спаренного» — тоже null, смотри warnings для текста в этом случае. */
+  p131ProfileSelection: P131ProfileSelection | null
   /** Предупреждения */
   warnings: string[]
 }
@@ -129,6 +140,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
   let polygonFrame: PolygonP112FrameResult | PolygonP113FrameResult | null = null
   let profileCutList: { main: CutListResult; bearing: CutListResult } | null = null
   let rawProfilePieces: { main: Piece[]; bearing: Piece[] } | null = null
+  let p131ProfileSelection: P131ProfileSelection | null = null
 
   if (type === 'p19') {
     return {
@@ -139,6 +151,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
       polygonSheetLayout: null,
       profileCutList: null,
       rawProfilePieces: null,
+      p131ProfileSelection: null,
       warnings: ['П19 (многоуровневый) — расчёт выполняется по индивидуальному проекту'],
     }
   }
@@ -422,17 +435,67 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
   // ─── П131: специальный каркас ──────────────────────────────────────────────
   if (type === 'p131') {
     const r = P131_SPECIAL_RATES[layers]
+    const full = spec as CeilingSpecFull
+    // 11.09.2026: точная геометрия каркаса (ПС несущий + ПН по двум длинным
+    // стенам, см. calcP131Frame.ts), если заданы размеры помещения — вместо
+    // усреднённого расхода на м² для ПН/ПС. Остальные расходники (шурупы,
+    // дюбели, лента) по-прежнему берутся из табл. 18 P131_SPECIAL_RATES — их
+    // формула по факту крепления официально не задокументирована так же
+    // подробно, как позиции профиля.
+    const hasPreciseGeometryP131 = !!full.roomLengthMm && !!full.roomWidthMm
 
-    materials.push({ name: 'Профиль ПН 50(75,100)/40', unit: 'пог.м', qty: ceil(r.pn_profile_lm * areaSqm), ratePerSqm: r.pn_profile_lm })
+    if (hasPreciseGeometryP131) {
+      // Переиспользуем bearingAlongLength — то же поле, что и у П112/П113
+      // (там оно означает ориентацию основного/несущего сплошного профиля;
+      // здесь — ориентацию ПН: true = вдоль длины помещения).
+      const pnAlongLength = full.bearingAlongLength ?? true
+      const geo131 = calcP131FrameGeometry(
+        full.roomLengthMm, full.roomWidthMm, stepC, pnAlongLength, layers, full.layoutMode ?? 'user',
+      )
+      const pnRailLengthMm = pnAlongLength ? full.roomLengthMm : full.roomWidthMm
+      // 11.09.2026 (офиц. таблица Кнауф, фото пользователя): сечение ПС/ПН
+      // и одинарный/спаренный подбираются автоматически как минимально
+      // достаточные под пролёт (geo131.profileSelection) — НЕ привязаны к
+      // layers напрямую (число слоёв ГКЛ и спаривание — независимые оси,
+      // см. calcP131Frame.ts). null (пролёт превышает предел даже для
+      // ПС100 спаренного) — считаем по самому прочному варианту с явным
+      // предупреждением (geo131.spanWarning уже это отражает).
+      const widthMm = geo131.profileSelection?.widthMm ?? 100
+      const paired = geo131.profileSelection?.paired ?? true
+      const psPieceCount = geo131.psCount * (paired ? 2 : 1)
+      p131ProfileSelection = geo131.profileSelection
+
+      materials.push({ name: `Профиль ПН ${widthMm}/40`, unit: 'пог.м', qty: ceil(geo131.pnTotalLm) })
+      materials.push({
+        name: `Профиль ПС ${widthMm} ${paired ? 'спаренный' : 'одинарный'}`,
+        unit: 'пог.м',
+        qty: ceil(geo131.psTotalLm),
+      })
+      const extendersTotalP131 = geo131.psExtenders + geo131.pnExtenders
+      if (extendersTotalP131 > 0) {
+        materials.push({ name: 'Удлинитель профиля', unit: 'шт', qty: extendersTotalP131 })
+      }
+      profileCutList = calcCeilingProfileCutListP131(geo131.psLengthEachMm, psPieceCount, pnRailLengthMm)
+      rawProfilePieces = ceilingRawPiecesP131(geo131.psLengthEachMm, psPieceCount, pnRailLengthMm)
+      if (geo131.spanWarning) warnings.push(geo131.spanWarning)
+    } else {
+      warnings.push(
+        'П131: нет размеров помещения (длина/ширина) — расчёт каркаса по ' +
+        'среднему расходу на м², может отличаться от факта. Заполните ' +
+        'размеры для точного расчёта (в т.ч. для автоподбора сечения ПС/ПН).',
+      )
+      materials.push({ name: 'Профиль ПН 50(75,100)/40', unit: 'пог.м', qty: ceil(r.pn_profile_lm * areaSqm), ratePerSqm: r.pn_profile_lm })
+      materials.push({
+        name: 'Профиль ПС несущий (сечение уточняется по пролёту — заполните размеры)',
+        unit: 'пог.м',
+        qty: ceil(r.ps_profile_lm * areaSqm),
+        ratePerSqm: r.ps_profile_lm,
+      })
+    }
+
     materials.push({ name: 'Лента уплотнительная', unit: 'пог.м', qty: ceil(r.seal_tape_lm * areaSqm) })
     materials.push({ name: 'Шуруп 4.3×35 с прессшайбой (для ГСП/ГВЛ конструкций)', unit: 'шт', qty: ceil(r.screw_pn_gsp * areaSqm) })
     materials.push({ name: 'Дюбель анкерный (для кирпича/бетона)', unit: 'шт', qty: ceil(r.dowel_pn * areaSqm) })
-    materials.push({
-      name: layers === 2 ? 'Профиль ПС (спаренный)' : 'Профиль ПС несущий',
-      unit: 'пог.м',
-      qty: ceil(r.ps_profile_lm * areaSqm),
-      ratePerSqm: r.ps_profile_lm,
-    })
     materials.push({ name: 'Шуруп LB (скрепление ПС и ПН)', unit: 'шт', qty: ceil(r.screw_lb * areaSqm) })
   }
 
@@ -490,7 +553,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
     : null
   const sheetLayout = polygonInput ? null : calcCeilingSheetLayout(spec)
 
-  return { spec, areaSqm, perimeterM, materials, sheetLayout, polygonFrame, polygonSheetLayout, profileCutList, rawProfilePieces, warnings }
+  return { spec, areaSqm, perimeterM, materials, sheetLayout, polygonFrame, polygonSheetLayout, profileCutList, rawProfilePieces, p131ProfileSelection, warnings }
 }
 
 /** Длина листа для раскроя — из spec, с тем же дефолтом 2500мм, что и
