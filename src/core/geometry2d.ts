@@ -252,6 +252,40 @@ export function sampleArcPoints(arc: ArcFromChord, segments = 32): Point2D[] {
   return pts
 }
 
+/** Короткий отрезок вдоль касательной к дуге в одном из её концов (px). */
+export interface ArcTangentStub { x1: number; y1: number; x2: number; y2: number }
+
+/**
+ * Касательные "усы" дуговой стены в НАЧАЛЕ и КОНЦЕ (11.09.2026, Фаза 3
+ * объекта в Ростове — стыковка прямых стен с радиусными стенами зала).
+ * Дуга сама по себе не участвует в wallJoin (тело кривой — нерешённая
+ * задача, см. wallJoin.ts), но прямая стена, встречающая дуговую РОВНО в
+ * одном из двух концов хорды (частый реальный случай — переход радиусной
+ * стены зала в прямую стену коридора), должна получать нормальный L/T-стык
+ * по направлению КАСАТЕЛЬНОЙ в этой точке, а не по хорде целиком.
+ *
+ * Касательная берётся из первого/последнего шага аппроксимации дуги N
+ * сегментами (sampleArcPoints) — направление points[0]→points[1] и
+ * points[N-1]→points[N] сходится к истинной касательной при достаточном N
+ * (совпадает по духу с тем, как 3D уже аппроксимирует дугу, planTo3D.ts).
+ *
+ * Возвращает null для вырожденной дуги (arcFromChordAndSagitta вернула
+ * null — нет реальной кривизны, вызывающий код должен обработать линию
+ * как обычную прямую стену).
+ */
+export function arcEndTangents(
+  x1: number, y1: number, x2: number, y2: number, sagittaMm: number, segments = 24,
+): { start: ArcTangentStub; end: ArcTangentStub } | null {
+  const arc = arcFromChordAndSagitta(x1, y1, x2, y2, sagittaMm)
+  if (!arc) return null
+  const pts = sampleArcPoints(arc, segments)
+  const n = pts.length
+  return {
+    start: { x1: pts[0].x, y1: pts[0].y, x2: pts[1].x, y2: pts[1].y },
+    end: { x1: pts[n - 1].x, y1: pts[n - 1].y, x2: pts[n - 2].x, y2: pts[n - 2].y },
+  }
+}
+
 /**
  * ─── Форма проёма произвольного контура (23.07.2026) ────────────────────────
  * Начало полноценной 2D-упаковки листов с произвольными вырезами (см.
