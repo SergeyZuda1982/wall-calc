@@ -771,6 +771,10 @@ export interface RoomPolygon3D {
    *  сохранены из CeilingCalc.tsx («Сохранить в 3D», см. roomToCeilingSeed.ts).
    *  Не задано -> Scene3D рисует CeilingGridMesh по дефолтам, как раньше. */
   ceilingSpec?: Room['ceilingSpec']
+  /** НОВОЕ (13.09.2026, Этап 3 "реалистичные материалы в 3D") — прогресс
+   *  отделки потолка этой комнаты, см. core/ceilingProgress3D.ts. Не задано
+   *  -> каркас/обшивка всегда видны, как раньше (обратная совместимость). */
+  ceilingProgress?: Room['ceilingProgress']
 }
 
 export interface ColumnCylinder3D {
@@ -870,6 +874,7 @@ export function roomsToPolygons3D(rooms: Room[], lines: PlanLine[], scaleMmPx: n
         label: room.label,
         points: pts.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
         ...(room.ceilingSpec ? { ceilingSpec: room.ceilingSpec } : {}),
+        ...(room.ceilingProgress ? { ceilingProgress: room.ceilingProgress } : {}),
       }
     })
     .filter((r): r is RoomPolygon3D => r !== null)

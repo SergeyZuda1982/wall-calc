@@ -639,6 +639,31 @@ describe('roomsToPolygons3D', () => {
     const rooms: Room[] = [{ id: 'r1', lineIds: ['a'], areaM2: 0, perimeterMm: 0, label: 'X' }]
     expect(roomsToPolygons3D(rooms, lines, 10)).toHaveLength(0)
   })
+
+  it('ceilingProgress (13.09.2026, Этап 3) прокидывается в RoomPolygon3D, если задан', () => {
+    const lines: PlanLine[] = [
+      baseLine({ id: 'a', x1: 0, y1: 0, x2: 100, y2: 0 }),
+      baseLine({ id: 'b', x1: 100, y1: 0, x2: 100, y2: 100 }),
+      baseLine({ id: 'c', x1: 100, y1: 100, x2: 0, y2: 0 }),
+    ]
+    const progress = { steps: [{ stepId: 's1', label: 'Каркас', meaning3D: 'frame' as const, outcome: 'pending' as const }] }
+    const rooms: Room[] = [
+      { id: 'r1', lineIds: ['a', 'b', 'c'], areaM2: 5, perimeterMm: 300, label: 'Комната', ceilingProgress: progress },
+    ]
+    const polys = roomsToPolygons3D(rooms, lines, 10)
+    expect(polys[0].ceilingProgress).toEqual(progress)
+  })
+
+  it('ceilingProgress не задан — поле отсутствует в RoomPolygon3D (не undefined-заглушка, а реально отсутствует)', () => {
+    const lines: PlanLine[] = [
+      baseLine({ id: 'a', x1: 0, y1: 0, x2: 100, y2: 0 }),
+      baseLine({ id: 'b', x1: 100, y1: 0, x2: 100, y2: 100 }),
+      baseLine({ id: 'c', x1: 100, y1: 100, x2: 0, y2: 0 }),
+    ]
+    const rooms: Room[] = [{ id: 'r1', lineIds: ['a', 'b', 'c'], areaM2: 5, perimeterMm: 300, label: 'Комната' }]
+    const polys = roomsToPolygons3D(rooms, lines, 10)
+    expect('ceilingProgress' in polys[0]).toBe(false)
+  })
 })
 
 describe('roundColumnsToCylinders3D', () => {

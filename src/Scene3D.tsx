@@ -35,6 +35,7 @@ import CeilingEntityMesh from './components/CeilingEntityMesh'
 import { resolveFrameParams } from './core/calcP112Frame'
 import { formatDistanceM } from './core/formatDistance'
 import { lineProgressColor, lineProgressSummary, wallGklVisual3D } from './core/lineProgress'
+import { isCeilingBuiltForRender, ceilingGklVisual3D } from './core/ceilingProgress3D'
 import { finishSidesOf, finishMaterialCategoryOf, finishTemplateContextOf, resolveFinishZones } from './core/finishResolver'
 import { applyTemplate, templatesForContext, withDrawnZone } from './core/workProgress'
 import { BUILTIN_WORK_STAGE_TEMPLATES } from './data/workStageTemplates'
@@ -961,7 +962,7 @@ function LevelGroup({
         />
       ))}
       {polygons.map(room => <SlabOrColumn key={room.id} room={room} ceilingMm={ceilingMm} skipFloor={hasHandDrawnSlabs} opacity={opacity} />)}
-      {showCeilingGrid && !dimmed && polygons.filter(r => !r.isColumn).map(room => {
+      {showCeilingGrid && !dimmed && polygons.filter(r => !r.isColumn && isCeilingBuiltForRender(r.ceilingProgress)).map(room => {
         // 10.07.2026: если для этого Room сохранён ceilingSpec (CeilingCalc.tsx
         // → «Сохранить в 3D», см. KONSPEKT.md), считаем реальный шаг несущего/
         // подвесов через тот же resolveFrameParams, что и сам калькулятор —
@@ -988,6 +989,7 @@ function LevelGroup({
             layoutMode={spec?.layoutMode ?? 'user'}
             wallOffsetMainMm={frameParams?.wallOffsetMainMm}
             wallOffsetBearingMm={frameParams?.wallOffsetBearingMm}
+            showGkl={ceilingGklVisual3D(room.ceilingProgress).showGkl}
             onFocusElement={onFocusElement}
             measuring={measuring}
           />
