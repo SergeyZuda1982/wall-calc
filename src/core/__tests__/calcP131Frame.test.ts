@@ -57,8 +57,8 @@ describe('calcP131FrameGeometry — базовая геометрия', () => {
   it('ПС расставлены вдоль A с шагом stepMm — та же формула, что и calcFrameRowPositions', () => {
     const geo = calcP131FrameGeometry(5000, 3000, 500, true, 1)
     const expected = calcFrameRowPositions(5000, 500, { mode: 'user' })
-    expect(geo.psPositions).toEqual(expected)
-    expect(geo.psCount).toBe(expected.length)
+    expect(geo.psRunningPositions).toEqual(expected)
+    expect(geo.psCount).toBe(expected.length + 2) // + 2 замыкающих у коротких стен
   })
 
   it('длина каждого ПС = пролёт B (между двумя длинными стенами)', () => {
@@ -144,10 +144,26 @@ describe('calcP131FrameGeometry — удлинители (пролёт B дли�
   })
 })
 
+describe('calcP131FrameGeometry — замыкающий ПС на двух коротких стенах (endClosureCount)', () => {
+  it('endClosureCount = 2 при положительных A и B (проверено пользователем 11.09.2026 — отдельная деталь, не в шаге 500мм)', () => {
+    const geo = calcP131FrameGeometry(5000, 3000, 500, true, 1)
+    expect(geo.endClosureCount).toBe(2)
+    expect(geo.psCount).toBe(geo.psRunningPositions.length + 2)
+  })
+
+  it('замыкающие той же длины B, что и несущие — входят в тот же psTotalLm', () => {
+    const geo = calcP131FrameGeometry(5000, 2500, 500, true, 1) // одинарный, без спаривания — проще проверить
+    expect(geo.profileSelection?.paired).toBe(false)
+    const runningCount = geo.psRunningPositions.length
+    expect(geo.psTotalLm).toBeCloseTo(((runningCount + 2) * 2500) / 1000)
+  })
+})
+
 describe('calcP131FrameGeometry — вырожденные случаи', () => {
-  it('нулевой пролёт -> нулевые счётчики, не падает', () => {
+  it('нулевой пролёт -> нулевые счётчики (включая endClosureCount), не падает', () => {
     const geo = calcP131FrameGeometry(0, 0, 500, true, 1)
     expect(geo.psCount).toBe(0)
+    expect(geo.endClosureCount).toBe(0)
     expect(geo.psTotalLm).toBe(0)
     expect(geo.pnTotalLm).toBe(0)
   })

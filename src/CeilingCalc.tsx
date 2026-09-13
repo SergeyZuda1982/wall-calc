@@ -13,7 +13,7 @@ import { calcCeiling } from './core/calcCeiling'
 import { groupBars } from './core/cutList'
 import type { CeilingCalcResult, CeilingPolygonInput } from './core/calcCeiling'
 import { calcCeilingSheetRects, resolveSheetStartFlips } from './core/ceilingGridGeometry'
-import { calcFrameRowPositions, resolveFrameParams } from './core/calcP112Frame'
+import { calcFrameRowPositions, resolveFrameParams, KNAUF_WALL_OFFSET_MM } from './core/calcP112Frame'
 import type { PolygonP112FrameResult } from './core/calcPolygonP112Frame'
 import { toWorld } from './core/calcPolygonP112Frame'
 import type { PolygonP113FrameResult } from './core/calcPolygonP113Frame'
@@ -97,6 +97,19 @@ function getSteps(type: CeilingType): { id: Step; label: string; desc: string }[
       { id: 1, label: 'ПН 28×27',        desc: 'Периметральный профиль' },
       { id: 2, label: 'Подвесы + ПП',    desc: 'Основные профили вдоль длины' },
       { id: 3, label: 'Несущие ПП',      desc: 'Поперёк + крабы' },
+      { id: 4, label: 'Зашить ГКЛ',      desc: 'Раскладка листов' },
+    ]
+  }
+  // 11.09.2026: П131 — самонесущий каркас БЕЗ подвесов (не крепится к
+  // плите перекрытия) и без крабов (один ряд профиля, нет пересечений двух
+  // уровней) — см. calcP131Frame.ts. Раньше здесь молча использовался
+  // дефолтный (П112) сценарий с "Подвесы"/"Краб", которые к П131 отношения
+  // не имеют — баг замечен пользователем 11.09.2026 по скриншоту.
+  if (type === 'p131') {
+    return [
+      { id: 1, label: 'ПН направляющий', desc: 'По двум длинным стенам' },
+      { id: 2, label: 'ПС замыкающий',   desc: 'По двум коротким стенам' },
+      { id: 3, label: 'ПС несущие',      desc: 'Шаг 500мм от короткой стены' },
       { id: 4, label: 'Зашить ГКЛ',      desc: 'Раскладка листов' },
     ]
   }
@@ -998,8 +1011,11 @@ export default function CeilingCalc() {
           </Card>
         )}
 
-        {/* Управление сдвигом — появляется на шаге 2 и 3 */}
-        {hasRoom && step >= 2 && (
+        {/* Управление сдвигом — появляется на шаге 2 и 3. У П131 своя
+            независимая сетка позиций (см. p131RunningPosMm в CeilingCanvas),
+            сдвиг main/bearing на неё не действует — прячем, чтобы не
+            показывать мёртвый контрол. */}
+        {hasRoom && step >= 2 && form.type !== 'p131' && (
           <Card title="СДВИГ ГРЕБЁНКИ">
             {step >= 2 && (
               <div style={{ marginBottom: 8 }}>
@@ -1135,12 +1151,22 @@ export default function CeilingCalc() {
             {(hasRoom || hasPolygon) && (
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', padding: '6px 2px' }}>
                 {form.type === 'p113' && <LegItem color={C.pn} label="ПН 28×27 (периметр)" />}
-                {step >= 2 && <LegItem color={C.ppMain} label="Осн. ПП 60×27" />}
-                {step >= 2 && <LegItem color={C.hanger} label="Подвес" dot />}
-                {step >= 3 && <LegItem color={C.ppBearing} label="Несущий ПП 60×27" />}
-                {step >= 3 && (form.type === 'p113'
-                  ? <LegItem color={C.crab1lvl} label="Соединитель одноур." dot />
-                  : <LegItem color={C.crab} label="Краб" dot />)}
+                {form.type === 'p131' ? (
+                  <>
+                    {step >= 1 && <LegItem color={C.pn} label="ПН направляющий (2 длинные стены)" />}
+                    {step >= 2 && <LegItem color={C.ppMain} label="ПС замыкающий (2 короткие стены)" />}
+                    {step >= 3 && <LegItem color={C.ppBearing} label="ПС несущий (шаг 500мм)" />}
+                  </>
+                ) : (
+                  <>
+                    {step >= 2 && <LegItem color={C.ppMain} label="Осн. ПП 60×27" />}
+                    {step >= 2 && <LegItem color={C.hanger} label="Подвес" dot />}
+                    {step >= 3 && <LegItem color={C.ppBearing} label="Несущий ПП 60×27" />}
+                    {step >= 3 && (form.type === 'p113'
+                      ? <LegItem color={C.crab1lvl} label="Соединитель одноур." dot />
+                      : <LegItem color={C.crab} label="Краб" dot />)}
+                  </>
+                )}
                 {step >= 4 && <LegItem color={C.sheetBorder} bg={C.sheetFill} label="ГКЛ целый" />}
                 {step >= 4 && <LegItem color={C.sheetCutBorder} bg={C.sheetCutFill} label="ГКЛ резаный" />}
               </div>
@@ -1937,6 +1963,20 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
   const bearingPosY = bearingRowsPx.map(r => r.px)
   const bearingLabelFontSize = computeAutoFontSize(bearingPosY, 'v')
 
+  // ── П131: несущие ПС (11.09.2026) ──────────────────────────────────────────
+  // Своя, независимая от main/bearing (П112/П113) модель — см.
+  // calcP131Frame.ts. pnAlongLength=true: ПН по длинным стенам (верх/низ),
+  // ПС несущие идут вертикальными полосами с шагом stepC вдоль X (как
+  // mainPosXMm выше, но БЕЗ учёта stepB/п112-специфичных отступов).
+  const p131PnAlongLength = form.bearingAlongLength ?? true
+  const p131AMm = p131PnAlongLength ? L : W_room  // пролёт, вдоль которого идёт ПН и шаг ПС
+  const p131WallOffsetMm = layoutMode === 'knauf' ? KNAUF_WALL_OFFSET_MM : undefined
+  const p131RunningPosMm = form.type === 'p131'
+    ? calcFrameRowPositions(p131AMm, stepC, { mode: layoutMode, wallOffsetMm: p131WallOffsetMm })
+    : []
+  const p131RunningPx = p131RunningPosMm.map(mm => mm * scale)
+  const p131RunningLabelFontSize = computeAutoFontSize(p131RunningPx, p131PnAlongLength ? 'h' : 'v')
+
   // ── Подвесы ──
   // 05.09.2026, ИСПРАВЛЕНИЕ (проверка на объекте): подвес совпадал с точкой
   // соединителя (краб/двухуровневый узел) — неверно, см. calcP112Frame.ts
@@ -2146,8 +2186,61 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
           </>
         )}
 
+        {/* ── П131 (11.09.2026, см. calcP131Frame.ts) — самонесущий каркас,
+             своя топология, НЕ переиспользует main/bearing-сетку П112/П113:
+               Шаг 1: ПН по ДВУМ ДЛИННЫМ стенам (не весь периметр)
+               Шаг 2: ПС замыкающий по ДВУМ КОРОТКИМ стенам (отдельная деталь,
+                      НЕ входит в шаг 500мм — подтверждено пользователем)
+               Шаг 3: ПС несущие с шагом stepC от одной из коротких стен
+             p131PnAlongLength=true: ПН — верх/низ (вдоль X=L), замыкающий
+             ПС — лево/право (вдоль Y=W_room), несущие ПС — вертикальные
+             полосы с шагом вдоль X. false — всё повёрнуто на 90°. ── */}
+        {form.type === 'p131' && (
+          <>
+            {step >= 1 && (p131PnAlongLength ? (
+              <>
+                <Rect x={0} y={0} width={W} height={PN_W} fill={C.pn} opacity={0.85} />
+                <Rect x={0} y={H - PN_W} width={W} height={PN_W} fill={C.pn} opacity={0.85} />
+              </>
+            ) : (
+              <>
+                <Rect x={0} y={0} width={PN_W} height={H} fill={C.pn} opacity={0.85} />
+                <Rect x={W - PN_W} y={0} width={PN_W} height={H} fill={C.pn} opacity={0.85} />
+              </>
+            ))}
+            {step >= 2 && (p131PnAlongLength ? (
+              <>
+                <Rect x={0} y={0} width={PP_W} height={H} fill={C.ppMain} opacity={0.9} />
+                <Rect x={W - PP_W} y={0} width={PP_W} height={H} fill={C.ppMain} opacity={0.9} />
+              </>
+            ) : (
+              <>
+                <Rect x={0} y={0} width={W} height={PP_W} fill={C.ppMain} opacity={0.9} />
+                <Rect x={0} y={H - PP_W} width={W} height={PP_W} fill={C.ppMain} opacity={0.9} />
+              </>
+            ))}
+            {step >= 3 && p131RunningPx.map((px, i) => (
+              <Group key={`p131ps${i}`}>
+                {p131PnAlongLength ? (
+                  <>
+                    <Rect x={px - PP_W / 2} y={0} width={PP_W} height={H} fill={C.ppBearing} opacity={0.9} />
+                    <Text x={px - 30} y={-14} width={60} align="center"
+                      text={`${Math.round(p131RunningPosMm[i])}`} fontSize={p131RunningLabelFontSize} fill={C.ppBearing} fontStyle="bold" />
+                  </>
+                ) : (
+                  <>
+                    <Rect x={0} y={px - PP_W / 2} width={W} height={PP_W} fill={C.ppBearing} opacity={0.9} />
+                    <Text x={-46} y={px - p131RunningLabelFontSize / 2} width={40} align="right"
+                      text={`${Math.round(p131RunningPosMm[i])}`} fontSize={p131RunningLabelFontSize} fill={C.ppBearing} fontStyle="bold" />
+                  </>
+                )}
+              </Group>
+            ))}
+          </>
+        )}
+
         {/* ── Шаг 2+: Основные ПП 60×27 (вертикальные) ── */}
-        {step >= 2 && mainRowsPx.map((r, i) => (
+        {step >= 2 && form.type !== 'p131' && mainRowsPx.map((r, i) => (
           <Group key={`mp${i}`}>
             {/* Имитация П-профиля: тёмная полка + светлая середина + тёмная полка */}
             <Rect x={r.px - PP_W / 2} y={0} width={PP_W / 4} height={H}
@@ -2168,7 +2261,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
         ))}
 
         {/* ── Шаг 2+: Подвесы ── */}
-        {step >= 2 && showHangers && hangers.map((h, i) => (
+        {step >= 2 && form.type !== 'p131' && showHangers && hangers.map((h, i) => (
           <Group key={`hg${i}`} x={h.x} y={h.y}>
             <Rect x={-HANGER_W / 2} y={-HANGER_H / 2 - HANGER_H / 4} width={HANGER_W} height={HANGER_H}
               fill="rgba(229,57,53,0.25)" stroke={C.hanger} strokeWidth={1} cornerRadius={1} />
@@ -2207,7 +2300,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
             </Group>
           )
         })}
-        {step >= 3 && form.type !== 'p113' && bearingRowsPx.map((r, i) => (
+        {step >= 3 && form.type !== 'p113' && form.type !== 'p131' && bearingRowsPx.map((r, i) => (
           <Group key={`bp${i}`}>
             <Rect x={0} y={r.px - PP_W / 2} width={W} height={PP_W / 4}
               fill={C.ppBearing} opacity={0.9} />
@@ -2226,7 +2319,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
         {/* ── Шаг 3+: Соединители на пересечениях — двухуровневый краб (П112)
              или одноуровневый (П113, другой цвет, т.к. физически другая
              деталь, см. calcP113Frame.ts) ── */}
-        {step >= 3 && mainPosX.map((px, mi) =>
+        {step >= 3 && form.type !== 'p131' && mainPosX.map((px, mi) =>
           bearingPosY.map((py, bi) => (
             <Group key={`cr${mi}_${bi}`} x={px} y={py}>
               <Rect x={-CRAB_SIZE / 2} y={-CRAB_SIZE / 2} width={CRAB_SIZE} height={CRAB_SIZE}
@@ -2242,7 +2335,7 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
           fill="transparent" stroke={C.ppMain} strokeWidth={2} />
 
         {/* Подсказка если подвесов слишком много для отображения */}
-        {!showHangers && step >= 2 && (
+        {!showHangers && step >= 2 && form.type !== 'p131' && (
           <Text x={W / 2 - 80} y={H / 2 - 8} width={160} align="center"
             text={`Подвесы: приблизьте чертёж`}
             fontSize={11} fill={C.hanger} />
