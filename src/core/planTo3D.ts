@@ -366,12 +366,6 @@ export function wallsToBoxes3D(
     return wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm, axisOverride, resolveSlope(l))
   })
 }
-  return lines.filter(isLineBuiltForRender).flatMap(l => {
-    const jw: JoinedWall | undefined = joins.get(l.id)
-    const axisOverride = jw ? { x1: jw.ax1, y1: jw.ay1, x2: jw.ax2, y2: jw.ay2 } : undefined
-    return wallToBoxesWithOpenings3D(l, scaleMmPx, ceilingMm, axisOverride, resolveSlope(l))
-  })
-}
 
 /**
  * Стена (короб) с вырезанными проёмами (дверь/окно/просто проём).
