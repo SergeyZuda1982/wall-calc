@@ -72,6 +72,14 @@ export interface CeilingCalc3DPreviewProps {
   bearingPositionsMm?: number[]
   /** 19.07.2026: выбранный угол начала раскладки ГКЛ, см. resolveSheetStartFlips. */
   sheetStartCorner?: 'tl' | 'tr' | 'bl' | 'br'
+  /** 12.09.2026 — П131 (см. calcP131Frame.ts): позиции несущих ПС вдоль A
+   *  (шаг фиксирован 500мм), подобранное сечение (50/75/100мм) и
+   *  одинарный/спаренный — для отдельной, более простой 3D-сетки (без
+   *  подвесов/крабов, которых у этой системы нет). Не заданы → сечение по
+   *  умолчанию 50мм одинарный (на случай fallback без размеров помещения). */
+  p131RunningPositionsMm?: number[]
+  p131ProfileWidthMm?: number
+  p131Paired?: boolean
 }
 
 const SLAB_THICKNESS_M = 0.2
@@ -98,10 +106,16 @@ function SlabPlate({ lengthM, widthM }: { lengthM: number; widthM: number }) {
  * Теперь ось функции и то, какая из осей экрана (X=длина/Z=ширина) ей
  * соответствует, берутся из sheetLayout.rotated — 3D больше не может
  * разойтись со сметой/2D-схемой. */
-function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, sheetStartCorner, yM, thicknessM = 0.0125, layerOffsetXMm = 0, layerOffsetZMm = 0 }: {
+function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, sheetStartCorner, yM, thicknessM = 0.0125, layerOffsetXMm = 0, layerOffsetZMm = 0, alwaysSnap = false }: {
   lengthMm: number; widthMm: number; sheetLayout: CeilingSheetLayout
   bearingPositionsMm?: number[]; sheetStartCorner?: 'tl' | 'tr' | 'bl' | 'br'; yM: number; thicknessM?: number
   layerOffsetXMm?: number; layerOffsetZMm?: number
+  /** 12.09.2026 — П131: bearingPositionsMm уже считаются в ПРАВИЛЬНОЙ оси
+   *  (та же, что и sheetAxisL для этого типа — см. calcCeilingSheetLayout,
+   *  useRotated инвертирован для П131), снэп нужен независимо от rotated —
+   *  в отличие от П112/П113, где это доступно только при rotated=true
+   *  (известное упрощение, см. ниже). */
+  alwaysSnap?: boolean
 }) {
   const rotated = !!sheetLayout.rotated
   const rects = useMemo(() => {
@@ -110,11 +124,12 @@ function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, s
     // См. известное упрощение в 2D CeilingCanvas: несущий на картинке всегда
     // вдоль длины, поэтому корректный снэп на bearingPositionsMm доступен
     // только когда rotated=true (ось функции = ширина = та же ось, вдоль
-    // которой считаны bearingPositionsMm).
-    const bearingForSnap = rotated ? (bearingPositionsMm ?? []) : []
+    // которой считаны bearingPositionsMm). Для П131 (alwaysSnap) это
+    // упрощение не нужно — позиции уже в оси sheetAxisL всегда.
+    const bearingForSnap = (alwaysSnap || rotated) ? (bearingPositionsMm ?? []) : []
     const { flipX, flipZ } = resolveSheetStartFlips(sheetStartCorner, rotated)
     return calcCeilingSheetRects(sheetAxisL, sheetAxisW, sheetLayout.sheetL, sheetLayout.sheetW, bearingForSnap, { flipX, flipZ, layerOffsetXMm, layerOffsetZMm })
-  }, [lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW, rotated, bearingPositionsMm, sheetStartCorner, layerOffsetXMm, layerOffsetZMm])
+  }, [lengthMm, widthMm, sheetLayout.sheetL, sheetLayout.sheetW, rotated, bearingPositionsMm, sheetStartCorner, layerOffsetXMm, layerOffsetZMm, alwaysSnap])
   return (
     <group>
       {rects.map((r, i) => {
@@ -140,15 +155,81 @@ function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, s
   )
 }
 
+/**
+ * 12.09.2026 — П131 (см. calcP131Frame.ts): своя, НАМНОГО более простая 3D-
+ * сетка, чем CeilingGridMesh (П112/П113) — нет подвесов, нет крабов, нет
+ * второго перпендикулярного уровня, только 3 вида профиля (ПН направляющий
+ * по 2 длинным стенам, ПС замыкающий по 2 коротким, ПС несущий с шагом
+ * 500мм). Профили рисуются простыми боксами (v1-упрощение — реальное
+ * C-образное сечение стоечного/направляющего профиля не строится, только
+ * габаритная коробка правильных реальных размеров: ПН глубиной 40мм, ПС
+ * глубиной 50мм, ширина обоих — подобранное сечение widthMm). Спаренный ПС
+ * (paired) рисуется одной коробкой ВДВОЕ большей высоты (глубины) на том же
+ * месте — упрощение того, что физически два профиля скреплены заодно, а не
+ * разнесены в стороны (см. calcP131Frame.ts — спаривание удваивает
+ * погонные метры материала, не занимает вторую параллельную позицию).
+ */
+function CeilingGridMeshP131({
+  roomLengthMm, roomWidthMm, pnAlongLength, runningPositionsMm, profileWidthMm, paired, ceilingM,
+}: {
+  roomLengthMm: number; roomWidthMm: number; pnAlongLength: boolean
+  runningPositionsMm: number[]; profileWidthMm: number; paired: boolean; ceilingM: number
+}) {
+  const A = pnAlongLength ? roomLengthMm : roomWidthMm
+  const B = pnAlongLength ? roomWidthMm : roomLengthMm
+  const AM = mmToM(A)
+  const BM = mmToM(B)
+  const faceWM = mmToM(profileWidthMm)
+  const psDepthM = mmToM(50) * (paired ? 2 : 1)
+  const pnDepthM = mmToM(40)
+  const psY = ceilingM + psDepthM / 2
+  const pnY = ceilingM + pnDepthM / 2
+
+  const pnMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#5f6b7a', roughness: 0.6, metalness: 0.3 }), [])
+  const psMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#8a97a8', roughness: 0.6, metalness: 0.3 }), [])
+
+  /** Бокс, тянущийся ВДОЛЬ всей оси A, узкий (thinWidthM) поперёк, на
+   *  позиции bCoordMm вдоль B. Используется для ПН (2 рейки, у стен B=0/B). */
+  function boxAlongA(bCoordMm: number, thinWidthM: number, heightM: number, yM: number, mat: THREE.Material, key: string) {
+    const bM = mmToM(bCoordMm)
+    const [px, pz, sx, sz] = pnAlongLength
+      ? [AM / 2, bM, AM, thinWidthM]
+      : [bM, AM / 2, thinWidthM, AM]
+    return <mesh key={key} position={[px, yM, pz]} material={mat} castShadow receiveShadow><boxGeometry args={[sx, heightM, sz]} /></mesh>
+  }
+  /** Бокс, тянущийся ВДОЛЬ всей оси B, узкий поперёк (вдоль A), на позиции
+   *  aCoordMm вдоль A. Используется для ПС (замыкающий у стен A=0/A,
+   *  несущий — на каждой позиции runningPositionsMm). */
+  function boxAlongB(aCoordMm: number, thinWidthM: number, heightM: number, yM: number, mat: THREE.Material, key: string) {
+    const aM = mmToM(aCoordMm)
+    const [px, pz, sx, sz] = pnAlongLength
+      ? [aM, BM / 2, thinWidthM, BM]
+      : [BM / 2, aM, BM, thinWidthM]
+    return <mesh key={key} position={[px, yM, pz]} material={mat} castShadow receiveShadow><boxGeometry args={[sx, heightM, sz]} /></mesh>
+  }
+
+  return (
+    <group>
+      {boxAlongA(profileWidthMm / 2, faceWM, pnDepthM, pnY, pnMat, 'pn0')}
+      {boxAlongA(B - profileWidthMm / 2, faceWM, pnDepthM, pnY, pnMat, 'pn1')}
+      {boxAlongB(profileWidthMm / 2, faceWM, psDepthM, psY, psMat, 'psClose0')}
+      {boxAlongB(A - profileWidthMm / 2, faceWM, psDepthM, psY, psMat, 'psClose1')}
+      {runningPositionsMm.map((aMm, i) => boxAlongB(aMm, faceWM, psDepthM, psY, psMat, `psRun${i}`))}
+    </group>
+  )
+}
+
 export default function CeilingCalc3DPreview({
   lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength,
   layoutMode, wallOffsetMainMm, wallOffsetBearingMm, sheetLayout,
   bearingPositionsMm, sheetStartCorner, layers = 1, thicknessMm = 12.5,
+  p131RunningPositionsMm, p131ProfileWidthMm, p131Paired,
 }: CeilingCalc3DPreviewProps) {
   const lengthM = mmToM(lengthMm)
   const widthM = mmToM(widthMm)
   const maxDim = Math.max(lengthM, widthM, 1)
-  const hasDetailedGrid = ceilingType === 'p112' || ceilingType === 'p113'
+  const isP131 = ceilingType === 'p131'
+  const hasDetailedGrid = ceilingType === 'p112' || ceilingType === 'p113' || isP131
 
   // Прямоугольный контур комнаты в тех же координатах (x,z), что и
   // roomPoints у RoomPolygon3D/CeilingGridMesh — origin в углу (0,0).
@@ -163,7 +244,7 @@ export default function CeilingCalc3DPreview({
         <directionalLight position={[maxDim, maxDim * 1.5, maxDim]} intensity={1} castShadow />
         <Suspense fallback={null}>
           <SlabPlate lengthM={lengthM} widthM={widthM} />
-          {hasDetailedGrid && (
+          {hasDetailedGrid && !isP131 && (
             <CeilingGridMesh
               roomPoints={roomPoints}
               ceilingM={0}
@@ -179,7 +260,18 @@ export default function CeilingCalc3DPreview({
               showGkl={false}
             />
           )}
-          {hasDetailedGrid && sheetLayout && (() => {
+          {isP131 && (
+            <CeilingGridMeshP131
+              roomLengthMm={lengthMm}
+              roomWidthMm={widthMm}
+              pnAlongLength={bearingAlongLength ?? true}
+              runningPositionsMm={p131RunningPositionsMm ?? []}
+              profileWidthMm={p131ProfileWidthMm ?? 50}
+              paired={p131Paired ?? false}
+              ceilingM={0}
+            />
+          )}
+          {hasDetailedGrid && sheetLayout && !isP131 && (() => {
             const gklType = ceilingType === 'p113' ? 'p113' : 'p112'
             const levels = calcGklLayerLevelsM(0, gklType, Array(layers).fill(thicknessMm))
             // 05.09.2026 (репорт пользователя): 2-й слой просто дублировал
@@ -198,6 +290,36 @@ export default function CeilingCalc3DPreview({
                 thicknessM={mmToM(thicknessMm)}
                 layerOffsetXMm={i === 1 ? 600 : 0}
                 layerOffsetZMm={i === 1 ? 500 : 0}
+              />
+            ))
+          })()}
+          {isP131 && sheetLayout && (() => {
+            // 12.09.2026 — П131: нет подвесной механики (drop/mainY/bearingY),
+            // ГКЛ крепится НАПРЯМУЮ к низу ПС — низ ПС = ceilingM (0, см.
+            // CeilingGridMeshP131: psY = ceilingM + psDepthM/2, т.е. профиль
+            // растёт ВВЕРХ от плоскости зашивки). Лист вплотную под этим
+            // уровнем, дальше слои стопкой вниз (та же логика, что и
+            // calcGklLayerLevelsM, но без main/bearing-смещений).
+            const levels: number[] = []
+            let stackTopM = 0
+            for (let i = 0; i < layers; i++) {
+              const thicknessM = mmToM(thicknessMm)
+              levels.push(stackTopM - thicknessM / 2)
+              stackTopM -= thicknessM
+            }
+            return levels.map((levelM, i) => (
+              <SheetLayoutMesh
+                key={i}
+                lengthMm={lengthMm}
+                widthMm={widthMm}
+                sheetLayout={sheetLayout}
+                bearingPositionsMm={bearingPositionsMm}
+                sheetStartCorner={sheetStartCorner}
+                yM={levelM}
+                thicknessM={mmToM(thicknessMm)}
+                layerOffsetXMm={i === 1 ? 600 : 0}
+                layerOffsetZMm={i === 1 ? 500 : 0}
+                alwaysSnap
               />
             ))
           })()}
