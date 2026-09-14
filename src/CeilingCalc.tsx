@@ -1002,11 +1002,17 @@ export default function CeilingCalc() {
         )}
 
         {/* 11.09.2026: точный расчёт каркаса П131 (см. calcP131Frame.ts) —
-            система проще П112/П113 (нет подвесов, нет зазора до плиты,
-            нет отдельного шага несущего/подвесов — только шаг ПС, общее
-            поле form.stepC уже выше в карточке "ПАРАМЕТРЫ"), поэтому
-            отдельная карточка не дублирует поля П112/П113, только то, что
-            специфично: с какой парой стен работает ПН. */}
+            система проще П112/П113 (нет подвесов, нет отдельного шага
+            несущего/подвесов — только шаг ПС, общее поле form.stepC уже
+            выше в карточке "ПАРАМЕТРЫ"), поэтому отдельная карточка не
+            дублирует поля П112/П113, только то, что специфично: с какой
+            парой стен работает ПН. 12.09.2026: добавлен зазор до
+            перекрытия — ЧИСТО для честного масштаба 3D (П131 крепится к
+            стенам, не к плите — на смету это поле не влияет, в отличие от
+            того же поля у П112/П113, где оно определяет длину подвеса).
+            Репорт пользователя: коридорный П131 типично ставится с большим
+            запасом до перекрытия (пример: 4500мм до плиты, потолок на
+            2700мм) — раньше плита в 3D всегда рисовалась вплотную. */}
         {form.type === 'p131' && (
           <Card title="ТОЧНЫЙ РАСЧЁТ КАРКАСА">
             <label style={{ ...lbl, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
@@ -1025,6 +1031,11 @@ export default function CeilingCalc() {
                 {' '}(предел {result.p131ProfileSelection.maxSpanMm}мм для этой конфигурации)
               </div>
             )}
+            <div style={{ marginTop: 10 }}>
+              <label style={lbl}>Запас до перекрытия, мм (только для 3D, на смету не влияет)</label>
+              <input type="number" style={inp} placeholder="напр. 1800"
+                value={form.slabGapMm ?? ''} onChange={e => setField('slabGapMm', +e.target.value || undefined)} />
+            </div>
             {!hasRoom && (
               <div style={{ marginTop: 6, fontSize: 11, color: C.warning }}>
                 Без размеров помещения каркас считается по среднему расходу на м² (менее точно, сечение не подбирается).
@@ -1132,6 +1143,7 @@ export default function CeilingCalc() {
                     p131RunningPositionsMm={p131RunningPositionsUi}
                     p131ProfileWidthMm={result?.p131ProfileSelection?.widthMm}
                     p131Paired={result?.p131ProfileSelection?.paired}
+                    slabGapMm={form.slabGapMm}
                   />
                 ) : hasRoom ? (
                   <CeilingCanvas
