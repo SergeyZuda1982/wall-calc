@@ -459,6 +459,16 @@ export default function CeilingCalc() {
         { mode: layoutModeUi, wallOffsetMm: frameParamsUi.wallOffsetBearingMm, profileKind: 'bearing' })
     : []
 
+  // 12.09.2026: то же самое, но для П131 (см. p131RunningPosMm внутри
+  // CeilingCanvas — та же формула, продублирована здесь для передачи в 3D)
+  // — позиции ПС вдоль A (шаг фиксирован 500мм, см. setField выше).
+  const p131PnAlongLengthUi = form.bearingAlongLength ?? true
+  const p131AMmUi = p131PnAlongLengthUi ? form.roomLengthMm : form.roomWidthMm
+  const p131RunningPositionsUi = hasRoom && form.type === 'p131'
+    ? calcFrameRowPositions(p131AMmUi, 500,
+        { mode: layoutModeUi, wallOffsetMm: layoutModeUi === 'knauf' ? KNAUF_WALL_OFFSET_MM : undefined })
+    : []
+
   // ── Ригели/препятствия для подвеса (11.09.2026, репорт с объекта) ──
   // Ригель бетонный, крепиться к нему МОЖНО, но между верхом каркаса и
   // низом ригеля мало места под штатную тягу с зажимом — узел пришлось бы
@@ -1115,10 +1125,13 @@ export default function CeilingCalc() {
                     wallOffsetMainMm={frameParamsUi.wallOffsetMainMm}
                     wallOffsetBearingMm={frameParamsUi.wallOffsetBearingMm}
                     sheetLayout={step === 4 ? (result?.sheetLayout ?? null) : null}
-                    bearingPositionsMm={bearingPosYMmUi}
+                    bearingPositionsMm={form.type === 'p131' ? p131RunningPositionsUi : bearingPosYMmUi}
                     sheetStartCorner={form.sheetStartCorner}
                     layers={form.layers}
                     thicknessMm={form.thickness}
+                    p131RunningPositionsMm={p131RunningPositionsUi}
+                    p131ProfileWidthMm={result?.p131ProfileSelection?.widthMm}
+                    p131Paired={result?.p131ProfileSelection?.paired}
                   />
                 ) : hasRoom ? (
                   <CeilingCanvas
