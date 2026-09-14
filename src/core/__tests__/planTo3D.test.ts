@@ -271,11 +271,35 @@ describe('wallToBox3D / wallToBoxesWithOpenings3D — уклон потолка 
     expect(box!.size.sy).toBeCloseTo(2.7)
   })
 
-  it('wallToBox3D: ригель — уклон потолка не при чём, не применяется', () => {
+  it('wallToBox3D: ригель под уклоном — ВЫСОТА короба (dropMm) не меняется, но ЦЕНТР смещается вместе со средней высотой плиты по концам ригеля (12.09.2026, объект в Ростове — переход ровной плиты в наклонную под ригелями)', () => {
     const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, type: 'rib_beam', sectionWidthMm: 300, dropMm: 200 })
     const box = wallToBox3D(line, 1, 3000, undefined, slope)
+    // slopeH1Mm/slopeH2Mm НЕ заполняются у ригеля (не хотим скошенный верх
+    // через wallToBoxesWithOpenings3D — та логика только для стен)
     expect(box!.slopeH1Mm).toBeUndefined()
-    expect(box!.size.sy).toBeCloseTo(0.2)
+    expect(box!.slopeH2Mm).toBeUndefined()
+    expect(box!.size.sy).toBeCloseTo(0.2) // высота = dropMm, как и без уклона
+    // Среднее по концам: (2500+3200)/2 = 2850мм = 2.85м; центр = 2.85 - 0.1
+    expect(box!.center.y).toBeCloseTo(2.75)
+  })
+
+  it('wallToBox3D: ригель БЕЗ уклона (slope не передан) — откат на плоский ceilingMm, как раньше', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, type: 'rib_beam', sectionWidthMm: 300, dropMm: 200 })
+    const box = wallToBox3D(line, 1, 3000) // без slope
+    expect(box!.center.y).toBeCloseTo(2.9) // 3 - 0.1, как в тесте выше без уклона
+  })
+
+  it('wallToBox3D: ригель-ДУГА (sagittaMm) — уклон не применяется, откат на плоский ceilingMm (та же логика exclusion, что и у обычных стен)', () => {
+    const line = baseLine({ x1: 0, y1: 0, x2: 1000, y2: 0, lengthMm: 1000, type: 'rib_beam', sectionWidthMm: 300, dropMm: 200, sagittaMm: 50 })
+    const box = wallToBox3D(line, 1, 3000, undefined, slope)
+    expect(box!.center.y).toBeCloseTo(2.9)
+  })
+
+  it('wallToBox3D: ригель на ГОРИЗОНТАЛЬНОМ участке уклона (оба конца на одной высоте) — центр как у простого плоского случая с этой высотой', () => {
+    const flatEnd = { x1: 0, y1: 500, height1Mm: 2800, x2: 1000, y2: 500, height2Mm: 2800 }
+    const line = baseLine({ x1: 0, y1: 500, x2: 1000, y2: 500, lengthMm: 1000, type: 'rib_beam', sectionWidthMm: 300, dropMm: 200 })
+    const box = wallToBox3D(line, 1, 3000, undefined, flatEnd)
+    expect(box!.center.y).toBeCloseTo(2.7) // 2.8 - 0.1
   })
 
   it('wallToBoxesWithOpenings3D без проёмов: topYAtFromM/topYAtToM = высота уклона в концах линии, метры', () => {
