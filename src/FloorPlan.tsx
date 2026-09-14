@@ -5183,7 +5183,7 @@ export default function FloorPlan() {
             </div>
 
           {/* ── Таблица конструкций снизу ── */}
-          {lines.length > 0 && (
+          {(lines.length > 0 || ceilings.length > 0) && (
             <div style={{
               background: '#fff', borderTop: '1px solid #e0e4ee',
               padding: '0', flexShrink: 0, maxHeight: 240, overflowY: 'auto',
@@ -5316,6 +5316,47 @@ export default function FloorPlan() {
                           <button title="Просмотр" style={iconBtnStyle} onClick={e => { e.stopPropagation(); setSelected(l.id); setInspectorId(l.id); setMode('select') }}>👁</button>
                           <button title="Открыть расчёт" style={iconBtnStyle} onClick={e => { e.stopPropagation(); setShowSheetSummary(true) }}>↗</button>
                           <button title="Меню" style={iconBtnStyle} onClick={e => { e.stopPropagation() }}>⋮</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {/* 14.09.2026: Ceiling (свободный контур/замкнутая цепочка линий типа
+                      'ceiling', см. sendNewCeilingToCalc) — отдельная от lines сущность,
+                      без них тут не отображалась вообще, потолок как будто "пропадал"
+                      после фикса N-линий-в-одну-конструкцию. Длина/Высота у потолка не
+                      имеют смысла (горизонтальная площадь, не вертикальная линия) — тире;
+                      клик по строке — то же действие, что кнопка "→ Потолок" в панели
+                      слева (mode==='ceiling'): открыть/донастроить в калькуляторе. */}
+                  {ceilings.map((cl, i) => {
+                    const seed = ceilingToCeilingSeed(cl, scaleMmPx)
+                    const specSummary = cl.ceilingSpec
+                      ? `${cl.ceilingSpec.type.toUpperCase()} · ${cl.ceilingSpec.layers} сл. · ${cl.ceilingSpec.material}`
+                      : null
+                    return (
+                      <tr key={cl.id}
+                        onClick={() => sendNewCeilingToCalc(cl.id)}
+                        style={{ cursor: 'pointer', background: 'transparent', borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={tdS}>{lines.filter(l => l.type !== 'rib_beam').length + i + 1}</td>
+                        <td style={tdS}>
+                          <span style={{ color: '#c9a68a', fontWeight: 600 }}>{cl.label}</span>
+                        </td>
+                        <td style={tdS}>
+                          Потолок
+                          {specSummary && <span style={{ color: '#888', marginLeft: 4 }}>({specSummary})</span>}
+                        </td>
+                        <td style={tdS}>—</td>
+                        <td style={tdS}>—</td>
+                        <td style={tdS}>{seed ? `${seed.areaSqm.toFixed(2)} м²` : '—'}</td>
+                        <td style={tdS}>
+                          {cl.ceilingSpec
+                            ? <span style={{ color: '#4caf50' }}>● Настроен</span>
+                            : <span style={{ color: '#bbb' }}>○ Не настроен</span>}
+                        </td>
+                        <td style={{ ...tdS, display: 'flex', gap: 4 }}>
+                          <button title="Открыть в калькуляторе потолка" style={iconBtnStyle}
+                            onClick={e => { e.stopPropagation(); sendNewCeilingToCalc(cl.id) }}>↗</button>
+                          <button title="Удалить" style={{ ...iconBtnStyle, color: '#e53935' }}
+                            onClick={e => { e.stopPropagation(); removeCeiling(cl.id) }}>🗑</button>
                         </td>
                       </tr>
                     )
