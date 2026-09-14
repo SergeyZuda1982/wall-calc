@@ -631,8 +631,15 @@ export function calcCeilingSheetLayout(spec: CeilingSpec): CeilingSheetLayout | 
   // семантика и тот же дефолт, что у calcCeilingGrid/CeilingCanvas). Лист
   // кладём длинной стороной вдоль ОСНОВНОГО профиля — то есть вдоль оси,
   // ПЕРПЕНДИКУЛЯРНОЙ несущему (см. комментарий-объяснение выше, 19.07.2026).
+  //
+  // 11.09.2026, П131 — ПРОТИВОПОЛОЖНОЕ правило (уточнение пользователя):
+  // здесь нет отдельного "основного" профиля, только один ряд несущего ПС
+  // с шагом 500мм. Лист зашивается ПОПЕРЁК отдельных ПС (пересекает
+  // несколько штук), то есть длинной стороной ВДОЛЬ той же оси A, вдоль
+  // которой расставлены сами ПС — чтобы торцевая кромка листа попадала
+  // на ось шага 500мм (опора для торца). См. calcP131Frame.ts.
   const bearingAlongLength = full.bearingAlongLength ?? true
-  const useRotated = bearingAlongLength
+  const useRotated = spec.type === 'p131' ? !bearingAlongLength : bearingAlongLength
 
   const best = useRotated
     ? calcLayoutVariant(roomWidthMm, roomLengthMm, sheetL, sheetW)
