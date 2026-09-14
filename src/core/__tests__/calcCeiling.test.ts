@@ -381,6 +381,45 @@ describe('calcCeilingSheetLayout — раскрой 5000×4000мм', () => {
   })
 })
 
+describe('calcCeilingSheetLayout — П131 (11.09.2026, ПРОТИВОПОЛОЖНОЕ правило ориентации листа)', () => {
+  // У П112/П113 лист идёт вдоль ОСНОВНОГО (перпендикулярно несущему). У П131
+  // нет "основного" — только один ряд несущего ПС с шагом 500мм. Лист
+  // зашивается ПОПЕРЁК отдельных ПС, то есть длинной стороной ВДОЛЬ той же
+  // оси A, вдоль которой расставлены сами ПС (уточнение пользователя,
+  // 11.09.2026) — противоположно правилу П112/П113.
+  const res = calcCeiling({ ...BASE, type: 'p131', stepC: 500 })
+  const layout = res.sheetLayout!
+  // pnAlongLength (bearingAlongLength) по умолчанию true -> A = roomLengthMm
+  // = 5000 -> лист вдоль length (НЕ rotated, в отличие от П112/П113 с теми
+  // же 5000×4000, где по умолчанию было бы rotated=true — см. блок выше).
+  // colCount = ceil(5000/2500) = 2 (обе целые, 5000%2500=0)
+  // rowCount = ceil(4000/1200) = 4 (3 целых по 1200 + 1 резаный 400мм)
+
+  it('rotated = false (лист вдоль length=A, а не вдоль width — обратно П112/П113 с теми же размерами)', () => {
+    expect(layout.rotated).toBe(false)
+  })
+
+  it('colCount = 2 (5000 / 2500 → вдоль A=length, обе целые)', () => {
+    expect(layout.colCount).toBe(2)
+  })
+
+  it('rowCount = 4 (4000 / 1200 → вдоль B=width)', () => {
+    expect(layout.rowCount).toBe(4)
+  })
+
+  it('totalSheets = 8, fullSheets = 6, cutSheets = 2', () => {
+    expect(layout.totalSheets).toBe(8)
+    expect(layout.fullSheets).toBe(6)
+    expect(layout.cutSheets).toBe(2)
+  })
+
+  it('bearingAlongLength=false -> rotated=true (A=width вместо length)', () => {
+    const res2 = calcCeiling({ ...BASE, type: 'p131', stepC: 500, bearingAlongLength: false })
+    expect(res2.sheetLayout!.rotated).toBe(true)
+  })
+})
+
+
 describe('calcCeilingSheetLayout — раскрой 2500×2400мм (несущий вдоль length по дефолту → лист вдоль ОСНОВНОГО, то есть вдоль width)', () => {
   const spec: CeilingSpecFull = { ...BASE, roomLengthMm: 2500, roomWidthMm: 2400,
     sheetLengthMm: 2500, areaSqm: 6, perimeterM: 9.8 }

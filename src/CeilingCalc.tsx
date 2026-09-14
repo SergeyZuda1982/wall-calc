@@ -349,6 +349,12 @@ export default function CeilingCalc() {
           next.perimeterM = Math.round((l + w) * 2 / 1000 * 100) / 100
         }
       }
+      // 11.09.2026: П131 — шаг несущего ПС официально ФИКСИРОВАН на 500мм
+      // (не выбирается монтажником, в отличие от шага основного профиля
+      // П112/П113) — подтверждено пользователем по факту монтажа. Раньше
+      // селектор "Шаг осн. (c)" молча позволял выставить П131 любой шаг
+      // 400-1200мм, что не соответствует системе.
+      if (key === 'type' && val === 'p131') next.stepC = 500
       if (next.areaSqm > 0) setResult(runCalc(next))
       return next
     })
@@ -716,10 +722,16 @@ export default function CeilingCalc() {
                 </select>
               </div>
               <div>
-                <label style={lbl}>Шаг осн. (c)</label>
-                <select style={sel} value={form.stepC} onChange={e => setField('stepC', +e.target.value as CeilingStep)}>
-                  {CEILING_STEP_OPTIONS.map(s => <option key={s} value={s}>{s} мм</option>)}
-                </select>
+                <label style={lbl}>Шаг осн. (c){form.type === 'p131' ? ' — фикс.' : ''}</label>
+                {form.type === 'p131' ? (
+                  <div style={{ ...sel, display: 'flex', alignItems: 'center', color: C.muted, background: '#f5f5f5' }}>
+                    500 мм (офиц. лимит П131, не выбирается)
+                  </div>
+                ) : (
+                  <select style={sel} value={form.stepC} onChange={e => setField('stepC', +e.target.value as CeilingStep)}>
+                    {CEILING_STEP_OPTIONS.map(s => <option key={s} value={s}>{s} мм</option>)}
+                  </select>
+                )}
               </div>
             </div>
             <div>
@@ -2046,9 +2058,19 @@ function CeilingCanvas({ form, step, canvasW, shiftMainMm, shiftBearingMm, layou
     // с этой же осью экрана (см. известное упрощение выше — картинка несущего
     // всегда вдоль длины, поэтому корректный снэп доступен только для
     // rotated=true, для rotated=false — деградация без снэпа, как раньше).
-    const bearingForSnap = rotated
-      ? bearingRowsPx.map(r => r.mm).filter(mm => mm >= 0 && mm <= W_room)
-      : []
+    // 11.09.2026 (уточнение пользователя): П131 — снэп швов на позиции
+    // несущего ПС (p131RunningPosMm, та же ось A, что и sheetAxisL для этого
+    // типа — см. calcCeilingSheetLayout, useRotated инвертирован для П131),
+    // а не на generic bearingRowsPx (П112/П113). Алгоритм снэпа/разбежки
+    // (calcCeilingSheetRects, STAGGER_TARGETS_MM) переиспользуется как есть —
+    // он уже снэпит и торцевой шов, и стартовую разбежку следующего ряда на
+    // ближайшую переданную позицию, для П131 эти позиции все кратны 500мм
+    // (сетка ПС), так что и торец, и разбежка автоматически попадают на неё.
+    const bearingForSnap = form.type === 'p131'
+      ? p131RunningPosMm
+      : (rotated
+        ? bearingRowsPx.map(r => r.mm).filter(mm => mm >= 0 && mm <= W_room)
+        : [])
     const { flipX, flipZ } = resolveSheetStartFlips(form.sheetStartCorner, rotated)
     for (const r of calcCeilingSheetRects(sheetAxisL, sheetAxisW, layout.sheetL, layout.sheetW, bearingForSnap, { flipX, flipZ })) {
       const screenX = rotated ? r.z : r.x
