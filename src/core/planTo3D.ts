@@ -226,6 +226,18 @@ export interface WallBox3D {
  * как и в 2D), верх коробки получится наклонным (см. slopeH1Mm/slopeH2Mm
  * на WallBox3D — окончательный пересчёт в topYAtFromM/topYAtToM происходит
  * в wallToBoxesWithOpenings3D, где уже известен shiftM).
+ *
+ * Ригель (isRib) — ОТДЕЛЬНАЯ, более простая ветка: он не "стоит от пола",
+ * а "висит под плитой" (монолитно с ней), поэтому его интересует не
+ * скошенный ВЕРХ (той логики через topYAtFromM/topYAtToM для ригеля нет
+ * и не нужно — slopeH1Mm/slopeH2Mm на возвращаемой коробке остаются
+ * undefined для ригеля намеренно, см. ниже), а точка подвеса — где
+ * реально проходит низ плиты В ЭТОМ МЕСТЕ. 12.09.2026 (объект в Ростове,
+ * переход ровной плиты в наклонную под ригелями и круглыми колоннами) —
+ * ribSlabTopMm берёт среднее по двум концам ригеля из ТОГО ЖЕ уклона
+ * (среднее, а не сегментация как у arcWallToBoxes3D — сечение ригеля
+ * обычно короткое относительно масштаба уклона плиты, одной коробки
+ * достаточно). Без применимого уклона — как раньше, плоский ceilingMm.
  */
 export function wallToBox3D(
   line: PlanLine, scaleMmPx: number, ceilingMm: number,
@@ -247,13 +259,17 @@ export function wallToBox3D(
   const slopeApplicable = !isRib && !!slope && !line.customHeight && !line.sagittaMm && line.lengthMm > 0
   const slopeH1Mm = slopeApplicable ? ceilingSlopeHeightAt(slope!, line.x1, line.y1) : undefined
   const slopeH2Mm = slopeApplicable ? ceilingSlopeHeightAt(slope!, line.x2, line.y2) : undefined
+  const ribSlopeApplicable = isRib && !!slope && !line.sagittaMm && line.lengthMm > 0
+  const ribSlabTopMm = ribSlopeApplicable
+    ? (ceilingSlopeHeightAt(slope!, line.x1, line.y1) + ceilingSlopeHeightAt(slope!, line.x2, line.y2)) / 2
+    : ceilingMm
   const heightM = isRib
     ? mmToM(line.dropMm ?? DEFAULT_RIB_DROP_MM)
     : slopeH1Mm !== undefined && slopeH2Mm !== undefined
       ? mmToM(Math.max(slopeH1Mm, slopeH2Mm))
       : mmToM(line.heightMm ?? DEFAULT_HEIGHT_MM)
   const centerY = isRib
-    ? mmToM(ceilingMm) - heightM / 2   // висит под плитой
+    ? mmToM(ribSlabTopMm) - heightM / 2 // висит под плитой, с учётом уклона в этой точке
     : heightM / 2                       // стоит на полу (y=0)
 
   return {
