@@ -80,6 +80,15 @@ export interface CeilingCalc3DPreviewProps {
   p131RunningPositionsMm?: number[]
   p131ProfileWidthMm?: number
   p131Paired?: boolean
+  /** 12.09.2026 — реальная высота зазора до перекрытия (мм), для честного
+   *  масштаба 3D-сцены (та же семантика, что и form.slabGapMm у П112/П113,
+   *  где он ещё и определяет длину подвеса в смете — для П131 это ЧИСТО
+   *  визуальный параметр, на смету не влияет, у П131 нет подвесов). Раньше
+   *  плита перекрытия рисовалась всегда вплотную к каркасу независимо от
+   *  реальной высоты — особенно вводит в заблуждение для коридорных П131
+   *  с большим запасом (репорт пользователя: 4500мм до плиты, потолок на
+   *  2700мм). Не задан → 0 (плита вплотную, как раньше). */
+  slabGapMm?: number
 }
 
 const SLAB_THICKNESS_M = 0.2
@@ -88,11 +97,11 @@ const SHEET_COLOR = '#90caf9'
 const SHEET_CUT_COLOR = '#ffb74d'
 const SHEET_GAP_M = 0.004 // тонкий видимый шов между листами
 
-function SlabPlate({ lengthM, widthM }: { lengthM: number; widthM: number }) {
+function SlabPlate({ lengthM, widthM, gapM = 0 }: { lengthM: number; widthM: number; gapM?: number }) {
   const geo = useMemo(() => new THREE.BoxGeometry(lengthM, SLAB_THICKNESS_M, widthM), [lengthM, widthM])
   const mat = useMemo(() => new THREE.MeshStandardMaterial({ color: SLAB_COLOR, roughness: 0.9 }), [])
   return (
-    <mesh geometry={geo} material={mat} position={[lengthM / 2, SLAB_THICKNESS_M / 2, widthM / 2]} castShadow receiveShadow />
+    <mesh geometry={geo} material={mat} position={[lengthM / 2, gapM + SLAB_THICKNESS_M / 2, widthM / 2]} castShadow receiveShadow />
   )
 }
 
@@ -223,11 +232,12 @@ export default function CeilingCalc3DPreview({
   lengthMm, widthMm, ceilingType, stepB, stepC, stepA, bearingAlongLength,
   layoutMode, wallOffsetMainMm, wallOffsetBearingMm, sheetLayout,
   bearingPositionsMm, sheetStartCorner, layers = 1, thicknessMm = 12.5,
-  p131RunningPositionsMm, p131ProfileWidthMm, p131Paired,
+  p131RunningPositionsMm, p131ProfileWidthMm, p131Paired, slabGapMm,
 }: CeilingCalc3DPreviewProps) {
   const lengthM = mmToM(lengthMm)
   const widthM = mmToM(widthMm)
-  const maxDim = Math.max(lengthM, widthM, 1)
+  const gapM = mmToM(slabGapMm ?? 0)
+  const maxDim = Math.max(lengthM, widthM, gapM + SLAB_THICKNESS_M, 1)
   const isP131 = ceilingType === 'p131'
   const hasDetailedGrid = ceilingType === 'p112' || ceilingType === 'p113' || isP131
 
@@ -243,7 +253,7 @@ export default function CeilingCalc3DPreview({
         <ambientLight intensity={0.6} />
         <directionalLight position={[maxDim, maxDim * 1.5, maxDim]} intensity={1} castShadow />
         <Suspense fallback={null}>
-          <SlabPlate lengthM={lengthM} widthM={widthM} />
+          <SlabPlate lengthM={lengthM} widthM={widthM} gapM={gapM} />
           {hasDetailedGrid && !isP131 && (
             <CeilingGridMesh
               roomPoints={roomPoints}
