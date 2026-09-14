@@ -1585,8 +1585,9 @@ export default function FloorPlan() {
       const closeThresh = SNAP_SCREEN_PX / stageScaleRef.current
       const closing = ceilingPts.length >= 3 && dist(pos.x, pos.y, ceilingPts[0].x, ceilingPts[0].y) <= closeThresh
       if (closing) {
-        addCeiling(ceilingPts)
+        const newId = addCeiling(ceilingPts)
         setCeilingPts([])
+        sendNewCeilingToCalc(newId)
         return
       }
       const hitIdx = ceilingPts.findIndex((p, i) => i > 0 && dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
@@ -1752,6 +1753,37 @@ export default function FloorPlan() {
         setDrawing({ x1: pt.x, y1: pt.y })
 
       } else if (closingChain) {
+        if (drawType === 'ceiling' && chainLineIds.length >= 3) {
+          // 14.09.2026 (приоритет пользователя, см. TASKS.md): «Потолки» в
+          // обычном инструменте рисования линий (щёлк по углам со снэпом,
+          // как у стен) — раньше замкнутая цепочка оставалась N отдельными
+          // PlanLine 'ceiling' конструкциями, каждая считалась движком
+          // СТЕН по вертикальной высоте — бессмысленно для горизонтальной
+          // плоскости потолка (сам потолок нигде не появлялся, только эти
+          // линии). Теперь замкнутая цепочка становится ОДНИМ объектом
+          // Ceiling — та же сущность и тот же путь дальше (выбор
+          // П112/П113/П131+слои+лист), что и у свободной обводки «обвести
+          // потолок» (mode==='ceiling' выше) — переиспользуем addCeiling/
+          // sendNewCeilingToCalc целиком. Линии, уже созданные кликами во
+          // время рисования (нужны были только как визуальный каркас со
+          // снэпом к углам стен) — удаляются, самостоятельного смысла как
+          // отдельные "конструкции" не несут.
+          const outer = [
+            { x: chainStartPt!.x, y: chainStartPt!.y },
+            ...chainLineIds.map(id => {
+              const l = lines.find(x => x.id === id)!
+              return { x: l.x2, y: l.y2 }
+            }),
+          ]
+          chainLineIds.forEach(id => removePlanLine(id))
+          const newId = addCeiling(outer)
+          sendNewCeilingToCalc(newId)
+          setDrawing(null)
+          setChainStartPt(null)
+          setChainLineIds([])
+          return
+        }
+
         // Замыкание: добавляем последний отрезок до chainStartPt (если нужен)
         const d = dist(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y)
         let allLineIds = [...chainLineIds]
@@ -1981,6 +2013,28 @@ export default function FloorPlan() {
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Shift') setOrthoMode(false)
   }, [])
+
+  /**
+   * 14.09.2026 — после замыкания периметра потолка (оба пути: свободная
+   * обводка mode==='ceiling' И замкнутая цепочка линий drawType==='ceiling'
+   * в обычном инструменте рисования, см. ниже) сразу отправляем зону в
+   * калькулятор потолка (CeilingCalc.tsx) — тот же payload, что у кнопки
+   * "→ Потолок" в панели списка потолков (см. ниже, ceilingToCeilingSeed).
+   * App.tsx слушает useCeilingSeedStore и сам переключает вкладку — так
+   * пользователь сразу попадает на выбор П112/П113/П131+слои+лист, не
+   * ищет кнопку вручную.
+   */
+  function sendNewCeilingToCalc(id: string) {
+    const cl = (useProjectStore.getState().floorPlan?.ceilings ?? []).find(c => c.id === id)
+    if (!cl) return
+    const seed = ceilingToCeilingSeed(cl, scaleMmPx)
+    if (!seed) return
+    setCeilingSeed({
+      label: cl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, holesCount: seed.holesCount,
+      zones: [{ label: cl.label, areaSqm: seed.areaSqm, perimeterM: seed.perimeterM, outerMm: seed.outerMm, holesMm: seed.holesMm }],
+      ceilingEntityId: cl.id,
+    })
+  }
 
   function handleCloseContour() {
     if (contourIds.length < 3) return
