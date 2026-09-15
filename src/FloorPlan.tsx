@@ -22,7 +22,7 @@ import { WorkProgressChecklist } from './components/WorkProgressChecklist'
 import { BUILTIN_WORK_STAGE_TEMPLATES } from './data/workStageTemplates'
 import { lineProgressColor, lineProgressSummary } from './core/lineProgress'
 import { aggregateProgressPercent, templatesForContext, baseZoneProgress, withBaseZoneProgress, removeZone } from './core/workProgress'
-import { useTemplateStore } from './store/useTemplateStore'
+import { useTemplateStore, type Template } from './store/useTemplateStore'
 import {
   rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
 } from './core/columnStamp'
@@ -31,7 +31,7 @@ import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentRe
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
 import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrameEstimate'
-import { buildCeilingProfilesByLineId, areaUnderProfileM2 } from './core/ceilingSlope'
+import { buildCeilingProfilesByLineId, areaUnderProfileM2, resolveRibBeamDropMm } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf, resolveFinishZones, finishTemplateContextOf } from './core/finishResolver'
 import { reverseLineDirection } from './core/lineReverse'
@@ -368,6 +368,16 @@ export default function FloorPlan() {
   )
 
   const { templates, addTemplate, removeTemplate } = useTemplateStore()
+  // 13.09.2026 — раздельные списки для панелей «Шаблоны колонн»/«Шаблоны
+  // ригелей»: явные type-guard функции (не просто .filter(t => t.kind===...))
+  // нужны, чтобы TS сузил union и дальше в JSX можно было спокойно читать
+  // t.widthMm/t.diameterMm/t.sectionWidthMm без повторных проверок kind.
+  const columnTemplates = templates.filter(
+    (t): t is Extract<Template, { kind: 'rectColumn' | 'roundColumn' }> => t.kind === 'rectColumn' || t.kind === 'roundColumn',
+  )
+  const ribBeamTemplates = templates.filter(
+    (t): t is Extract<Template, { kind: 'ribBeam' }> => t.kind === 'ribBeam',
+  )
 
   const lines     = floorPlan?.lines    ?? []
   const contours  = floorPlan?.contours ?? []
@@ -410,6 +420,11 @@ export default function FloorPlan() {
   const [inspectorArcDeep, setInspectorArcDeep] = useState(false)  // то же самое, но для поля R в инспекторе
   const [drawRibWidthMm, setDrawRibWidthMm] = useState('300')  // ригель: ширина сечения по плану, мм
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
+  // 13.09.2026 — авторасчёт опускания ригеля от уклона плиты: если задано,
+  // dropMm при коммите линии считается как (высота плиты/потолка в средней
+  // точке ригеля) − это значение, вместо буквального drawRibDropMm. Пусто
+  // (по умолчанию) — старое ручное поведение, drawRibDropMm как есть.
+  const [drawRibTargetBottomMm, setDrawRibTargetBottomMm] = useState('')
   const [pencilPts, setPencilPts] = useState<{ x: number; y: number }[]>([])       // карандаш: накопленные точки контура
   const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
   // Точный ввод длины следующего отрезка карандаша (01.09.2026) — направление
@@ -1029,6 +1044,54 @@ export default function FloorPlan() {
     addTemplate({ kind: 'roundColumn', name, diameterMm })
   }
 
+  // ── Шаблоны ригеля (13.09.2026) — только сечение (sectionWidthMm), у
+  // ригеля нет spec (см. useTemplateStore.ts). В отличие от шаблонов
+  // колонны, выбор ЭТОГО шаблона не входит в mode:'stamp' (ригель — линия
+  // с двумя концами, не точка) — вместо этого просто переключает обычный
+  // режим рисования линии (mode:'draw', drawType:'rib_beam') с уже
+  // подставленной шириной, тем же путём, что и раньше без шаблона.
+  function selectRibBeamTemplate(id: string) {
+    const tpl = templates.find(t => t.id === id)
+    if (!tpl || tpl.kind !== 'ribBeam') return
+    setDrawRibWidthMm(String(tpl.sectionWidthMm))
+    setDrawType('rib_beam')
+    setDrawSpec(null)
+    setMode('draw')
+    if (isMobile) setMobileLeftOpen(false)
+  }
+
+  function createRibBeamTemplateFromScratch() {
+    const name = window.prompt('Название шаблона:', 'Ригель')
+    if (!name) return
+    const sectionWidthMm = parseFloat(window.prompt('Сечение (ширина по плану), мм:', '300') || '')
+    if (!(sectionWidthMm > 0)) { window.alert('Сечение должно быть положительным числом.'); return }
+    addTemplate({ kind: 'ribBeam', name, sectionWidthMm })
+  }
+
+  // Сохранить сечение ТЕКУЩЕГО значения поля «Сечение» как шаблон — удобнее,
+  // чем пересоздавать те же цифры заново через createRibBeamTemplateFromScratch,
+  // когда уже нарисовал пару ригелей и понял, что сечение на объекте одно и то же.
+  function saveCurrentRibWidthAsTemplate() {
+    const sectionWidthMm = parseFloat(drawRibWidthMm) || 0
+    if (!(sectionWidthMm > 0)) { window.alert('Сечение должно быть положительным числом.'); return }
+    const name = window.prompt('Название шаблона:', `Ригель ${sectionWidthMm}мм`)
+    if (!name) return
+    addTemplate({ kind: 'ribBeam', name, sectionWidthMm })
+  }
+
+  // 13.09.2026 — тонкая обёртка над resolveRibBeamDropMm (core/ceilingSlope.ts,
+  // вынесена туда ради тестируемости) — парсит текстовое поле и подставляет
+  // компонентное состояние (lines/slabs/ceilings/ceilingSlopes/rooms).
+  function resolveRibDropMm(x1: number, y1: number, x2: number, y2: number): number {
+    const manual = parseFloat(drawRibDropMm) || 200
+    const targetBottomMm = parseFloat(drawRibTargetBottomMm)
+    return resolveRibBeamDropMm(
+      x1, y1, x2, y2,
+      Number.isFinite(targetBottomMm) ? targetBottomMm : undefined, manual,
+      lines, slabs, ceilings, ceilingSlopes, rooms,
+    )
+  }
+
   // Сохранение шаблона от прямоугольной колонны-СУЩНОСТИ (RectColumn, с 05.07.2026).
   // Старую saveRectColumnAsTemplate(room: Room) выше не трогаем — она нужна
   // для уже расставленных ранее колонн старого образца (Room+4 линии).
@@ -1530,6 +1593,11 @@ export default function FloorPlan() {
 
       // Прямоугольная колонна: 1-й клик — центр (Ctrl — снап в ряд с соседними
       // колоннами), 2-й — угол поворота (Shift/⊾90° — привязка к 15°)
+      // 13.09.2026: ribBeam-шаблоны сюда попасть не должны в принципе — выбор
+      // такого шаблона переключает на обычный режим рисования линии (mode
+      // 'draw'), а не 'stamp' (см. выбор шаблона ригеля ниже в файле). Защитный
+      // guard — на случай рассинхрона состояния (напр. смена вкладки посреди клика).
+      if (tpl.kind !== 'rectColumn') return
       if (!stampCenter) {
         const pt = applySnap(pos.x, pos.y)
         const ctrlHeld = ctrlDown || ('ctrlKey' in e.evt && e.evt.ctrlKey) || ('metaKey' in e.evt && e.evt.metaKey)
@@ -1768,7 +1836,7 @@ export default function FloorPlan() {
             spec: drawSpec ? { ...drawSpec, step: parseFloat(drawStep) || 600, layer1: drawLayer1, layer2: drawLayer2 } : undefined,
             heightMm: parseFloat(drawHeightMm) || 3000,
             category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
-            ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: parseFloat(drawRibDropMm) || 200 } : {}),
+            ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: resolveRibDropMm(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y) } : {}),
             ...(sagittaMm ? { sagittaMm } : {}),
           })
           allLineIds = [...allLineIds, closingId]
@@ -1815,7 +1883,7 @@ export default function FloorPlan() {
           x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label,
           spec: drawSpec ? { ...drawSpec, step: parseFloat(drawStep) || 600, layer1: drawLayer1, layer2: drawLayer2 } : undefined, heightMm: parseFloat(drawHeightMm) || 3000,
           category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
-          ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: parseFloat(drawRibDropMm) || 200 } : {}),
+          ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: resolveRibDropMm(drawing.x1, drawing.y1, pt.x, pt.y) } : {}),
           ...(sagittaMm ? { sagittaMm } : {}),
         })
         setChainLineIds(prev => [...prev, newId])
@@ -1839,7 +1907,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') { setSelected(null); setSelectedOpening(null) }
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, ceilingPts, addCeiling, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline, slopePts])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawRibTargetBottomMm, slabs, ceilings, ceilingSlopes, rooms, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, ceilingPts, addCeiling, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline, slopePts])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -2737,6 +2805,67 @@ export default function FloorPlan() {
                 style={{ width: 60, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
               <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм от потолка</span>
             </div>
+            {/* 13.09.2026 — авторасчёт опускания от уклона плиты (объект в
+                Ростове: общая нижняя отметка ригелей при разной высоте плиты
+                на ровном/наклонном участках). Если заполнено — ПЕРЕБИВАЕТ
+                поле «Опускание» выше при следующем коммите линии; поле
+                «Опускание» остаётся как откат, если в этой точке нет
+                применимого уклона (Плиты/Потолка/зоны). */}
+            <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }} title="Опускание посчитается само из высоты плиты над серединой ригеля минус это значение — так низ у всех ригелей выходит на одну отметку, даже если плита разной высоты">
+                Держать низ на отм.:
+              </span>
+              <input type="number" value={drawRibTargetBottomMm}
+                onChange={e => setDrawRibTargetBottomMm(e.target.value)}
+                placeholder="откл."
+                style={{ width: 60, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+              <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
+            </div>
+
+            {/* Шаблоны ригелей — та же библиотека (useTemplateStore), что и
+                у колонн, но выбор шаблона НЕ входит в mode:'stamp' (ригель —
+                линия с двумя концами, не точка) — просто подставляет ширину
+                и включает обычное рисование линии, см. selectRibBeamTemplate. */}
+            <div style={{ padding: '4px 14px 2px', fontSize: 10, color: '#8a9ac8', opacity: 0.8 }}>Шаблоны ригелей</div>
+            {ribBeamTemplates.length > 0 && (
+              <div style={{ padding: '2px 14px 6px' }}>
+                {ribBeamTemplates.map(t => (
+                  <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+                    <button
+                      onClick={() => selectRibBeamTemplate(t.id)}
+                      style={{
+                        flex: 1, textAlign: 'left', padding: '5px 8px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                        border: (mode === 'draw' && drawType === 'rib_beam' && drawRibWidthMm === String(t.sectionWidthMm)) ? '1px solid #c5a880' : '1px solid #3a4060',
+                        background: 'transparent', color: '#8a9ac8',
+                      }}>
+                      <span style={{ marginRight: 6 }}>▬</span>
+                      {t.name}
+                      <span style={{ opacity: 0.75 }}> {t.sectionWidthMm} мм</span>
+                    </button>
+                    <button
+                      title="Удалить шаблон"
+                      onClick={() => {
+                        if (window.confirm(`Удалить шаблон «${t.name}»? Уже нарисованные ригели не тронет.`)) removeTemplate(t.id)
+                      }}
+                      style={{
+                        padding: '5px 7px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                        border: '1px solid #3a4060', background: 'transparent', color: '#8a9ac8',
+                      }}>🗑</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 4, padding: '0 14px 8px' }}>
+              <button onClick={createRibBeamTemplateFromScratch}
+                style={{ flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer', border: '1px dashed #c5a880', background: 'transparent', color: '#c5a880' }}>
+                + ▬ новый
+              </button>
+              <button onClick={saveCurrentRibWidthAsTemplate}
+                title="Сохранить текущее значение поля «Сечение» выше как шаблон"
+                style={{ flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer', border: '1px dashed #c5a880', background: 'transparent', color: '#c5a880' }}>
+                💾 из поля
+              </button>
+            </div>
           </div>
 
           {/* Карандаш — свободный контур плиты (пол/потолок этажа) + вырезание
@@ -3440,15 +3569,15 @@ export default function FloorPlan() {
               на плане (материал у такого шаблона донастраивается уже после штамповки). */}
           <div>
             <div style={{ ...sectionHeaderStyle, color: '#c5a880' }}>Шаблоны колонн</div>
-            {templates.length === 0 && (
+            {columnTemplates.length === 0 && (
               <div style={{ padding: '2px 14px 6px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
                 Пока пусто. Создайте шаблон кнопками ниже, либо выделите уже
                 нарисованную колонну и нажмите «Сохранить как шаблон» в её панели.
               </div>
             )}
-            {templates.length > 0 && (
+            {columnTemplates.length > 0 && (
               <div style={{ padding: '2px 14px 8px' }}>
-                {templates.map(t => (
+                {columnTemplates.map(t => (
                   <div key={t.id} style={{
                     display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3,
                   }}>
@@ -4967,6 +5096,10 @@ export default function FloorPlan() {
 
                     // rectColumn: до 1-го клика — превью по курсору (с учётом снапа
                     // в ряд) без поворота; после — крутится вокруг зафиксированного center
+                    // 13.09.2026: ribBeam сюда попасть не должен (не 'stamp'-режим,
+                    // см. защитный guard в handleStageClick) — явный guard и здесь,
+                    // чтобы TS корректно сузил tpl.kind и для читаемости кода.
+                    if (tpl.kind !== 'rectColumn') return null
                     const center = stampCenter ?? previewCursor
                     let angle = stampCenter ? angleTo(stampCenter.x, stampCenter.y, cursor.x, cursor.y) : 0
                     if (stampCenter && orthoMode) angle = snapAngleToStep(angle, 15)

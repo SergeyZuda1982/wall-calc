@@ -1,14 +1,15 @@
 /**
- * useTemplateStore.ts — библиотека шаблонов конструкций (пока только колонны).
+ * useTemplateStore.ts — библиотека шаблонов конструкций (колонны + ригели).
  *
  * Осознанно ОТДЕЛЬНО от useProjectStore: шаблоны общие на все объекты
- * пользователя (сечения колонн часто повторяются между разными объектами),
- * а не привязаны к конкретному проекту. Хранится в своём ключе localStorage,
- * НЕ синхронизируется через Supabase (пока не просили — см. конспект задачи).
+ * пользователя (сечения колонн/ригелей часто повторяются между разными
+ * объектами), а не привязаны к конкретному проекту. Хранится в своём ключе
+ * localStorage, НЕ синхронизируется через Supabase (пока не просили — см.
+ * конспект задачи).
  *
  * Union-тип Template специально расширяемый: другие виды конструкций
- * (не колонны) добавляются сюда же новыми вариантами union, а не отдельным
- * стором — библиотека одна на все виды шаблонов.
+ * добавляются сюда же новыми вариантами union, а не отдельным стором —
+ * библиотека одна на все виды шаблонов.
  */
 
 import { create } from 'zustand'
@@ -18,6 +19,11 @@ import type { PlanLineSpec } from '../types'
 export type Template =
   | { id: string; kind: 'rectColumn'; name: string; widthMm: number; depthMm: number; spec?: PlanLineSpec }
   | { id: string; kind: 'roundColumn'; name: string; diameterMm: number; spec?: PlanLineSpec }
+  // 13.09.2026 — ригель (rib_beam) БЕЗ spec: та же материальная логика, что
+  // и у самой линии типа rib_beam на плане — у ригеля нет облицовки/состава
+  // слоёв, только геометрия сечения (см. types/index.ts, rib_beam — только
+  // sectionWidthMm/dropMm, никакого PlanLineSpec).
+  | { id: string; kind: 'ribBeam'; name: string; sectionWidthMm: number }
 
 /** Omit, распределяющийся по union — обычный Omit<Template,'id'> схлопывает дискриминацию kind */
 type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never

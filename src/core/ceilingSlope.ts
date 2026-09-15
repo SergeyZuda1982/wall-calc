@@ -189,6 +189,33 @@ export function effectiveCeilingSlopeHeightAtPoint(
 }
 
 /**
+ * Опускание РИГЕЛЯ (dropMm) при рисовании новой линии — 13.09.2026, объект
+ * в Ростове (общая нижняя отметка ригелей 3450мм при плите от 3800 до
+ * ~5500 на разных участках): вместо того, чтобы вручную считать разное
+ * опускание под каждый ригель на наклонном участке, пользователь один раз
+ * задаёт желаемую отметку низа (targetBottomMm) — опускание считается как
+ * (высота плиты/потолка в СРЕДНЕЙ точке ригеля, через
+ * effectiveCeilingSlopeHeightAtPoint выше) минус эта отметка. Без
+ * применимого уклона в этой точке (targetBottomMm не задан, или нет
+ * покрывающей Плиты/Потолка/зоны) — откат на manualDropMm как есть.
+ *
+ * Чистая функция (вынесена из FloorPlan.tsx, где раньше была локальным
+ * замыканием resolveRibDropMm — недоступным для теста, т.к. в проекте нет
+ * ни одного .test.tsx/React-теста компонентов, только core/-логика).
+ */
+export function resolveRibBeamDropMm(
+  x1: number, y1: number, x2: number, y2: number,
+  targetBottomMm: number | undefined, manualDropMm: number,
+  allLines: PlanLine[], slabs: Slab[], ceilings: Ceiling[], slopes: CeilingSlope[], rooms: Room[],
+): number {
+  if (targetBottomMm === undefined || !(targetBottomMm >= 0)) return manualDropMm
+  const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2
+  const slabTopMm = effectiveCeilingSlopeHeightAtPoint({ x: midX, y: midY }, allLines, slabs, ceilings, slopes, rooms)
+  if (slabTopMm === undefined) return manualDropMm
+  return Math.max(0, Math.round(slabTopMm - targetBottomMm))
+}
+
+/**
  * Удобная пакетная обёртка: line.id → ceilingProfile (только для линий,
  * где уклон реально применим — остальные в карте отсутствуют, вызывающий
  * код должен трактовать отсутствие как "плоская линия", не как ошибку).

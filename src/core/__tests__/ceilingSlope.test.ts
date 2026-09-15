@@ -8,6 +8,7 @@ import {
   buildEffectiveCeilingSlopeResolver,
   effectiveCeilingSlopeHeightAtPoint,
   areaUnderProfileM2,
+  resolveRibBeamDropMm,
 } from '../ceilingSlope'
 import type { CeilingSlope, PlanLine, Room, Slab, Ceiling } from '../../types'
 
@@ -233,6 +234,53 @@ describe('buildEffectiveCeilingSlopeResolver / effectiveCeilingSlopeHeightAtPoin
     const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
     const h = effectiveCeilingSlopeHeightAtPoint({ x: 500, y: 500 }, [], [sl], [], [zoneSlope], [])
     expect(h).toBe(3500)
+  })
+
+  describe('resolveRibBeamDropMm (13.09.2026 — авторасчёт опускания ригеля по уклону плиты, объект в Ростове)', () => {
+    it('targetBottomMm задан, есть уклон над серединой ригеля — опускание = высота плиты в середине минус targetBottomMm', () => {
+      const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
+      // Ригель от x=0 до x=1000 -> середина x=500 -> высота плиты 3500 (как в тесте выше)
+      const drop = resolveRibBeamDropMm(0, 0, 1000, 0, 3450, 200, [], [sl], [], [], [])
+      expect(drop).toBe(3500 - 3450) // 50
+    })
+
+    it('targetBottomMm НЕ задан (undefined) — откат на manualDropMm, уклон не считается вообще', () => {
+      const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
+      const drop = resolveRibBeamDropMm(0, 0, 1000, 0, undefined, 200, [], [sl], [], [], [])
+      expect(drop).toBe(200)
+    })
+
+    it('targetBottomMm задан, но НЕТ применимого уклона в этой точке — откат на manualDropMm', () => {
+      const drop = resolveRibBeamDropMm(0, 0, 1000, 0, 3450, 200, [], [], [], [], [])
+      expect(drop).toBe(200)
+    })
+
+    it('targetBottomMm отрицательный — трактуется как некорректный ввод, откат на manualDropMm', () => {
+      const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
+      const drop = resolveRibBeamDropMm(0, 0, 1000, 0, -50, 200, [], [sl], [], [], [])
+      expect(drop).toBe(200)
+    })
+
+    it('результат клэмпится снизу нулём — если targetBottomMm выше самой плиты в этой точке (некорректная настройка, не должно уйти в минус)', () => {
+      const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
+      const drop = resolveRibBeamDropMm(0, 0, 1000, 0, 9999, 200, [], [sl], [], [], [])
+      expect(drop).toBe(0)
+    })
+
+    it('округляется до целого мм', () => {
+      const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 3001 } }) // высота в середине 3000.25
+      const drop = resolveRibBeamDropMm(0, 0, 1000, 0, 2000, 200, [], [sl], [], [], [])
+      expect(Number.isInteger(drop)).toBe(true)
+    })
+
+    it('разные ригели под РАЗНЫМИ участками наклонной плиты получают РАЗНОЕ опускание, но одинаковый желаемый низ (сценарий Сергея — общая нижняя отметка 3450 при плите 3800→5500)', () => {
+      const sl = slab({ outer: [{ x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 1000 }, { x: 0, y: 1000 }], slope: { x1: 0, y1: 0, x2: 4000, y2: 0, height1Mm: 3800, height2Mm: 5500 } })
+      const targetBottomMm = 3450
+      const dropNearFlatEnd = resolveRibBeamDropMm(0, 500, 200, 500, targetBottomMm, 999, [], [sl], [], [], [])
+      const dropNearHighEnd = resolveRibBeamDropMm(3800, 500, 4000, 500, targetBottomMm, 999, [], [sl], [], [], [])
+      expect(dropNearFlatEnd).toBeLessThan(dropNearHighEnd) // ригель у высокого края опускается сильнее
+      expect(dropNearFlatEnd).toBeGreaterThan(0)
+    })
   })
 })
 
