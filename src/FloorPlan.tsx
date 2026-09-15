@@ -1700,7 +1700,7 @@ export default function FloorPlan() {
         // по явному клику на кнопку внутри панели.
         setInspectorCeilingId(newId)
         setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
-        setInspectorRectColumnId(null); setInspectorFreeformId(null)
+        setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
         return
       }
       const hitIdx = ceilingPts.findIndex((p, i) => i > 0 && dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
@@ -1894,7 +1894,7 @@ export default function FloorPlan() {
           const newId = addCeiling(outer)
           setInspectorCeilingId(newId)
           setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
-          setInspectorRectColumnId(null); setInspectorFreeformId(null)
+          setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
           setDrawing(null)
           setChainStartPt(null)
           setChainLineIds([])
@@ -5575,7 +5575,7 @@ export default function FloorPlan() {
                         onClick={() => {
                           setInspectorCeilingId(cl.id)
                           setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
-                          setInspectorRectColumnId(null); setInspectorFreeformId(null)
+                          setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
                         }}
                         style={{ cursor: 'pointer', background: cl.id === inspectorCeilingId ? '#eef2ff' : 'transparent', borderBottom: '1px solid #f0f0f0' }}>
                         <td style={tdS}>{lines.filter(l => l.type !== 'rib_beam').length + i + 1}</td>
@@ -6709,7 +6709,7 @@ export default function FloorPlan() {
             направление монтажа, класс нагрузки, шаг подвесов вручную,
             превью раскроя листов и т.п. — здесь этого нет, сознательно
             компактная версия). */}
-        {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && !inspectorRectColumnId && !inspectorFreeformId && inspectorCeilingId && (() => {
+        {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && !inspectorRectColumnId && !inspectorFreeformId && !inspectorSlabId && inspectorCeilingId && (() => {
           const cl = ceilings.find(c => c.id === inspectorCeilingId)
           if (!cl) return null
           const seed = ceilingToCeilingSeed(cl, scaleMmPx)
