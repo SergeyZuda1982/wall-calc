@@ -14,7 +14,7 @@ const PROFILE_LETTER: Record<string, string> = {
  * Виды сущностей плана, выбираемых кликом в 3D (10.07.2026) — см.
  * ProjectStore.selectedEntity ниже.
  */
-export type SelectedEntityKind = 'wall' | 'roundColumn' | 'rectColumn' | 'freeform'
+export type SelectedEntityKind = 'wall' | 'roundColumn' | 'rectColumn' | 'freeform' | 'slab' | 'ceiling'
 export interface SelectedEntity {
   kind: SelectedEntityKind
   id: string
@@ -947,7 +947,18 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       clearFloorPlan: () => {
-        set(s => updateActiveFloorPlan(s, fp => ({ ...fp, lines: [], contours: [] })))
+        // До 15.09.2026 чистились только lines/contours — Плиты, Потолки,
+        // Помещения, колонны, произвольные конструкции, уклоны и MEP-трассы
+        // переживали «Очистить план» и оставались висеть в проекте без
+        // возможности их увидеть (не было привязанных стен). scaleMmPerPx,
+        // backgroundImage, mepBackgrounds и defaultHeightMm — настройки
+        // этажа, а не нарисованные объекты, их не трогаем.
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          lines: [], contours: [], rooms: [], slabs: [], ceilings: [],
+          roundColumns: [], rectColumns: [], freeformStructures: [],
+          ceilingSlopes: [], mepRoutes: [],
+        })))
       },
 
       addContour: (contour) => {

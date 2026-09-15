@@ -560,6 +560,27 @@ export default function FloorPlan() {
   const [inspectorRoundColumnId, setInspectorRoundColumnId] = useState<string | null>(null)
   const [inspectorRectColumnId, setInspectorRectColumnId] = useState<string | null>(null)
   const [inspectorFreeformId, setInspectorFreeformId] = useState<string | null>(null)
+  // Инспектор Плиты/Потолка (15.09.2026) — раньше эти сущности можно было
+  // только удалить/редактировать через боковую панель «Плиты»/«Потолки»,
+  // клик по самой фигуре на плане ничего не выделял (Shape рисовался с
+  // listening={false}). Тот же паттерн select-маркера, что и у
+  // freeformStructures/roundColumns ниже — маркер в центроиде, клик по
+  // нему подсвечивает фигуру и разворачивает/подсвечивает её строку в
+  // боковой панели (там уже есть «→ Потолок» для смены типа конструкции
+  // без удаления, «✎ точки», «📐 уклон» и «✕» удалить).
+  const [inspectorSlabId, setInspectorSlabId] = useState<string | null>(null)
+  const [inspectorCeilingId, setInspectorCeilingId] = useState<string | null>(null)
+  // Автоскролл боковой панели к строке Плиты/Потолка при выборе через
+  // маркер на плане — иначе на длинных списках выбранная строка (и её
+  // «→ Потолок»/«✎ точки»/«✕») может быть не видна без ручной прокрутки.
+  const slabRowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const ceilingRowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  useEffect(() => {
+    if (inspectorSlabId) slabRowRefs.current[inspectorSlabId]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [inspectorSlabId])
+  useEffect(() => {
+    if (inspectorCeilingId) ceilingRowRefs.current[inspectorCeilingId]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [inspectorCeilingId])
   // Синхронизация выделения с объектом, выбранным в 3D (10.07.2026) — стор
   // (useProjectStore.selectedEntity) переживает переключение вкладок
   // (App.tsx размонтирует FloorPlan/Scene3D при смене activeTab), локальный
@@ -583,6 +604,10 @@ export default function FloorPlan() {
       setInspectorRectColumnId(e.id)
     } else if (e.kind === 'freeform' && freeformStructures.some(f => f.id === e.id)) {
       setInspectorFreeformId(e.id)
+    } else if (e.kind === 'slab' && slabs.some(s => s.id === e.id)) {
+      setInspectorSlabId(e.id)
+    } else if (e.kind === 'ceiling' && ceilings.some(c => c.id === e.id)) {
+      setInspectorCeilingId(e.id)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -600,8 +625,10 @@ export default function FloorPlan() {
     else if (inspectorRoundColumnId) setSelectedEntity({ kind: 'roundColumn', id: inspectorRoundColumnId })
     else if (inspectorRectColumnId) setSelectedEntity({ kind: 'rectColumn', id: inspectorRectColumnId })
     else if (inspectorFreeformId) setSelectedEntity({ kind: 'freeform', id: inspectorFreeformId })
+    else if (inspectorSlabId) setSelectedEntity({ kind: 'slab', id: inspectorSlabId })
+    else if (inspectorCeilingId) setSelectedEntity({ kind: 'ceiling', id: inspectorCeilingId })
     else setSelectedEntity(null)
-  }, [selectedId, inspectorRoundColumnId, inspectorRectColumnId, inspectorFreeformId, setSelectedEntity])
+  }, [selectedId, inspectorRoundColumnId, inspectorRectColumnId, inspectorFreeformId, inspectorSlabId, inspectorCeilingId, setSelectedEntity])
   // Цепочка рисования периметра
   const [chainStartPt, setChainStartPt] = useState<{ x: number; y: number } | null>(null)
   const [chainLineIds, setChainLineIds] = useState<string[]>([])
@@ -1997,6 +2024,21 @@ export default function FloorPlan() {
       } else if (selectedId) {
         removePlanLine(selectedId)
         setSelected(null)
+      } else if (inspectorSlabId) {
+        const sl = slabs.find(s => s.id === inspectorSlabId)
+        if (sl && window.confirm(`Удалить плиту «${sl.label}»?`)) {
+          if (pencilHoleTargetId === sl.id) { setPencilHoleTargetId(null); setPencilPts([]) }
+          removeSlab(sl.id)
+          setCombineSelection(prev => prev.filter(s => !(s.type === 'slab' && s.id === sl.id)))
+          setInspectorSlabId(null)
+        }
+      } else if (inspectorCeilingId) {
+        const cl = ceilings.find(c => c.id === inspectorCeilingId)
+        if (cl && window.confirm(`Удалить потолок «${cl.label}»?`)) {
+          removeCeiling(cl.id)
+          setCombineSelection(prev => prev.filter(s => !(s.type === 'ceiling' && s.id === cl.id)))
+          setInspectorCeilingId(null)
+        }
       }
     }
     if (e.key === 'r' || e.key === 'R') {
@@ -2008,7 +2050,7 @@ export default function FloorPlan() {
       }
     }
     if (e.key === 'Shift') setOrthoMode(true)
-  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter, mepRoutePts, activeDiscipline, mepDrawElevationMm, mepDrawDiameterMm, mepDrawWidthMm, mepDrawHeightSectionMm, addMepRoute, mepRoutes, selectedOpening, undo, redo, slopePts])
+  }, [selectedId, removePlanLine, mode, eraseIds, stampCenter, mepRoutePts, activeDiscipline, mepDrawElevationMm, mepDrawDiameterMm, mepDrawWidthMm, mepDrawHeightSectionMm, addMepRoute, mepRoutes, selectedOpening, undo, redo, slopePts, inspectorSlabId, inspectorCeilingId, slabs, ceilings, pencilHoleTargetId, removeSlab, removeCeiling, setCombineSelection])
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Shift') setOrthoMode(false)
@@ -2885,11 +2927,14 @@ export default function FloorPlan() {
                 {slabs.map(sl => {
                   const seed = slabToCeilingSeed(sl, scaleMmPx)
                   return (
-                    <div key={sl.id} style={{
-                      marginBottom: 5, borderRadius: 4,
-                      border: pencilHoleTargetId === sl.id ? '1px solid #8d99ae' : '1px solid #3a4060',
-                      background: pencilHoleTargetId === sl.id ? 'rgba(141,153,174,0.15)' : 'transparent',
-                    }}>
+                    <div key={sl.id}
+                      ref={el => { slabRowRefs.current[sl.id] = el }}
+                      style={{
+                        marginBottom: 5, borderRadius: 4,
+                        border: inspectorSlabId === sl.id ? '1.5px solid #e0c341'
+                          : pencilHoleTargetId === sl.id ? '1px solid #8d99ae' : '1px solid #3a4060',
+                        background: pencilHoleTargetId === sl.id ? 'rgba(141,153,174,0.15)' : 'transparent',
+                      }}>
                       <button
                         onClick={() => { setPencilHoleTargetId(sl.id); setPencilPts([]); setMode('pencil') }}
                         title="Клик — начать обводку выреза (проёма) в этой плите"
@@ -3069,9 +3114,12 @@ export default function FloorPlan() {
                 {ceilings.map(cl => {
                   const seed = ceilingToCeilingSeed(cl, scaleMmPx)
                   return (
-                    <div key={cl.id} style={{
-                      marginBottom: 5, borderRadius: 4, border: '1px solid #3a4060',
-                    }}>
+                    <div key={cl.id}
+                      ref={el => { ceilingRowRefs.current[cl.id] = el }}
+                      style={{
+                        marginBottom: 5, borderRadius: 4,
+                        border: inspectorCeilingId === cl.id ? '1.5px solid #e0c341' : '1px solid #3a4060',
+                      }}>
                       <div style={{ padding: '5px 10px', fontSize: 11, color: '#8a9ac8' }}>
                         {cl.label}
                         {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
@@ -4169,8 +4217,8 @@ export default function FloorPlan() {
                     <Shape
                       key={sl.id}
                       fill={pencilHoleTargetId === sl.id ? '#8d99ae33' : '#8d99ae22'}
-                      stroke="#8d99ae"
-                      strokeWidth={1.5}
+                      stroke={inspectorSlabId === sl.id ? '#e0c341' : '#8d99ae'}
+                      strokeWidth={inspectorSlabId === sl.id ? 3 : 1.5}
                       listening={false}
                       sceneFunc={(ctx, shape) => {
                         ctx.beginPath()
@@ -4193,8 +4241,8 @@ export default function FloorPlan() {
                     <Shape
                       key={cl.id}
                       fill="#c9a68a22"
-                      stroke="#c9a68a"
-                      strokeWidth={1.5}
+                      stroke={inspectorCeilingId === cl.id ? '#e0c341' : '#c9a68a'}
+                      strokeWidth={inspectorCeilingId === cl.id ? 3 : 1.5}
                       listening={false}
                       sceneFunc={(ctx, shape) => {
                         ctx.beginPath()
@@ -4989,6 +5037,41 @@ export default function FloorPlan() {
                         <Circle x={cx} y={cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
                         <Text x={cx - r} y={cy - r} width={r * 2} height={r * 2} text={fs.kind === 'column' ? '▦' : '⌁'}
                           fontSize={11 / stageScale} fill="#78909c" align="center" verticalAlign="middle" listening={false} />
+                      </Group>
+                    )
+                  })}
+
+                  {/* Select-маркеры Плиты/Потолка (15.09.2026) — сама фигура
+                      listening={false} (не мешает карандашу/драгу под ней),
+                      маркер в центроиде открывает/подсвечивает строку в
+                      панели «Плиты»/«Потолки» слева, где уже есть смена
+                      типа конструкции, уклон, точки и удаление. */}
+                  {mode === 'select' && slabs.map(sl => {
+                    const r = 9 / stageScale
+                    const cx = sl.outer.reduce((s, p) => s + p.x, 0) / sl.outer.length
+                    const cy = sl.outer.reduce((s, p) => s + p.y, 0) / sl.outer.length
+                    return (
+                      <Group key={'marker-' + sl.id}
+                        onClick={e => { e.cancelBubble = true; setInspectorSlabId(sl.id); setInspectorCeilingId(null); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}
+                        onTap={e => { if (touchGestureRef.current) return; e.cancelBubble = true; setInspectorSlabId(sl.id); setInspectorCeilingId(null); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}>
+                        <Circle x={cx} y={cy} radius={r} fill="#fff" stroke="#8d99ae" strokeWidth={1.5 / stageScale} />
+                        <Text x={cx - r} y={cy - r} width={r * 2} height={r * 2} text="▭"
+                          fontSize={11 / stageScale} fill="#8d99ae" align="center" verticalAlign="middle" listening={false} />
+                      </Group>
+                    )
+                  })}
+
+                  {mode === 'select' && ceilings.map(cl => {
+                    const r = 9 / stageScale
+                    const cx = cl.outer.reduce((s, p) => s + p.x, 0) / cl.outer.length
+                    const cy = cl.outer.reduce((s, p) => s + p.y, 0) / cl.outer.length
+                    return (
+                      <Group key={'marker-' + cl.id}
+                        onClick={e => { e.cancelBubble = true; setInspectorCeilingId(cl.id); setInspectorSlabId(null); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}
+                        onTap={e => { if (touchGestureRef.current) return; e.cancelBubble = true; setInspectorCeilingId(cl.id); setInspectorSlabId(null); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}>
+                        <Circle x={cx} y={cy} radius={r} fill="#fff" stroke="#c9a68a" strokeWidth={1.5 / stageScale} />
+                        <Text x={cx - r} y={cy - r} width={r * 2} height={r * 2} text="▨"
+                          fontSize={11 / stageScale} fill="#c9a68a" align="center" verticalAlign="middle" listening={false} />
                       </Group>
                     )
                   })}
