@@ -43,6 +43,9 @@ import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
 import { slabToCeilingSeed } from './core/slabToCeilingSeed'
 import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
+import { calcCeiling } from './core/calcCeiling'
+import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS } from './data/ceilingData'
+import type { CeilingSpec, CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep } from './data/ceilingData'
 import { roomToCeilingSeed } from './core/roomToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { useZoneDrawStore } from './store/useZoneDrawStore'
@@ -583,6 +586,15 @@ export default function FloorPlan() {
   // нему подсвечивает фигуру и разворачивает/подсвечивает её строку в
   // боковой панели (там уже есть «→ Потолок» для смены типа конструкции
   // без удаления, «✎ точки», «📐 уклон» и «✕» удалить).
+  //
+  // 14-15.09.2026: помимо подсветки строки слева, тот же inspectorCeilingId
+  // ТЕПЕРЬ ЕЩЁ И открывает полноценную ПРАВУЮ панель (см. ниже, зеркало
+  // inspectorLine у стен) — инлайн выбор типа П112/П113/П131+слои+материал
+  // с автоматическим расчётом материалов на месте (calcCeiling), без
+  // обязательного перехода на вкладку калькулятора (по жалобе пользователя
+  // на неудобный авто-прыжок при замыкании контура — теперь замыкание
+  // контура тоже просто ставит inspectorCeilingId вместо прыжка). Оба
+  // реагирования на один и тот же id не конфликтуют — независимые части UI.
   const [inspectorSlabId, setInspectorSlabId] = useState<string | null>(null)
   const [inspectorCeilingId, setInspectorCeilingId] = useState<string | null>(null)
   // Автоскролл боковой панели к строке Плиты/Потолка при выборе через
@@ -1682,7 +1694,13 @@ export default function FloorPlan() {
       if (closing) {
         const newId = addCeiling(ceilingPts)
         setCeilingPts([])
-        sendNewCeilingToCalc(newId)
+        // 14.09.2026: раньше сразу прыгало в полный калькулятор — неудобно
+        // (жалоба пользователя), теперь открываем боковую панель тут же на
+        // плане (тот же принцип, что у стен/облицовок), полный калькулятор —
+        // по явному клику на кнопку внутри панели.
+        setInspectorCeilingId(newId)
+        setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
+        setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
         return
       }
       const hitIdx = ceilingPts.findIndex((p, i) => i > 0 && dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
@@ -1858,11 +1876,13 @@ export default function FloorPlan() {
           // линии). Теперь замкнутая цепочка становится ОДНИМ объектом
           // Ceiling — та же сущность и тот же путь дальше (выбор
           // П112/П113/П131+слои+лист), что и у свободной обводки «обвести
-          // потолок» (mode==='ceiling' выше) — переиспользуем addCeiling/
-          // sendNewCeilingToCalc целиком. Линии, уже созданные кликами во
-          // время рисования (нужны были только как визуальный каркас со
-          // снэпом к углам стен) — удаляются, самостоятельного смысла как
-          // отдельные "конструкции" не несут.
+          // потолок» (mode==='ceiling' выше) — переиспользуем addCeiling.
+          // Линии, уже созданные кликами во время рисования (нужны были
+          // только как визуальный каркас со снэпом к углам стен) —
+          // удаляются, самостоятельного смысла как отдельные "конструкции"
+          // не несут. 14.09.2026: сразу в полный калькулятор больше НЕ
+          // прыгаем (неудобно) — открываем боковую панель на плане (см.
+          // inspectorCeilingId ниже), тот же принцип, что и у стен.
           const outer = [
             { x: chainStartPt!.x, y: chainStartPt!.y },
             ...chainLineIds.map(id => {
@@ -1872,7 +1892,9 @@ export default function FloorPlan() {
           ]
           chainLineIds.forEach(id => removePlanLine(id))
           const newId = addCeiling(outer)
-          sendNewCeilingToCalc(newId)
+          setInspectorCeilingId(newId)
+          setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
+          setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
           setDrawing(null)
           setChainStartPt(null)
           setChainLineIds([])
@@ -5550,8 +5572,12 @@ export default function FloorPlan() {
                       : null
                     return (
                       <tr key={cl.id}
-                        onClick={() => sendNewCeilingToCalc(cl.id)}
-                        style={{ cursor: 'pointer', background: 'transparent', borderBottom: '1px solid #f0f0f0' }}>
+                        onClick={() => {
+                          setInspectorCeilingId(cl.id)
+                          setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
+                          setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
+                        }}
+                        style={{ cursor: 'pointer', background: cl.id === inspectorCeilingId ? '#eef2ff' : 'transparent', borderBottom: '1px solid #f0f0f0' }}>
                         <td style={tdS}>{lines.filter(l => l.type !== 'rib_beam').length + i + 1}</td>
                         <td style={tdS}>
                           <span style={{ color: '#c9a68a', fontWeight: 600 }}>{cl.label}</span>
@@ -6663,6 +6689,151 @@ export default function FloorPlan() {
                   контура.
                 </div>
                 <button onClick={() => { removeFreeformStructure(fs.id); setInspectorFreeformId(null) }}
+                  style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
+                  🗑 Удалить
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* 14.09.2026: Ceiling (потолок, свободный контур/замкнутая цепочка
+            "потолочных" линий) — по просьбе пользователя больше НЕ кидает
+            автоматически в полный калькулятор (CeilingCalc.tsx) при
+            замыкании контура, вместо этого открывается ЭТА боковая панель —
+            тот же принцип, что и у стен/облицовок (inspectorLine ниже):
+            выбрал тип (П112/П113/П131) — применил — расчёт материалов
+            посчитан сразу тут же (calcCeiling, тот же движок, что и у
+            полного калькулятора). "Открыть в полном калькуляторе" — теперь
+            ТОЛЬКО по явному клику на кнопку (нужен для тонкой настройки:
+            направление монтажа, класс нагрузки, шаг подвесов вручную,
+            превью раскроя листов и т.п. — здесь этого нет, сознательно
+            компактная версия). */}
+        {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && !inspectorRectColumnId && !inspectorFreeformId && !inspectorSlabId && inspectorCeilingId && (() => {
+          const cl = ceilings.find(c => c.id === inspectorCeilingId)
+          if (!cl) return null
+          const seed = ceilingToCeilingSeed(cl, scaleMmPx)
+          const areaSqm = seed?.areaSqm ?? 0
+          const perimeterM = seed?.perimeterM ?? 0
+          const spec: CeilingSpec = cl.ceilingSpec
+            ? { ...cl.ceilingSpec, areaSqm, perimeterM }
+            : { type: 'p112', layers: 1, material: 'gsp', thickness: 12.5, stepC: 600, areaSqm, perimeterM }
+          const patchSpec = (patch: Partial<CeilingSpec>) => updateCeiling(cl.id, { ceilingSpec: { ...spec, ...patch } })
+          const calcResult = areaSqm > 0 ? calcCeiling(spec) : null
+          return (
+            <div style={isMobile ? {
+              ...rightPanelStyle,
+              position: 'absolute', top: 0, bottom: 0, right: 0, zIndex: 21,
+              width: Math.min(RIGHT_W, window.innerWidth - 32),
+              minWidth: 0, maxWidth: Math.min(RIGHT_W, window.innerWidth - 32),
+              boxShadow: '-4px 0 16px rgba(0,0,0,0.25)',
+            } : rightPanelStyle}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px 10px', borderBottom: '1px solid #e0e4ee', background: '#fff',
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433' }}>{cl.label}</div>
+                  <button onClick={() => sendNewCeilingToCalc(cl.id)}
+                    style={{
+                      marginTop: 6, fontSize: 11, fontWeight: 600,
+                      color: '#fff', background: '#c9a68a', border: 'none',
+                      borderRadius: 5, padding: '5px 12px', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 5,
+                    }}>
+                    Открыть в полном калькуляторе ↗
+                  </button>
+                </div>
+                <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorCeilingId(null)}>✕</button>
+              </div>
+
+              <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ fontSize: 12, color: '#888' }}>
+                  Площадь: <b>{areaSqm.toFixed(2)} м²</b> · Периметр: <b>{perimeterM.toFixed(2)} м</b>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 10, color: '#999', marginBottom: 4, textTransform: 'uppercase' }}>Тип потолка</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {(['p112', 'p113', 'p131'] as CeilingType[]).map(t => (
+                      <button key={t} onClick={() => patchSpec({ type: t })}
+                        style={{
+                          textAlign: 'left', padding: '7px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+                          border: spec.type === t ? '1.5px solid #c9a68a' : '1px solid #ddd',
+                          background: spec.type === t ? '#faf3ec' : '#fff',
+                          color: spec.type === t ? '#8a6d4f' : '#666', fontWeight: spec.type === t ? 700 : 400,
+                        }}>
+                        {CEILING_TYPE_LABELS[t].split(' — ')[0]}
+                        <span style={{ display: 'block', fontSize: 10, color: '#999', fontWeight: 400 }}>
+                          {CEILING_TYPE_LABELS[t].split(' — ')[1]}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <label style={{ fontSize: 11, color: '#555' }}>
+                    Слоёв ГКЛ
+                    <select value={spec.layers} onChange={e => patchSpec({ layers: +e.target.value as CeilingLayers })}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
+                      <option value={1}>1 слой</option>
+                      <option value={2}>2 слоя</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 11, color: '#555' }}>
+                    Материал
+                    <select value={spec.material}
+                      onChange={e => {
+                        const mat = e.target.value as CeilingMaterial
+                        if (mat === 'sapphire') patchSpec({ material: mat, thickness: 12.5 })
+                        else patchSpec({ material: mat })
+                      }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
+                      <option value="gsp">ГСП (ГКЛ)</option>
+                      <option value="gvl">ГВЛ</option>
+                      <option value="sapphire">Сапфир</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 11, color: '#555' }}>
+                    Толщина, мм
+                    <select value={spec.thickness} disabled={spec.material === 'sapphire'}
+                      onChange={e => patchSpec({ thickness: +e.target.value as CeilingSheetThickness })}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
+                      <option value={9.5}>9.5</option>
+                      <option value={12.5}>12.5</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 11, color: '#555' }}>
+                    Шаг осн. (c){spec.type === 'p131' ? ' — фикс.' : ''}
+                    {spec.type === 'p131' ? (
+                      <div style={{ marginTop: 4, padding: '6px 8px', borderRadius: 5, fontSize: 11, color: '#999', background: '#f5f5f5' }}>500 мм</div>
+                    ) : (
+                      <select value={spec.stepC} onChange={e => patchSpec({ stepC: +e.target.value as CeilingStep })}
+                        style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
+                        {CEILING_STEP_OPTIONS.map(s => <option key={s} value={s}>{s} мм</option>)}
+                      </select>
+                    )}
+                  </label>
+                </div>
+
+                {calcResult && (
+                  <div style={{ borderTop: '1px solid #eee', paddingTop: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#555', marginBottom: 6 }}>Материалы</div>
+                    <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                      <tbody>
+                        {calcResult.materials.map((m, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid #f3f3f3' }}>
+                            <td style={{ padding: '4px 0', color: '#444' }}>{m.name}</td>
+                            <td style={{ padding: '4px 0', textAlign: 'right', color: '#888' }}>{m.qty.toFixed(m.unit === 'шт' ? 0 : 2)} {m.unit}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <button onClick={() => { removeCeiling(cl.id); setInspectorCeilingId(null) }}
                   style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
                   🗑 Удалить
                 </button>
