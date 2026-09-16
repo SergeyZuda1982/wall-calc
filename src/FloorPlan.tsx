@@ -1892,9 +1892,19 @@ export default function FloorPlan() {
           ]
           chainLineIds.forEach(id => removePlanLine(id))
           const newId = addCeiling(outer)
-          setInspectorCeilingId(newId)
-          setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
-          setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
+          // 15.09.2026 (по просьбе Сергея): «Черновой» потолок (материал
+          // rough — голый конструктив, просто обеспыливание/покраска по
+          // месту, как в «Ведомости отделки» на объекте в Ростове для
+          // технических помещений) НЕ предполагает дальнейших работ по
+          // монтажу каркаса/ГКЛ — значит и панель с выбором конструкции
+          // (П112/П113/П131) открывать не нужно, это лишний шаг. Зона всё
+          // равно создаётся (площадь/документация, плоская плита в 3D без
+          // ceilingSpec) — просто без прыжка в инспектор.
+          if (drawSpec?.material !== 'rough') {
+            setInspectorCeilingId(newId)
+            setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
+            setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
+          }
           setDrawing(null)
           setChainStartPt(null)
           setChainLineIds([])
