@@ -9,6 +9,7 @@ import {
   effectiveCeilingSlopeHeightAtPoint,
   areaUnderProfileM2,
   resolveRibBeamDropMm,
+  ceilingMaterialForRoom,
 } from '../ceilingSlope'
 import type { CeilingSlope, PlanLine, Room, Slab, Ceiling } from '../../types'
 
@@ -280,6 +281,43 @@ describe('buildEffectiveCeilingSlopeResolver / effectiveCeilingSlopeHeightAtPoin
       const dropNearHighEnd = resolveRibBeamDropMm(3800, 500, 4000, 500, targetBottomMm, 999, [], [sl], [], [], [])
       expect(dropNearFlatEnd).toBeLessThan(dropNearHighEnd) // ригель у высокого края опускается сильнее
       expect(dropNearFlatEnd).toBeGreaterThan(0)
+    })
+  })
+
+  describe('ceilingMaterialForRoom (15.09.2026 — чек-лист последующих работ подстраивается под материал потолка)', () => {
+    const perim: PlanLine[] = [
+      { id: 'R1', x1: 0, y1: 0, x2: 2000, y2: 0, type: 'wall_existing', lengthMm: 2000, label: '' } as PlanLine,
+      { id: 'R2', x1: 2000, y1: 0, x2: 2000, y2: 2000, type: 'wall_existing', lengthMm: 2000, label: '' } as PlanLine,
+      { id: 'R3', x1: 2000, y1: 2000, x2: 0, y2: 2000, type: 'wall_existing', lengthMm: 2000, label: '' } as PlanLine,
+      { id: 'R4', x1: 0, y1: 2000, x2: 0, y2: 0, type: 'wall_existing', lengthMm: 2000, label: '' } as PlanLine,
+    ]
+    const room: Room = { id: 'ROOM1', lineIds: ['R1', 'R2', 'R3', 'R4'], areaM2: 4, perimeterMm: 8000, label: 'Комната' }
+
+    it('комната накрыта Ceiling-зоной с материалом — возвращает этот материал', () => {
+      const cl = { id: 'cl1', label: 'Потолок 1', outer: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }], material: 'suspended' } as Ceiling
+      expect(ceilingMaterialForRoom(room, perim, [cl])).toBe('suspended')
+    })
+
+    it('Ceiling-зона БЕЗ материала (свободная обводка «обвести потолок») — не даёт ответа', () => {
+      const cl = { id: 'cl1', label: 'Потолок 1', outer: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }] } as Ceiling
+      expect(ceilingMaterialForRoom(room, perim, [cl])).toBeUndefined()
+    })
+
+    it('комната НЕ накрыта никакой Ceiling-зоной — undefined', () => {
+      const cl = { id: 'cl1', label: 'Потолок далеко', outer: [{ x: 5000, y: 5000 }, { x: 6000, y: 5000 }, { x: 6000, y: 6000 }, { x: 5000, y: 6000 }], material: 'gkl' } as Ceiling
+      expect(ceilingMaterialForRoom(room, perim, [cl])).toBeUndefined()
+    })
+
+    it('незамкнутый/не найденный контур комнаты — undefined, не падает', () => {
+      const brokenRoom: Room = { id: 'ROOM1', lineIds: ['NOPE'], areaM2: 4, perimeterMm: 8000, label: 'Комната' }
+      const cl = { id: 'cl1', label: 'Потолок 1', outer: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }], material: 'gkl' } as Ceiling
+      expect(ceilingMaterialForRoom(brokenRoom, perim, [cl])).toBeUndefined()
+    })
+
+    it('несколько зон — берётся ПЕРВАЯ накрывающая комнату', () => {
+      const clA = { id: 'clA', label: 'A', outer: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }], material: 'rough' } as Ceiling
+      const clB = { id: 'clB', label: 'B', outer: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }], material: 'stretch' } as Ceiling
+      expect(ceilingMaterialForRoom(room, perim, [clA, clB])).toBe('rough')
     })
   })
 })

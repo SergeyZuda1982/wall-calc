@@ -342,6 +342,40 @@ describe('templatesForContext (07.09.2026 — фильтрация шаблон�
     expect(templatesForContext(all, 'finish_masonry')).toEqual([masonry, legacyCustom])
     expect(templatesForContext(all, 'floor')).toEqual([floor, legacyCustom])
   })
+
+  describe('ceilingMaterial (15.09.2026 — чек-лист потолка подстраивается под материал)', () => {
+    const ceilingGkl: WorkStageTemplate = { id: 'ceiling_gkl', label: 'ГКЛ потолок', context: 'ceiling', ceilingMaterial: ['gkl'], steps: [] }
+    const ceilingRough: WorkStageTemplate = { id: 'ceiling_rough', label: 'Черновой потолок', context: 'ceiling', ceilingMaterial: ['rough'], steps: [] }
+    const ceilingTurnkey: WorkStageTemplate = { id: 'ceiling_turnkey', label: 'Готовая система', context: 'ceiling', ceilingMaterial: ['suspended', 'stretch'], steps: [] }
+    const ceilingAny: WorkStageTemplate = { id: 'ceiling_custom', label: 'Мой шаблон потолка', context: 'ceiling', steps: [] } // без ceilingMaterial — подходит всем
+    const all = [ceilingGkl, ceilingRough, ceilingTurnkey, ceilingAny]
+
+    it('материал не передан — фильтр по материалу не сужает список (все шаблоны контекста ceiling)', () => {
+      expect(templatesForContext(all, 'ceiling')).toEqual(all)
+    })
+
+    it('материал gkl — только ceiling_gkl + шаблон без ceilingMaterial', () => {
+      expect(templatesForContext(all, 'ceiling', 'gkl')).toEqual([ceilingGkl, ceilingAny])
+    })
+
+    it('материал rough — только ceiling_rough + шаблон без ceilingMaterial', () => {
+      expect(templatesForContext(all, 'ceiling', 'rough')).toEqual([ceilingRough, ceilingAny])
+    })
+
+    it('материал suspended — ceiling_turnkey (список из двух материалов, содержит suspended) + шаблон без ceilingMaterial', () => {
+      expect(templatesForContext(all, 'ceiling', 'suspended')).toEqual([ceilingTurnkey, ceilingAny])
+    })
+
+    it('материал stretch — тот же ceiling_turnkey (второй материал в его списке) + шаблон без ceilingMaterial', () => {
+      expect(templatesForContext(all, 'ceiling', 'stretch')).toEqual([ceilingTurnkey, ceilingAny])
+    })
+
+    it('фильтр материала применяется ТОЛЬКО к context===\'ceiling\' — для других контекстов ceilingMaterial игнорируется', () => {
+      const floorWithCeilingMaterialTag: WorkStageTemplate = { id: 'weird', label: 'X', context: 'floor', ceilingMaterial: ['gkl'], steps: [] }
+      // Материал 'rough' не совпадает с тегом на этом шаблоне, но контекст floor — тег вообще не должен рассматриваться
+      expect(templatesForContext([floorWithCeilingMaterialTag], 'floor', 'rough')).toEqual([floorWithCeilingMaterialTag])
+    })
+  })
 })
 
 describe('baseZoneProgress / withBaseZoneProgress (07.09.2026 — зоны отделки FinishZone)', () => {

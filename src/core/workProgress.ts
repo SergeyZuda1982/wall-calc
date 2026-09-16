@@ -71,8 +71,32 @@ export function saveAsTemplate(progress: WorkProgress, templateId: string, label
  * контекст — иначе уже сохранённые Сергеем кастомные шаблоны молча исчезли
  * бы из выпадающих списков после этого изменения.
  */
-export function templatesForContext(templates: WorkStageTemplate[], context: WorkStageTemplateContext): WorkStageTemplate[] {
-  return templates.filter(t => !t.context || t.context === context)
+/**
+ * Фильтрует список шаблонов по контексту поверхности (07.09.2026) — стена
+ * не должна предлагать шаблоны пола и наоборот. Шаблоны БЕЗ context (старые
+ * пользовательские, сохранённые до появления этого поля) проходят в ЛЮБОЙ
+ * контекст — иначе уже сохранённые Сергеем кастомные шаблоны молча исчезли
+ * бы из выпадающих списков после этого изменения.
+ *
+ * ceilingMaterial (15.09.2026, необязательный) — дополнительная фильтрация
+ * ВНУТРИ context==='ceiling' по материалу потолка (см.
+ * ceilingMaterialForRoom в core/ceilingSlope.ts): шаблон с непустым
+ * WorkStageTemplate.ceilingMaterial показывается только если материал
+ * совпадает (или материал комнаты неизвестен — undefined, тогда фильтр
+ * материала не сужает список, безопасный дефолт, как и раньше). Шаблоны
+ * БЕЗ ceilingMaterial (в т.ч. все старые/кастомные) проходят всегда, тем
+ * же принципом, что и context выше.
+ */
+export function templatesForContext(
+  templates: WorkStageTemplate[], context: WorkStageTemplateContext, ceilingMaterial?: string,
+): WorkStageTemplate[] {
+  return templates.filter(t => {
+    if (t.context && t.context !== context) return false
+    if (context === 'ceiling' && ceilingMaterial && t.ceilingMaterial && t.ceilingMaterial.length > 0) {
+      return t.ceilingMaterial.includes(ceilingMaterial)
+    }
+    return true
+  })
 }
 
 /**
