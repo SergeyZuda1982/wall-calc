@@ -42,6 +42,7 @@ import type { ProjectSheetResult } from './core/calcProjectSheetLayout'
 import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
 import { slabToCeilingSeed } from './core/slabToCeilingSeed'
+import { computeSlabResidualPolygons, matchSlabZones } from './core/slabResidualZones'
 import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
 import { calcCeiling } from './core/calcCeiling'
 import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS } from './data/ceilingData'
@@ -458,6 +459,7 @@ export default function FloorPlan() {
   // работает как раньше, без изменений.
   const [combineSelection, setCombineSelection] = useState<Array<{ type: 'slab' | 'ceiling'; id: string }>>([])
   const [slabPointsOpenId, setSlabPointsOpenId] = useState<string | null>(null) // какая плита сейчас раскрыта для правки точек (x/y в мм)
+  const [slabZonesOpenId, setSlabZonesOpenId] = useState<string | null>(null) // какая плита сейчас раскрыта для просмотра неучтённых зон (18.09.2026)
   const toggleCombineSelection = (type: 'slab' | 'ceiling', id: string) => {
     setCombineSelection(prev => {
       const exists = prev.some(s => s.type === type && s.id === id)
@@ -3245,6 +3247,98 @@ export default function FloorPlan() {
                                   cursor: sl.outer.length > 3 ? 'pointer' : 'not-allowed', opacity: sl.outer.length > 3 ? 1 : 0.35,
                                 }}>
                                 ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Неучтённые зоны плиты (18.09.2026) — площадь Slab, не
+                          покрытая ни одним Room, с отдельным чек-листом на
+                          каждый несвязный кусок. См. core/slabResidualZones.ts —
+                          пересчёт только по явному клику, не на каждый рендер,
+                          чтобы не дёргать уже отмеченный прогресс. */}
+                      <div style={{ padding: '2px 8px 6px' }}>
+                        <button
+                          onClick={() => {
+                            const polys = computeSlabResidualPolygons(sl, rooms, lines)
+                            const nextZones = matchSlabZones(polys, sl.zones, scaleMmPx)
+                            updateSlab(sl.id, { zones: nextZones })
+                            setSlabZonesOpenId(sl.id)
+                          }}
+                          title="Посчитать площадь плиты, не покрытую ни одним Помещением, и разбить её на несвязные куски со своим чек-листом"
+                          style={{
+                            fontSize: 10, padding: '4px 8px', borderRadius: 3,
+                            border: '1px solid #3a6ea5', background: 'transparent', color: '#6fa8dc', cursor: 'pointer',
+                          }}>
+                          ⟲ Пересчитать зоны{sl.zones && sl.zones.some(z => z.live) ? ` (${sl.zones.filter(z => z.live).length})` : ''}
+                        </button>
+                        {sl.zones && sl.zones.length > 0 && (
+                          <button
+                            onClick={() => setSlabZonesOpenId(prev => prev === sl.id ? null : sl.id)}
+                            style={{
+                              fontSize: 10, padding: '4px 8px', marginLeft: 4, borderRadius: 3,
+                              border: '1px solid #3a4060', background: slabZonesOpenId === sl.id ? 'rgba(141,153,174,0.15)' : 'transparent',
+                              color: '#8a9ac8', cursor: 'pointer',
+                            }}>
+                            {slabZonesOpenId === sl.id ? 'скрыть зоны' : 'показать зоны'}
+                          </button>
+                        )}
+                      </div>
+                      {slabZonesOpenId === sl.id && sl.zones && sl.zones.length > 0 && (
+                        <div style={{ padding: '2px 10px 8px' }}>
+                          {sl.zones.map(zone => (
+                            <div key={zone.id} style={{
+                              marginBottom: 8, padding: 8, borderRadius: 4,
+                              border: zone.live ? '1px solid #3a4060' : '1px dashed #4a3a3a',
+                              opacity: zone.live ? 1 : 0.55,
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                                <input value={zone.label}
+                                  onChange={e => {
+                                    const next = (sl.zones ?? []).map(z => z.id === zone.id ? { ...z, label: e.target.value } : z)
+                                    updateSlab(sl.id, { zones: next })
+                                  }}
+                                  style={{ flex: 1, fontSize: 11, padding: '4px 6px', borderRadius: 3, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                                <span style={{ fontSize: 10, color: '#5c7a99', whiteSpace: 'nowrap' }}>{zone.areaM2} м²</span>
+                              </div>
+                              {!zone.live && (
+                                <div style={{ fontSize: 9, color: '#8a6d3b', marginBottom: 6 }}>
+                                  Не найдена в последнем пересчёте (накрыта Помещением) — прогресс сохранён на случай, если контур уберут обратно.
+                                </div>
+                              )}
+                              <WorkProgressChecklist
+                                label="Пол"
+                                progress={zone.floorProgress}
+                                templates={templatesForContext(allWorkStageTemplates, 'floor')}
+                                onChange={p => {
+                                  const next = (sl.zones ?? []).map(z => z.id === zone.id ? { ...z, floorProgress: p } : z)
+                                  updateSlab(sl.id, { zones: next })
+                                }}
+                                onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'floor' })}
+                              />
+                              <WorkProgressChecklist
+                                label="Потолок"
+                                progress={zone.ceilingProgress}
+                                templates={templatesForContext(allWorkStageTemplates, 'ceiling')}
+                                onChange={p => {
+                                  const next = (sl.zones ?? []).map(z => z.id === zone.id ? { ...z, ceilingProgress: p } : z)
+                                  updateSlab(sl.id, { zones: next })
+                                }}
+                                onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'ceiling' })}
+                              />
+                              <button
+                                onClick={() => {
+                                  if (window.confirm(`Удалить зону «${zone.label}»? Прогресс по ней будет потерян.`)) {
+                                    const next = (sl.zones ?? []).filter(z => z.id !== zone.id)
+                                    updateSlab(sl.id, { zones: next })
+                                  }
+                                }}
+                                style={{
+                                  marginTop: 4, fontSize: 9, padding: '3px 6px', borderRadius: 3,
+                                  border: '1px solid #7a3a3a', background: 'transparent', color: '#d98a8a', cursor: 'pointer',
+                                }}>
+                                ✕ удалить зону
                               </button>
                             </div>
                           ))}
