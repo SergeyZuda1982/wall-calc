@@ -34,7 +34,7 @@ import { useZoneDrawStore } from './store/useZoneDrawStore'
 import { useSlopePickStore } from './store/useSlopePickStore'
 import { calcStudMaterial } from './core/calcStudMaterial'
 import { calcProjectCutList } from './core/calcProjectCutList'
-import { calcProjectSheetLayout, buildSurfaceInputs } from './core/calcProjectSheetLayout'
+import { calcProjectSheetLayout, buildSurfaceInputs, buildCeilingSurfaceInputs } from './core/calcProjectSheetLayout'
 import { BAR_LENGTH, groupBars } from './core/cutList'
 import ProfileEditor from './components/ProfileEditor'
 import ProfileCanvasEditor from './components/ProfileCanvasEditor'
@@ -2310,8 +2310,13 @@ export default function App() {
             {/* ─── Раскрой листов объекта ─── */}
             {(() => {
               const surfaces = buildSurfaceInputs(walls, linings)
-              if (surfaces.length === 0) return null
-              const proj = calcProjectSheetLayout(surfaces)
+              // 18.09.2026: раньше потолки сюда не попадали вообще, хотя
+              // calcProjectSheetLayout это поддерживает — обнаружено при
+              // реализации сводной сметы (materials_qty), там уже считалось
+              // правильно. Просто забыли подключить в этом старом блоке.
+              const ceilingSurfaces = buildCeilingSurfaceInputs(ceilings, floorPlan.scaleMmPerPx || 1)
+              if (surfaces.length === 0 && ceilingSurfaces.length === 0) return null
+              const proj = calcProjectSheetLayout(surfaces, ceilingSurfaces)
               const offcuts = [...proj.finalOffcuts].sort((a, b) => b.w * b.h - a.w * a.h)
               const offcutM2 = offcuts.reduce((s, o) => s + o.w * o.h / 1e6, 0)
               return (
