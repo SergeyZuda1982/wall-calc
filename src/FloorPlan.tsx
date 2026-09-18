@@ -31,7 +31,7 @@ import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentRe
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
 import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrameEstimate'
-import { buildCeilingProfilesByLineId, areaUnderProfileM2, resolveRibBeamDropMm } from './core/ceilingSlope'
+import { buildCeilingProfilesByLineId, areaUnderProfileM2, resolveRibBeamDropMm, ceilingMaterialForRoom } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf, resolveFinishZones, finishTemplateContextOf } from './core/finishResolver'
 import { reverseLineDirection } from './core/lineReverse'
@@ -59,6 +59,23 @@ const CANVAS_H   = 520
 const SNAP_SCREEN_PX = 24   // порог снапа в экранных пикселях (увеличен для тач-устройств — нет hover перед тапом)
 const CHAIN_SNAP_SCREEN_PX = 34   // ещё более терпимый порог для продолжения цепочки от конца предыдущей линии
 const DRAG_THRESHOLD = 4
+
+/**
+ * Материалы потолка (верхний уровень дерева в data/constructionTaxonomy.ts,
+ * ветка ceiling), для которых каркасные системы Knauf (П112/П113/П131,
+ * CeilingSpec.type) в принципе НЕ ПРИМЕНИМЫ — 15.09.2026, по просьбе
+ * Сергея:
+ *  - 'rough' (Черновой — голый конструктив, обеспыливание/покраска по
+ *    месту, каркаса нет вообще);
+ *  - 'suspended' (Подвесной — Армстронг/Реечный/Грильято/Кубота, готовая
+ *    система на своей металлической решётке, не ГКЛ-каркас);
+ *  - 'stretch' (Натяжной — готовое полотно).
+ * 'gkl' сюда осознанно НЕ входит — это единственный материал, для
+ * которого П112/П113/П131 реально нужны. Используется при замыкании
+ * контура потолка (drawType==='ceiling'), чтобы решить, открывать ли
+ * панель выбора конструкции — см. handleStageClick.
+ */
+const CEILING_MATERIALS_WITHOUT_FRAME: readonly string[] = ['rough', 'suspended', 'stretch']
 
 const LINE_COLORS: Record<PlanLineType, string> = {
   wall_new:      '#e53935',
@@ -1891,16 +1908,18 @@ export default function FloorPlan() {
             }),
           ]
           chainLineIds.forEach(id => removePlanLine(id))
-          const newId = addCeiling(outer)
-          // 15.09.2026 (по просьбе Сергея): «Черновой» потолок (материал
-          // rough — голый конструктив, просто обеспыливание/покраска по
-          // месту, как в «Ведомости отделки» на объекте в Ростове для
-          // технических помещений) НЕ предполагает дальнейших работ по
-          // монтажу каркаса/ГКЛ — значит и панель с выбором конструкции
-          // (П112/П113/П131) открывать не нужно, это лишний шаг. Зона всё
+          const newId = addCeiling(outer, drawSpec?.material)
+          // 15.09.2026 (по просьбе Сергея): материалы, для которых П112/
+          // П113/П131 (ГКЛ-каркасные системы Knauf) в принципе не
+          // применимы — «Черновой» (нет каркаса вообще, только
+          // обеспыливание/покраска по месту) и «Подвесной»/«Натяжной»
+          // (готовые системы — Армстронг/Реечный/Грильято/Кубота/Натяжной:
+          // после монтажа ничего не следует, ни малярки, ни ГКЛ-работ,
+          // просто «готово/не готово», см. CEILING_MATERIALS_WITHOUT_FRAME
+          // ниже) — для них панель выбора конструкции лишняя. Зона всё
           // равно создаётся (площадь/документация, плоская плита в 3D без
           // ceilingSpec) — просто без прыжка в инспектор.
-          if (drawSpec?.material !== 'rough') {
+          if (!drawSpec || !CEILING_MATERIALS_WITHOUT_FRAME.includes(drawSpec.material)) {
             setInspectorCeilingId(newId)
             setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
             setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
@@ -6427,7 +6446,7 @@ export default function FloorPlan() {
                     <WorkProgressChecklist
                       label="Потолок"
                       progress={room.ceilingProgress}
-                      templates={templatesForContext(allWorkStageTemplates, 'ceiling')}
+                      templates={templatesForContext(allWorkStageTemplates, 'ceiling', ceilingMaterialForRoom(room, lines, ceilings))}
                       onChange={p => updateRoom(room.id, { ceilingProgress: p })}
                       onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'ceiling' })}
                     />

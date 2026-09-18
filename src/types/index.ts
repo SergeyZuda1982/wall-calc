@@ -650,6 +650,15 @@ export interface WorkStageTemplate {
   /** Не задано — шаблон показывается в ЛЮБОМ контексте (совместимость со
    *  старыми пользовательскими шаблонами, сохранёнными до появления этого поля). */
   context?: WorkStageTemplateContext
+  /**
+   * НОВОЕ (15.09.2026) — для context==='ceiling' сужает шаблон до
+   * конкретных материалов потолка (data/constructionTaxonomy.ts, ветка
+   * ceiling: 'rough' | 'gkl' | 'suspended' | 'stretch'), см.
+   * ceilingMaterialForRoom()/templatesForContext() в core/. Не задано —
+   * шаблон подходит для ЛЮБОГО материала (старые пользовательские шаблоны
+   * и context !== 'ceiling' — эта возможность их не касается).
+   */
+  ceilingMaterial?: string[]
   steps: WorkStageTemplateStep[]
 }
 
@@ -870,6 +879,21 @@ export interface Ceiling {
    * та же плоскость, тот же смысл полей).
    */
   slope?: SlopePlane
+  /**
+   * НОВОЕ (15.09.2026, по просьбе Сергея) — материал верхнего уровня
+   * дерева потолков (data/constructionTaxonomy.ts, ветка ceiling: 'rough'
+   * | 'gkl' | 'suspended' | 'stretch'), скопированный из drawSpec.material
+   * в момент замыкания контура (см. FloorPlan.tsx, drawType==='ceiling').
+   * Не задано — материал неизвестен (свободная обводка «обвести потолок»
+   * его не задаёт вовсе, mode==='ceiling', там нет дерева материалов).
+   * Единственное текущее применение — core/workProgress.ts,
+   * ceilingMaterialForRoom()/templatesForContext(): чек-лист последующих
+   * работ комнаты (Room.ceilingProgress) подбирается по материалу
+   * ближайшей накрывающей Ceiling-зоны, тем же способом, что и уклон
+   * (см. slopeFromCoveringEntity в core/ceilingSlope.ts) — просто ищет
+   * material вместо slope.
+   */
+  material?: string
 }
 
 /**
