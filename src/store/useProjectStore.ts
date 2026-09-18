@@ -196,7 +196,7 @@ export interface ProjectStore {
   // плиты (пол/потолок этажа) — свободный контур + вырезы
   addSlab: (outer: { x: number; y: number }[]) => string
   removeSlab: (id: string) => void
-  addCeiling: (outer: { x: number; y: number }[]) => string
+  addCeiling: (outer: { x: number; y: number }[], material?: string) => string
   removeCeiling: (id: string) => void
   updateCeilingOuter: (id: string, outer: { x: number; y: number }[]) => void
   updateCeiling: (id: string, patch: Partial<Ceiling>) => void
@@ -1044,11 +1044,11 @@ export const useProjectStore = create<ProjectStore>()(
 
       // ─── Потолки (отдельная от Плиты сущность, 10.07.2026 — см. types/index.ts) ──
 
-      addCeiling: (outer) => {
+      addCeiling: (outer, material) => {
         const id = `cl_${Date.now()}_${Math.random().toString(36).slice(2)}`
         set(s => {
           const count = (s.floorPlan?.ceilings ?? []).length + 1
-          const newCeiling: Ceiling = { id, outer, label: `Потолок ${count}` }
+          const newCeiling: Ceiling = { id, outer, label: `Потолок ${count}`, ...(material ? { material } : {}) }
           return updateActiveFloorPlan(s, fp => ({ ...fp, ceilings: [...(fp.ceilings ?? []), newCeiling] }))
         })
         return id

@@ -22,7 +22,7 @@ import { WorkProgressChecklist } from './components/WorkProgressChecklist'
 import { BUILTIN_WORK_STAGE_TEMPLATES } from './data/workStageTemplates'
 import { lineProgressColor, lineProgressSummary } from './core/lineProgress'
 import { aggregateProgressPercent, templatesForContext, baseZoneProgress, withBaseZoneProgress, removeZone } from './core/workProgress'
-import { useTemplateStore } from './store/useTemplateStore'
+import { useTemplateStore, type Template } from './store/useTemplateStore'
 import {
   rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
 } from './core/columnStamp'
@@ -31,7 +31,7 @@ import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentRe
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
 import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrameEstimate'
-import { buildCeilingProfilesByLineId, areaUnderProfileM2 } from './core/ceilingSlope'
+import { buildCeilingProfilesByLineId, areaUnderProfileM2, resolveRibBeamDropMm, ceilingMaterialForRoom } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf, resolveFinishZones, finishTemplateContextOf } from './core/finishResolver'
 import { reverseLineDirection } from './core/lineReverse'
@@ -43,6 +43,9 @@ import { extractContourPoints } from './core/contour'
 import { arcFromChordAndSagitta, arcLengthFromSagitta, sampleArcPoints, sagittaFromRadius, infiniteLineIntersection, openingOffsetFromClick } from './core/geometry2d'
 import { slabToCeilingSeed } from './core/slabToCeilingSeed'
 import { ceilingToCeilingSeed } from './core/ceilingToCeilingSeed'
+import { calcCeiling } from './core/calcCeiling'
+import { CEILING_TYPE_LABELS, CEILING_STEP_OPTIONS } from './data/ceilingData'
+import type { CeilingSpec, CeilingType, CeilingLayers, CeilingMaterial, CeilingSheetThickness, CeilingStep } from './data/ceilingData'
 import { roomToCeilingSeed } from './core/roomToCeilingSeed'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import { useZoneDrawStore } from './store/useZoneDrawStore'
@@ -56,6 +59,23 @@ const CANVAS_H   = 520
 const SNAP_SCREEN_PX = 24   // порог снапа в экранных пикселях (увеличен для тач-устройств — нет hover перед тапом)
 const CHAIN_SNAP_SCREEN_PX = 34   // ещё более терпимый порог для продолжения цепочки от конца предыдущей линии
 const DRAG_THRESHOLD = 4
+
+/**
+ * Материалы потолка (верхний уровень дерева в data/constructionTaxonomy.ts,
+ * ветка ceiling), для которых каркасные системы Knauf (П112/П113/П131,
+ * CeilingSpec.type) в принципе НЕ ПРИМЕНИМЫ — 15.09.2026, по просьбе
+ * Сергея:
+ *  - 'rough' (Черновой — голый конструктив, обеспыливание/покраска по
+ *    месту, каркаса нет вообще);
+ *  - 'suspended' (Подвесной — Армстронг/Реечный/Грильято/Кубота, готовая
+ *    система на своей металлической решётке, не ГКЛ-каркас);
+ *  - 'stretch' (Натяжной — готовое полотно).
+ * 'gkl' сюда осознанно НЕ входит — это единственный материал, для
+ * которого П112/П113/П131 реально нужны. Используется при замыкании
+ * контура потолка (drawType==='ceiling'), чтобы решить, открывать ли
+ * панель выбора конструкции — см. handleStageClick.
+ */
+const CEILING_MATERIALS_WITHOUT_FRAME: readonly string[] = ['rough', 'suspended', 'stretch']
 
 const LINE_COLORS: Record<PlanLineType, string> = {
   wall_new:      '#e53935',
@@ -368,6 +388,16 @@ export default function FloorPlan() {
   )
 
   const { templates, addTemplate, removeTemplate } = useTemplateStore()
+  // 13.09.2026 — раздельные списки для панелей «Шаблоны колонн»/«Шаблоны
+  // ригелей»: явные type-guard функции (не просто .filter(t => t.kind===...))
+  // нужны, чтобы TS сузил union и дальше в JSX можно было спокойно читать
+  // t.widthMm/t.diameterMm/t.sectionWidthMm без повторных проверок kind.
+  const columnTemplates = templates.filter(
+    (t): t is Extract<Template, { kind: 'rectColumn' | 'roundColumn' }> => t.kind === 'rectColumn' || t.kind === 'roundColumn',
+  )
+  const ribBeamTemplates = templates.filter(
+    (t): t is Extract<Template, { kind: 'ribBeam' }> => t.kind === 'ribBeam',
+  )
 
   const lines     = floorPlan?.lines    ?? []
   const contours  = floorPlan?.contours ?? []
@@ -410,6 +440,11 @@ export default function FloorPlan() {
   const [inspectorArcDeep, setInspectorArcDeep] = useState(false)  // то же самое, но для поля R в инспекторе
   const [drawRibWidthMm, setDrawRibWidthMm] = useState('300')  // ригель: ширина сечения по плану, мм
   const [drawRibDropMm, setDrawRibDropMm]   = useState('200')  // ригель: опускание низа от плиты перекрытия, мм
+  // 13.09.2026 — авторасчёт опускания ригеля от уклона плиты: если задано,
+  // dropMm при коммите линии считается как (высота плиты/потолка в средней
+  // точке ригеля) − это значение, вместо буквального drawRibDropMm. Пусто
+  // (по умолчанию) — старое ручное поведение, drawRibDropMm как есть.
+  const [drawRibTargetBottomMm, setDrawRibTargetBottomMm] = useState('')
   const [pencilPts, setPencilPts] = useState<{ x: number; y: number }[]>([])       // карандаш: накопленные точки контура
   const [pencilHoleTargetId, setPencilHoleTargetId] = useState<string | null>(null) // если задано — рисуем дырку В этой плите, а не новую плиту
   // Точный ввод длины следующего отрезка карандаша (01.09.2026) — направление
@@ -568,6 +603,15 @@ export default function FloorPlan() {
   // нему подсвечивает фигуру и разворачивает/подсвечивает её строку в
   // боковой панели (там уже есть «→ Потолок» для смены типа конструкции
   // без удаления, «✎ точки», «📐 уклон» и «✕» удалить).
+  //
+  // 14-15.09.2026: помимо подсветки строки слева, тот же inspectorCeilingId
+  // ТЕПЕРЬ ЕЩЁ И открывает полноценную ПРАВУЮ панель (см. ниже, зеркало
+  // inspectorLine у стен) — инлайн выбор типа П112/П113/П131+слои+материал
+  // с автоматическим расчётом материалов на месте (calcCeiling), без
+  // обязательного перехода на вкладку калькулятора (по жалобе пользователя
+  // на неудобный авто-прыжок при замыкании контура — теперь замыкание
+  // контура тоже просто ставит inspectorCeilingId вместо прыжка). Оба
+  // реагирования на один и тот же id не конфликтуют — независимые части UI.
   const [inspectorSlabId, setInspectorSlabId] = useState<string | null>(null)
   const [inspectorCeilingId, setInspectorCeilingId] = useState<string | null>(null)
   // Автоскролл боковой панели к строке Плиты/Потолка при выборе через
@@ -1054,6 +1098,54 @@ export default function FloorPlan() {
     const diameterMm = parseFloat(window.prompt('Диаметр, мм:', '400') || '')
     if (!(diameterMm > 0)) { window.alert('Диаметр должен быть положительным числом.'); return }
     addTemplate({ kind: 'roundColumn', name, diameterMm })
+  }
+
+  // ── Шаблоны ригеля (13.09.2026) — только сечение (sectionWidthMm), у
+  // ригеля нет spec (см. useTemplateStore.ts). В отличие от шаблонов
+  // колонны, выбор ЭТОГО шаблона не входит в mode:'stamp' (ригель — линия
+  // с двумя концами, не точка) — вместо этого просто переключает обычный
+  // режим рисования линии (mode:'draw', drawType:'rib_beam') с уже
+  // подставленной шириной, тем же путём, что и раньше без шаблона.
+  function selectRibBeamTemplate(id: string) {
+    const tpl = templates.find(t => t.id === id)
+    if (!tpl || tpl.kind !== 'ribBeam') return
+    setDrawRibWidthMm(String(tpl.sectionWidthMm))
+    setDrawType('rib_beam')
+    setDrawSpec(null)
+    setMode('draw')
+    if (isMobile) setMobileLeftOpen(false)
+  }
+
+  function createRibBeamTemplateFromScratch() {
+    const name = window.prompt('Название шаблона:', 'Ригель')
+    if (!name) return
+    const sectionWidthMm = parseFloat(window.prompt('Сечение (ширина по плану), мм:', '300') || '')
+    if (!(sectionWidthMm > 0)) { window.alert('Сечение должно быть положительным числом.'); return }
+    addTemplate({ kind: 'ribBeam', name, sectionWidthMm })
+  }
+
+  // Сохранить сечение ТЕКУЩЕГО значения поля «Сечение» как шаблон — удобнее,
+  // чем пересоздавать те же цифры заново через createRibBeamTemplateFromScratch,
+  // когда уже нарисовал пару ригелей и понял, что сечение на объекте одно и то же.
+  function saveCurrentRibWidthAsTemplate() {
+    const sectionWidthMm = parseFloat(drawRibWidthMm) || 0
+    if (!(sectionWidthMm > 0)) { window.alert('Сечение должно быть положительным числом.'); return }
+    const name = window.prompt('Название шаблона:', `Ригель ${sectionWidthMm}мм`)
+    if (!name) return
+    addTemplate({ kind: 'ribBeam', name, sectionWidthMm })
+  }
+
+  // 13.09.2026 — тонкая обёртка над resolveRibBeamDropMm (core/ceilingSlope.ts,
+  // вынесена туда ради тестируемости) — парсит текстовое поле и подставляет
+  // компонентное состояние (lines/slabs/ceilings/ceilingSlopes/rooms).
+  function resolveRibDropMm(x1: number, y1: number, x2: number, y2: number): number {
+    const manual = parseFloat(drawRibDropMm) || 200
+    const targetBottomMm = parseFloat(drawRibTargetBottomMm)
+    return resolveRibBeamDropMm(
+      x1, y1, x2, y2,
+      Number.isFinite(targetBottomMm) ? targetBottomMm : undefined, manual,
+      lines, slabs, ceilings, ceilingSlopes, rooms,
+    )
   }
 
   // Сохранение шаблона от прямоугольной колонны-СУЩНОСТИ (RectColumn, с 05.07.2026).
@@ -1557,6 +1649,11 @@ export default function FloorPlan() {
 
       // Прямоугольная колонна: 1-й клик — центр (Ctrl — снап в ряд с соседними
       // колоннами), 2-й — угол поворота (Shift/⊾90° — привязка к 15°)
+      // 13.09.2026: ribBeam-шаблоны сюда попасть не должны в принципе — выбор
+      // такого шаблона переключает на обычный режим рисования линии (mode
+      // 'draw'), а не 'stamp' (см. выбор шаблона ригеля ниже в файле). Защитный
+      // guard — на случай рассинхрона состояния (напр. смена вкладки посреди клика).
+      if (tpl.kind !== 'rectColumn') return
       if (!stampCenter) {
         const pt = applySnap(pos.x, pos.y)
         const ctrlHeld = ctrlDown || ('ctrlKey' in e.evt && e.evt.ctrlKey) || ('metaKey' in e.evt && e.evt.metaKey)
@@ -1614,7 +1711,13 @@ export default function FloorPlan() {
       if (closing) {
         const newId = addCeiling(ceilingPts)
         setCeilingPts([])
-        sendNewCeilingToCalc(newId)
+        // 14.09.2026: раньше сразу прыгало в полный калькулятор — неудобно
+        // (жалоба пользователя), теперь открываем боковую панель тут же на
+        // плане (тот же принцип, что у стен/облицовок), полный калькулятор —
+        // по явному клику на кнопку внутри панели.
+        setInspectorCeilingId(newId)
+        setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
+        setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
         return
       }
       const hitIdx = ceilingPts.findIndex((p, i) => i > 0 && dist(pos.x, pos.y, p.x, p.y) <= closeThresh)
@@ -1790,11 +1893,13 @@ export default function FloorPlan() {
           // линии). Теперь замкнутая цепочка становится ОДНИМ объектом
           // Ceiling — та же сущность и тот же путь дальше (выбор
           // П112/П113/П131+слои+лист), что и у свободной обводки «обвести
-          // потолок» (mode==='ceiling' выше) — переиспользуем addCeiling/
-          // sendNewCeilingToCalc целиком. Линии, уже созданные кликами во
-          // время рисования (нужны были только как визуальный каркас со
-          // снэпом к углам стен) — удаляются, самостоятельного смысла как
-          // отдельные "конструкции" не несут.
+          // потолок» (mode==='ceiling' выше) — переиспользуем addCeiling.
+          // Линии, уже созданные кликами во время рисования (нужны были
+          // только как визуальный каркас со снэпом к углам стен) —
+          // удаляются, самостоятельного смысла как отдельные "конструкции"
+          // не несут. 14.09.2026: сразу в полный калькулятор больше НЕ
+          // прыгаем (неудобно) — открываем боковую панель на плане (см.
+          // inspectorCeilingId ниже), тот же принцип, что и у стен.
           const outer = [
             { x: chainStartPt!.x, y: chainStartPt!.y },
             ...chainLineIds.map(id => {
@@ -1803,8 +1908,22 @@ export default function FloorPlan() {
             }),
           ]
           chainLineIds.forEach(id => removePlanLine(id))
-          const newId = addCeiling(outer)
-          sendNewCeilingToCalc(newId)
+          const newId = addCeiling(outer, drawSpec?.material)
+          // 15.09.2026 (по просьбе Сергея): материалы, для которых П112/
+          // П113/П131 (ГКЛ-каркасные системы Knauf) в принципе не
+          // применимы — «Черновой» (нет каркаса вообще, только
+          // обеспыливание/покраска по месту) и «Подвесной»/«Натяжной»
+          // (готовые системы — Армстронг/Реечный/Грильято/Кубота/Натяжной:
+          // после монтажа ничего не следует, ни малярки, ни ГКЛ-работ,
+          // просто «готово/не готово», см. CEILING_MATERIALS_WITHOUT_FRAME
+          // ниже) — для них панель выбора конструкции лишняя. Зона всё
+          // равно создаётся (площадь/документация, плоская плита в 3D без
+          // ceilingSpec) — просто без прыжка в инспектор.
+          if (!drawSpec || !CEILING_MATERIALS_WITHOUT_FRAME.includes(drawSpec.material)) {
+            setInspectorCeilingId(newId)
+            setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
+            setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
+          }
           setDrawing(null)
           setChainStartPt(null)
           setChainLineIds([])
@@ -1827,7 +1946,7 @@ export default function FloorPlan() {
             spec: drawSpec ? { ...drawSpec, step: parseFloat(drawStep) || 600, layer1: drawLayer1, layer2: drawLayer2 } : undefined,
             heightMm: parseFloat(drawHeightMm) || 3000,
             category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
-            ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: parseFloat(drawRibDropMm) || 200 } : {}),
+            ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: resolveRibDropMm(drawing.x1, drawing.y1, chainStartPt!.x, chainStartPt!.y) } : {}),
             ...(sagittaMm ? { sagittaMm } : {}),
           })
           allLineIds = [...allLineIds, closingId]
@@ -1874,7 +1993,7 @@ export default function FloorPlan() {
           x1: drawing.x1, y1: drawing.y1, x2: pt.x, y2: pt.y, type: drawType, lengthMm, label,
           spec: drawSpec ? { ...drawSpec, step: parseFloat(drawStep) || 600, layer1: drawLayer1, layer2: drawLayer2 } : undefined, heightMm: parseFloat(drawHeightMm) || 3000,
           category: defaultCategory(drawType), workStatus: defaultStatus(defaultCategory(drawType)),
-          ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: parseFloat(drawRibDropMm) || 200 } : {}),
+          ...(drawType === 'rib_beam' ? { sectionWidthMm: parseFloat(drawRibWidthMm) || 300, dropMm: resolveRibDropMm(drawing.x1, drawing.y1, pt.x, pt.y) } : {}),
           ...(sagittaMm ? { sagittaMm } : {}),
         })
         setChainLineIds(prev => [...prev, newId])
@@ -1898,7 +2017,7 @@ export default function FloorPlan() {
       return
     }
     if (mode === 'select') { setSelected(null); setSelectedOpening(null) }
-  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, ceilingPts, addCeiling, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline, slopePts])
+  }, [mode, drawing, lines, scaleMmPx, drawType, drawSpec, drawHeightMm, drawSagittaMm, drawArcMode, drawRadiusMm, drawArcDeep, drawRibWidthMm, drawRibDropMm, drawRibTargetBottomMm, slabs, ceilings, ceilingSlopes, rooms, drawStep, drawLayer1, drawLayer2, scaleStep, orthoMode, addPlanLine, removePlanLine, pencilPts, pencilHoleTargetId, addSlab, addSlabHole, ceilingPts, addCeiling, templates, stampTemplateId, stampCenter, addRoundColumn, addRectColumn, addRoom, ctrlDown, existingColumnCenters, freeformPts, freeformKind, freeformStructures, addFreeformStructure, openingTargetFreeformId, addFreeformOpening, mepRoutePts, activeDiscipline, slopePts])
 
   const handleLinePointerDown = useCallback((id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     // В режимах рисования/калибровки клик по уже нарисованной линии — это не выбор
@@ -2833,6 +2952,67 @@ export default function FloorPlan() {
                 style={{ width: 60, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
               <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм от потолка</span>
             </div>
+            {/* 13.09.2026 — авторасчёт опускания от уклона плиты (объект в
+                Ростове: общая нижняя отметка ригелей при разной высоте плиты
+                на ровном/наклонном участках). Если заполнено — ПЕРЕБИВАЕТ
+                поле «Опускание» выше при следующем коммите линии; поле
+                «Опускание» остаётся как откат, если в этой точке нет
+                применимого уклона (Плиты/Потолка/зоны). */}
+            <div style={{ padding: '0 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: '#8a9ac8', whiteSpace: 'nowrap' }} title="Опускание посчитается само из высоты плиты над серединой ригеля минус это значение — так низ у всех ригелей выходит на одну отметку, даже если плита разной высоты">
+                Держать низ на отм.:
+              </span>
+              <input type="number" value={drawRibTargetBottomMm}
+                onChange={e => setDrawRibTargetBottomMm(e.target.value)}
+                placeholder="откл."
+                style={{ width: 60, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+              <span style={{ fontSize: 11, color: '#8a9ac8' }}>мм</span>
+            </div>
+
+            {/* Шаблоны ригелей — та же библиотека (useTemplateStore), что и
+                у колонн, но выбор шаблона НЕ входит в mode:'stamp' (ригель —
+                линия с двумя концами, не точка) — просто подставляет ширину
+                и включает обычное рисование линии, см. selectRibBeamTemplate. */}
+            <div style={{ padding: '4px 14px 2px', fontSize: 10, color: '#8a9ac8', opacity: 0.8 }}>Шаблоны ригелей</div>
+            {ribBeamTemplates.length > 0 && (
+              <div style={{ padding: '2px 14px 6px' }}>
+                {ribBeamTemplates.map(t => (
+                  <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+                    <button
+                      onClick={() => selectRibBeamTemplate(t.id)}
+                      style={{
+                        flex: 1, textAlign: 'left', padding: '5px 8px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                        border: (mode === 'draw' && drawType === 'rib_beam' && drawRibWidthMm === String(t.sectionWidthMm)) ? '1px solid #c5a880' : '1px solid #3a4060',
+                        background: 'transparent', color: '#8a9ac8',
+                      }}>
+                      <span style={{ marginRight: 6 }}>▬</span>
+                      {t.name}
+                      <span style={{ opacity: 0.75 }}> {t.sectionWidthMm} мм</span>
+                    </button>
+                    <button
+                      title="Удалить шаблон"
+                      onClick={() => {
+                        if (window.confirm(`Удалить шаблон «${t.name}»? Уже нарисованные ригели не тронет.`)) removeTemplate(t.id)
+                      }}
+                      style={{
+                        padding: '5px 7px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                        border: '1px solid #3a4060', background: 'transparent', color: '#8a9ac8',
+                      }}>🗑</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 4, padding: '0 14px 8px' }}>
+              <button onClick={createRibBeamTemplateFromScratch}
+                style={{ flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer', border: '1px dashed #c5a880', background: 'transparent', color: '#c5a880' }}>
+                + ▬ новый
+              </button>
+              <button onClick={saveCurrentRibWidthAsTemplate}
+                title="Сохранить текущее значение поля «Сечение» выше как шаблон"
+                style={{ flex: 1, fontSize: 11, padding: '5px 0', borderRadius: 4, cursor: 'pointer', border: '1px dashed #c5a880', background: 'transparent', color: '#c5a880' }}>
+                💾 из поля
+              </button>
+            </div>
           </div>
 
           {/* Карандаш — свободный контур плиты (пол/потолок этажа) + вырезание
@@ -2946,7 +3126,7 @@ export default function FloorPlan() {
                         {sl.label} {sl.holes.length > 0 && `(${sl.holes.length} проём${sl.holes.length > 1 ? 'а' : ''})`}
                         {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
                       </button>
-                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px', alignItems: 'center', flexWrap: 'wrap' as const }}>
                         <label title="Отметить для объединения нескольких зон в один расчёт потолка"
                           style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                           <input type="checkbox"
@@ -3124,7 +3304,7 @@ export default function FloorPlan() {
                         {cl.label}
                         {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
                       </div>
-                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px', alignItems: 'center', flexWrap: 'wrap' as const }}>
                         <label title="Отметить для объединения нескольких зон в один расчёт потолка"
                           style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                           <input type="checkbox"
@@ -3542,15 +3722,15 @@ export default function FloorPlan() {
               на плане (материал у такого шаблона донастраивается уже после штамповки). */}
           <div>
             <div style={{ ...sectionHeaderStyle, color: '#c5a880' }}>Шаблоны колонн</div>
-            {templates.length === 0 && (
+            {columnTemplates.length === 0 && (
               <div style={{ padding: '2px 14px 6px', fontSize: 10, color: '#8a9ac8', lineHeight: 1.4 }}>
                 Пока пусто. Создайте шаблон кнопками ниже, либо выделите уже
                 нарисованную колонну и нажмите «Сохранить как шаблон» в её панели.
               </div>
             )}
-            {templates.length > 0 && (
+            {columnTemplates.length > 0 && (
               <div style={{ padding: '2px 14px 8px' }}>
-                {templates.map(t => (
+                {columnTemplates.map(t => (
                   <div key={t.id} style={{
                     display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3,
                   }}>
@@ -5104,6 +5284,10 @@ export default function FloorPlan() {
 
                     // rectColumn: до 1-го клика — превью по курсору (с учётом снапа
                     // в ряд) без поворота; после — крутится вокруг зафиксированного center
+                    // 13.09.2026: ribBeam сюда попасть не должен (не 'stamp'-режим,
+                    // см. защитный guard в handleStageClick) — явный guard и здесь,
+                    // чтобы TS корректно сузил tpl.kind и для читаемости кода.
+                    if (tpl.kind !== 'rectColumn') return null
                     const center = stampCenter ?? previewCursor
                     let angle = stampCenter ? angleTo(stampCenter.x, stampCenter.y, cursor.x, cursor.y) : 0
                     if (stampCenter && orthoMode) angle = snapAngleToStep(angle, 15)
@@ -5417,8 +5601,12 @@ export default function FloorPlan() {
                       : null
                     return (
                       <tr key={cl.id}
-                        onClick={() => sendNewCeilingToCalc(cl.id)}
-                        style={{ cursor: 'pointer', background: 'transparent', borderBottom: '1px solid #f0f0f0' }}>
+                        onClick={() => {
+                          setInspectorCeilingId(cl.id)
+                          setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null)
+                          setInspectorRectColumnId(null); setInspectorFreeformId(null); setInspectorSlabId(null)
+                        }}
+                        style={{ cursor: 'pointer', background: cl.id === inspectorCeilingId ? '#eef2ff' : 'transparent', borderBottom: '1px solid #f0f0f0' }}>
                         <td style={tdS}>{lines.filter(l => l.type !== 'rib_beam').length + i + 1}</td>
                         <td style={tdS}>
                           <span style={{ color: '#c9a68a', fontWeight: 600 }}>{cl.label}</span>
@@ -6258,7 +6446,7 @@ export default function FloorPlan() {
                     <WorkProgressChecklist
                       label="Потолок"
                       progress={room.ceilingProgress}
-                      templates={templatesForContext(allWorkStageTemplates, 'ceiling')}
+                      templates={templatesForContext(allWorkStageTemplates, 'ceiling', ceilingMaterialForRoom(room, lines, ceilings))}
                       onChange={p => updateRoom(room.id, { ceilingProgress: p })}
                       onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'ceiling' })}
                     />
@@ -6530,6 +6718,151 @@ export default function FloorPlan() {
                   контура.
                 </div>
                 <button onClick={() => { removeFreeformStructure(fs.id); setInspectorFreeformId(null) }}
+                  style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
+                  🗑 Удалить
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* 14.09.2026: Ceiling (потолок, свободный контур/замкнутая цепочка
+            "потолочных" линий) — по просьбе пользователя больше НЕ кидает
+            автоматически в полный калькулятор (CeilingCalc.tsx) при
+            замыкании контура, вместо этого открывается ЭТА боковая панель —
+            тот же принцип, что и у стен/облицовок (inspectorLine ниже):
+            выбрал тип (П112/П113/П131) — применил — расчёт материалов
+            посчитан сразу тут же (calcCeiling, тот же движок, что и у
+            полного калькулятора). "Открыть в полном калькуляторе" — теперь
+            ТОЛЬКО по явному клику на кнопку (нужен для тонкой настройки:
+            направление монтажа, класс нагрузки, шаг подвесов вручную,
+            превью раскроя листов и т.п. — здесь этого нет, сознательно
+            компактная версия). */}
+        {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && !inspectorRectColumnId && !inspectorFreeformId && !inspectorSlabId && inspectorCeilingId && (() => {
+          const cl = ceilings.find(c => c.id === inspectorCeilingId)
+          if (!cl) return null
+          const seed = ceilingToCeilingSeed(cl, scaleMmPx)
+          const areaSqm = seed?.areaSqm ?? 0
+          const perimeterM = seed?.perimeterM ?? 0
+          const spec: CeilingSpec = cl.ceilingSpec
+            ? { ...cl.ceilingSpec, areaSqm, perimeterM }
+            : { type: 'p112', layers: 1, material: 'gsp', thickness: 12.5, stepC: 600, areaSqm, perimeterM }
+          const patchSpec = (patch: Partial<CeilingSpec>) => updateCeiling(cl.id, { ceilingSpec: { ...spec, ...patch } })
+          const calcResult = areaSqm > 0 ? calcCeiling(spec) : null
+          return (
+            <div style={isMobile ? {
+              ...rightPanelStyle,
+              position: 'absolute', top: 0, bottom: 0, right: 0, zIndex: 21,
+              width: Math.min(RIGHT_W, window.innerWidth - 32),
+              minWidth: 0, maxWidth: Math.min(RIGHT_W, window.innerWidth - 32),
+              boxShadow: '-4px 0 16px rgba(0,0,0,0.25)',
+            } : rightPanelStyle}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px 10px', borderBottom: '1px solid #e0e4ee', background: '#fff',
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433' }}>{cl.label}</div>
+                  <button onClick={() => sendNewCeilingToCalc(cl.id)}
+                    style={{
+                      marginTop: 6, fontSize: 11, fontWeight: 600,
+                      color: '#fff', background: '#c9a68a', border: 'none',
+                      borderRadius: 5, padding: '5px 12px', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 5,
+                    }}>
+                    Открыть в полном калькуляторе ↗
+                  </button>
+                </div>
+                <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorCeilingId(null)}>✕</button>
+              </div>
+
+              <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ fontSize: 12, color: '#888' }}>
+                  Площадь: <b>{areaSqm.toFixed(2)} м²</b> · Периметр: <b>{perimeterM.toFixed(2)} м</b>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 10, color: '#999', marginBottom: 4, textTransform: 'uppercase' }}>Тип потолка</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {(['p112', 'p113', 'p131'] as CeilingType[]).map(t => (
+                      <button key={t} onClick={() => patchSpec({ type: t })}
+                        style={{
+                          textAlign: 'left', padding: '7px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+                          border: spec.type === t ? '1.5px solid #c9a68a' : '1px solid #ddd',
+                          background: spec.type === t ? '#faf3ec' : '#fff',
+                          color: spec.type === t ? '#8a6d4f' : '#666', fontWeight: spec.type === t ? 700 : 400,
+                        }}>
+                        {CEILING_TYPE_LABELS[t].split(' — ')[0]}
+                        <span style={{ display: 'block', fontSize: 10, color: '#999', fontWeight: 400 }}>
+                          {CEILING_TYPE_LABELS[t].split(' — ')[1]}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <label style={{ fontSize: 11, color: '#555' }}>
+                    Слоёв ГКЛ
+                    <select value={spec.layers} onChange={e => patchSpec({ layers: +e.target.value as CeilingLayers })}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
+                      <option value={1}>1 слой</option>
+                      <option value={2}>2 слоя</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 11, color: '#555' }}>
+                    Материал
+                    <select value={spec.material}
+                      onChange={e => {
+                        const mat = e.target.value as CeilingMaterial
+                        if (mat === 'sapphire') patchSpec({ material: mat, thickness: 12.5 })
+                        else patchSpec({ material: mat })
+                      }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
+                      <option value="gsp">ГСП (ГКЛ)</option>
+                      <option value="gvl">ГВЛ</option>
+                      <option value="sapphire">Сапфир</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 11, color: '#555' }}>
+                    Толщина, мм
+                    <select value={spec.thickness} disabled={spec.material === 'sapphire'}
+                      onChange={e => patchSpec({ thickness: +e.target.value as CeilingSheetThickness })}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
+                      <option value={9.5}>9.5</option>
+                      <option value={12.5}>12.5</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 11, color: '#555' }}>
+                    Шаг осн. (c){spec.type === 'p131' ? ' — фикс.' : ''}
+                    {spec.type === 'p131' ? (
+                      <div style={{ marginTop: 4, padding: '6px 8px', borderRadius: 5, fontSize: 11, color: '#999', background: '#f5f5f5' }}>500 мм</div>
+                    ) : (
+                      <select value={spec.stepC} onChange={e => patchSpec({ stepC: +e.target.value as CeilingStep })}
+                        style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
+                        {CEILING_STEP_OPTIONS.map(s => <option key={s} value={s}>{s} мм</option>)}
+                      </select>
+                    )}
+                  </label>
+                </div>
+
+                {calcResult && (
+                  <div style={{ borderTop: '1px solid #eee', paddingTop: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#555', marginBottom: 6 }}>Материалы</div>
+                    <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                      <tbody>
+                        {calcResult.materials.map((m, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid #f3f3f3' }}>
+                            <td style={{ padding: '4px 0', color: '#444' }}>{m.name}</td>
+                            <td style={{ padding: '4px 0', textAlign: 'right', color: '#888' }}>{m.qty.toFixed(m.unit === 'шт' ? 0 : 2)} {m.unit}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <button onClick={() => { removeCeiling(cl.id); setInspectorCeilingId(null) }}
                   style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
                   🗑 Удалить
                 </button>

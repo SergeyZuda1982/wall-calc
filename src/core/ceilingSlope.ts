@@ -189,6 +189,68 @@ export function effectiveCeilingSlopeHeightAtPoint(
 }
 
 /**
+ * Опускание РИГЕЛЯ (dropMm) при рисовании новой линии — 13.09.2026, объект
+ * в Ростове (общая нижняя отметка ригелей 3450мм при плите от 3800 до
+ * ~5500 на разных участках): вместо того, чтобы вручную считать разное
+ * опускание под каждый ригель на наклонном участке, пользователь один раз
+ * задаёт желаемую отметку низа (targetBottomMm) — опускание считается как
+ * (высота плиты/потолка в СРЕДНЕЙ точке ригеля, через
+ * effectiveCeilingSlopeHeightAtPoint выше) минус эта отметка. Без
+ * применимого уклона в этой точке (targetBottomMm не задан, или нет
+ * покрывающей Плиты/Потолка/зоны) — откат на manualDropMm как есть.
+ *
+ * Чистая функция (вынесена из FloorPlan.tsx, где раньше была локальным
+ * замыканием resolveRibDropMm — недоступным для теста, т.к. в проекте нет
+ * ни одного .test.tsx/React-теста компонентов, только core/-логика).
+ */
+export function resolveRibBeamDropMm(
+  x1: number, y1: number, x2: number, y2: number,
+  targetBottomMm: number | undefined, manualDropMm: number,
+  allLines: PlanLine[], slabs: Slab[], ceilings: Ceiling[], slopes: CeilingSlope[], rooms: Room[],
+): number {
+  if (targetBottomMm === undefined || !(targetBottomMm >= 0)) return manualDropMm
+  const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2
+  const slabTopMm = effectiveCeilingSlopeHeightAtPoint({ x: midX, y: midY }, allLines, slabs, ceilings, slopes, rooms)
+  if (slabTopMm === undefined) return manualDropMm
+  return Math.max(0, Math.round(slabTopMm - targetBottomMm))
+}
+
+/**
+ * Материал потолка ДЛЯ КОМНАТЫ (15.09.2026, по просьбе Сергея — чек-лист
+ * последующих работ Room.ceilingProgress должен подстраиваться под тип
+ * потолка: Черновой — без каркаса, но с малярными работами; ГКЛ — полный
+ * цикл каркас→обшивка→шпаклёвка→покраска; Подвесной/Натяжной — готовая
+ * система, монтаж и сразу «готово», без малярки и ГКЛ-работ).
+ *
+ * Тот же принцип "накрывающей сущности", что и slopeFromCoveringEntity
+ * выше (point-in-polygon по Ceiling.outer), просто по ЦЕНТРОИДУ полигона
+ * комнаты, а не по точке линии — у комнаты нет естественной "середины
+ * отрезка", а простое среднее вершин полигона (не истинный центроид
+ * многоугольника) — тот же уровень точности, что и у остальных подобных
+ * резолверов в проекте (см., например, resolveRibBeamDropMm выше — среднее
+ * по двум концам, не интеграл по кривой). Для сильно вогнутых комнат
+ * среднее вершин теоретически может попасть мимо самой комнаты — на
+ * практике для типовых прямоугольных/Г-образных помещений вопрос не
+ * возникал, не мудрим сверх необходимого.
+ *
+ * Первая накрывающая Ceiling-зона с заданным material — та и даёт ответ
+ * (соответствует порядку, в котором зоны лежат в массиве; если на одну
+ * комнату случайно наложены две зоны разного материала — берётся первая,
+ * это редкий/ошибочный случай рисования, а не нормальный сценарий).
+ */
+export function ceilingMaterialForRoom(room: Room, allLines: PlanLine[], ceilings: Ceiling[]): string | undefined {
+  const poly = roomPolygon(room, allLines)
+  if (!poly) return undefined
+  let cx = 0, cy = 0
+  for (const p of poly) { cx += p.x; cy += p.y }
+  const centroid: Point2D = { x: cx / poly.length, y: cy / poly.length }
+  for (const cl of ceilings) {
+    if (cl.material && cl.outer.length >= 3 && pointInPolygon(centroid, [cl.outer])) return cl.material
+  }
+  return undefined
+}
+
+/**
  * Удобная пакетная обёртка: line.id → ceilingProfile (только для линий,
  * где уклон реально применим — остальные в карте отсутствуют, вызывающий
  * код должен трактовать отсутствие как "плоская линия", не как ошибку).

@@ -1,4 +1,5 @@
-import type { CeilingSpec } from '../data/ceilingData'
+import type { CeilingSpec, CeilingStep } from '../data/ceilingData'
+import type { CeilingBorderJointType } from '../data/ceilingBorderData'
 import type { OpeningShape } from '../core/geometry2d'
 
 // ─── Геометрия потолка/пола (переменная высота) ──────────────────────────────
@@ -650,6 +651,15 @@ export interface WorkStageTemplate {
   /** Не задано — шаблон показывается в ЛЮБОМ контексте (совместимость со
    *  старыми пользовательскими шаблонами, сохранёнными до появления этого поля). */
   context?: WorkStageTemplateContext
+  /**
+   * НОВОЕ (15.09.2026) — для context==='ceiling' сужает шаблон до
+   * конкретных материалов потолка (data/constructionTaxonomy.ts, ветка
+   * ceiling: 'rough' | 'gkl' | 'suspended' | 'stretch'), см.
+   * ceilingMaterialForRoom()/templatesForContext() в core/. Не задано —
+   * шаблон подходит для ЛЮБОГО материала (старые пользовательские шаблоны
+   * и context !== 'ceiling' — эта возможность их не касается).
+   */
+  ceilingMaterial?: string[]
   steps: WorkStageTemplateStep[]
 }
 
@@ -870,6 +880,66 @@ export interface Ceiling {
    * та же плоскость, тот же смысл полей).
    */
   slope?: SlopePlane
+  /**
+   * НОВОЕ (15.09.2026, по просьбе Сергея) — материал верхнего уровня
+   * дерева потолков (data/constructionTaxonomy.ts, ветка ceiling: 'rough'
+   * | 'gkl' | 'suspended' | 'stretch'), скопированный из drawSpec.material
+   * в момент замыкания контура (см. FloorPlan.tsx, drawType==='ceiling').
+   * Не задано — материал неизвестен (свободная обводка «обвести потолок»
+   * его не задаёт вовсе, mode==='ceiling', там нет дерева материалов).
+   * Единственное текущее применение — core/workProgress.ts,
+   * ceilingMaterialForRoom()/templatesForContext(): чек-лист последующих
+   * работ комнаты (Room.ceilingProgress) подбирается по материалу
+   * ближайшей накрывающей Ceiling-зоны, тем же способом, что и уклон
+   * (см. slopeFromCoveringEntity в core/ceilingSlope.ts) — просто ищет
+   * material вместо slope.
+   */
+  material?: string
+}
+
+/**
+ * Борт (короб) между двумя уровнями многоуровневого потолка — см. подробный
+ * комментарий-архитектуру в data/ceilingBorderData.ts (16.09.2026, тема
+ * "П19"). Сами уровни — ОБЫЧНЫЕ Ceiling со своей плоской отметкой через
+ * slope (height1Mm===height2Mm); эта сущность — только соединяющий их борт.
+ *
+ * ⚠️ v1 (16.09.2026): пока НЕ подключена ни к FloorPlan.ceilings (не
+ * рисуется на плане), ни к 3D, ни к общей смете — только типы + расчётный
+ * движок (calcCeilingBorder.ts) с юнит-тестами. Следующие этапы: 2)
+ * суммирование в общую смету потолка, 3) UI, 4) рисование на плане, 5) 3D.
+ */
+export interface CeilingBorder {
+  id: string
+  label: string
+  /** Путь борта, px (координаты плана, как у Ceiling.outer). НЕ обязан быть
+   *  замкнутым — по подтверждению пользователя 16.09.2026 бывает и кольцом
+   *  по всему периметру, и вдоль части стен "от края до края" (тогда
+   *  последняя точка НЕ равна первой). Если борт всё-таки идёт замкнутым
+   *  кольцом — первая точка ПОВТОРЯЕТСЯ последней явно (как и у остальных
+   *  путей в проекте), а не подразумевается неявным замыканием. */
+  path: { x: number; y: number }[]
+  jointType: CeilingBorderJointType
+  /** Опуск (перепад высоты между уровнями), мм. В альбоме КНАУФ — пример на
+   *  ≤150мм, но пользователь подтвердил: свободное редактируемое число, без
+   *  жёсткого лимита (пример из альбома — не ограничение). */
+  dropMm: number
+  /** Глубина полки, мм. Как и dropMm — свободное число. */
+  shelfDepthMm: number
+  /** Шаг несущего профиля соседнего уровня П112/П113 — используется как шаг
+   *  угловых соединителей вдоль борта (см. data/ceilingBorderData.ts).
+   *  ⚠️ Сознательно НЕ ссылка на конкретный id соседнего Ceiling (борт может
+   *  быть логически не привязан к одному конкретному уровню, а также чтобы
+   *  борт оставался независимо рассчитываемым, как и остальные сущности
+   *  плана) — просто копия нужного числа, как Ceiling.ceilingSpec копирует
+   *  свои параметры, а не ссылается на общий пресет. */
+  stepCMm: CeilingStep
+  /** Длина листа ГКЛ для раскроя обшивки борта, мм (как CeilingSpecFull.sheetLengthMm) */
+  sheetLengthMm: number
+  /** Задел под нишу с LED-подсветкой — см. data/ceilingBorderData.ts,
+   *  "НЕ реализовано в v1". Поля есть, calcCeilingBorder их не использует. */
+  nicheDepthMm?: number
+  nicheHeightMm?: number
+  ledGapMm?: number
 }
 
 /**
