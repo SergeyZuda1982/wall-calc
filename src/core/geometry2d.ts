@@ -36,6 +36,24 @@ export function polygonArea(points: Point2D[]): number {
   return Math.abs(sum) / 2
 }
 
+/** Длина РАЗОМКНУТОГО пути — сумма длин отрезков между последовательными
+ *  точками, БЕЗ замыкания последней точки на первую (в отличие от
+ *  polygonPerimeter ниже). Нужна для бортов/коробов потолка (calcCeilingBorder.ts,
+ *  16.09.2026) — путь борта не обязан быть замкнутым контуром (может идти
+ *  вдоль части стен помещения "от края до края"), а может — если борт
+ *  всё-таки замкнут кольцом по периметру, вызывающий код сам добавляет
+ *  первую точку в конец points перед вызовом. */
+export function polylineLength(points: Point2D[]): number {
+  if (points.length < 2) return 0
+  let sum = 0
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]
+    const b = points[i + 1]
+    sum += Math.hypot(b.x - a.x, b.y - a.y)
+  }
+  return sum
+}
+
 /** Периметр замкнутого многоугольника — сумма длин сторон по контуру
  *  (последняя точка соединяется с первой). Порядок обхода не важен. */
 export function polygonPerimeter(points: Point2D[]): number {
