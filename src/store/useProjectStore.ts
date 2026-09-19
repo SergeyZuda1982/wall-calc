@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, FreeformOpening, CeilingSlope } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, FreeformOpening, CeilingSlope, CeilingBorder, CeilingComposition } from '../types'
 import type { DoubleFrameInput, DoubleFrameResult } from '../core/calcDoubleFrame'
+import type { CeilingSpec, CeilingStep } from '../data/ceilingData'
+import type { CeilingBorderJointType } from '../data/ceilingBorderData'
 import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from '../types'
 import { duplicateFloorPlanGeometry } from '../core/duplicateFloorPlan'
 import { idbSetBackground, idbGetBackground, idbDeleteBackground, backgroundStorageKey } from './bgIndexedDb'
@@ -200,6 +202,29 @@ export interface ProjectStore {
   removeCeiling: (id: string) => void
   updateCeilingOuter: (id: string, outer: { x: number; y: number }[]) => void
   updateCeiling: (id: string, patch: Partial<Ceiling>) => void
+  // П19 — борта многоуровневого потолка (см. types/index.ts CeilingBorder,
+  // этап 3, 18.09.2026). CRUD общего назначения — используется как напрямую
+  // (этап 4, рисование на плане), так и через addCompositionBorder ниже.
+  addCeilingBorder: (border: Omit<CeilingBorder, 'id'>) => string
+  updateCeilingBorder: (id: string, patch: Partial<CeilingBorder>) => void
+  removeCeilingBorder: (id: string) => void
+  // П19 — композиции уровней+бортов (см. types/index.ts CeilingComposition,
+  // этап 3). addCompositionLevel/addCompositionBorder создают САМИ сущности
+  // (Ceiling/CeilingBorder) без геометрии на плане (outer/path пустые — их
+  // задаст этап 4) и сразу линкуют id в композицию — конструктор
+  // (CeilingCompositionEditor.tsx) работает только через них, не вызывая
+  // addCeiling/addCeilingBorder напрямую.
+  addCeilingComposition: (label?: string) => string
+  updateCeilingComposition: (id: string, patch: Partial<Pick<import('../types').CeilingComposition, 'label'>>) => void
+  removeCeilingComposition: (id: string) => void
+  addCompositionLevel: (compositionId: string, spec: CeilingSpec, elevationMm: number, label?: string) => string
+  removeCompositionLevel: (compositionId: string, levelId: string) => void
+  addCompositionBorder: (
+    compositionId: string,
+    section: { jointType: CeilingBorderJointType; dropMm: number; shelfDepthMm: number; stepCMm: CeilingStep; sheetLengthMm: number },
+    label?: string,
+  ) => string
+  removeCompositionBorder: (compositionId: string, borderId: string) => void
   updateSlabOuter: (id: string, outer: { x: number; y: number }[]) => void
   updateSlab: (id: string, patch: Partial<import('../types').Slab>) => void
   addSlabHole: (id: string, hole: { x: number; y: number }[]) => void
@@ -1071,6 +1096,124 @@ export const useProjectStore = create<ProjectStore>()(
       updateCeiling: (id, patch) => {
         set(s => updateActiveFloorPlan(s, fp => ({
           ...fp, ceilings: (fp.ceilings ?? []).map(cl => cl.id === id ? { ...cl, ...patch } : cl),
+        })))
+      },
+
+      // ─── Борта многоуровневого потолка (П19, этап 3, 18.09.2026) ───────────
+
+      addCeilingBorder: (border) => {
+        const id = `clb_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const newBorder: CeilingBorder = { id, ...border }
+          return updateActiveFloorPlan(s, fp => ({ ...fp, ceilingBorders: [...(fp.ceilingBorders ?? []), newBorder] }))
+        })
+        return id
+      },
+
+      updateCeilingBorder: (id, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, ceilingBorders: (fp.ceilingBorders ?? []).map(b => b.id === id ? { ...b, ...patch } : b),
+        })))
+      },
+
+      removeCeilingBorder: (id) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, ceilingBorders: (fp.ceilingBorders ?? []).filter(b => b.id !== id),
+        })))
+      },
+
+      // ─── Композиции П19 (уровни + борта), этап 3 ────────────────────────────
+
+      addCeilingComposition: (label) => {
+        const id = `clcomp_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const count = (s.floorPlan?.ceilingCompositions ?? []).length + 1
+          const newComposition: CeilingComposition = {
+            id, label: label ?? `П19 — композиция ${count}`, levelIds: [], borderIds: [],
+          }
+          return updateActiveFloorPlan(s, fp => ({
+            ...fp, ceilingCompositions: [...(fp.ceilingCompositions ?? []), newComposition],
+          }))
+        })
+        return id
+      },
+
+      updateCeilingComposition: (id, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, ceilingCompositions: (fp.ceilingCompositions ?? []).map(c => c.id === id ? { ...c, ...patch } : c),
+        })))
+      },
+
+      removeCeilingComposition: (id) => {
+        // Композиция + все входящие в неё уровни/борта — удаляем как единое
+        // целое (иначе останутся "осиротевшие" Ceiling/CeilingBorder без
+        // владельца, никому в проекте не видные, кроме случая, когда их уже
+        // успели нарисовать на плане отдельно — но на это v1 не рассчитан,
+        // см. комментарий у CeilingComposition в types/index.ts).
+        set(s => {
+          const composition = (s.floorPlan?.ceilingCompositions ?? []).find(c => c.id === id)
+          if (!composition) return s
+          return updateActiveFloorPlan(s, fp => ({
+            ...fp,
+            ceilingCompositions: (fp.ceilingCompositions ?? []).filter(c => c.id !== id),
+            ceilings: (fp.ceilings ?? []).filter(cl => !composition.levelIds.includes(cl.id)),
+            ceilingBorders: (fp.ceilingBorders ?? []).filter(b => !composition.borderIds.includes(b.id)),
+          }))
+        })
+      },
+
+      addCompositionLevel: (compositionId, spec, elevationMm, label) => {
+        const id = `cl_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const composition = (s.floorPlan?.ceilingCompositions ?? []).find(c => c.id === compositionId)
+          if (!composition) return s
+          const count = composition.levelIds.length + 1
+          const newLevel: Ceiling = {
+            id, outer: [], label: label ?? `Уровень ${count}`, ceilingSpec: spec,
+            slope: { x1: 0, y1: 0, height1Mm: elevationMm, x2: 1, y2: 0, height2Mm: elevationMm },
+          }
+          return updateActiveFloorPlan(s, fp => ({
+            ...fp,
+            ceilings: [...(fp.ceilings ?? []), newLevel],
+            ceilingCompositions: (fp.ceilingCompositions ?? []).map(c =>
+              c.id === compositionId ? { ...c, levelIds: [...c.levelIds, id] } : c),
+          }))
+        })
+        return id
+      },
+
+      removeCompositionLevel: (compositionId, levelId) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          ceilings: (fp.ceilings ?? []).filter(cl => cl.id !== levelId),
+          ceilingCompositions: (fp.ceilingCompositions ?? []).map(c =>
+            c.id === compositionId ? { ...c, levelIds: c.levelIds.filter(lid => lid !== levelId) } : c),
+        })))
+      },
+
+      addCompositionBorder: (compositionId, section, label) => {
+        const id = `clb_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const composition = (s.floorPlan?.ceilingCompositions ?? []).find(c => c.id === compositionId)
+          if (!composition) return s
+          const count = composition.borderIds.length + 1
+          const newBorder: CeilingBorder = { id, path: [], label: label ?? `Борт ${count}`, ...section }
+          return updateActiveFloorPlan(s, fp => ({
+            ...fp,
+            ceilingBorders: [...(fp.ceilingBorders ?? []), newBorder],
+            ceilingCompositions: (fp.ceilingCompositions ?? []).map(c =>
+              c.id === compositionId ? { ...c, borderIds: [...c.borderIds, id] } : c),
+          }))
+        })
+        return id
+      },
+
+      removeCompositionBorder: (compositionId, borderId) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp,
+          ceilingBorders: (fp.ceilingBorders ?? []).filter(b => b.id !== borderId),
+          ceilingCompositions: (fp.ceilingCompositions ?? []).map(c =>
+            c.id === compositionId ? { ...c, borderIds: c.borderIds.filter(bid => bid !== borderId) } : c),
         })))
       },
 
