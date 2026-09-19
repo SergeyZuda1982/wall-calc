@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory, type WallForJoin } from '../wallJoin'
+import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory, rectColumnExposedFraction, roundColumnExposedFraction, columnExposedPerimeterFraction, type WallForJoin, type Pt } from '../wallJoin'
 import { roundColumnPolygonPx } from '../columnStamp'
 import type { PlanLine, RectColumn, RoundColumn } from '../../types'
 
@@ -533,5 +533,124 @@ describe('computeWallJoins — реальный узел с объекта (KONS
     const angles = computeJoinAngles([A, B])
     expect(angles).toHaveLength(1)
     expect(angles[0].angleDeg).toBeCloseTo(123.49, 1)
+  })
+})
+
+describe('columnExposedPerimeterFraction (15.09.2026 — по просьбе Сергея: отделка/чек-лист колонны только по открытой части периметра, закрытая внутри перегородок часть не считается)', () => {
+  function wall(overrides: Partial<WallForJoin> = {}): WallForJoin {
+    return { id: 'w', x1: 0, y1: 0, x2: 0, y2: 0, halfPx: 10, createdIndex: 0, ...overrides }
+  }
+
+  it('нет ни одной стены рядом — периметр полностью открыт (1)', () => {
+    const edges: [Pt, Pt][] = [[{ x: 0, y: 0 }, { x: 100, y: 0 }]]
+    expect(columnExposedPerimeterFraction(edges, [])).toBe(1)
+  })
+
+  it('одна грань, стена касается её СЕРЕДИНЫ — закрыт участок ровно на толщину стены (2×halfPx)', () => {
+    const edges: [Pt, Pt][] = [[{ x: 0, y: 0 }, { x: 100, y: 0 }]]
+    // конец стены ровно в точке (50,0) — середина грани; halfPx=10 → закрыто [40,60], открыто 80 из 100
+    const otherWalls = [wall({ x1: 50, y1: 0, x2: 50, y2: -50, halfPx: 10 })]
+    expect(columnExposedPerimeterFraction(edges, otherWalls)).toBeCloseTo(0.8, 6)
+  })
+
+  it('несколько граней — закрыта только ОДНА, остальные полностью открыты (взвешенное по длине)', () => {
+    const edges: [Pt, Pt][] = [
+      [{ x: 0, y: 0 }, { x: 100, y: 0 }],   // будет частично закрыта
+      [{ x: 0, y: 100 }, { x: 100, y: 100 }], // полностью открыта
+    ]
+    const otherWalls = [wall({ x1: 50, y1: 0, x2: 50, y2: -50, halfPx: 10 })]
+    // Грань 1: открыто 80 из 100. Грань 2: открыто 100 из 100. Итого 180/200 = 0.9
+    expect(columnExposedPerimeterFraction(edges, otherWalls)).toBeCloseTo(0.9, 6)
+  })
+
+  it('стена подходит СОВСЕМ БЛИЗКО к вершине грани — всё равно засчитывается (нет исключения по краю, в отличие от T-стыка — см. комментарий у функции)', () => {
+    const edges: [Pt, Pt][] = [[{ x: 0, y: 0 }, { x: 100, y: 0 }]]
+    const otherWalls = [wall({ x1: 1, y1: 0, x2: 1, y2: -50, halfPx: 10 })] // s=1, у самого края
+    // Закрыто [0,11] (клэмп слева), открыто 89 из 100
+    expect(columnExposedPerimeterFraction(edges, otherWalls)).toBeCloseTo(0.89, 6)
+  })
+
+  it('стена рядом, но не КАСАЕТСЯ оси грани (перпендикулярное расстояние больше её толщины) — не засчитывается', () => {
+    const edges: [Pt, Pt][] = [[{ x: 0, y: 0 }, { x: 100, y: 0 }]]
+    const otherWalls = [wall({ x1: 50, y1: 500, x2: 50, y2: 600, halfPx: 10 })] // далеко по перпендикуляру
+    expect(columnExposedPerimeterFraction(edges, otherWalls)).toBe(1)
+  })
+
+  it('две стены с ПЕРЕСЕКАЮЩИМИСЯ закрытыми интервалами на одной грани — объединяются, не вычитаются дважды', () => {
+    const edges: [Pt, Pt][] = [[{ x: 0, y: 0 }, { x: 100, y: 0 }]]
+    // Обе стены закрывают пересекающиеся участки: [35,55] и [45,65] → объединение [35,65], закрыто 30, открыто 70
+    const otherWalls = [
+      wall({ id: 'w1', x1: 45, y1: 0, x2: 45, y2: -50, halfPx: 10 }),
+      wall({ id: 'w2', x1: 55, y1: 0, x2: 55, y2: -50, halfPx: 10 }),
+    ]
+    expect(columnExposedPerimeterFraction(edges, otherWalls)).toBeCloseTo(0.7, 6)
+  })
+
+  it('стена перекрывает грань ПОЛНОСТЬЮ (толще самой грани) — открытая часть клэмпится в 0, не в отрицательное число', () => {
+    const edges: [Pt, Pt][] = [[{ x: 0, y: 0 }, { x: 100, y: 0 }]]
+    const otherWalls = [wall({ x1: 50, y1: 0, x2: 50, y2: -50, halfPx: 1000 })]
+    expect(columnExposedPerimeterFraction(edges, otherWalls)).toBe(0)
+  })
+
+  it('список граней пуст — по соглашению открыт полностью (1), не деление на ноль', () => {
+    expect(columnExposedPerimeterFraction([], [])).toBe(1)
+  })
+})
+
+describe('rectColumnExposedFraction / roundColumnExposedFraction (15.09.2026)', () => {
+  function baseRect(overrides: Partial<RectColumn> = {}): RectColumn {
+    return { id: 'rc1', cx: 0, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'К1', ...overrides }
+  }
+  function wallLine(overrides: Partial<PlanLine> = {}): PlanLine {
+    return {
+      id: 'w1', x1: 0, y1: 0, x2: 0, y2: 0,
+      type: 'wall_existing', lengthMm: 1000, label: '',
+      spec: { material: 'brick', subtype: '200' },
+      ...overrides,
+    } as PlanLine
+  }
+
+  it('прямоугольная колонна без соседних стен — открыта полностью (1)', () => {
+    expect(rectColumnExposedFraction(baseRect(), [], 10)).toBe(1)
+  })
+
+  it('прямоугольная колонна 300×300 (scale=10 → грани по 30px) — одна грань частично закрыта стеной 200мм (halfPx=10) точно по её середине', () => {
+    // Грань 1 (правая, x=15) идёт от (15,-15) до (15,15) — середина (15,0).
+    const wall = wallLine({ x1: 35, y1: 0, x2: 15, y2: 0 })
+    const frac = rectColumnExposedFraction(baseRect(), [wall], 10)
+    // Грань 1: открыто 30-20=10 из 30. Остальные 3 грани по 30 открыты полностью.
+    // Итого (10+30+30+30)/120 = 100/120 = 5/6
+    expect(frac).toBeCloseTo(5 / 6, 6)
+  })
+
+  it('прямоугольная колонна, ОБСТРОЕННАЯ перегородками со всех 4 сторон (толстыми, шире каждой грани) — открытая доля близка к 0', () => {
+    const walls = [
+      wallLine({ id: 'wTop', x1: 0, y1: -15, x2: 0, y2: -100 }),
+      wallLine({ id: 'wRight', x1: 15, y1: 0, x2: 100, y2: 0 }),
+      wallLine({ id: 'wBottom', x1: 0, y1: 15, x2: 0, y2: 100 }),
+      wallLine({ id: 'wLeft', x1: -15, y1: 0, x2: -100, y2: 0 }),
+    ].map(w => ({ ...w, spec: { material: 'brick', subtype: '380' } })) // halfPx=19 > 15 (половина грани) — полное перекрытие
+    const frac = rectColumnExposedFraction(baseRect(), walls, 10)
+    expect(frac).toBeLessThan(0.01)
+  })
+
+  it('круглая колонна без соседних стен — открыта полностью (1)', () => {
+    const rc: RoundColumn = { id: 'round1', cx: 0, cy: 0, diameterMm: 300, label: 'К1' }
+    expect(roundColumnExposedFraction(rc, [], 10)).toBe(1)
+  })
+
+  it('круглая колонна с одной прилегающей стеной — открытая доля СТРОГО между 0 и 1 (частично закрыта)', () => {
+    const rc: RoundColumn = { id: 'round1', cx: 0, cy: 0, diameterMm: 300, label: 'К1' }
+    // Стена должна упираться в СЕРЕДИНУ одного из 24 рёбер многоугольника, а
+    // не в вершину (та же оговорка, что и в arcEndTangents-тестах — вершина
+    // на границе t=0/1 сразу двух граней, исключается из T-детекции).
+    const poly = roundColumnPolygonPx(0, 0, 300, 10)
+    const mid = { x: (poly[0].x + poly[1].x) / 2, y: (poly[0].y + poly[1].y) / 2 }
+    const dirLen = Math.hypot(mid.x, mid.y)
+    const ux = mid.x / dirLen, uy = mid.y / dirLen
+    const wall = wallLine({ x1: mid.x + 20 * ux, y1: mid.y + 20 * uy, x2: mid.x, y2: mid.y, spec: { material: 'brick', subtype: '200' } })
+    const frac = roundColumnExposedFraction(rc, [wall], 10)
+    expect(frac).toBeGreaterThan(0)
+    expect(frac).toBeLessThan(1)
   })
 })

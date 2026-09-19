@@ -16,7 +16,7 @@ import { arcEndTangents } from './geometry2d'
 
 const JOIN_EPS = 3 // допуск совпадения точек, px
 
-interface Pt { x: number; y: number }
+export interface Pt { x: number; y: number }
 
 export interface WallForJoin {
   id: string
@@ -536,4 +536,103 @@ export function buildWallsForJoin(
     }
   })
   return walls
+}
+
+/**
+ * Доля (0..1) ОТКРЫТОГО периметра колонны — той части, что НЕ занята
+ * примыкающими стенами/перегородками (15.09.2026, по просьбе Сергея —
+ * отделка колонны считается только по открытой части периметра; часть,
+ * закрытая внутри соседней перегородки/облицовки, никаких работ не
+ * требует и в чек-лист/площадь отделки не попадает).
+ *
+ * Для каждой грани колонны (переданной готовым списком рёбер — 4 у
+ * прямоугольной, 24-угольник у круглой, та же геометрия, что уже строит
+ * buildWallsForJoin выше) ищем ЧУЖИЕ стены (не грани самой колонны — см.
+ * columnExposedFraction ниже, вызывающий передаёт otherWalls БЕЗ граней
+ * колонн вообще), чей конец проецируется на эту грань в пределах [0,1] с
+ * допуском JOIN_EPS от оси — тот же критерий T-стыка, что уже использует
+ * computeWallJoins. Занятый участок грани — отрезок длиной с толщину
+ * примыкающей стены (halfPx*2), центрированный в точке проекции,
+ * обрезанный по границам самой грани. Несколько примыканий на одной
+ * грани объединяются, а не складываются наивно, если пересекаются.
+ *
+ * ⚠️ В отличие от computeWallJoins/T-стыка, здесь НЕТ исключения "точка у
+ * самого края грани" — у короткой грани круглой колонны (24-угольник) оно
+ * ошибочно съедало бы всю грань целиком (см. комментарий внутри функции).
+ * Проекция должна лишь попадать в пределы [0, edgeLen] самой грани.
+ */
+export function columnExposedPerimeterFraction(
+  edges: [Pt, Pt][],
+  otherWalls: WallForJoin[],
+): number {
+  let totalLen = 0
+  let openLen = 0
+  for (const [a, b] of edges) {
+    const dx = b.x - a.x, dy = b.y - a.y
+    const edgeLen = Math.hypot(dx, dy)
+    if (edgeLen < 1e-6) continue
+    totalLen += edgeLen
+    const ux = dx / edgeLen, uy = dy / edgeLen
+    const covered: [number, number][] = []
+    for (const w of otherWalls) {
+      for (const p of [{ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }]) {
+        const relX = p.x - a.x, relY = p.y - a.y
+        const s = relX * ux + relY * uy
+        const perpDist = Math.abs(relX * -uy + relY * ux)
+        if (perpDist > w.halfPx + JOIN_EPS) continue
+        // ⚠️ Сознательно НЕТ исключения "точка у самого края грани" (в отличие
+        // от computeWallJoins/T-стыка выше) — там оно нужно, чтобы не путать
+        // T-стык с L-стыком в вершине. Здесь эта же идея была бы ОШИБКОЙ: у
+        // круглой колонны (24-угольник) грани короткие (единицы px при
+        // небольшом диаметре/масштабе) — JOIN_EPS=3px сам по себе способен
+        // съесть всю грань целиком, и настоящее примыкание ровно по её
+        // середине ошибочно не засчитывалось бы (обнаружено тестом
+        // 15.09.2026). Если стена касается ровно в общей вершине двух
+        // соседних граней — интервал закрытия честно учитывается на ОБЕИХ,
+        // это приемлемое небольшое двойное вычитание у стыка граней, не
+        // искажающее результат сколь-нибудь заметно.
+        if (s < 0 || s > edgeLen) continue // сама проекция всё же должна попадать на эту грань
+        const half = Math.max(w.halfPx, 1)
+        covered.push([Math.max(0, s - half), Math.min(edgeLen, s + half)])
+      }
+    }
+    covered.sort((x, y) => x[0] - y[0])
+    let coveredLen = 0
+    let curStart: number | null = null, curEnd = 0
+    for (const [s0, s1] of covered) {
+      if (curStart === null) { curStart = s0; curEnd = s1; continue }
+      if (s0 <= curEnd) { curEnd = Math.max(curEnd, s1) }
+      else { coveredLen += curEnd - curStart; curStart = s0; curEnd = s1 }
+    }
+    if (curStart !== null) coveredLen += curEnd - curStart
+    openLen += Math.max(0, edgeLen - coveredLen)
+  }
+  return totalLen > 0 ? openLen / totalLen : 1
+}
+
+/**
+ * Удобная обёртка columnExposedPerimeterFraction для прямоугольной колонны
+ * (15.09.2026) — otherWalls строится через buildWallsForJoin С ПУСТЫМИ
+ * rectColumns/roundColumns (только обычные линии), чтобы колонна не
+ * "примыкала сама к себе" и не мешала другим колоннам (колонна вплотную к
+ * колонне — редкий/нетипичный случай, здесь не разбирается отдельно).
+ */
+export function rectColumnExposedFraction(
+  rc: RectColumn, lines: PlanLine[], scaleMmPx: number,
+): number {
+  const corners = rectColumnCornersPx(rc.cx, rc.cy, rc.widthMm, rc.depthMm, rc.angleRad, scaleMmPx)
+  const edges: [Pt, Pt][] = [0, 1, 2, 3].map(e => [corners[e], corners[(e + 1) % 4]])
+  const otherWalls = buildWallsForJoin(lines, scaleMmPx, [], [])
+  return columnExposedPerimeterFraction(edges, otherWalls)
+}
+
+/** Тот же приём для круглой колонны — см. rectColumnExposedFraction выше. */
+export function roundColumnExposedFraction(
+  rc: RoundColumn, lines: PlanLine[], scaleMmPx: number,
+): number {
+  const poly = roundColumnPolygonPx(rc.cx, rc.cy, rc.diameterMm, scaleMmPx)
+  const n = poly.length
+  const edges: [Pt, Pt][] = poly.map((p, i) => [p, poly[(i + 1) % n]] as [Pt, Pt])
+  const otherWalls = buildWallsForJoin(lines, scaleMmPx, [], [])
+  return columnExposedPerimeterFraction(edges, otherWalls)
 }
