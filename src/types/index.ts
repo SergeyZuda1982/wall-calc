@@ -977,6 +977,33 @@ export interface CeilingBorder {
 }
 
 /**
+ * Композиция многоуровневого потолка (П19) — этап 3 (18.09.2026, см.
+ * переписку и TASKS.md). Сама по себе НЕ содержит геометрии/параметров —
+ * только ссылки на уже существующие сущности `Ceiling` (уровни) и
+ * `CeilingBorder` (борта между ними), см. архитектуру в
+ * data/ceilingBorderData.ts. Нужна, чтобы план и смета знали, что эти N
+ * потолков и M бортов — одна логическая П19-группа (без неё group by
+ * roomId/подписи была бы неявной и хрупкой).
+ *
+ * ⚠️ v1 (18.09.2026): уровни создаются "с нуля" через конструктор
+ * (CeilingCompositionEditor.tsx), БЕЗ геометрии на плане — их
+ * `Ceiling.outer` пуст ([]) до этапа 4 (рисование на плане). Борта
+ * аналогично создаются без `path` (пустой массив) — задаётся только
+ * сечение узла (опуск/полка/тип), длина посчитается позже, когда борт
+ * будет нарисован. `levelIds` — порядок "снизу вверх" (используется,
+ * чтобы понимать, какие уровни соседние для конкретного борта, в UI
+ * конструктора).
+ */
+export interface CeilingComposition {
+  id: string
+  label: string
+  /** id сущностей Ceiling (из FloorPlan.ceilings), порядок — снизу вверх */
+  levelIds: string[]
+  /** id сущностей CeilingBorder (из FloorPlan.ceilingBorders) */
+  borderIds: string[]
+}
+
+/**
  * Круглая колонна — лёгкая самостоятельная сущность (не Room, не набор линий),
  * по аналогии с тем, как Slab существует параллельно старому коду линий/помещений.
  *
@@ -1191,6 +1218,13 @@ export interface FloorPlan {
   rooms: Room[]
   slabs: Slab[]
   ceilings: Ceiling[]
+  /** Борта многоуровневого потолка (П19) — см. CeilingBorder, этап 3.
+   *  Опционально (не в DEFAULT_FLOOR_PLAN) — старые сохранённые планы
+   *  этого поля не имеют, все чтения через `?? []`, как и у остальных
+   *  подобных добавленных позже массивов. */
+  ceilingBorders?: CeilingBorder[]
+  /** Композиции многоуровневого потолка (П19) — см. CeilingComposition. */
+  ceilingCompositions?: CeilingComposition[]
   roundColumns: RoundColumn[]
   rectColumns: RectColumn[]
   freeformStructures: FreeformStructure[]
