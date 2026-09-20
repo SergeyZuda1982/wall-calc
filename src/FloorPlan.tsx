@@ -6595,6 +6595,18 @@ export default function FloorPlan() {
                 </label>
                 <ConstructionSpecSelector planType="wall_existing" value={rc.spec}
                   onChange={spec => updateRoundColumn(rc.id, { spec })} />
+                <div style={{ fontSize: 12, color: '#555', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Высота:
+                  <input type="number" value={rc.heightMm ?? 3000}
+                    onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateRoundColumn(rc.id, { heightMm: v }) }}
+                    style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#999', cursor: 'pointer', marginTop: -6 }}
+                  title="По умолчанию колонна идёт до отметки перекрытия в точке своего центра (с учётом уклона Плиты/Потолка, если он есть) — поле выше игнорируется. Включите, если эта колонна НЕ до перекрытия и должна оставаться на своей фиксированной высоте.">
+                  <input type="checkbox" checked={!!rc.customHeight}
+                    onChange={e => updateRoundColumn(rc.id, { customHeight: e.target.checked })} />
+                  своя высота (не до перекрытия, игнорировать уклон)
+                </label>
                 <div style={{ fontSize: 12, color: '#888' }}>
                   Площадь сечения: <b>{rectAreaM2Circle(rc.diameterMm).toFixed(2)} м²</b>
                 </div>
@@ -6657,6 +6669,18 @@ export default function FloorPlan() {
                 </label>
                 <ConstructionSpecSelector planType="wall_existing" value={rc.spec}
                   onChange={spec => updateRectColumn(rc.id, { spec })} />
+                <div style={{ fontSize: 12, color: '#555', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Высота:
+                  <input type="number" value={rc.heightMm ?? 3000}
+                    onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateRectColumn(rc.id, { heightMm: v }) }}
+                    style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde' }} /> мм
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#999', cursor: 'pointer', marginTop: -6 }}
+                  title="По умолчанию колонна идёт до отметки перекрытия в точке своего центра (с учётом уклона Плиты/Потолка, если он есть) — поле выше игнорируется. Включите, если эта колонна НЕ до перекрытия и должна оставаться на своей фиксированной высоте.">
+                  <input type="checkbox" checked={!!rc.customHeight}
+                    onChange={e => updateRectColumn(rc.id, { customHeight: e.target.checked })} />
+                  своя высота (не до перекрытия, игнорировать уклон)
+                </label>
                 <div style={{ fontSize: 12, color: '#888' }}>
                   Площадь сечения: <b>{rectAreaM2(rc.widthMm, rc.depthMm).toFixed(2)} м²</b>
                 </div>

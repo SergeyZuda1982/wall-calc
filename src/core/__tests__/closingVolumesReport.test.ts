@@ -83,6 +83,15 @@ describe('buildClosingVolumesReport — колонны', () => {
     expect(r.rows[0].tiers.belowM).toBeCloseTo(3) // высота в точке (500,0) = 4000 -> 3 ниже + 1 выше
     expect(r.rows[0].tiers.aboveM).toBeCloseTo(1)
   })
+
+  it('20.09.2026 — customHeight:true у колонны игнорирует уклон, использует свою heightMm', () => {
+    const slope: CeilingSlope = { id: 'S1', label: 'Уклон', x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 5000 }
+    const col: RoundColumn = { id: 'C1', cx: 500, cy: 0, diameterMm: 800, label: 'Колонна 1', heightMm: 2800, customHeight: true }
+    const r = buildClosingVolumesReport({ ...baseInput, ceilingSlopes: [slope], lines: [], roundColumns: [col], rectColumns: [] })
+    // высота в точке (500,0) по уклону = 4000мм, но customHeight фиксирует 2800мм — целиком ниже порога
+    expect(r.rows[0].tiers.belowM).toBeCloseTo(2.8)
+    expect(r.rows[0].tiers.aboveM).toBe(0)
+  })
 })
 
 describe('buildClosingVolumesReport — статус прогресса', () => {

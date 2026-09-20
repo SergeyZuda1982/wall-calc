@@ -822,13 +822,15 @@ export function roundColumnsToCylinders3D(
   return roundColumns
     .filter(rc => rc.diameterMm > 0)
     .map(rc => {
-      const slopeHeightMm = effectiveCeilingSlopeHeightAtPoint({ x: rc.cx, y: rc.cy }, lines, slabs, ceilings, slopes, rooms)
+      const resolvedHeightMm = rc.customHeight && rc.heightMm
+        ? rc.heightMm
+        : (effectiveCeilingSlopeHeightAtPoint({ x: rc.cx, y: rc.cy }, lines, slabs, ceilings, slopes, rooms) ?? ceilingMm)
       return {
         id: rc.id,
         cx: pxToM(rc.cx, scaleMmPx),
         cz: pxToM(rc.cy, scaleMmPx),
         radius: mmToM(rc.diameterMm) / 2,
-        heightM: mmToM(slopeHeightMm ?? ceilingMm),
+        heightM: mmToM(resolvedHeightMm),
       }
     })
 }
@@ -867,8 +869,10 @@ export function rectColumnsToBoxes3D(
   return rectColumns
     .filter(rc => rc.widthMm > 0 && rc.depthMm > 0)
     .map(rc => {
-      const slopeHeightMm = effectiveCeilingSlopeHeightAtPoint({ x: rc.cx, y: rc.cy }, lines, slabs, ceilings, slopes, rooms)
-      const heightM = mmToM(slopeHeightMm ?? ceilingMm)
+      const resolvedHeightMm = rc.customHeight && rc.heightMm
+        ? rc.heightMm
+        : (effectiveCeilingSlopeHeightAtPoint({ x: rc.cx, y: rc.cy }, lines, slabs, ceilings, slopes, rooms) ?? ceilingMm)
+      const heightM = mmToM(resolvedHeightMm)
       return {
         id: rc.id,
         center: { x: pxToM(rc.cx, scaleMmPx), y: heightM / 2, z: pxToM(rc.cy, scaleMmPx) },

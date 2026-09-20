@@ -84,7 +84,9 @@ export function buildClosingVolumesReport(input: ClosingVolumesReportInput): Clo
   }
 
   for (const col of input.roundColumns) {
-    const heightMm = effectiveCeilingSlopeHeightAtPoint({ x: col.cx, y: col.cy }, input.lines, input.slabs ?? [], input.ceilings ?? [], input.ceilingSlopes, input.rooms) ?? input.defaultHeightMm
+    const heightMm = col.customHeight && col.heightMm
+      ? col.heightMm
+      : (effectiveCeilingSlopeHeightAtPoint({ x: col.cx, y: col.cy }, input.lines, input.slabs ?? [], input.ceilings ?? [], input.ceilingSlopes, input.rooms) ?? input.defaultHeightMm)
     const tiers = columnRunByPriceTier(heightMm, T)
     rows.push({
       id: col.id, label: col.label, kind: 'round_column', tiers,
@@ -95,7 +97,9 @@ export function buildClosingVolumesReport(input: ClosingVolumesReportInput): Clo
   }
 
   for (const col of input.rectColumns) {
-    const heightMm = effectiveCeilingSlopeHeightAtPoint({ x: col.cx, y: col.cy }, input.lines, input.slabs ?? [], input.ceilings ?? [], input.ceilingSlopes, input.rooms) ?? input.defaultHeightMm
+    const heightMm = col.customHeight && col.heightMm
+      ? col.heightMm
+      : (effectiveCeilingSlopeHeightAtPoint({ x: col.cx, y: col.cy }, input.lines, input.slabs ?? [], input.ceilings ?? [], input.ceilingSlopes, input.rooms) ?? input.defaultHeightMm)
     const tiers = columnRunByPriceTier(heightMm, T)
     rows.push({
       id: col.id, label: col.label, kind: 'rect_column', tiers,

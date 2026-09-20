@@ -743,6 +743,29 @@ describe('roundColumnsToCylinders3D', () => {
     const cyls = roundColumnsToCylinders3D([baseColumn({})], 10, 2850)
     expect(cyls[0].heightM).toBeCloseTo(2.85, 5)
   })
+
+  it('20.09.2026 — customHeight у колонны перебивает и уклон, и плоский потолок (своя фиксированная высота)', () => {
+    const slab: Slab = {
+      id: 's1', label: 'Плита', holes: [],
+      outer: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
+      slope: { x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 4000 },
+    }
+    const col = baseColumn({ cx: 500, cy: 500, heightMm: 2200, customHeight: true })
+    const cyls = roundColumnsToCylinders3D([col], 10, 3000, [], [slab])
+    expect(cyls[0].heightM).toBeCloseTo(2.2, 5) // НЕ 3.5 (уклон в этой точке)
+  })
+
+  it('customHeight включён, но heightMm не задан — откат на уклон/потолок как обычно (heightMm обязателен для фиксации)', () => {
+    const col = baseColumn({ customHeight: true })
+    const cyls = roundColumnsToCylinders3D([col], 10, 2700)
+    expect(cyls[0].heightM).toBeCloseTo(2.7, 5)
+  })
+
+  it('heightMm задан, но customHeight не включён — игнорируется, высота по уклону/потолку как обычно', () => {
+    const col = baseColumn({ heightMm: 2200 })
+    const cyls = roundColumnsToCylinders3D([col], 10, 2700)
+    expect(cyls[0].heightM).toBeCloseTo(2.7, 5)
+  })
 })
 
 describe('wallToBoxesWithOpenings3D', () => {
@@ -915,6 +938,18 @@ describe('rectColumnsToBoxes3D', () => {
   it('без slabs/ceilings/slopes/rooms (дефолт []) — обычная плоская высота, как раньше (обратная совместимость)', () => {
     const boxes = rectColumnsToBoxes3D([baseRectColumn({})], 10, 2850)
     expect(boxes[0].size.sy).toBeCloseTo(2.85, 5)
+  })
+
+  it('20.09.2026 — customHeight у колонны перебивает и уклон, и плоский потолок (своя фиксированная высота)', () => {
+    const slab: Slab = {
+      id: 's1', label: 'Плита', holes: [],
+      outer: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
+      slope: { x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 4000 },
+    }
+    const col = baseRectColumn({ cx: 500, cy: 500, heightMm: 2200, customHeight: true })
+    const boxes = rectColumnsToBoxes3D([col], 10, 3000, [], [slab])
+    expect(boxes[0].size.sy).toBeCloseTo(2.2, 5)  // НЕ 3.5 (уклон в этой точке)
+    expect(boxes[0].center.y).toBeCloseTo(1.1, 5) // половина от 2.2
   })
 })
 

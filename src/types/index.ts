@@ -996,6 +996,18 @@ export interface RoundColumn {
   spec?: PlanLineSpec    // тот же тип spec, что у wall_existing (материал/подтип)
   category?: LineCategory   // по умолчанию 'capital'
   workStatus?: WorkStatus   // по умолчанию 'existing'
+  /**
+   * Своя высота (20.09.2026, запрос Сергея) — по умолчанию (customHeight
+   * не включён) колонна идёт от пола до отметки перекрытия в точке своего
+   * центра: effectiveCeilingSlopeHeightAtPoint (Плита/Потолок с уклоном →
+   * зона «Задать уклон» → высота потолка этажа), тот же принцип, что и у
+   * обычной линии (PlanLine.customHeight) — см. core/ceilingSlope.ts.
+   * customHeight включён — heightMm фиксирует высоту колонны вручную
+   * (например, колонна ниже общей высоты потолка на конкретном участке),
+   * уклон/высота этажа для неё игнорируются.
+   */
+  heightMm?: number
+  customHeight?: boolean
   label: string
 }
 
@@ -1017,6 +1029,9 @@ export interface RectColumn {
   spec?: PlanLineSpec
   category?: LineCategory   // по умолчанию 'capital'
   workStatus?: WorkStatus   // по умолчанию 'existing'
+  /** Своя высота — см. подробный комментарий у RoundColumn.heightMm/customHeight выше. */
+  heightMm?: number
+  customHeight?: boolean
   label: string
 }
 
