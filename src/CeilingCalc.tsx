@@ -32,6 +32,7 @@ import {
   type BeamObstacle, type StepSuggestion,
 } from './core/hangerBeamConflict'
 import { ribBeamsToBeamObstacles } from './core/ribBeamsToBeamObstacles'
+import CeilingCompositionEditor from './components/CeilingCompositionEditor'
 
 // ─── Цвета ───────────────────────────────────────────────────────────────────
 
@@ -630,7 +631,10 @@ export default function CeilingCalc() {
           </div>
         )}
 
-        {/* Размеры */}
+        {/* Размеры — не имеют смысла для П19 (композиция из НЕСКОЛЬКИХ
+            уровней/площадей, у каждой свои Длина/Ширина — задаются в
+            конструкторе композиции справа, а не тут одним числом). */}
+        {form.type !== 'p19' && (
         <Card title="РАЗМЕРЫ ПОМЕЩЕНИЯ">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
             <div>
@@ -676,6 +680,7 @@ export default function CeilingCalc() {
             </div>
           </div>
         </Card>
+        )}
 
         {/* Стена начала раскладки — пункт 5 плана (KONSPEKT.md 10.07.2026).
             Только для непрямоугольного контура (пришёл с плана, L×W не заданы).
@@ -684,8 +689,10 @@ export default function CeilingCalc() {
             для ОДНОЙ зоны; при объединении нескольких зон геометрического
             union контуров пока нет, см. buildPolygonInput() и текст в
             StartWallPicker ниже. Для прямоугольного помещения (hasRoom)
-            раскладка уже точная и стена старта там не нужна. */}
-        {!hasRoom && seedZones && seedZones.some(z => z.outerMm.length >= 3) && (
+            раскладка уже точная и стена старта там не нужна.
+            18.09.2026: гейт form.type !== 'p19' — у П19 нет единого
+            "помещения" (seedZones/hasRoom для этого экрана бессмысленны). */}
+        {form.type !== 'p19' && !hasRoom && seedZones && seedZones.some(z => z.outerMm.length >= 3) && (
           <Card title="СТЕНА НАЧАЛА РАСКЛАДКИ">
             <StartWallPicker
               zones={seedZones}
@@ -1080,14 +1087,7 @@ export default function CeilingCalc() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
 
         {form.type === 'p19' ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: C.panel, borderRadius: 10, border: `1px solid ${C.border}`, padding: 40, textAlign: 'center' }}>
-            <div>
-              <div style={{ fontSize: 36, marginBottom: 10 }}>✦</div>
-              <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 6 }}>П19 — многоуровневый потолок</div>
-              <div style={{ color: C.muted, fontSize: 13 }}>Расчёт по индивидуальному проекту. В разработке.</div>
-            </div>
-          </div>
+          <CeilingCompositionEditor />
         ) : (
           <>
             {/* Шаги монтажа */}

@@ -4524,8 +4524,11 @@ export default function FloorPlan() {
                     />
                   ))}
 
-                  {/* Потолки — отдельный от Плит слой (10.07.2026), без дырок, свой цвет (тёплый бежевый) */}
-                  {ceilings.map(cl => (
+                  {/* Потолки — отдельный от Плит слой (10.07.2026), без дырок, свой цвет (тёплый бежевый).
+                      18.09.2026: уровни П19-композиции (CeilingCompositionEditor.tsx) создаются с
+                      outer:[] (без геометрии на плане, до этапа 4 "рисование на плане") — фильтруем,
+                      иначе ctx.moveTo(cl.outer[0]...) ниже упадёт на undefined. */}
+                  {ceilings.filter(cl => cl.outer.length >= 3).map(cl => (
                     <Shape
                       key={cl.id}
                       fill="#c9a68a22"
@@ -5349,7 +5352,9 @@ export default function FloorPlan() {
                     )
                   })}
 
-                  {mode === 'select' && ceilings.map(cl => {
+                  {/* 18.09.2026: та же фильтрация пустого outer, что и выше — маркер-кружок
+                      посреди контура не имеет смысла для ещё не нарисованного П19-уровня. */}
+                  {mode === 'select' && ceilings.filter(cl => cl.outer.length >= 3).map(cl => {
                     const r = 9 / stageScale
                     const cx = cl.outer.reduce((s, p) => s + p.x, 0) / cl.outer.length
                     const cy = cl.outer.reduce((s, p) => s + p.y, 0) / cl.outer.length
