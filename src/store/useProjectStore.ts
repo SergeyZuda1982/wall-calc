@@ -161,7 +161,7 @@ export interface ProjectStore {
   renameProfileTemplate: (id: string, name: string) => void
 
   // этажи
-  addLevel: (name: string, elevationMm: number) => string
+  addLevel: (name: string, elevationMm: number, scaleMmPerPx?: number) => string
   duplicateLevel: (id: string, name: string, elevationMm: number) => string
   removeLevel: (id: string) => void
   renameLevel: (id: string, name: string) => void
@@ -806,8 +806,8 @@ export const useProjectStore = create<ProjectStore>()(
 
       // ─── Этажи ───────────────────────────────────────────────────────────
 
-      addLevel: (name, elevationMm) => {
-        const level = emptyLevel(name, elevationMm)
+      addLevel: (name, elevationMm, scaleMmPerPx) => {
+        const level = emptyLevel(name, elevationMm, scaleMmPerPx)
         set(s => {
           const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
           const projects = s.projects.map(p =>

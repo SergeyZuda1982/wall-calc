@@ -2660,7 +2660,13 @@ export default function FloorPlan() {
               if (!name) return
               const elevStr = window.prompt('Отметка низа этажа, мм', '0')
               if (elevStr === null) return
-              addLevel(name, parseFloat(elevStr) || 0)
+              // Наследуем масштаб уже откалиброванного плана активного этажа —
+              // новый план чертится "с нуля" (без геометрии/подложки), но
+              // масштаб в подавляющем большинстве случаев тот же комплект
+              // чертежей, что и у предыдущего этажа, пересчитывать вручную не
+              // нужно. При необходимости масштаб всё равно можно поправить
+              // на новом этаже через "📐 Откалибровать масштаб".
+              addLevel(name, parseFloat(elevStr) || 0, floorPlan?.scaleMmPerPx)
             }}
             title="Добавить этаж" style={{ ...toolBtnStyle(false), padding: '4px 10px', fontSize: 12 }}>
             + этаж

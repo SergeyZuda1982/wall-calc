@@ -1229,12 +1229,16 @@ export interface Level {
   floorPlan: FloorPlan
 }
 
-export function emptyLevel(name: string, elevationMm: number): Level {
+export function emptyLevel(name: string, elevationMm: number, scaleMmPerPx?: number): Level {
   return {
     id: `lv_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     name,
     elevationMm,
-    floorPlan: { ...DEFAULT_FLOOR_PLAN, lines: [] },
+    floorPlan: {
+      ...DEFAULT_FLOOR_PLAN,
+      lines: [],
+      scaleMmPerPx: scaleMmPerPx ?? DEFAULT_FLOOR_PLAN.scaleMmPerPx,
+    },
   }
 }
 
