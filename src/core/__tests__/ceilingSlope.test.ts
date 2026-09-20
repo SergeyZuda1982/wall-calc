@@ -200,8 +200,8 @@ describe('buildEffectiveCeilingSlopeResolver / effectiveCeilingSlopeHeightAtPoin
   it('нарисованная Плита с наклоном приоритетнее зоны «Задать уклон», даже если зона тоже покрывает линию', () => {
     const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
     const resolve = buildEffectiveCeilingSlopeResolver([line()], [sl], [], [zoneSlope], [])
-    const l = line({ x1: 0, y1: 0, x2: 1000, y2: 0 }) // середина x=500 -> высота Плиты, не 9999
-    expect(ceilingSlopeHeightAt(resolve(l)!, 500, 0)).toBe(3500)
+    const l = line({ x1: 0, y1: 0, x2: 1000, y2: 0 }) // середина x=500 -> высота Плиты (3500), минус толщина плиты по умолчанию (200) = 3300
+    expect(ceilingSlopeHeightAt(resolve(l)!, 500, 0)).toBe(3300)
   })
 
   it('Плита без наклона (slope не задан) НЕ считается источником — падает на зону уклона', () => {
@@ -221,7 +221,8 @@ describe('buildEffectiveCeilingSlopeResolver / effectiveCeilingSlopeHeightAtPoin
     const cl = ceiling({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 2700, height2Mm: 2700 } })
     const resolve = buildEffectiveCeilingSlopeResolver([line()], [sl], [cl], [], [])
     const l = line({ x1: 0, y1: 0, x2: 1000, y2: 0 })
-    expect(ceilingSlopeHeightAt(resolve(l)!, 0, 0)).toBe(3000) // от Плиты, не от Потолка (2700)
+    // от Плиты (3000 минус толщина по умолчанию 200 = 2800), не от Потолка (2700 — у Потолка толщина не вычитается)
+    expect(ceilingSlopeHeightAt(resolve(l)!, 0, 0)).toBe(2800)
   })
 
   it('линия ВНЕ контура Плиты — Плита не применяется, работает обычный резолвер по зоне', () => {
@@ -234,13 +235,42 @@ describe('buildEffectiveCeilingSlopeResolver / effectiveCeilingSlopeHeightAtPoin
   it('effectiveCeilingSlopeHeightAtPoint — та же приоритезация для точки (колонны)', () => {
     const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
     const h = effectiveCeilingSlopeHeightAtPoint({ x: 500, y: 500 }, [], [sl], [], [zoneSlope], [])
-    expect(h).toBe(3500)
+    expect(h).toBe(3300) // 3500 (уклон в точке) минус толщина плиты по умолчанию 200
+  })
+
+  describe('Slab.thicknessMm (20.09.2026 — перегородка должна доходить до НИЖНЕЙ грани плиты, не до верхней)', () => {
+    it('без thicknessMm — вычитается DEFAULT_SLAB_THICKNESS_MM (200)', () => {
+      const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 3000 } })
+      const h = effectiveCeilingSlopeHeightAtPoint({ x: 0, y: 0 }, [], [sl], [], [], [])
+      expect(h).toBe(2800)
+    })
+
+    it('с заданным thicknessMm — вычитается именно оно, не дефолт', () => {
+      const sl = slab({ thicknessMm: 300, slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 3000 } })
+      const h = effectiveCeilingSlopeHeightAtPoint({ x: 0, y: 0 }, [], [sl], [], [], [])
+      expect(h).toBe(2700)
+    })
+
+    it('тонкая плита (thicknessMm мал) — вычитается меньше, высота ближе к верху плиты', () => {
+      const sl = slab({ thicknessMm: 50, slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 3000 } })
+      const h = effectiveCeilingSlopeHeightAtPoint({ x: 0, y: 0 }, [], [sl], [], [], [])
+      expect(h).toBe(2950)
+    })
+
+    it('у Потолка (Ceiling) такое вычитание НЕ применяется — это уже готовая/подвесная поверхность, а не сырая плита', () => {
+      const cl = ceiling({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 2700, height2Mm: 2700 } })
+      const h = effectiveCeilingSlopeHeightAtPoint({ x: 0, y: 0 }, [], [], [cl], [], [])
+      expect(h).toBe(2700) // ровно как задано, без вычета
+    })
   })
 
   describe('resolveRibBeamDropMm (13.09.2026 — авторасчёт опускания ригеля по уклону плиты, объект в Ростове)', () => {
     it('targetBottomMm задан, есть уклон над серединой ригеля — опускание = высота плиты в середине минус targetBottomMm', () => {
-      const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3000, height2Mm: 5000 } })
-      // Ригель от x=0 до x=1000 -> середина x=500 -> высота плиты 3500 (как в тесте выше)
+      // height1Mm/height2Mm сдвинуты на +200 (толщина плиты по умолчанию) относительно
+      // "низа" плиты, который реально нужен здесь (3000→5000) — сама функция вычитает
+      // эту толщину один раз внутри effectiveCeilingSlopeHeightAtPoint (ceilingSlope.ts).
+      const sl = slab({ slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 3200, height2Mm: 5200 } })
+      // Ригель от x=0 до x=1000 -> середина x=500 -> низ плиты в середине 3500 (как в тесте выше)
       const drop = resolveRibBeamDropMm(0, 0, 1000, 0, 3450, 200, [], [sl], [], [], [])
       expect(drop).toBe(3500 - 3450) // 50
     })

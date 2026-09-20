@@ -370,7 +370,7 @@ function HandDrawnSlabMesh({ slab, scaleMmPx, opacity = 1 }: { slab: SlabPolygon
     for (const hole of slab.holes) {
       shape.holes.push(new THREE.Path(hole.map(p => new THREE.Vector2(p.x, -p.z))))
     }
-    const depth = mmToM(FLOOR_SLAB_THICKNESS_MM)
+    const depth = mmToM(slab.thicknessMm ?? FLOOR_SLAB_THICKNESS_MM)
     const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, steps: 1 })
     g.rotateX(-Math.PI / 2)
     g.translate(0, -depth, 0)

@@ -593,6 +593,9 @@ export interface SlabPolygon3D {
    *  раз в момент применения, см. slopePlaneCoefficients), передаётся как
    *  есть из Slab.slope. */
   slope?: SlopePlane
+  /** Толщина плиты, мм (20.09.2026) — как есть из Slab.thicknessMm,
+   *  не задано = DEFAULT_SLAB_THICKNESS_MM (см. types/index.ts). */
+  thicknessMm?: number
 }
 
 /**
@@ -610,6 +613,7 @@ export function slabsToPolygons3D(slabs: Slab[], scaleMmPx: number): SlabPolygon
       outer: toM(sl.outer),
       holes: sl.holes.filter(h => h.length >= 3).map(toM),
       slope: sl.slope,
+      thicknessMm: sl.thicknessMm,
     }))
 }
 
