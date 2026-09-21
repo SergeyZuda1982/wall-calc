@@ -27,7 +27,7 @@
  *   было от чего повесить ригель
  */
 
-import type { PlanLine, PlanLineType, Room, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, SlopePlane, CeilingSlope } from '../types'
+import type { PlanLine, PlanLineType, Room, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, SlopePlane, CeilingSlope, Staircase } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { extractContourPoints } from './contour'
 import { isLineBuiltForRender } from './lineProgress'
@@ -37,6 +37,7 @@ import { buildPositions } from './buildPositions'
 import { parseDoubleFrameSubtype } from '../data/constructionTaxonomy'
 import { ceilingSlopeHeightAt, buildEffectiveCeilingSlopeResolver, effectiveCeilingSlopeHeightAtPoint } from './ceilingSlope'
 import { arcFromChordAndSagitta, sampleArcPoints } from './geometry2d'
+import { resolveStaircaseSteps, spiralStepAngles, spiralStepSectorPx, mmToPx as staircaseMmToPx } from './staircase'
 
 export const DEFAULT_HEIGHT_MM = 3000
 export const DEFAULT_RIB_SECTION_MM = 300
@@ -837,6 +838,92 @@ export function roundColumnsToCylinders3D(
         heightM: mmToM(resolvedHeightMm),
       }
     })
+}
+
+/** Одна ступень винтовой лестницы → полигон для ExtrudeGeometry, метры. */
+export interface StaircaseTread3D {
+  /** id родительской лестницы (одинаков у всех ступеней одной Staircase — как lineId у сегментов стены) */
+  id: string
+  /** контур ступени (сектор), метры, план сверху (x,z) */
+  points: { x: number; z: number }[]
+  /** высота верхней грани ступени над полом этажа, метры */
+  topY: number
+  /** толщина плиты проступи, метры */
+  thicknessM: number
+}
+
+/** Центральная стойка/столб винтовой лестницы (если innerRadiusMm > 0) → цилиндр, метры. */
+export interface StaircasePost3D {
+  id: string
+  cx: number
+  cz: number
+  radius: number
+  bottomY: number
+  topY: number
+}
+
+export interface StaircaseGeometry3D {
+  treads: StaircaseTread3D[]
+  posts: StaircasePost3D[]
+}
+
+/**
+ * Винтовые лестницы → ступени+столб в метрах, для Scene3D (Фаза 4 объекта
+ * в Ростове, 20.09.2026, первый инкремент). Тот же принцип высоты, что у
+ * roundColumnsToCylinders3D выше: по умолчанию верх лестницы —
+ * effectiveCeilingSlopeHeightAtPoint в центре (реальная отметка плиты
+ * следующего этажа, включая наклонные участки), customHeight — ручной
+ * override общей высоты. Низ — bottomElevationMm (по умолчанию 0, пол
+ * этого этажа).
+ *
+ * Число ступеней и их угловые/радиальные границы — через core/staircase.ts
+ * (resolveStaircaseSteps/spiralStepAngles/spiralStepSectorPx), эта функция
+ * только переводит px/мм результат в метры и раскладывает по высоте
+ * (каждая следующая ступень на actualRiserMm выше предыдущей).
+ *
+ * Лестницы с вырожденной геометрией (stepCount=0 — totalHeightMm<=0 или
+ * targetRiserMm<=0, см. resolveStaircaseSteps) молча пропускаются — та же
+ * защита, что и у `.filter(rc => rc.diameterMm > 0)` в roundColumnsToCylinders3D.
+ */
+export function spiralStaircasesToTreads3D(
+  staircases: Staircase[], scaleMmPx: number, ceilingMm: number,
+  lines: PlanLine[] = [], slabs: Slab[] = [], ceilings: Ceiling[] = [], slopes: CeilingSlope[] = [], rooms: Room[] = [],
+): StaircaseGeometry3D {
+  const treads: StaircaseTread3D[] = []
+  const posts: StaircasePost3D[] = []
+  for (const st of staircases) {
+    const bottomMm = st.bottomElevationMm ?? 0
+    const totalHeightMm = st.customHeight && st.heightMm
+      ? st.heightMm
+      : (effectiveCeilingSlopeHeightAtPoint({ x: st.cx, y: st.cy }, lines, slabs, ceilings, slopes, rooms) ?? ceilingMm) - bottomMm
+    const { stepCount, actualRiserMm } = resolveStaircaseSteps(totalHeightMm, st.targetRiserMm)
+    if (stepCount === 0) continue
+
+    const innerRadiusPx = staircaseMmToPx(st.innerRadiusMm, scaleMmPx)
+    const outerRadiusPx = staircaseMmToPx(st.outerRadiusMm, scaleMmPx)
+    const ranges = spiralStepAngles(st.startAngleRad, st.totalAngleRad, stepCount)
+    ranges.forEach((r, i) => {
+      const sectorPx = spiralStepSectorPx(st.cx, st.cy, innerRadiusPx, outerRadiusPx, r.angleFromRad, r.angleToRad)
+      treads.push({
+        id: st.id,
+        points: sectorPx.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
+        topY: mmToM(bottomMm + (i + 1) * actualRiserMm),
+        thicknessM: mmToM(st.treadThicknessMm),
+      })
+    })
+
+    if (st.innerRadiusMm > 0) {
+      posts.push({
+        id: st.id,
+        cx: pxToM(st.cx, scaleMmPx),
+        cz: pxToM(st.cy, scaleMmPx),
+        radius: mmToM(st.innerRadiusMm),
+        bottomY: mmToM(bottomMm),
+        topY: mmToM(bottomMm + totalHeightMm),
+      })
+    }
+  }
+  return { treads, posts }
 }
 
 export interface RectColumnBox3D {

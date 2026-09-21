@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, FreeformOpening, CeilingSlope, CeilingBorder, CeilingComposition } from '../types'
+import type { WallInput, CalcResult, LiningInput, LiningResult, ProfileTemplate, FloorPlan, PlanLine, PlanContour, Room, Level, Slab, Ceiling, RoundColumn, RectColumn, FreeformStructure, FreeformOpening, CeilingSlope, CeilingBorder, CeilingComposition, Staircase } from '../types'
 import type { DoubleFrameInput, DoubleFrameResult } from '../core/calcDoubleFrame'
 import type { CeilingSpec, CeilingStep } from '../data/ceilingData'
 import type { CeilingBorderJointType } from '../data/ceilingBorderData'
@@ -16,7 +16,7 @@ const PROFILE_LETTER: Record<string, string> = {
  * Виды сущностей плана, выбираемых кликом в 3D (10.07.2026) — см.
  * ProjectStore.selectedEntity ниже.
  */
-export type SelectedEntityKind = 'wall' | 'roundColumn' | 'rectColumn' | 'freeform' | 'slab' | 'ceiling'
+export type SelectedEntityKind = 'wall' | 'roundColumn' | 'rectColumn' | 'freeform' | 'slab' | 'ceiling' | 'staircase'
 export interface SelectedEntity {
   kind: SelectedEntityKind
   id: string
@@ -241,6 +241,10 @@ export interface ProjectStore {
   addCeilingSlope: (slope: Omit<CeilingSlope, 'id'>) => string
   updateCeilingSlope: (id: string, patch: Partial<CeilingSlope>) => void
   removeCeilingSlope: (id: string) => void
+  // лестницы (Фаза 4 объекта в Ростове, 20.09.2026) — см. types/index.ts Staircase
+  addStaircase: (st: Omit<Staircase, 'id'>) => string
+  updateStaircase: (id: string, patch: Partial<Staircase>) => void
+  removeStaircase: (id: string) => void
 
   addFreeformStructure: (fs: Omit<FreeformStructure, 'id'>) => string
   updateFreeformStructure: (id: string, patch: Partial<FreeformStructure>) => void
@@ -1237,6 +1241,29 @@ export const useProjectStore = create<ProjectStore>()(
       removeRoundColumn: (id) => {
         set(s => updateActiveFloorPlan(s, fp => ({
           ...fp, roundColumns: (fp.roundColumns ?? []).filter(rc => rc.id !== id),
+        })))
+      },
+
+      // ─── Лестницы (Фаза 4 объекта в Ростове, 20.09.2026) ───────────────────
+
+      addStaircase: (st) => {
+        const id = `stair_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const newSt: Staircase = { ...st, id }
+          return updateActiveFloorPlan(s, fp => ({ ...fp, staircases: [...(fp.staircases ?? []), newSt] }))
+        })
+        return id
+      },
+
+      updateStaircase: (id, patch) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, staircases: (fp.staircases ?? []).map(st => st.id === id ? { ...st, ...patch } : st),
+        })))
+      },
+
+      removeStaircase: (id) => {
+        set(s => updateActiveFloorPlan(s, fp => ({
+          ...fp, staircases: (fp.staircases ?? []).filter(st => st.id !== id),
         })))
       },
 
