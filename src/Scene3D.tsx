@@ -29,7 +29,8 @@ import {
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame, type SlabStepRiser3D,
 } from './core/planTo3D'
-import type { PlanLineType, FloorPlan, PlanLine, WorkStageTemplate } from './types'
+import type { PlanLineType, FloorPlan, PlanLine, WorkStageTemplate, Level } from './types'
+import { virtualSlabsFromLevelAbove } from './core/ceilingSlope'
 import CeilingGridMesh from './components/CeilingGridMesh'
 import CeilingEntityMesh from './components/CeilingEntityMesh'
 import { resolveFrameParams } from './core/calcP112Frame'
@@ -838,10 +839,10 @@ function ZoneDrawOverlay({ points }: { points: THREE.Vector3[] }) {
  * объект целиком, но сразу понятно, какой этаж сейчас редактируется.
  */
 function LevelGroup({
-  floorPlan, offsetY, dimmed, showCeilingGrid, onFocusRoom, onFocusElement,
+  floorPlan, elevationMm, allLevels, offsetY, dimmed, showCeilingGrid, onFocusRoom, onFocusElement,
   selectedEntity, measuring, onSelectEntity, onDeselect,
 }: {
-  floorPlan: FloorPlan; offsetY: number; dimmed: boolean; showCeilingGrid: boolean
+  floorPlan: FloorPlan; elevationMm: number; allLevels: Level[]; offsetY: number; dimmed: boolean; showCeilingGrid: boolean
   onFocusRoom: (worldTarget: THREE.Vector3, distance: number) => void
   onFocusElement: (localTarget: THREE.Vector3, localDistance: number) => void
   selectedEntity: SelectedEntity | null
@@ -859,10 +860,20 @@ function LevelGroup({
   const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
   const opacity = dimmed ? 0.35 : 1
 
+  // 20.09.2026 — низ плиты этажа НАД текущим = потолок текущего этажа
+  // (монолитное перекрытие) — см. virtualSlabsFromLevelAbove в
+  // core/ceilingSlope.ts. В КОНЕЦ, чтобы собственная Плита/Потолок этого
+  // же этажа (если на ней явно задан уклон) оставалась в приоритете.
+  const aboveLevelSlabs = useMemo(
+    () => virtualSlabsFromLevelAbove(elevationMm, allLevels),
+    [elevationMm, allLevels],
+  )
+  const slabsWithAbove = useMemo(() => [...slabs, ...aboveLevelSlabs], [slabs, aboveLevelSlabs])
+
   const ceilingSlopes = floorPlan.ceilingSlopes ?? []
   const boxes = useMemo(
-    () => wallsToBoxes3D(lines, scaleMmPx, rectColumns, roundColumns, slabs, ceilings, ceilingSlopes, rooms),
-    [lines, scaleMmPx, rectColumns, roundColumns, slabs, ceilings, ceilingSlopes, rooms],
+    () => wallsToBoxes3D(lines, scaleMmPx, rectColumns, roundColumns, slabsWithAbove, ceilings, ceilingSlopes, rooms),
+    [lines, scaleMmPx, rectColumns, roundColumns, slabsWithAbove, ceilings, ceilingSlopes, rooms],
   )
   const linesById = useMemo(() => new Map(lines.map(l => [l.id, l])), [lines])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])
@@ -871,12 +882,12 @@ function LevelGroup({
   const ceilingPolygons = useMemo(() => ceilingsToPolygons3D(ceilings, scaleMmPx), [ceilings, scaleMmPx])
   const ceilingMm = useMemo(() => estimateCeilingMm(lines), [lines])
   const columnCylinders = useMemo(
-    () => roundColumnsToCylinders3D(roundColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms),
-    [roundColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms],
+    () => roundColumnsToCylinders3D(roundColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms),
+    [roundColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms],
   )
   const rectColumnBoxes = useMemo(
-    () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms),
-    [rectColumns, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms],
+    () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms),
+    [rectColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms],
   )
   const freeformPrisms = useMemo(
     () => freeformStructuresToPrisms3D(freeformStructures, scaleMmPx, ceilingMm),
@@ -1906,6 +1917,8 @@ export default function Scene3D() {
             <LevelGroup
               key={lv.id}
               floorPlan={lv.floorPlan}
+              elevationMm={lv.elevationMm}
+              allLevels={levels}
               offsetY={mmToM(lv.elevationMm)}
               dimmed={lv.id !== activeLevelId}
               showCeilingGrid={showCeilingGrid}

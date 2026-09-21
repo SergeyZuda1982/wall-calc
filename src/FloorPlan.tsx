@@ -31,7 +31,7 @@ import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentRe
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
 import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrameEstimate'
-import { buildCeilingProfilesByLineId, areaUnderProfileM2, resolveRibBeamDropMm, ceilingMaterialForRoom } from './core/ceilingSlope'
+import { buildCeilingProfilesByLineId, areaUnderProfileM2, resolveRibBeamDropMm, ceilingMaterialForRoom, virtualSlabsFromLevelAbove } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf, resolveFinishZones, finishTemplateContextOf } from './core/finishResolver'
 import { reverseLineDirection } from './core/lineReverse'
@@ -412,6 +412,18 @@ export default function FloorPlan() {
   const mepRoutes = floorPlan?.mepRoutes ?? []
   const mepBackgrounds = floorPlan?.mepBackgrounds ?? {}
   const scaleMmPx = floorPlan?.scaleMmPerPx ?? 10
+
+  // 20.09.2026 — низ плиты этажа НАД текущим = потолок текущего этажа
+  // (монолитное перекрытие) — см. подробный комментарий на
+  // virtualSlabsFromLevelAbove в core/ceilingSlope.ts. Добавляются В КОНЕЦ
+  // массива slabs везде ниже — так собственная Плита/Потолок текущего
+  // этажа (если на ней явно задан уклон) остаётся в приоритете.
+  const activeLevelElevationMm = levels.find(lv => lv.id === activeLevelId)?.elevationMm ?? 0
+  const aboveLevelSlabs = useMemo(
+    () => virtualSlabsFromLevelAbove(activeLevelElevationMm, levels),
+    [activeLevelElevationMm, levels],
+  )
+  const slabsWithAbove = useMemo(() => [...slabs, ...aboveLevelSlabs], [slabs, aboveLevelSlabs])
 
   // ── UI-состояние ──────────────────────────────────────────────────────────
   const [planView, setPlanView]         = useState<PlanView>('top')
@@ -1146,7 +1158,7 @@ export default function FloorPlan() {
     return resolveRibBeamDropMm(
       x1, y1, x2, y2,
       Number.isFinite(targetBottomMm) ? targetBottomMm : undefined, manual,
-      lines, slabs, ceilings, ceilingSlopes, rooms,
+      lines, slabsWithAbove, ceilings, ceilingSlopes, rooms,
     )
   }
 
@@ -2579,8 +2591,8 @@ export default function FloorPlan() {
   // calcPlanFrameEstimate. Пересчитывается только когда меняются
   // линии/плиты/потолки/уклоны/комнаты — не на каждый рендер.
   const ceilingProfilesById = useMemo(
-    () => buildCeilingProfilesByLineId(lines, slabs, ceilings, ceilingSlopes, rooms),
-    [lines, slabs, ceilings, ceilingSlopes, rooms],
+    () => buildCeilingProfilesByLineId(lines, slabsWithAbove, ceilings, ceilingSlopes, rooms),
+    [lines, slabsWithAbove, ceilings, ceilingSlopes, rooms],
   )
 
   // ── Смета каркаса ГКЛ (стойки ПС) по всему проекту, с дедупликацией

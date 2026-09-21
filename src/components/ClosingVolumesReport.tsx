@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useProjectStore } from '../store/useProjectStore'
 import { buildClosingVolumesReport, type ClosingVolumeKind } from '../core/closingVolumesReport'
+import { virtualSlabsFromLevelAbove } from '../core/ceilingSlope'
 
 const KIND_LABEL: Record<ClosingVolumeKind, string> = {
   wall_new: 'Перегородка', wall_lining: 'Облицовка', round_column: 'Колонна (круглая)', rect_column: 'Колонна (прямоуг.)',
@@ -10,17 +11,22 @@ const fmt = (n: number) => n.toLocaleString('ru-RU', { maximumFractionDigits: 2 
 const fmtRub = (n: number) => Math.round(n).toLocaleString('ru-RU') + ' ₽'
 
 export default function ClosingVolumesReport() {
-  const { floorPlan } = useProjectStore()
+  const { floorPlan, levels, activeLevelId } = useProjectStore()
   const [rateBelow, setRateBelow] = useState(1200)
   const [rateAbove, setRateAbove] = useState(1400)
   const [thresholdMm, setThresholdMm] = useState(3000)
   const [onlyConfirmed, setOnlyConfirmed] = useState(false)
 
+  // 20.09.2026 — низ плиты этажа НАД текущим = потолок текущего этажа
+  // (монолитное перекрытие), см. virtualSlabsFromLevelAbove.
+  const activeLevelElevationMm = levels.find(lv => lv.id === activeLevelId)?.elevationMm ?? 0
+  const aboveLevelSlabs = virtualSlabsFromLevelAbove(activeLevelElevationMm, levels)
+
   const report = buildClosingVolumesReport({
     lines: floorPlan.lines,
     roundColumns: floorPlan.roundColumns,
     rectColumns: floorPlan.rectColumns,
-    slabs: floorPlan.slabs,
+    slabs: [...(floorPlan.slabs ?? []), ...aboveLevelSlabs],
     ceilings: floorPlan.ceilings,
     ceilingSlopes: floorPlan.ceilingSlopes,
     rooms: floorPlan.rooms,

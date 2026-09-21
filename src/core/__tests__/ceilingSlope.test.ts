@@ -10,6 +10,7 @@ import {
   areaUnderProfileM2,
   resolveRibBeamDropMm,
   ceilingMaterialForRoom,
+  virtualSlabsFromLevelAbove,
 } from '../ceilingSlope'
 import type { CeilingSlope, PlanLine, Room, Slab, Ceiling } from '../../types'
 
@@ -373,5 +374,78 @@ describe('areaUnderProfileM2 (07.09.2026 — площадь под наклон�
   it('вырожденный профиль (1 точка или пусто) — площадь 0, не падает', () => {
     expect(areaUnderProfileM2([])).toBe(0)
     expect(areaUnderProfileM2([{ x: 0, y: 3000 }])).toBe(0)
+  })
+})
+
+describe('virtualSlabsFromLevelAbove (20.09.2026 — монолитное перекрытие: низ плиты этажа выше = потолок текущего этажа)', () => {
+  const outer = [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }]
+
+  it('нет этажа выше — пустой массив', () => {
+    const levels = [{ elevationMm: 0, floorPlan: { slabs: [] } }]
+    expect(virtualSlabsFromLevelAbove(0, levels)).toEqual([])
+  })
+
+  it('этаж выше есть, но на нём нет плит — пустой массив', () => {
+    const levels = [{ elevationMm: 0, floorPlan: { slabs: [] } }, { elevationMm: 3600, floorPlan: { slabs: [] } }]
+    expect(virtualSlabsFromLevelAbove(0, levels)).toEqual([])
+  })
+
+  it('плоская плита этажа выше (без уклона) — высота = gapMm между этажами в каждой точке', () => {
+    const aboveSlab: Slab = { id: 'SL2', label: 'Плита 2', outer, holes: [] }
+    const levels = [
+      { elevationMm: 0, floorPlan: { slabs: [] } },
+      { elevationMm: 3600, floorPlan: { slabs: [aboveSlab] } },
+    ]
+    const [virt] = virtualSlabsFromLevelAbove(0, levels)
+    expect(virt.slope).toBeDefined()
+    expect(ceilingSlopeHeightAt(virt.slope!, 0, 0)).toBe(3600)
+    expect(ceilingSlopeHeightAt(virt.slope!, 1500, 1500)).toBe(3600) // плоская — везде одинаково
+  })
+
+  it('плита этажа выше СО своим уклоном — уклон переносится со сдвигом на gapMm', () => {
+    const aboveSlab: Slab = { id: 'SL2', label: 'Плита 2', outer, holes: [], slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 100, height2Mm: 300 } }
+    const levels = [
+      { elevationMm: 0, floorPlan: { slabs: [] } },
+      { elevationMm: 3600, floorPlan: { slabs: [aboveSlab] } },
+    ]
+    const [virt] = virtualSlabsFromLevelAbove(0, levels)
+    expect(ceilingSlopeHeightAt(virt.slope!, 0, 0)).toBe(3700)   // 3600 + 100
+    expect(ceilingSlopeHeightAt(virt.slope!, 2000, 0)).toBe(3900) // 3600 + 300
+  })
+
+  it('берётся БЛИЖАЙШИЙ этаж выше, а не любой (если их несколько)', () => {
+    const near: Slab = { id: 'near', label: 'Плита близкая', outer, holes: [] }
+    const far: Slab = { id: 'far', label: 'Плита далёкая', outer, holes: [] }
+    const levels = [
+      { elevationMm: 0, floorPlan: { slabs: [] } },
+      { elevationMm: 3600, floorPlan: { slabs: [near] } },
+      { elevationMm: 7200, floorPlan: { slabs: [far] } },
+    ]
+    const virt = virtualSlabsFromLevelAbove(0, levels)
+    expect(virt.map(s => s.id)).toEqual(['near__above'])
+    expect(ceilingSlopeHeightAt(virt[0].slope!, 0, 0)).toBe(3600) // не 7200
+  })
+
+  it('интеграция с effectiveCeilingSlopeHeightAtPoint — толщина плиты вычитается и для виртуальной (та же slopeFromCoveringEntity)', () => {
+    const aboveSlab: Slab = { id: 'SL2', label: 'Плита 2', outer, holes: [], thicknessMm: 300 }
+    const levels = [
+      { elevationMm: 0, floorPlan: { slabs: [] } },
+      { elevationMm: 3600, floorPlan: { slabs: [aboveSlab] } },
+    ]
+    const virt = virtualSlabsFromLevelAbove(0, levels)
+    const h = effectiveCeilingSlopeHeightAtPoint({ x: 1000, y: 1000 }, [], virt, [], [], [])
+    expect(h).toBe(3300) // 3600 минус толщина 300
+  })
+
+  it('своя Плита/Потолок текущего этажа (с уклоном) в приоритете над плитой этажа выше', () => {
+    const ownSlope: Slab = { id: 'own', label: 'Своя плита', outer, holes: [], slope: { x1: 0, y1: 0, x2: 2000, y2: 0, height1Mm: 2800, height2Mm: 2800 } }
+    const aboveSlab: Slab = { id: 'SL2', label: 'Плита 2', outer, holes: [] }
+    const levels = [
+      { elevationMm: 0, floorPlan: { slabs: [ownSlope] } },
+      { elevationMm: 3600, floorPlan: { slabs: [aboveSlab] } },
+    ]
+    const virtual = virtualSlabsFromLevelAbove(0, levels)
+    const h = effectiveCeilingSlopeHeightAtPoint({ x: 1000, y: 1000 }, [], [ownSlope, ...virtual], [], [], [])
+    expect(h).toBe(2600) // 2800 минус дефолтная толщина 200 — от СВОЕЙ плиты, не от 3600-200=3400 этажа выше
   })
 })

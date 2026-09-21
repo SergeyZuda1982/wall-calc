@@ -177,6 +177,62 @@ function slopeFromCoveringEntity(point: Point2D, slabs: Slab[], ceilings: Ceilin
 }
 
 /**
+ * Плиты этажа НАД текущим, спроецированные как "виртуальные" плиты
+ * ТЕКУЩЕГО этажа (20.09.2026, найдено Сергеем: создал Плиту первого
+ * этажа и Плиту второго этажа — по сути это ОДНА монолитная плита
+ * перекрытия между ними, её нижняя грань и есть потолок первого этажа;
+ * уклон на ней при этом не задавали — плита обычная плоская). До этой
+ * функции slopeFromCoveringEntity видела только Slab/Ceiling СВОЕГО
+ * этажа (floorPlan.slabs текущего Level) — плита, нарисованная на
+ * этаже выше, никак не влияла на высоту стен этажа ниже, даже если
+ * оба этажа расставлены по высоте верно через Level.elevationMm.
+ *
+ * Level.elevationMm — "отметка низа этажа" (types/index.ts), общая для
+ * всех этажей объекта система координат по вертикали. Плита без уклона
+ * стоит на Y=0 СВОЕГО этажа (см. комментарий на Slab выше) — то есть в
+ * абсолютных координатах на high.elevationMm. Для текущего этажа это
+ * gapMm = high.elevationMm - currentElevationMm мм НАД его собственным
+ * полом — ровно то число, которое нужно отдать перегородкам текущего
+ * этажа как высоту (до вычета толщины плиты, это уже делает
+ * slopeFromCoveringEntity выше). Если у плиты этажа выше уже задан
+ * СВОЙ уклон — он тоже переносится, просто со сдвигом на gapMm.
+ *
+ * x,y (px) — одна и та же система координат на обоих этажах (тот же
+ * масштаб уже наследуется при создании этажа, см. addLevel), поэтому
+ * контур плиты (outer/holes) переносится как есть, без пересчёта.
+ *
+ * Приоритет: эти виртуальные плиты добавляются В КОНЕЦ массива slabs
+ * на вызывающей стороне — то есть чужая (со своего этажа) Плита/Потолок
+ * с явным уклоном всё равно проверяется первой (см. slopeFromCoveringEntity
+ * выше, порядок в массиве и есть приоритет), а зона «Задать уклон» —
+ * наоборот, ПОСЛЕ (у неё исторически самый низкий приоритет, см.
+ * buildEffectiveCeilingSlopeResolver ниже).
+ */
+export function virtualSlabsFromLevelAbove(
+  currentElevationMm: number,
+  levels: { elevationMm: number; floorPlan: { slabs: Slab[] } }[],
+): Slab[] {
+  const above = levels
+    .filter(lv => lv.elevationMm > currentElevationMm)
+    .sort((a, b) => a.elevationMm - b.elevationMm)[0]
+  if (!above) return []
+  const gapMm = above.elevationMm - currentElevationMm
+  return above.floorPlan.slabs
+    .filter(sl => sl.outer.length >= 3)
+    .map(sl => ({
+      ...sl,
+      id: `${sl.id}__above`,
+      slope: sl.slope
+        ? { ...sl.slope, height1Mm: sl.slope.height1Mm + gapMm, height2Mm: sl.slope.height2Mm + gapMm }
+        // плоская плита (без уклона) — синтезируем вырожденную "плоскость"
+        // с одинаковой высотой в обеих опорных точках; направление линии
+        // роли не играет (height1Mm === height2Mm), нужны только две
+        // РАЗНЫЕ точки для вектора (см. ceilingSlopeHeightAt).
+        : { x1: sl.outer[0].x, y1: sl.outer[0].y, x2: sl.outer[0].x + 1000, y2: sl.outer[0].y, height1Mm: gapMm, height2Mm: gapMm },
+    }))
+}
+
+/**
  * Резолвер уклона для линии, объединяющий ОБА источника (07.09.2026,
  * приоритет подтверждён Сергеем): сперва — наклон нарисованной Плиты/
  * Потолка, накрывающей середину линии; если такой нет — старая зона
