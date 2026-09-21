@@ -2457,16 +2457,16 @@ export default function FloorPlan() {
   // ── Wall join: скорректированные точки для стыков (стены + грани колонн,
   // см. buildWallsForJoin в wallJoin.ts — общая логика для 2D и 3D) ────────
   const wallJoins = useMemo(
-    () => computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns)),
-    [lines, rectColumns, roundColumns, scaleMmPx],
+    () => computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns, staircases)),
+    [lines, rectColumns, roundColumns, staircases, scaleMmPx],
   )
 
   // Углы узлов в градусах (debug/справочно) — считаются только когда включён
   // тумблер showJoinAngles, чтобы не тратить время на насыщенных планах,
   // когда это не нужно. См. computeJoinAngles в core/wallJoin.ts.
   const joinAngles = useMemo(
-    () => (showJoinAngles ? computeJoinAngles(buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns)) : []),
-    [showJoinAngles, lines, rectColumns, roundColumns, scaleMmPx],
+    () => (showJoinAngles ? computeJoinAngles(buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns, staircases)) : []),
+    [showJoinAngles, lines, rectColumns, roundColumns, staircases, scaleMmPx],
   )
 
   // Дублируем в консоль сырые данные узлов при включении тумблера — вместе
@@ -2487,7 +2487,7 @@ export default function FloorPlan() {
   // и near-miss ниже покажет фактический зазор.
   useEffect(() => {
     if (!showJoinAngles) return
-    const allWalls = buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns)
+    const allWalls = buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns, staircases)
     const linesById = new Map(lines.map(l => [l.id, l]))
     const toMm = (px: number) => Math.round(px * scaleMmPx)
     // eslint-disable-next-line no-console

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory, rectColumnExposedFraction, roundColumnExposedFraction, columnExposedPerimeterFraction, type WallForJoin, type Pt } from '../wallJoin'
 import { roundColumnPolygonPx } from '../columnStamp'
-import type { PlanLine, RectColumn, RoundColumn } from '../../types'
+import type { PlanLine, RectColumn, RoundColumn, Staircase } from '../../types'
 
 // scaleMmPx = 10 (как дефолт в FloorPlan), т.е. 1px = 10мм
 // B — капитальная стена 200мм толщиной (halfPx=10), горизонтальная, ось y=50, x: 0..200
@@ -594,6 +594,94 @@ describe('columnExposedPerimeterFraction (15.09.2026 — по просьбе С�
 
   it('список граней пуст — по соглашению открыт полностью (1), не деление на ноль', () => {
     expect(columnExposedPerimeterFraction([], [])).toBe(1)
+  })
+})
+
+describe('buildWallsForJoin — ЛЕСТНИЦЫ (20.09.2026, Фаза 4 объекта в Ростове, стыковка со стенами клетки)', () => {
+  function line(overrides: Partial<PlanLine> = {}): PlanLine {
+    return {
+      id: 'L1', x1: 0, y1: 0, x2: 300, y2: 0,
+      type: 'wall_new', lengthMm: 3000, label: 'П-1',
+      spec: { material: 'gkl', subtype: 'ps75' },
+      ...overrides,
+    } as PlanLine
+  }
+  function staircase(overrides: Partial<Staircase> = {}): Staircase {
+    return {
+      id: 'st1', kind: 'spiral', cx: 0, cy: 0,
+      innerRadiusMm: 200, outerRadiusMm: 150, // 150мм — та же величина, что и "диаметр 300" у круглой колонны в тестах выше
+      startAngleRad: 0, totalAngleRad: Math.PI * 2,
+      targetRiserMm: 170, treadThicknessMm: 30, label: 'Лестница',
+      ...overrides,
+    }
+  }
+
+  it('лестница добавляет 24 грани по ВНЕШНЕМУ контуру (аппроксимация многоугольником), капитальные, почти нулевой толщины', () => {
+    const st = staircase({ outerRadiusMm: 150 }) // radius=150мм → diameterMm=300, тот же случай, что и у круглой колонны выше
+    const walls = buildWallsForJoin([], 10, [], [], [st])
+    expect(walls).toHaveLength(24)
+    walls.forEach(w => {
+      expect(w.id).toContain('st1')
+      expect(w.category).toBe('capital')
+      expect(w.halfPx).toBeCloseTo(0.01)
+    })
+  })
+
+  it('innerRadiusMm НЕ участвует в стыковке — только outerRadiusMm (ступени/внутренняя стойка не примыкают к стене)', () => {
+    const stSmallInner = staircase({ innerRadiusMm: 0, outerRadiusMm: 150 })
+    const stBigInner = staircase({ innerRadiusMm: 140, outerRadiusMm: 150 })
+    const wallsSmall = buildWallsForJoin([], 10, [], [], [stSmallInner])
+    const wallsBig = buildWallsForJoin([], 10, [], [], [stBigInner])
+    // Геометрия граней идентична независимо от innerRadiusMm
+    expect(wallsSmall.map(w => ({ x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 })))
+      .toEqual(wallsBig.map(w => ({ x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 })))
+  })
+
+  it('без лестниц (дефолт []) — тот же результат, что и раньше (обратная совместимость)', () => {
+    const walls = buildWallsForJoin([line()], 10)
+    expect(walls).toHaveLength(1)
+  })
+
+  it('лестница с явной category — пробрасывается как есть', () => {
+    const st = staircase({ category: 'mutable' })
+    const walls = buildWallsForJoin([], 10, [], [], [st])
+    expect(walls.every(w => w.category === 'mutable')).toBe(true)
+  })
+
+  it('несколько лестниц — id граней не пересекаются между собой', () => {
+    const sts = [staircase({ id: 'stA', cx: 0, cy: 0 }), staircase({ id: 'stB', cx: 1000, cy: 0 })]
+    const walls = buildWallsForJoin([], 10, [], [], sts)
+    expect(walls).toHaveLength(48)
+    const ids = new Set(walls.map(w => w.id))
+    expect(ids.size).toBe(48)
+  })
+
+  it('лестницы, круглые И прямоугольные колонны одновременно — id граней не пересекаются ни у одной пары', () => {
+    const rect: RectColumn = { id: 'rect1', cx: -500, cy: 0, widthMm: 300, depthMm: 300, angleRad: 0, label: 'Прям.' }
+    const round: RoundColumn = { id: 'round1', cx: 500, cy: 0, diameterMm: 300, label: 'Кругл.' }
+    const st = staircase({ id: 'st1', cx: 0, cy: 1000 })
+    const walls = buildWallsForJoin([], 10, [rect], [round], [st])
+    expect(walls).toHaveLength(4 + 24 + 24)
+    const ids = new Set(walls.map(w => w.id))
+    expect(ids.size).toBe(4 + 24 + 24)
+  })
+
+  it('стена лестничной клетки реально стыкуется с внешним контуром лестницы через computeWallJoins (не проходит насквозь)', () => {
+    const st = staircase({ outerRadiusMm: 150 }) // radius=150px при scale=10 (диаметр 300мм)
+    // Та же логика, что и у теста с круглой колонной: стена должна упираться
+    // в СЕРЕДИНУ одного из 24 рёбер многоугольника (не в вершину).
+    const poly = roundColumnPolygonPx(0, 0, 300, 10)
+    const mid = { x: (poly[0].x + poly[1].x) / 2, y: (poly[0].y + poly[1].y) / 2 }
+    const dirLen = Math.hypot(mid.x, mid.y)
+    const ux = mid.x / dirLen, uy = mid.y / dirLen
+    const wall = line({
+      id: 'W1', x1: mid.x, y1: mid.y,
+      x2: mid.x + 200 * ux, y2: mid.y + 200 * uy,
+    })
+    const walls = buildWallsForJoin([wall], 10, [], [], [st])
+    const res = computeWallJoins(walls)
+    const jw = res.get('W1')!
+    expect(jw.cap1).toBe(false) // T-стык распознан, торец не рисуется
   })
 })
 
