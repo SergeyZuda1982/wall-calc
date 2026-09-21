@@ -26,8 +26,10 @@ import {
   freeformStructuresToPrisms3D, wallStudPositionsMm,
   wallToBox3D, wallFaceFrame, worldToFaceMm,
   slopePlaneCoefficients, slabStepRisers3D,
+  spiralStaircasesToTreads3D,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame, type SlabStepRiser3D,
+  type StaircaseTread3D, type StaircasePost3D,
 } from './core/planTo3D'
 import type { PlanLineType, FloorPlan, PlanLine, WorkStageTemplate, Level } from './types'
 import { virtualSlabsFromLevelAbove } from './core/ceilingSlope'
@@ -474,6 +476,92 @@ function RoundColumnMesh({ cyl, opacity = 1, selected = false, measuring = false
 }
 
 /**
+ * Одна ступень винтовой лестницы → extrude THREE.Shape по её сектору,
+ * та же техника, что у HandDrawnSlabMesh (Shape(x,-z) → ExtrudeGeometry
+ * → rotateX(-90°) → translate(0,-depth,0), верхняя грань оказывается на
+ * y=0 локально) — здесь дополнительно позиционируем меш по Y на topY, так
+ * верхняя грань ступени оказывается ровно на нужной высоте, а толщина
+ * уходит вниз (Фаза 4 объекта в Ростове, 20.09.2026, первый инкремент).
+ *
+ * Каждая ступень — отдельный мини-меш (без общей геометрии на всю
+ * лестницу, как и отдельные ExtrudeGeometry у ступенчатых плит
+ * slabStepRisers3D) — CSG не нужен, ступени физически не пересекаются.
+ */
+function StaircaseTreadMesh({ tread, opacity = 1, selected = false, measuring = false, onSelect }: {
+  tread: StaircaseTread3D
+  opacity?: number
+  selected?: boolean
+  measuring?: boolean
+  onSelect?: (id: string) => void
+}) {
+  const tex = useMemo(() => getWallTexture('concrete', 1, 1), [])
+  const tint = useMemo(() => tintOverTexture(COLUMN_COLOR), [])
+  const geo = useMemo(() => {
+    const shape = new THREE.Shape(tread.points.map(p => new THREE.Vector2(p.x, -p.z)))
+    const g = new THREE.ExtrudeGeometry(shape, { depth: tread.thicknessM, bevelEnabled: false, steps: 1 })
+    g.rotateX(-Math.PI / 2)
+    g.translate(0, -tread.thicknessM, 0)
+    return g
+  }, [tread])
+  function handleClick(e: ThreeEvent<MouseEvent>) {
+    if (measuring || !onSelect) return
+    e.stopPropagation()
+    onSelect(tread.id)
+  }
+  return (
+    <mesh geometry={geo} position={[0, tread.topY, 0]} castShadow receiveShadow onClick={handleClick}>
+      <meshStandardMaterial
+        map={tex}
+        color={tint}
+        roughness={0.9}
+        transparent={opacity < 1}
+        opacity={opacity}
+        emissive={selected ? '#ffca28' : '#000000'}
+        emissiveIntensity={selected ? 0.55 : 0}
+      />
+    </mesh>
+  )
+}
+
+/**
+ * Центральная стойка винтовой лестницы (innerRadiusMm > 0) → цилиндр,
+ * тот же принцип, что и RoundColumnMesh выше (CylinderGeometry уже вдоль
+ * вертикальной оси Y, поворот не нужен), но координата — bottomY..topY, а
+ * не 0..heightM (лестница может начинаться не от пола, bottomElevationMm).
+ */
+function StaircasePostMesh({ post, opacity = 1, selected = false, measuring = false, onSelect }: {
+  post: StaircasePost3D
+  opacity?: number
+  selected?: boolean
+  measuring?: boolean
+  onSelect?: (id: string) => void
+}) {
+  const heightM = post.topY - post.bottomY
+  const tex = useMemo(() => getWallTexture('concrete', 2 * Math.PI * post.radius, heightM), [post.radius, heightM])
+  const tint = useMemo(() => tintOverTexture(COLUMN_COLOR), [])
+  function handleClick(e: ThreeEvent<MouseEvent>) {
+    if (measuring || !onSelect) return
+    e.stopPropagation()
+    onSelect(post.id)
+  }
+  if (!(heightM > 0)) return null
+  return (
+    <mesh position={[post.cx, post.bottomY + heightM / 2, post.cz]} castShadow receiveShadow onClick={handleClick}>
+      <cylinderGeometry args={[post.radius, post.radius, heightM, 24]} />
+      <meshStandardMaterial
+        map={tex}
+        color={tint}
+        roughness={0.9}
+        transparent={opacity < 1}
+        opacity={opacity}
+        emissive={selected ? '#ffca28' : '#000000'}
+        emissiveIntensity={selected ? 0.55 : 0}
+      />
+    </mesh>
+  )
+}
+
+/**
  * Прямоугольная колонна (самостоятельная сущность) → коробка three.js.
  * Тот же принцип, что и WallMesh (боковая коробка стены) — но свой
  * фиксированный цвет COLUMN_COLOR, как и у круглой колонны, а не цвет
@@ -856,6 +944,7 @@ function LevelGroup({
   const ceilings = floorPlan.ceilings ?? []
   const roundColumns = floorPlan.roundColumns ?? []
   const rectColumns = floorPlan.rectColumns ?? []
+  const staircases = floorPlan.staircases ?? []
   const freeformStructures = floorPlan.freeformStructures ?? []
   const scaleMmPx = floorPlan.scaleMmPerPx ?? 10
   const opacity = dimmed ? 0.35 : 1
@@ -888,6 +977,10 @@ function LevelGroup({
   const rectColumnBoxes = useMemo(
     () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms),
     [rectColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms],
+  )
+  const staircaseGeometry = useMemo(
+    () => spiralStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms),
+    [staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms],
   )
   const freeformPrisms = useMemo(
     () => freeformStructuresToPrisms3D(freeformStructures, scaleMmPx, ceilingMm),
@@ -924,6 +1017,7 @@ function LevelGroup({
   const selectedRoundColId    = !dimmed && selectedEntity?.kind === 'roundColumn' ? selectedEntity.id : null
   const selectedRectColId     = !dimmed && selectedEntity?.kind === 'rectColumn'  ? selectedEntity.id : null
   const selectedFreeformId    = !dimmed && selectedEntity?.kind === 'freeform'    ? selectedEntity.id : null
+  const selectedStaircaseId   = !dimmed && selectedEntity?.kind === 'staircase'   ? selectedEntity.id : null
 
   const selectedLine = selectedWallId ? lines.find(l => l.id === selectedWallId) : undefined
   const selectedWallBox = selectedLine ? boxes.find(b => b.lineId === selectedLine.id) : undefined
@@ -933,6 +1027,8 @@ function LevelGroup({
   const selectedRectBox = selectedRectCol ? rectColumnBoxes.find(b => b.id === selectedRectCol.id) : undefined
   const selectedFreeform = selectedFreeformId ? freeformStructures.find(f => f.id === selectedFreeformId) : undefined
   const selectedFreeformFirstPrism = selectedFreeform ? freeformPrisms.find(p => p.structureId === selectedFreeform.id) : undefined
+  const selectedStaircase = selectedStaircaseId ? staircases.find(s => s.id === selectedStaircaseId) : undefined
+  const selectedStaircaseFirstTread = selectedStaircase ? staircaseGeometry.treads.find(t => t.id === selectedStaircase.id) : undefined
 
   // Панель статуса (10.07.2026) — единая для всех 4 видов объектов, но
   // содержимое собирается по-разному: у стены есть buildProgress (см.
@@ -956,6 +1052,13 @@ function LevelGroup({
         y: mmToM(selectedFreeform.heightMm ?? ceilingMm) + 0.3,
         z: selectedFreeformFirstPrism.points.reduce((s, p) => s + p.z, 0) / selectedFreeformFirstPrism.points.length,
         label: selectedFreeform.label,
+      }
+    : selectedStaircase && selectedStaircaseFirstTread
+    ? {
+        x: selectedStaircaseFirstTread.points.reduce((s, p) => s + p.x, 0) / selectedStaircaseFirstTread.points.length,
+        y: staircaseGeometry.treads.filter(t => t.id === selectedStaircase.id).reduce((max, t) => Math.max(max, t.topY), 0) + 0.3,
+        z: selectedStaircaseFirstTread.points.reduce((s, p) => s + p.z, 0) / selectedStaircaseFirstTread.points.length,
+        label: selectedStaircase.label,
       }
     : null
 
@@ -1036,6 +1139,26 @@ function LevelGroup({
           selected={box.id === selectedRectColId}
           measuring={measuring}
           onSelect={(id) => onSelectEntity({ kind: 'rectColumn', id })}
+        />
+      ))}
+      {staircaseGeometry.treads.map((tread, i) => (
+        <StaircaseTreadMesh
+          key={`stair-tread-${tread.id}-${i}`}
+          tread={tread}
+          opacity={opacity}
+          selected={tread.id === selectedStaircaseId}
+          measuring={measuring}
+          onSelect={(id) => onSelectEntity({ kind: 'staircase', id })}
+        />
+      ))}
+      {staircaseGeometry.posts.map(post => (
+        <StaircasePostMesh
+          key={`stair-post-${post.id}`}
+          post={post}
+          opacity={opacity}
+          selected={post.id === selectedStaircaseId}
+          measuring={measuring}
+          onSelect={(id) => onSelectEntity({ kind: 'staircase', id })}
         />
       ))}
       {freeformPrisms.map(prism => (

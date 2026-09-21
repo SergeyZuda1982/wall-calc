@@ -374,6 +374,7 @@ export default function FloorPlan() {
     addCeiling, removeCeiling, updateCeiling,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
+    addStaircase, updateStaircase, removeStaircase,
     addCeilingSlope, updateCeilingSlope, removeCeilingSlope,
     addFreeformStructure, updateFreeformStructure, removeFreeformStructure,
     addFreeformOpening, updateFreeformOpening, removeFreeformOpening,
@@ -407,6 +408,7 @@ export default function FloorPlan() {
   const ceilings  = floorPlan?.ceilings ?? []
   const roundColumns = floorPlan?.roundColumns ?? []
   const rectColumns  = floorPlan?.rectColumns  ?? []
+  const staircases   = floorPlan?.staircases   ?? []
   const ceilingSlopes = floorPlan?.ceilingSlopes ?? []
   const freeformStructures = floorPlan?.freeformStructures ?? []
   const mepRoutes = floorPlan?.mepRoutes ?? []
@@ -609,6 +611,7 @@ export default function FloorPlan() {
   const [inspectorRoundColumnId, setInspectorRoundColumnId] = useState<string | null>(null)
   const [inspectorRectColumnId, setInspectorRectColumnId] = useState<string | null>(null)
   const [inspectorFreeformId, setInspectorFreeformId] = useState<string | null>(null)
+  const [inspectorStaircaseId, setInspectorStaircaseId] = useState<string | null>(null)
   // Инспектор Плиты/Потолка (15.09.2026) — раньше эти сущности можно было
   // только удалить/редактировать через боковую панель «Плиты»/«Потолки»,
   // клик по самой фигуре на плане ничего не выделял (Shape рисовался с
@@ -662,6 +665,8 @@ export default function FloorPlan() {
       setInspectorRectColumnId(e.id)
     } else if (e.kind === 'freeform' && freeformStructures.some(f => f.id === e.id)) {
       setInspectorFreeformId(e.id)
+    } else if (e.kind === 'staircase' && staircases.some(s => s.id === e.id)) {
+      setInspectorStaircaseId(e.id)
     } else if (e.kind === 'slab' && slabs.some(s => s.id === e.id)) {
       setInspectorSlabId(e.id)
     } else if (e.kind === 'ceiling' && ceilings.some(c => c.id === e.id)) {
@@ -683,10 +688,11 @@ export default function FloorPlan() {
     else if (inspectorRoundColumnId) setSelectedEntity({ kind: 'roundColumn', id: inspectorRoundColumnId })
     else if (inspectorRectColumnId) setSelectedEntity({ kind: 'rectColumn', id: inspectorRectColumnId })
     else if (inspectorFreeformId) setSelectedEntity({ kind: 'freeform', id: inspectorFreeformId })
+    else if (inspectorStaircaseId) setSelectedEntity({ kind: 'staircase', id: inspectorStaircaseId })
     else if (inspectorSlabId) setSelectedEntity({ kind: 'slab', id: inspectorSlabId })
     else if (inspectorCeilingId) setSelectedEntity({ kind: 'ceiling', id: inspectorCeilingId })
     else setSelectedEntity(null)
-  }, [selectedId, inspectorRoundColumnId, inspectorRectColumnId, inspectorFreeformId, inspectorSlabId, inspectorCeilingId, setSelectedEntity])
+  }, [selectedId, inspectorRoundColumnId, inspectorRectColumnId, inspectorFreeformId, inspectorStaircaseId, inspectorSlabId, inspectorCeilingId, setSelectedEntity])
   // Цепочка рисования периметра
   const [chainStartPt, setChainStartPt] = useState<{ x: number; y: number } | null>(null)
   const [chainLineIds, setChainLineIds] = useState<string[]>([])
@@ -3665,6 +3671,63 @@ export default function FloorPlan() {
             )}
           </div>
 
+          {/* Лестница (винтовая, Фаза 4 объекта в Ростове, 20.09.2026) —
+              первый инкремент, см. TASKS.md/types/index.ts Staircase. Без
+              полноценного stamp-режима мышью (тот отдельным инкрементом) —
+              кнопка создаёт лестницу с дефолтами (радиусы по референсу
+              листа 55\15 объекта в Ростове) в центре текущего вида плана,
+              дальше её параметры правятся числовым инспектором (открывается
+              сразу же, тот же паттерн, что у RoundColumn выше). */}
+          <div>
+            <div style={{ ...sectionHeaderStyle, color: '#8d99ae' }}>Лестница</div>
+            <div style={{ padding: '0 14px 8px' }}>
+              <button
+                onClick={() => {
+                  const cxPx = (canvasW / 2 - stagePos.x) / stageScale
+                  const cyPx = (CANVAS_H / 2 - stagePos.y) / stageScale
+                  const id = addStaircase({
+                    kind: 'spiral',
+                    cx: cxPx, cy: cyPx,
+                    innerRadiusMm: 200, outerRadiusMm: 1400,
+                    startAngleRad: 0, totalAngleRad: Math.PI * 2,
+                    targetRiserMm: 170, treadThicknessMm: 30,
+                    label: 'Лестница (винтовая)',
+                  })
+                  setInspectorId(null); setInspectorRoomId(null)
+                  setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null)
+                  setInspectorStaircaseId(id)
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                  padding: '7px 10px', fontSize: 12, borderRadius: 5, cursor: 'pointer',
+                  border: '1px solid #3a4060', background: 'transparent', color: '#8a9ac8', textAlign: 'left',
+                }}>
+                <span style={{ fontSize: 14 }}>🌀</span> Добавить винтовую лестницу
+              </button>
+              {staircases.length > 0 && (
+                <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {staircases.map(st => (
+                    <button key={st.id}
+                      onClick={() => {
+                        setInspectorId(null); setInspectorRoomId(null)
+                        setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null)
+                        setInspectorStaircaseId(st.id)
+                      }}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px',
+                        fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                        border: inspectorStaircaseId === st.id ? '1px solid #6a4fb5' : '1px solid #3a4060',
+                        background: inspectorStaircaseId === st.id ? '#6a4fb5' : 'transparent',
+                        color: inspectorStaircaseId === st.id ? '#fff' : '#8a9ac8',
+                      }}>
+                      🌀 {st.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Трасса инженерной системы (08.07.2026) — только когда активна
               вентиляция/электрика (см. переключатель дисциплин выше). Путь —
               открытая ломаная, не замкнутый контур, поэтому завершение не по
@@ -5344,6 +5407,40 @@ export default function FloorPlan() {
                     )
                   })}
 
+                  {/* 20.09.2026: Лестница (винтовая) — внешний контур пунктиром
+                      (сектор целиком, не по ступеням — первый инкремент, чисто
+                      обзорная отрисовка) + select-маркер в центре, тот же
+                      паттерн клика, что у остальных select-маркеров выше. */}
+                  {staircases.map(st => {
+                    const outerR = st.outerRadiusMm / scaleMmPx
+                    const innerR = st.innerRadiusMm / scaleMmPx
+                    const isSel = inspectorStaircaseId === st.id
+                    return (
+                      <Group key={'stair-' + st.id}>
+                        <Circle x={st.cx} y={st.cy} radius={outerR}
+                          stroke={isSel ? '#6a4fb5' : '#78909c'} strokeWidth={1.5 / stageScale}
+                          dash={[6 / stageScale, 4 / stageScale]} listening={false} />
+                        {st.innerRadiusMm > 0 && (
+                          <Circle x={st.cx} y={st.cy} radius={innerR}
+                            stroke={isSel ? '#6a4fb5' : '#78909c'} strokeWidth={1 / stageScale}
+                            dash={[4 / stageScale, 3 / stageScale]} listening={false} />
+                        )}
+                        {mode === 'select' && (() => {
+                          const r = 9 / stageScale
+                          return (
+                            <Group
+                              onClick={e => { e.cancelBubble = true; setInspectorStaircaseId(st.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}
+                              onTap={e => { if (touchGestureRef.current) return; e.cancelBubble = true; setInspectorStaircaseId(st.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}>
+                              <Circle x={st.cx} y={st.cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
+                              <Text x={st.cx - r} y={st.cy - r} width={r * 2} height={r * 2} text="🌀"
+                                fontSize={11 / stageScale} align="center" verticalAlign="middle" listening={false} />
+                            </Group>
+                          )
+                        })()}
+                      </Group>
+                    )
+                  })}
+
                   {/* Select-маркеры Плиты/Потолка (15.09.2026) — сама фигура
                       listening={false} (не мешает карандашу/драгу под ней),
                       маркер в центроиде открывает/подсвечивает строку в
@@ -6875,6 +6972,108 @@ export default function FloorPlan() {
           )
         })()}
 
+        {/* 20.09.2026: Лестница (винтовая) — Фаза 4 объекта в Ростове, первый
+            инкремент. Минимальная числовая панель (без drag-редактирования
+            мышью — тот же выбор, что и у проёмов/вершин ранее), тот же
+            паттерн, что у инспектора RoundColumn выше. НЕ показывает
+            материалы/раскрой проступей — этого расчёта пока нет (см.
+            комментарий у типа Staircase, types/index.ts). */}
+        {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && !inspectorRectColumnId && !inspectorFreeformId && inspectorStaircaseId && (() => {
+          const st = staircases.find(s => s.id === inspectorStaircaseId)
+          if (!st) return null
+          const toDeg = (rad: number) => Math.round(rad * 180 / Math.PI * 100) / 100
+          const fromDeg = (deg: number) => deg * Math.PI / 180
+          return (
+            <div style={isMobile ? {
+              ...rightPanelStyle,
+              position: 'absolute', top: 0, bottom: 0, right: 0, zIndex: 21,
+              width: Math.min(RIGHT_W, window.innerWidth - 32),
+              minWidth: 0, maxWidth: Math.min(RIGHT_W, window.innerWidth - 32),
+              boxShadow: '-4px 0 16px rgba(0,0,0,0.25)',
+            } : rightPanelStyle}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px 10px', borderBottom: '1px solid #e0e4ee', background: '#fff',
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>Лестница (винтовая)</div>
+                <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorStaircaseId(null)}>✕</button>
+              </div>
+              <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <label style={{ fontSize: 12, color: '#555' }}>
+                  Название
+                  <input value={st.label} onChange={e => updateStaircase(st.id, { label: e.target.value })}
+                    style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                    Радиус внутр., мм
+                    <input type="number" value={st.innerRadiusMm} min={0}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v >= 0) updateStaircase(st.id, { innerRadiusMm: v }) }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                  </label>
+                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                    Радиус внешн., мм
+                    <input type="number" value={st.outerRadiusMm} min={1}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateStaircase(st.id, { outerRadiusMm: v }) }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                  </label>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                    Угол начала, °
+                    <input type="number" value={toDeg(st.startAngleRad)}
+                      onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) updateStaircase(st.id, { startAngleRad: fromDeg(v) }) }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                  </label>
+                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}
+                    title="Знак задаёт направление обхода: положительный — по часовой стрелке (экранные координаты, Y вниз), отрицательный — против.">
+                    Общий угол, °
+                    <input type="number" value={toDeg(st.totalAngleRad)}
+                      onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) updateStaircase(st.id, { totalAngleRad: fromDeg(v) }) }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                  </label>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                    Подступёнок (цель), мм
+                    <input type="number" value={st.targetRiserMm} min={1}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateStaircase(st.id, { targetRiserMm: v }) }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                  </label>
+                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                    Толщина проступи, мм
+                    <input type="number" value={st.treadThicknessMm} min={1}
+                      onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateStaircase(st.id, { treadThicknessMm: v }) }}
+                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                  </label>
+                </div>
+                <label style={{ fontSize: 12, color: '#555' }}>
+                  Низ (отметка от пола этажа), мм
+                  <input type="number" value={st.bottomElevationMm ?? 0}
+                    onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) updateStaircase(st.id, { bottomElevationMm: v }) }}
+                    style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                </label>
+                <div style={{ fontSize: 12, color: '#555', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Высота:
+                  <input type="number" value={st.heightMm ?? 3000} disabled={!st.customHeight}
+                    onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateStaircase(st.id, { heightMm: v }) }}
+                    style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde', opacity: st.customHeight ? 1 : 0.5 }} /> мм
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#999', cursor: 'pointer', marginTop: -6 }}
+                  title="По умолчанию лестница идёт от пола этажа до отметки перекрытия в точке своего центра (с учётом уклона Плиты/Потолка, если он есть) — поле выше игнорируется. Включите, если у этой лестницы должна быть своя фиксированная высота.">
+                  <input type="checkbox" checked={!!st.customHeight}
+                    onChange={e => updateStaircase(st.id, { customHeight: e.target.checked })} />
+                  своя высота (не до перекрытия, игнорировать уклон)
+                </label>
+                <button onClick={() => { removeStaircase(st.id); setInspectorStaircaseId(null) }}
+                  style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
+                  🗑 Удалить лестницу
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+
         {/* 14.09.2026: Ceiling (потолок, свободный контур/замкнутая цепочка
             "потолочных" линий) — по просьбе пользователя больше НЕ кидает
             автоматически в полный калькулятор (CeilingCalc.tsx) при
@@ -6887,7 +7086,7 @@ export default function FloorPlan() {
             направление монтажа, класс нагрузки, шаг подвесов вручную,
             превью раскроя листов и т.п. — здесь этого нет, сознательно
             компактная версия). */}
-        {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && !inspectorRectColumnId && !inspectorFreeformId && !inspectorSlabId && inspectorCeilingId && (() => {
+        {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && !inspectorRectColumnId && !inspectorFreeformId && !inspectorStaircaseId && !inspectorSlabId && inspectorCeilingId && (() => {
           const cl = ceilings.find(c => c.id === inspectorCeilingId)
           if (!cl) return null
           const seed = ceilingToCeilingSeed(cl, scaleMmPx)
