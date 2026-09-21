@@ -722,10 +722,12 @@ describe('roundColumnsToCylinders3D', () => {
       outer: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }],
       slope: { x1: 0, y1: 0, x2: 1000, y2: 0, height1Mm: 3000, height2Mm: 4000 },
     }
-    // Колонна в центре по X (x=500) — высота уклона линейно между 3000 и 4000 = 3500мм
+    // Колонна в центре по X (x=500) — высота уклона линейно между 3000 и 4000 = 3500мм,
+    // минус толщина плиты по умолчанию (200мм, 20.09.2026 — колонна должна доходить до
+    // НИЖНЕЙ грани плиты, а не до верхней) = 3300мм
     const col = baseColumn({ cx: 500, cy: 500 })
     const cyls = roundColumnsToCylinders3D([col], 10, 3000 /* плоский потолок — должен быть ПЕРЕБИТ уклоном */, [], [slab])
-    expect(cyls[0].heightM).toBeCloseTo(3.5, 5) // НЕ 3.0 (плоский ceilingMm)
+    expect(cyls[0].heightM).toBeCloseTo(3.3, 5) // НЕ 3.0 (плоский ceilingMm) и НЕ 3.5 (верх плиты без вычета толщины)
   })
 
   it('колонна ВНЕ контура наклонной Плиты — берёт обычную плоскую ceilingMm (уклон не применяется к чужой точке)', () => {
@@ -752,7 +754,7 @@ describe('roundColumnsToCylinders3D', () => {
     }
     const col = baseColumn({ cx: 500, cy: 500, heightMm: 2200, customHeight: true })
     const cyls = roundColumnsToCylinders3D([col], 10, 3000, [], [slab])
-    expect(cyls[0].heightM).toBeCloseTo(2.2, 5) // НЕ 3.5 (уклон в этой точке)
+    expect(cyls[0].heightM).toBeCloseTo(2.2, 5) // НЕ 3.3 (уклон в этой точке минус толщина плиты)
   })
 
   it('customHeight включён, но heightMm не задан — откат на уклон/потолок как обычно (heightMm обязателен для фиксации)', () => {
@@ -931,8 +933,9 @@ describe('rectColumnsToBoxes3D', () => {
     }
     const col = baseRectColumn({ cx: 500, cy: 500 })
     const boxes = rectColumnsToBoxes3D([col], 10, 3000, [], [slab])
-    expect(boxes[0].size.sy).toBeCloseTo(3.5, 5)  // НЕ 3.0
-    expect(boxes[0].center.y).toBeCloseTo(1.75, 5) // половина от 3.5, не от 3.0
+    // 3500 (верх плиты в точке) минус толщина плиты по умолчанию 200 = 3300 (низ плиты, 20.09.2026)
+    expect(boxes[0].size.sy).toBeCloseTo(3.3, 5)  // НЕ 3.0 и НЕ 3.5
+    expect(boxes[0].center.y).toBeCloseTo(1.65, 5) // половина от 3.3, не от 3.5
   })
 
   it('без slabs/ceilings/slopes/rooms (дефолт []) — обычная плоская высота, как раньше (обратная совместимость)', () => {
@@ -948,7 +951,7 @@ describe('rectColumnsToBoxes3D', () => {
     }
     const col = baseRectColumn({ cx: 500, cy: 500, heightMm: 2200, customHeight: true })
     const boxes = rectColumnsToBoxes3D([col], 10, 3000, [], [slab])
-    expect(boxes[0].size.sy).toBeCloseTo(2.2, 5)  // НЕ 3.5 (уклон в этой точке)
+    expect(boxes[0].size.sy).toBeCloseTo(2.2, 5)  // НЕ 3.3 (уклон в этой точке минус толщина плиты)
     expect(boxes[0].center.y).toBeCloseTo(1.1, 5) // половина от 2.2
   })
 })

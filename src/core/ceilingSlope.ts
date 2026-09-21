@@ -18,6 +18,7 @@
  */
 
 import type { CeilingSlope, SlopePlane, EdgeProfile, PlanLine, Room, Slab, Ceiling } from '../types'
+import { DEFAULT_SLAB_THICKNESS_MM } from '../types'
 import { pointInPolygon, type Point2D } from './geometry2d'
 import { extractContourPoints } from './contour'
 
@@ -147,13 +148,27 @@ export function ceilingProfileForLine(line: PlanLine, slope: SlopePlane | undefi
  * Сергей решил, что если плита/потолок над помещением уже нарисованы —
  * перегородки должны брать высоту из них, а зона уклона остаётся только
  * запасным вариантом, пока плита ещё не нарисована. Плита проверяется
- * раньше потолка (структурная плита перекрытия — то, до чего реально
- * должна доходить перегородка; подвесной потолок ниже неё на высоту
- * подвесов и не обязан совпадать).
+ * раньше потолка (структурная плита перекрытия), но Slab.slope хранит
+ * отметку её ВЕРХНЕЙ грани (та же величина, что задаёт положение плиты в
+ * 3D, см. Scene3D.tsx) — до чего реально должна доходить перегородка, это
+ * её НИЖНЯЯ грань, поэтому здесь вычитается толщина плиты (20.09.2026,
+ * найдено на тестовом объекте: без вычитания перегородка рисовалась
+ * насквозь через плиту до её верха) — см. DEFAULT_SLAB_THICKNESS_MM в
+ * types/index.ts. У Ceiling такого вычитания нет: подвесной потолок сам
+ * по себе уже готовая/подвешенная поверхность на нужной отметке, а не
+ * сырая структурная плита со своей толщиной.
  */
 function slopeFromCoveringEntity(point: Point2D, slabs: Slab[], ceilings: Ceiling[]): SlopePlane | undefined {
   for (const sl of slabs) {
-    if (sl.slope && sl.outer.length >= 3 && pointInPolygon(point, [sl.outer])) return sl.slope
+    if (sl.slope && sl.outer.length >= 3 && pointInPolygon(point, [sl.outer])) {
+      // Slope хранит отметку ВЕРХНЕЙ грани плиты (та же величина, что
+      // используется для 3D-экструзии в Scene3D.tsx) — перегородка/колонна
+      // под плитой должна доходить до её НИЖНЕЙ грани, поэтому толщина
+      // плиты вычитается здесь один раз, до того как высота уйдёт дальше
+      // ко всем потребителям (ceilingProfileForLine, колонны, ригели).
+      const thicknessMm = sl.thicknessMm ?? DEFAULT_SLAB_THICKNESS_MM
+      return { ...sl.slope, height1Mm: sl.slope.height1Mm - thicknessMm, height2Mm: sl.slope.height2Mm - thicknessMm }
+    }
   }
   for (const cl of ceilings) {
     if (cl.slope && cl.outer.length >= 3 && pointInPolygon(point, [cl.outer])) return cl.slope

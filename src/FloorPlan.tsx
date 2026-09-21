@@ -3140,6 +3140,14 @@ export default function FloorPlan() {
                         {sl.label} {sl.holes.length > 0 && `(${sl.holes.length} проём${sl.holes.length > 1 ? 'а' : ''})`}
                         {seed && <span style={{ color: '#5c7a99' }}> · {seed.areaSqm} м² · {seed.perimeterM} пог.м</span>}
                       </button>
+                      <div style={{ display: 'flex', gap: 4, padding: '0 8px 4px', alignItems: 'center' }}>
+                        <span style={{ fontSize: 10, color: '#8a9ac8' }}>Толщина плиты:</span>
+                        <input type="number" value={sl.thicknessMm ?? 200}
+                          onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateSlab(sl.id, { thicknessMm: v }) }}
+                          title="Толщина плиты, мм — вычитается из отметки уклона при определении высоты перегородок/колонн под этой плитой (они должны доходить до её НИЖНЕЙ грани, не до верхней)"
+                          style={{ width: 56, fontSize: 10, padding: '3px 5px', borderRadius: 3, border: '1px solid #3a4060', background: '#1a1f33', color: '#fff' }} />
+                        <span style={{ fontSize: 10, color: '#8a9ac8' }}>мм</span>
+                      </div>
                       <div style={{ display: 'flex', gap: 4, padding: '0 8px 6px', alignItems: 'center', flexWrap: 'wrap' as const }}>
                         <label title="Отметить для объединения нескольких зон в один расчёт потолка"
                           style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
