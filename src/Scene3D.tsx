@@ -1308,6 +1308,12 @@ function CameraScaleSync({ scale, controlsRef }: { scale: VisualScale; controlsR
 export default function Scene3D() {
   const [cameraMode, setCameraMode] = useState<'orbit' | 'fly'>('orbit')
   const [showCeilingGrid, setShowCeilingGrid] = useState(false)
+  // 21.09.2026 — «общий вид» по запросу Сергея: все этажи и так рендерятся
+  // вместе всегда (см. LevelGroup ниже, offsetY по Level.elevationMm), но
+  // неактивный этаж по умолчанию притушен (opacity 0.35), чтобы не мешал
+  // работать с активным. showAllLevels=true убирает притушивание — все
+  // этажи видно как единое здание, без переключения.
+  const [showAllLevels, setShowAllLevels] = useState(false)
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
   const focusNonce = useRef(0)
   const [visualScale, setVisualScale] = useState<VisualScale>(1)
@@ -1368,6 +1374,7 @@ export default function Scene3D() {
 
   const levels = useProjectStore(s => s.levels)
   const activeLevelId = useProjectStore(s => s.activeLevelId)
+  const selectLevel = useProjectStore(s => s.selectLevel)
   // Выбор объекта кликом (10.07.2026, стена/колонны/произвольные
   // конструкции) — общее с 2D-планом состояние (см.
   // useProjectStore.selectedEntity): клик по объекту здесь подсвечивает его
@@ -1705,6 +1712,38 @@ export default function Scene3D() {
           }}>
           {maximized ? '⤢ Свернуть' : '⛶ Во весь экран'}
         </button>
+        {levels.length > 1 && (
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 8px',
+            border: '1px solid #ccc', borderRadius: 6, background: '#fff', maxWidth: 260,
+          }}>
+            {[...levels].sort((a, b) => a.elevationMm - b.elevationMm).map(lv => (
+              <button
+                key={lv.id}
+                onClick={() => selectLevel(lv.id)}
+                title={`Переключиться на «${lv.name}» (не влияет на «общий вид» ниже — он показывает все этажи сразу)`}
+                style={{
+                  padding: '6px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  border: '1px solid #444', borderRadius: 5,
+                  background: lv.id === activeLevelId ? '#444' : '#fff',
+                  color: lv.id === activeLevelId ? '#fff' : '#444',
+                }}>
+                {lv.name}
+              </button>
+            ))}
+            <button
+              onClick={() => setShowAllLevels(v => !v)}
+              title="Показать все этажи сразу без притушивания неактивных — общий вид здания"
+              style={{
+                padding: '6px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                border: '1px solid #b0873a', borderRadius: 5,
+                background: showAllLevels ? '#b0873a' : '#fff',
+                color: showAllLevels ? '#fff' : '#b0873a',
+              }}>
+              {showAllLevels ? '🏢 Общий вид (вкл)' : '🏢 Общий вид'}
+            </button>
+          </div>
+        )}
         <button
           onClick={() => setCameraMode(m => m === 'orbit' ? 'fly' : 'orbit')}
           style={{
@@ -2043,7 +2082,7 @@ export default function Scene3D() {
               elevationMm={lv.elevationMm}
               allLevels={levels}
               offsetY={mmToM(lv.elevationMm)}
-              dimmed={lv.id !== activeLevelId}
+              dimmed={!showAllLevels && lv.id !== activeLevelId}
               showCeilingGrid={showCeilingGrid}
               onFocusRoom={focusOnPoint}
               onFocusElement={focusOnPoint}
