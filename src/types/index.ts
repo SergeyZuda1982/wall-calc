@@ -1063,6 +1063,54 @@ export interface RectColumn {
 }
 
 /**
+ * Винтовая лестница — самостоятельная сущность (Фаза 4 объекта в Ростове,
+ * 20.09.2026, начали с винтовой — см. TASKS.md и core/staircase.ts). Тот же
+ * принцип, что и у RoundColumn/RectColumn выше: центр + параметры в мм,
+ * а не набор линий. Геометрия сектора одной ступени — spiralStepSectorPx
+ * (core/staircase.ts), число ступеней/факт. подступёнок — resolveStaircaseSteps.
+ *
+ * `kind` уже сейчас как union (хоть и с единственным значением) — второй
+ * инкремент Фазы 4 добавит `straight_run` (маршевая с площадками), геометрия
+ * которой принципиально другая (последовательность маршей, а не сектор) и
+ * потребует своих полей; общий `Staircase` тип на оба вида не заводим, чтобы
+ * не городить кучу полей, бессмысленных для одного из видов (тот же подход,
+ * что развёл RectColumn/RoundColumn на два типа, а не один с "kind").
+ *
+ * Высота (bottomElevationMm..topElevationMm) — по умолчанию (customHeight не
+ * включён) от пола (0) до effectiveCeilingSlopeHeightAtPoint в точке центра,
+ * ТОТ ЖЕ принцип, что у RoundColumn.heightMm/customHeight (см. комментарий
+ * там) — лестница садится на реальную отметку плиты следующего этажа/уровня
+ * в этой точке, включая наклонные участки, без ручного ввода на каждый
+ * случай. customHeight включён — topElevationMm фиксирует верх вручную.
+ *
+ * ⚠️ Первый инкремент (20.09.2026): НЕ участвует в wallJoin (лестница просто
+ * ставится в уже нарисованный проём стен лестничной клетки — как и Slab/
+ * Ceiling, а не как стена/колонна), нет материалов/раскроя проступей (мрамор/
+ * подступенок на реальном чертеже) — расчётный движок не покрывает эту
+ * сущность, аналогично тому, как FreeformStructure не участвует в
+ * calcSheetLayout. Оба пункта — явно отложенные будущие задачи, не забытые.
+ */
+export interface Staircase {
+  id: string
+  kind: 'spiral'
+  cx: number              // центр, px (координаты плана)
+  cy: number
+  innerRadiusMm: number    // радиус центральной стойки/выреза; 0 — без стойки (клин до центра)
+  outerRadiusMm: number
+  startAngleRad: number    // откуда начинается лестница (atan2-space, Y вниз — как angleTo в columnStamp.ts)
+  totalAngleRad: number    // на сколько радиан закручивается; знак задаёт направление обхода (см. spiralStepAngles)
+  targetRiserMm: number    // желаемая высота подступенка — см. resolveStaircaseSteps
+  treadThicknessMm: number // толщина плиты проступи
+  bottomElevationMm?: number // низ, мм от пола этажа; не задано = 0 (пол)
+  heightMm?: number         // своя высота (верх - низ); см. подробный комментарий выше
+  customHeight?: boolean
+  spec?: PlanLineSpec
+  category?: LineCategory   // по умолчанию 'capital'
+  workStatus?: WorkStatus   // по умолчанию 'existing'
+  label: string
+}
+
+/**
  * Обведённая карандашом стена/перегородка ИЛИ колонна произвольной формы —
  * единый контур по реальным граням (px), БЕЗ деления на прямые отрезки, в
  * отличие от обычных wall_new/wall_existing (x1/y1/x2/y2 + перпендикулярная
@@ -1227,6 +1275,10 @@ export interface FloorPlan {
   ceilingCompositions?: CeilingComposition[]
   roundColumns: RoundColumn[]
   rectColumns: RectColumn[]
+  /** Лестницы (Фаза 4 объекта в Ростове, 20.09.2026) — см. Staircase. Опционально
+   *  (не в DEFAULT_FLOOR_PLAN) — старые сохранённые планы этого поля не имеют,
+   *  все чтения через `?? []`, как и у ceilingBorders/ceilingCompositions выше. */
+  staircases?: Staircase[]
   freeformStructures: FreeformStructure[]
   ceilingSlopes: CeilingSlope[]
   backgroundImage?: BackgroundImage | null
