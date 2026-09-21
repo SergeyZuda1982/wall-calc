@@ -961,8 +961,8 @@ function LevelGroup({
 
   const ceilingSlopes = floorPlan.ceilingSlopes ?? []
   const boxes = useMemo(
-    () => wallsToBoxes3D(lines, scaleMmPx, rectColumns, roundColumns, slabsWithAbove, ceilings, ceilingSlopes, rooms),
-    [lines, scaleMmPx, rectColumns, roundColumns, slabsWithAbove, ceilings, ceilingSlopes, rooms],
+    () => wallsToBoxes3D(lines, scaleMmPx, rectColumns, roundColumns, slabsWithAbove, ceilings, ceilingSlopes, rooms, staircases),
+    [lines, scaleMmPx, rectColumns, roundColumns, slabsWithAbove, ceilings, ceilingSlopes, rooms, staircases],
   )
   const linesById = useMemo(() => new Map(lines.map(l => [l.id, l])), [lines])
   const polygons = useMemo(() => roomsToPolygons3D(rooms, lines, scaleMmPx), [rooms, lines, scaleMmPx])

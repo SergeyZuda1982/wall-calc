@@ -9,7 +9,7 @@
  *   Продолжение — коллинеарные (обрабатываются автоматически через L с нулевым cross).
  */
 
-import type { PlanLine, PlanLineType, LineCategory, RectColumn, RoundColumn } from '../types'
+import type { PlanLine, PlanLineType, LineCategory, RectColumn, RoundColumn, Staircase } from '../types'
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { rectColumnCornersPx, roundColumnPolygonPx } from './columnStamp'
 import { arcEndTangents } from './geometry2d'
@@ -449,12 +449,19 @@ export const COLUMN_EDGE_HALF_PX = 0.01
  * насквозь без обработки, как было раньше (круглые колонны вообще не
  * участвовали в computeWallJoins — та же исходная проблема, что когда-то
  * была у прямоугольных, см. комментарий выше).
+ *
+ * staircases (20.09.2026, Фаза 4 объекта в Ростове) — тот же приём для
+ * ВНЕШНЕГО контура винтовой лестницы (по outerRadiusMm, без учёта
+ * innerRadiusMm/ступеней — они не участвуют в стыковке стен), стена
+ * лестничной клетки получает нормальный угол по касательной к внешнему
+ * контуру лестницы вместо гладкого торца/наложения.
  */
 export function buildWallsForJoin(
   lines: PlanLine[],
   scaleMmPx: number,
   rectColumns: RectColumn[] = [],
   roundColumns: RoundColumn[] = [],
+  staircases: Staircase[] = [],
 ): WallForJoin[] {
   const walls: WallForJoin[] = []
   lines.forEach((l, idx) => {
@@ -532,6 +539,29 @@ export function buildWallsForJoin(
         // (-1000 - rcIdx*4 - e при любом реалистичном числе rectColumns)
         createdIndex: -100000 - rcIdx * n - e,
         category: rc.category ?? 'capital',
+      })
+    }
+  })
+  // Лестницы (20.09.2026, Фаза 4 объекта в Ростове) — стена лестничной
+  // клетки, упирающаяся в ВНЕШНИЙ контур лестницы (outerRadiusMm), получает
+  // нормальный T/L-стык по ближайшей грани 24-угольника — ТОЧНО тот же
+  // приём, что и у круглой колонны выше (геометрически внешняя граница
+  // винтовой лестницы ничем не отличается от круглой колонны для целей
+  // стыковки стен). innerRadiusMm/ступени здесь ни при чём — вплотную к
+  // стене может подходить только внешний контур.
+  staircases.forEach((st, stIdx) => {
+    const poly = roundColumnPolygonPx(st.cx, st.cy, st.outerRadiusMm * 2, scaleMmPx)
+    const n = poly.length
+    for (let e = 0; e < n; e++) {
+      const p0 = poly[e], p1 = poly[(e + 1) % n]
+      walls.push({
+        id: `__staircase_${st.id}_edge${e}`,
+        x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y,
+        halfPx: COLUMN_EDGE_HALF_PX,
+        // индексы дальше и roundColumns, и rectColumns, чтобы не пересекаться
+        // с их диапазонами при любом реалистичном числе тех и других
+        createdIndex: -500000 - stIdx * n - e,
+        category: st.category ?? 'capital',
       })
     }
   })

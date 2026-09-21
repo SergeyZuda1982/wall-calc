@@ -369,14 +369,21 @@ export function worldToFaceMm(frame: WallFaceFrame, point: { x: number; y: numbe
  * камеры по bounding box — см. Scene3D.tsx). Резолвер (см. ceilingSlope.ts
  * buildEffectiveCeilingSlopeResolver) строится один раз на весь список
  * линий, не на каждую линию отдельно — та же оптимизация, что и joins выше.
+ *
+ * staircases (20.09.2026, Фаза 4 объекта в Ростове) — тот же принцип join,
+ * что у rectColumns/roundColumns выше (см. wallJoin.ts), но по ВНЕШНЕМУ
+ * контуру лестницы; добавлен последним параметром (а не рядом с
+ * rectColumns/roundColumns), чтобы не сдвигать позиционные аргументы
+ * slabs/ceilings/slopes/rooms в уже существующих вызовах этой функции.
  */
 export function wallsToBoxes3D(
   lines: PlanLine[], scaleMmPx: number,
   rectColumns: RectColumn[] = [], roundColumns: RoundColumn[] = [],
   slabs: Slab[] = [], ceilings: Ceiling[] = [], slopes: CeilingSlope[] = [], rooms: Room[] = [],
+  staircases: Staircase[] = [],
 ): WallBox3D[] {
   const ceilingMm = estimateCeilingMm(lines)
-  const joins = computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns))
+  const joins = computeWallJoins(buildWallsForJoin(lines, scaleMmPx, rectColumns, roundColumns, staircases))
   const resolveSlope = buildEffectiveCeilingSlopeResolver(lines, slabs, ceilings, slopes, rooms)
   return lines.filter(isLineBuiltForRender).flatMap(l => {
     if (l.sagittaMm) return arcWallToBoxes3D(l, scaleMmPx, ceilingMm)
