@@ -549,7 +549,12 @@ export function buildWallsForJoin(
   // винтовой лестницы ничем не отличается от круглой колонны для целей
   // стыковки стен). innerRadiusMm/ступени здесь ни при чём — вплотную к
   // стене может подходить только внешний контур.
-  staircases.forEach((st, stIdx) => {
+  //
+  // ⚠️ ТОЛЬКО винтовые (kind==='spiral') — маршевая (straight_run, второй
+  // инкремент, 20.09.2026) в wall-join пока НЕ участвует вообще (явно
+  // отложенная задача, см. types/index.ts StraightRunStaircase) — марши/
+  // площадки обычно просто стоят в уже нарисованном проёме клетки.
+  staircases.filter((st): st is Extract<Staircase, { kind: 'spiral' }> => st.kind === 'spiral').forEach((st, stIdx) => {
     const poly = roundColumnPolygonPx(st.cx, st.cy, st.outerRadiusMm * 2, scaleMmPx)
     const n = poly.length
     for (let e = 0; e < n; e++) {

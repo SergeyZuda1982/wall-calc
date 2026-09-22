@@ -26,7 +26,7 @@ import {
   freeformStructuresToPrisms3D, wallStudPositionsMm,
   wallToBox3D, wallFaceFrame, worldToFaceMm,
   slopePlaneCoefficients, slabStepRisers3D,
-  spiralStaircasesToTreads3D,
+  spiralStaircasesToTreads3D, straightRunStaircasesToTreads3D,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame, type SlabStepRiser3D,
   type StaircaseTread3D, type StaircasePost3D,
@@ -978,10 +978,11 @@ function LevelGroup({
     () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms),
     [rectColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms],
   )
-  const staircaseGeometry = useMemo(
-    () => spiralStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms),
-    [staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms],
-  )
+  const staircaseGeometry = useMemo(() => {
+    const spiral = spiralStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms)
+    const straightRunTreads = straightRunStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms)
+    return { treads: [...spiral.treads, ...straightRunTreads], posts: spiral.posts }
+  }, [staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms])
   const freeformPrisms = useMemo(
     () => freeformStructuresToPrisms3D(freeformStructures, scaleMmPx, ceilingMm),
     [freeformStructures, scaleMmPx, ceilingMm],

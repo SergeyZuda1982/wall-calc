@@ -27,6 +27,7 @@ import {
   rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
 } from './core/columnStamp'
 import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory } from './core/wallJoin'
+import { flightStepRectPx } from './core/staircase'
 import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
@@ -3671,13 +3672,16 @@ export default function FloorPlan() {
             )}
           </div>
 
-          {/* Лестница (винтовая, Фаза 4 объекта в Ростове, 20.09.2026) —
-              первый инкремент, см. TASKS.md/types/index.ts Staircase. Без
-              полноценного stamp-режима мышью (тот отдельным инкрементом) —
-              кнопка создаёт лестницу с дефолтами (радиусы по референсу
-              листа 55\15 объекта в Ростове) в центре текущего вида плана,
-              дальше её параметры правятся числовым инспектором (открывается
-              сразу же, тот же паттерн, что у RoundColumn выше). */}
+          {/* Лестница — винтовая (первый инкремент, 20.09.2026) и маршевая
+              (второй инкремент, тот же день, см. TASKS.md/types/index.ts
+              StraightRunStaircase). Без полноценного stamp-режима мышью для
+              ОБОИХ видов (тот отдельным инкрементом) — кнопки создают
+              лестницу с дефолтами в центре текущего вида плана, дальше
+              правится числовым инспектором. Маршевая — дефолт Z-профиль
+              (марш→площадка→марш с поворотом на 90°), по грубым пропорциям
+              листа 2 референса объекта в Ростове; per-segment редактирование
+              координат маршей/площадки — НЕ в этом инкременте (только общие
+              параметры лестницы целиком в инспекторе). */}
           <div>
             <div style={{ ...sectionHeaderStyle, color: '#8d99ae' }}>Лестница</div>
             <div style={{ padding: '0 14px 8px' }}>
@@ -3704,6 +3708,38 @@ export default function FloorPlan() {
                 }}>
                 <span style={{ fontSize: 14 }}>🌀</span> Добавить винтовую лестницу
               </button>
+              <button
+                onClick={() => {
+                  const cxPx = (canvasW / 2 - stagePos.x) / stageScale
+                  const cyPx = (CANVAS_H / 2 - stagePos.y) / stageScale
+                  const toPx = (mm: number) => mm / scaleMmPx
+                  const flightLenMm = 2400, widthMm = 1000, landingMm = 1000
+                  const f1x1 = cxPx, f1y1 = cyPx
+                  const f1x2 = cxPx, f1y2 = cyPx - toPx(flightLenMm)
+                  const landingCx = cxPx, landingCy = f1y2 - toPx(landingMm / 2)
+                  const f2x1 = landingCx + toPx(landingMm / 2), f2y1 = landingCy
+                  const f2x2 = f2x1 + toPx(flightLenMm), f2y2 = f2y1
+                  const id = addStaircase({
+                    kind: 'straight_run',
+                    targetRiserMm: 170, treadThicknessMm: 30,
+                    label: 'Лестница (маршевая)',
+                    segments: [
+                      { kind: 'flight', id: 'f1', x1: f1x1, y1: f1y1, x2: f1x2, y2: f1y2, widthMm },
+                      { kind: 'landing', id: 'l1', cx: landingCx, cy: landingCy, widthMm: landingMm, depthMm: landingMm, angleRad: 0, thicknessMm: 30 },
+                      { kind: 'flight', id: 'f2', x1: f2x1, y1: f2y1, x2: f2x2, y2: f2y2, widthMm },
+                    ],
+                  })
+                  setInspectorId(null); setInspectorRoomId(null)
+                  setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null)
+                  setInspectorStaircaseId(id)
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%', marginTop: 4,
+                  padding: '7px 10px', fontSize: 12, borderRadius: 5, cursor: 'pointer',
+                  border: '1px solid #3a4060', background: 'transparent', color: '#8a9ac8', textAlign: 'left',
+                }}>
+                <span style={{ fontSize: 14 }}>🪜</span> Добавить маршевую лестницу
+              </button>
               {staircases.length > 0 && (
                 <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {staircases.map(st => (
@@ -3720,7 +3756,7 @@ export default function FloorPlan() {
                         background: inspectorStaircaseId === st.id ? '#6a4fb5' : 'transparent',
                         color: inspectorStaircaseId === st.id ? '#fff' : '#8a9ac8',
                       }}>
-                      🌀 {st.label}
+                      {st.kind === 'spiral' ? '🌀' : '🪜'} {st.label}
                     </button>
                   ))}
                 </div>
@@ -5407,32 +5443,73 @@ export default function FloorPlan() {
                     )
                   })}
 
-                  {/* 20.09.2026: Лестница (винтовая) — внешний контур пунктиром
-                      (сектор целиком, не по ступеням — первый инкремент, чисто
-                      обзорная отрисовка) + select-маркер в центре, тот же
-                      паттерн клика, что у остальных select-маркеров выше. */}
+                  {/* 20.09.2026: Лестница — обзорная отрисовка контуром
+                      пунктиром (не по ступеням — первый/второй инкремент,
+                      чисто справочно на плане) + select-маркер, тот же
+                      паттерн клика, что у остальных select-маркеров выше.
+                      Винтовая — два концентрических круга (внешний/
+                      внутренний радиус); маршевая — прямоугольник на
+                      каждый марш (flightStepRectPx как "один шаг из
+                      одного", т.е. контур всего марша целиком) +
+                      прямоугольник на каждую площадку (rectColumnCornersPx,
+                      та же геометрия, что и у RectColumn). */}
                   {staircases.map(st => {
-                    const outerR = st.outerRadiusMm / scaleMmPx
-                    const innerR = st.innerRadiusMm / scaleMmPx
                     const isSel = inspectorStaircaseId === st.id
+                    const selectHandlers = () => ({
+                      onClick: (e: any) => { e.cancelBubble = true; setInspectorStaircaseId(st.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) },
+                      onTap: (e: any) => { if (touchGestureRef.current) return; e.cancelBubble = true; setInspectorStaircaseId(st.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) },
+                    })
+                    if (st.kind === 'spiral') {
+                      const outerR = st.outerRadiusMm / scaleMmPx
+                      const innerR = st.innerRadiusMm / scaleMmPx
+                      return (
+                        <Group key={'stair-' + st.id}>
+                          <Circle x={st.cx} y={st.cy} radius={outerR}
+                            stroke={isSel ? '#6a4fb5' : '#78909c'} strokeWidth={1.5 / stageScale}
+                            dash={[6 / stageScale, 4 / stageScale]} listening={false} />
+                          {st.innerRadiusMm > 0 && (
+                            <Circle x={st.cx} y={st.cy} radius={innerR}
+                              stroke={isSel ? '#6a4fb5' : '#78909c'} strokeWidth={1 / stageScale}
+                              dash={[4 / stageScale, 3 / stageScale]} listening={false} />
+                          )}
+                          {mode === 'select' && (() => {
+                            const r = 9 / stageScale
+                            return (
+                              <Group {...selectHandlers()}>
+                                <Circle x={st.cx} y={st.cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
+                                <Text x={st.cx - r} y={st.cy - r} width={r * 2} height={r * 2} text="🌀"
+                                  fontSize={11 / stageScale} align="center" verticalAlign="middle" listening={false} />
+                              </Group>
+                            )
+                          })()}
+                        </Group>
+                      )
+                    }
+                    // straight_run
+                    const markerSeg = st.segments[0]
+                    const markerCx = markerSeg.kind === 'flight' ? markerSeg.x1 : markerSeg.cx
+                    const markerCy = markerSeg.kind === 'flight' ? markerSeg.y1 : markerSeg.cy
                     return (
                       <Group key={'stair-' + st.id}>
-                        <Circle x={st.cx} y={st.cy} radius={outerR}
-                          stroke={isSel ? '#6a4fb5' : '#78909c'} strokeWidth={1.5 / stageScale}
-                          dash={[6 / stageScale, 4 / stageScale]} listening={false} />
-                        {st.innerRadiusMm > 0 && (
-                          <Circle x={st.cx} y={st.cy} radius={innerR}
-                            stroke={isSel ? '#6a4fb5' : '#78909c'} strokeWidth={1 / stageScale}
-                            dash={[4 / stageScale, 3 / stageScale]} listening={false} />
-                        )}
+                        {st.segments.map(seg => {
+                          const widthPx = seg.kind === 'flight' ? seg.widthMm / scaleMmPx : 0
+                          const pts = seg.kind === 'flight'
+                            ? flightStepRectPx(seg.x1, seg.y1, seg.x2, seg.y2, widthPx, 0, 1)
+                            : rectColumnCornersPx(seg.cx, seg.cy, seg.widthMm, seg.depthMm, seg.angleRad, scaleMmPx)
+                          return (
+                            <Line key={seg.id}
+                              points={pts.flatMap(p => [p.x, p.y])} closed
+                              stroke={isSel ? '#6a4fb5' : '#78909c'} strokeWidth={1.5 / stageScale}
+                              dash={seg.kind === 'flight' ? [6 / stageScale, 4 / stageScale] : [3 / stageScale, 3 / stageScale]}
+                              listening={false} />
+                          )
+                        })}
                         {mode === 'select' && (() => {
                           const r = 9 / stageScale
                           return (
-                            <Group
-                              onClick={e => { e.cancelBubble = true; setInspectorStaircaseId(st.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}
-                              onTap={e => { if (touchGestureRef.current) return; e.cancelBubble = true; setInspectorStaircaseId(st.id); setInspectorId(null); setInspectorRoomId(null); setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null); setSelected(null) }}>
-                              <Circle x={st.cx} y={st.cy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
-                              <Text x={st.cx - r} y={st.cy - r} width={r * 2} height={r * 2} text="🌀"
+                            <Group {...selectHandlers()}>
+                              <Circle x={markerCx} y={markerCy} radius={r} fill="#fff" stroke="#78909c" strokeWidth={1.5 / stageScale} />
+                              <Text x={markerCx - r} y={markerCy - r} width={r * 2} height={r * 2} text="🪜"
                                 fontSize={11 / stageScale} align="center" verticalAlign="middle" listening={false} />
                             </Group>
                           )
@@ -6972,12 +7049,18 @@ export default function FloorPlan() {
           )
         })()}
 
-        {/* 20.09.2026: Лестница (винтовая) — Фаза 4 объекта в Ростове, первый
-            инкремент. Минимальная числовая панель (без drag-редактирования
-            мышью — тот же выбор, что и у проёмов/вершин ранее), тот же
-            паттерн, что у инспектора RoundColumn выше. НЕ показывает
-            материалы/раскрой проступей — этого расчёта пока нет (см.
-            комментарий у типа Staircase, types/index.ts). */}
+        {/* 20.09.2026: Лестница — Фаза 4 объекта в Ростове (винтовая —
+            первый инкремент, маршевая — второй, тот же день). Минимальная
+            числовая панель (без drag-редактирования мышью — тот же выбор,
+            что и у проёмов/вершин ранее), тот же паттерн, что у инспектора
+            RoundColumn выше. НЕ показывает материалы/раскрой проступей —
+            этого расчёта пока нет (см. комментарий у типа Staircase,
+            types/index.ts). Для маршевой (straight_run) — только ОБЩИЕ
+            параметры лестницы целиком (название/подступёнок/толщина
+            проступи/низ), БЕЗ редактирования координат отдельных
+            маршей/площадок — геометрия задаётся один раз при создании
+            (см. кнопку добавления выше), per-segment редактирование —
+            отдельная будущая задача. */}
         {!inspectorLine && !inspectorRoomId && !inspectorRoundColumnId && !inspectorRectColumnId && !inspectorFreeformId && inspectorStaircaseId && (() => {
           const st = staircases.find(s => s.id === inspectorStaircaseId)
           if (!st) return null
@@ -6995,7 +7078,7 @@ export default function FloorPlan() {
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 padding: '12px 16px 10px', borderBottom: '1px solid #e0e4ee', background: '#fff',
               }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>Лестница (винтовая)</div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>Лестница ({st.kind === 'spiral' ? 'винтовая' : 'маршевая'})</div>
                 <button title="Закрыть" style={iconBtnStyle2} onClick={() => setInspectorStaircaseId(null)}>✕</button>
               </div>
               <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -7004,35 +7087,46 @@ export default function FloorPlan() {
                   <input value={st.label} onChange={e => updateStaircase(st.id, { label: e.target.value })}
                     style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
                 </label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
-                    Радиус внутр., мм
-                    <input type="number" value={st.innerRadiusMm} min={0}
-                      onChange={e => { const v = parseFloat(e.target.value); if (v >= 0) updateStaircase(st.id, { innerRadiusMm: v }) }}
-                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
-                  </label>
-                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
-                    Радиус внешн., мм
-                    <input type="number" value={st.outerRadiusMm} min={1}
-                      onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateStaircase(st.id, { outerRadiusMm: v }) }}
-                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
-                  </label>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
-                    Угол начала, °
-                    <input type="number" value={toDeg(st.startAngleRad)}
-                      onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) updateStaircase(st.id, { startAngleRad: fromDeg(v) }) }}
-                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
-                  </label>
-                  <label style={{ fontSize: 12, color: '#555', flex: 1 }}
-                    title="Знак задаёт направление обхода: положительный — по часовой стрелке (экранные координаты, Y вниз), отрицательный — против.">
-                    Общий угол, °
-                    <input type="number" value={toDeg(st.totalAngleRad)}
-                      onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) updateStaircase(st.id, { totalAngleRad: fromDeg(v) }) }}
-                      style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
-                  </label>
-                </div>
+                {st.kind === 'spiral' && (
+                  <>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                        Радиус внутр., мм
+                        <input type="number" value={st.innerRadiusMm} min={0}
+                          onChange={e => { const v = parseFloat(e.target.value); if (v >= 0) updateStaircase(st.id, { innerRadiusMm: v }) }}
+                          style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                      </label>
+                      <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                        Радиус внешн., мм
+                        <input type="number" value={st.outerRadiusMm} min={1}
+                          onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateStaircase(st.id, { outerRadiusMm: v }) }}
+                          style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                      </label>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
+                        Угол начала, °
+                        <input type="number" value={toDeg(st.startAngleRad)}
+                          onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) updateStaircase(st.id, { startAngleRad: fromDeg(v) }) }}
+                          style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                      </label>
+                      <label style={{ fontSize: 12, color: '#555', flex: 1 }}
+                        title="Знак задаёт направление обхода: положительный — по часовой стрелке (экранные координаты, Y вниз), отрицательный — против.">
+                        Общий угол, °
+                        <input type="number" value={toDeg(st.totalAngleRad)}
+                          onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) updateStaircase(st.id, { totalAngleRad: fromDeg(v) }) }}
+                          style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
+                      </label>
+                    </div>
+                  </>
+                )}
+                {st.kind === 'straight_run' && (
+                  <div style={{ fontSize: 11, color: '#888', background: '#f5f6fa', borderRadius: 5, padding: '8px 10px' }}>
+                    Маршей: {st.segments.filter(s => s.kind === 'flight').length}, площадок:{' '}
+                    {st.segments.filter(s => s.kind === 'landing').length}. Форма марша/площадки задаётся при
+                    создании — редактирование координат отдельных сегментов пока не поддержано.
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 8 }}>
                   <label style={{ fontSize: 12, color: '#555', flex: 1 }}>
                     Подступёнок (цель), мм
@@ -7053,18 +7147,28 @@ export default function FloorPlan() {
                     onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) updateStaircase(st.id, { bottomElevationMm: v }) }}
                     style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 13 }} />
                 </label>
-                <div style={{ fontSize: 12, color: '#555', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  Высота:
-                  <input type="number" value={st.heightMm ?? 3000} disabled={!st.customHeight}
-                    onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateStaircase(st.id, { heightMm: v }) }}
-                    style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde', opacity: st.customHeight ? 1 : 0.5 }} /> мм
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#999', cursor: 'pointer', marginTop: -6 }}
-                  title="По умолчанию лестница идёт от пола этажа до отметки перекрытия в точке своего центра (с учётом уклона Плиты/Потолка, если он есть) — поле выше игнорируется. Включите, если у этой лестницы должна быть своя фиксированная высота.">
-                  <input type="checkbox" checked={!!st.customHeight}
-                    onChange={e => updateStaircase(st.id, { customHeight: e.target.checked })} />
-                  своя высота (не до перекрытия, игнорировать уклон)
-                </label>
+                {st.kind === 'spiral' && (
+                  <>
+                    <div style={{ fontSize: 12, color: '#555', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      Высота:
+                      <input type="number" value={st.heightMm ?? 3000} disabled={!st.customHeight}
+                        onChange={e => { const v = parseFloat(e.target.value); if (v > 0) updateStaircase(st.id, { heightMm: v }) }}
+                        style={{ width: 64, fontSize: 12, padding: '3px 5px', borderRadius: 4, border: '1px solid #dde', opacity: st.customHeight ? 1 : 0.5 }} /> мм
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#999', cursor: 'pointer', marginTop: -6 }}
+                      title="По умолчанию лестница идёт от пола этажа до отметки перекрытия в точке своего центра (с учётом уклона Плиты/Потолка, если он есть) — поле выше игнорируется. Включите, если у этой лестницы должна быть своя фиксированная высота.">
+                      <input type="checkbox" checked={!!st.customHeight}
+                        onChange={e => updateStaircase(st.id, { customHeight: e.target.checked })} />
+                      своя высота (не до перекрытия, игнорировать уклон)
+                    </label>
+                  </>
+                )}
+                {st.kind === 'straight_run' && (
+                  <div style={{ fontSize: 10, color: '#999' }}>
+                    Верх лестницы определяется автоматически — по отметке перекрытия в конце последнего марша/площадки
+                    (с учётом уклона, если есть) и общему числу ступеней; ручного override высоты для маршевой пока нет.
+                  </div>
+                )}
                 <button onClick={() => { removeStaircase(st.id); setInspectorStaircaseId(null) }}
                   style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
                   🗑 Удалить лестницу

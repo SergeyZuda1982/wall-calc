@@ -134,3 +134,97 @@ export function spiralStepSectorPx(
   }
   return pts
 }
+
+/**
+ * МАРШЕВАЯ лестница (Фаза 4 объекта в Ростове, второй инкремент,
+ * 20.09.2026, см. types/index.ts StraightRunStaircase). Тот же общий
+ * подступёнок на ВСЮ лестницу (не свой на каждый марш — так гарантированно
+ * получается физически осмысленная лестница, одинаковый подступёнок на
+ * всех маршах, как в реальности), а число ступеней РАСПРЕДЕЛЯЕТСЯ между
+ * маршами пропорционально их длине в плане (методом наибольших остатков —
+ * тот же принцип раскладки целых долей, что часто применяется для мест в
+ * пропорциональных избирательных системах, здесь просто гарантирует, что
+ * сумма ступеней по маршам ТОЧНО равна общему числу ступеней, без потери/
+ * лишней ступени от округления каждого марша по отдельности).
+ *
+ * Площадки (flightLengthsPx с length=0, т.е. НЕ марши) сюда не передаются
+ * вообще — вызывающий код (planTo3D.ts) фильтрует segments на marши перед
+ * вызовом, эта функция работает только с длинами маршей.
+ *
+ * Марш с itemLength=0 (вырожденный, нулевая длина) получает 0 ступеней —
+ * не может быть меньше нуля, но и гарантированного минимума 1 для НЕГО
+ * нет (в отличие от остальных маршей с положительной длиной, которые
+ * гарантированно получают хотя бы 1 ступень, если totalStepCount>0 и
+ * marшей не больше totalStepCount).
+ */
+export interface StraightRunStepsResolution {
+  totalStepCount: number
+  actualRiserMm: number
+  stepsPerFlight: number[] // тот же порядок и длина, что flightLengthsPx
+}
+
+export function resolveStraightRunSteps(
+  totalHeightMm: number,
+  targetRiserMm: number,
+  flightLengthsPx: number[],
+): StraightRunStepsResolution {
+  const { stepCount: totalStepCount, actualRiserMm } = resolveStaircaseSteps(totalHeightMm, targetRiserMm)
+  if (totalStepCount === 0 || flightLengthsPx.length === 0) {
+    return { totalStepCount: 0, actualRiserMm: 0, stepsPerFlight: flightLengthsPx.map(() => 0) }
+  }
+  const totalLen = flightLengthsPx.reduce((s, l) => s + Math.max(0, l), 0)
+  if (totalLen <= 0) {
+    return { totalStepCount, actualRiserMm, stepsPerFlight: flightLengthsPx.map(() => 0) }
+  }
+  // Наибольшие остатки: сначала floor от пропорциональной доли каждого
+  // марша, затем недостающие ступени (totalStepCount минус сумма floor'ов)
+  // раздаются по одной маршам с САМОЙ БОЛЬШОЙ дробной частью — гарантирует
+  // точную сумму без систематического смещения в пользу первых/последних
+  // маршей (в отличие от, например, простого "остаток — последнему маршу").
+  const raw = flightLengthsPx.map(l => (totalStepCount * Math.max(0, l)) / totalLen)
+  const floors = raw.map(Math.floor)
+  let remainder = totalStepCount - floors.reduce((s, f) => s + f, 0)
+  const order = raw
+    .map((r, i) => ({ i, frac: r - Math.floor(r) }))
+    .sort((a, b) => b.frac - a.frac)
+  const stepsPerFlight = [...floors]
+  for (let k = 0; k < order.length && remainder > 0; k++) {
+    if (flightLengthsPx[order[k].i] <= 0) continue // марш нулевой длины ступень не получает
+    stepsPerFlight[order[k].i]++
+    remainder--
+  }
+  return { totalStepCount, actualRiserMm, stepsPerFlight }
+}
+
+/**
+ * Прямоугольник одной ступени марша (px) — марш идёт от (x1,y1) к (x2,y2)
+ * (направление подъёма), stepIndex-я ступень занимает долю
+ * [stepIndex/stepCount .. (stepIndex+1)/stepCount] длины марша, во всю
+ * ширину widthPx, симметрично относительно осевой линии марша.
+ *
+ * Вырожденный марш (x1,y1)=(x2,y2) — нулевая длина — возвращает вырожденный
+ * прямоугольник (все 4 точки совпадают с (x1,y1)); вызывающий код такие
+ * марши уже отсеивает через stepCount=0 в resolveStraightRunSteps выше, но
+ * функция не падает и на настоящем нулевом векторе.
+ */
+export function flightStepRectPx(
+  x1: number, y1: number, x2: number, y2: number,
+  widthPx: number, stepIndex: number, stepCount: number,
+): Point2D[] {
+  const dx = x2 - x1, dy = y2 - y1
+  const len = Math.hypot(dx, dy)
+  if (len < 1e-9 || stepCount <= 0) return [{ x: x1, y: y1 }, { x: x1, y: y1 }, { x: x1, y: y1 }, { x: x1, y: y1 }]
+  const ux = dx / len, uy = dy / len   // вдоль марша
+  const px = -uy, py = ux              // перпендикуляр (влево от направления подъёма)
+  const half = widthPx / 2
+  const sAlong = (stepIndex / stepCount) * len
+  const eAlong = ((stepIndex + 1) / stepCount) * len
+  const sx = x1 + ux * sAlong, sy = y1 + uy * sAlong
+  const ex = x1 + ux * eAlong, ey = y1 + uy * eAlong
+  return [
+    { x: sx + px * half, y: sy + py * half },
+    { x: ex + px * half, y: ey + py * half },
+    { x: ex - px * half, y: ey - py * half },
+    { x: sx - px * half, y: sy - py * half },
+  ]
+}

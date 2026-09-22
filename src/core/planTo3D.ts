@@ -37,7 +37,8 @@ import { buildPositions } from './buildPositions'
 import { parseDoubleFrameSubtype } from '../data/constructionTaxonomy'
 import { ceilingSlopeHeightAt, buildEffectiveCeilingSlopeResolver, effectiveCeilingSlopeHeightAtPoint } from './ceilingSlope'
 import { arcFromChordAndSagitta, sampleArcPoints } from './geometry2d'
-import { resolveStaircaseSteps, spiralStepAngles, spiralStepSectorPx, mmToPx as staircaseMmToPx } from './staircase'
+import { resolveStaircaseSteps, spiralStepAngles, spiralStepSectorPx, resolveStraightRunSteps, flightStepRectPx, mmToPx as staircaseMmToPx } from './staircase'
+import { rectColumnCornersPx } from './columnStamp'
 
 export const DEFAULT_HEIGHT_MM = 3000
 export const DEFAULT_RIB_SECTION_MM = 300
@@ -899,6 +900,7 @@ export function spiralStaircasesToTreads3D(
   const treads: StaircaseTread3D[] = []
   const posts: StaircasePost3D[] = []
   for (const st of staircases) {
+    if (st.kind !== 'spiral') continue
     const bottomMm = st.bottomElevationMm ?? 0
     const totalHeightMm = st.customHeight && st.heightMm
       ? st.heightMm
@@ -931,6 +933,78 @@ export function spiralStaircasesToTreads3D(
     }
   }
   return { treads, posts }
+}
+
+/**
+ * Маршевые лестницы → ступени маршей + площадки, метры, для Scene3D
+ * (Фаза 4 объекта в Ростове, 20.09.2026, второй инкремент). Переиспользует
+ * StaircaseTread3D (та же форма — полигон+topY+толщина, что и у ступени
+ * винтовой лестницы) и для ступеней марша, и для площадок — Scene3D
+ * рендерит оба через один и тот же StaircaseTreadMesh.
+ *
+ * Высота лестницы (totalHeightMm) — ТОТ ЖЕ принцип, что у винтовой и
+ * RoundColumn: effectiveCeilingSlopeHeightAtPoint в характерной точке (тут
+ * — конец ПОСЛЕДНЕГО segment'а: x2/y2 последнего марша или cx/cy последней
+ * площадки) минус bottomElevationMm. В отличие от винтовой, здесь НЕТ
+ * customHeight/heightMm override — см. комментарий у StraightRunStaircase
+ * (types/index.ts): высота производна от resolveStraightRunSteps, а не
+ * задаётся отдельно.
+ *
+ * Площадки НЕ поднимают текущую отметку (runningMm) — их верх строго равен
+ * верху ПРЕДЫДУЩЕГО segment'а (марша или другой площадки), только марши
+ * прибавляют actualRiserMm за каждую свою ступень — см. комментарий у
+ * StaircaseLandingSegment (types/index.ts).
+ */
+export function straightRunStaircasesToTreads3D(
+  staircases: Staircase[], scaleMmPx: number, ceilingMm: number,
+  lines: PlanLine[] = [], slabs: Slab[] = [], ceilings: Ceiling[] = [], slopes: CeilingSlope[] = [], rooms: Room[] = [],
+): StaircaseTread3D[] {
+  const out: StaircaseTread3D[] = []
+  for (const st of staircases) {
+    if (st.kind !== 'straight_run') continue
+    if (st.segments.length === 0) continue
+    const bottomMm = st.bottomElevationMm ?? 0
+    const last = st.segments[st.segments.length - 1]
+    const lastPtPx = last.kind === 'flight' ? { x: last.x2, y: last.y2 } : { x: last.cx, y: last.cy }
+    const totalHeightMm = (effectiveCeilingSlopeHeightAtPoint(lastPtPx, lines, slabs, ceilings, slopes, rooms) ?? ceilingMm) - bottomMm
+
+    // Площадки участвуют в массиве длин как "марш нулевой длины" — та же
+    // защита от деления на 0/лишних ступеней, что в самой
+    // resolveStraightRunSteps (марш с length<=0 получает 0 ступеней).
+    const flightLengthsPx = st.segments.map(seg =>
+      seg.kind === 'flight' ? Math.hypot(seg.x2 - seg.x1, seg.y2 - seg.y1) : 0,
+    )
+    const { stepsPerFlight, actualRiserMm, totalStepCount } = resolveStraightRunSteps(totalHeightMm, st.targetRiserMm, flightLengthsPx)
+    if (totalStepCount === 0) continue
+
+    let runningMm = bottomMm
+    st.segments.forEach((seg, segIdx) => {
+      if (seg.kind === 'flight') {
+        const n = stepsPerFlight[segIdx]
+        const widthPx = staircaseMmToPx(seg.widthMm, scaleMmPx)
+        for (let i = 0; i < n; i++) {
+          const rectPx = flightStepRectPx(seg.x1, seg.y1, seg.x2, seg.y2, widthPx, i, n)
+          runningMm += actualRiserMm
+          out.push({
+            id: st.id,
+            points: rectPx.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
+            topY: mmToM(runningMm),
+            thicknessM: mmToM(st.treadThicknessMm),
+          })
+        }
+      } else {
+        const rectPx = rectColumnCornersPx(seg.cx, seg.cy, seg.widthMm, seg.depthMm, seg.angleRad, scaleMmPx)
+        out.push({
+          id: st.id,
+          points: rectPx.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
+          topY: mmToM(runningMm),
+          thicknessM: mmToM(seg.thicknessMm),
+        })
+        // runningMm НЕ меняется — площадка не поднимает уровень, см. doc-комментарий выше
+      }
+    })
+  }
+  return out
 }
 
 export interface RectColumnBox3D {

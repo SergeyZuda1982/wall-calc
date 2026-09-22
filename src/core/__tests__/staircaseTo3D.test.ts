@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { spiralStaircasesToTreads3D, mmToM, pxToM } from '../planTo3D'
-import type { Staircase } from '../../types'
+import type { SpiralStaircase } from '../../types'
 
-function baseStaircase(overrides: Partial<Staircase> = {}): Staircase {
+function baseStaircase(overrides: Partial<SpiralStaircase> = {}): SpiralStaircase {
   return {
     id: 'st1',
     kind: 'spiral',
