@@ -2075,14 +2075,14 @@ export default function Scene3D() {
         <directionalLight position={[8, 12, 6]} intensity={1} castShadow />
         <group scale={[visualScale, visualScale, visualScale]} onClick={e => { handleMeasureClick(e); handleZoneDrawClick(e); handleSlopePickClick(e) }}>
           <Grid args={[100, 100]} cellColor="#c9ccd6" sectionColor="#9aa0b0" fadeDistance={40} position={[0, -0.001, 0]} />
-          {levels.map(lv => (
+          {(showAllLevels ? levels : levels.filter(lv => lv.id === activeLevelId)).map(lv => (
             <LevelGroup
               key={lv.id}
               floorPlan={lv.floorPlan}
               elevationMm={lv.elevationMm}
               allLevels={levels}
               offsetY={mmToM(lv.elevationMm)}
-              dimmed={!showAllLevels && lv.id !== activeLevelId}
+              dimmed={false}
               showCeilingGrid={showCeilingGrid}
               onFocusRoom={focusOnPoint}
               onFocusElement={focusOnPoint}
