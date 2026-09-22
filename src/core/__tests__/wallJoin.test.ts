@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory, rectColumnExposedFraction, roundColumnExposedFraction, columnExposedPerimeterFraction, type WallForJoin, type Pt } from '../wallJoin'
 import { roundColumnPolygonPx } from '../columnStamp'
-import type { PlanLine, RectColumn, RoundColumn, Staircase } from '../../types'
+import type { PlanLine, RectColumn, RoundColumn, SpiralStaircase } from '../../types'
 
 // scaleMmPx = 10 (как дефолт в FloorPlan), т.е. 1px = 10мм
 // B — капитальная стена 200мм толщиной (halfPx=10), горизонтальная, ось y=50, x: 0..200
@@ -606,7 +606,7 @@ describe('buildWallsForJoin — ЛЕСТНИЦЫ (20.09.2026, Фаза 4 объ�
       ...overrides,
     } as PlanLine
   }
-  function staircase(overrides: Partial<Staircase> = {}): Staircase {
+  function staircase(overrides: Partial<SpiralStaircase> = {}): SpiralStaircase {
     return {
       id: 'st1', kind: 'spiral', cx: 0, cy: 0,
       innerRadiusMm: 200, outerRadiusMm: 150, // 150мм — та же величина, что и "диаметр 300" у круглой колонны в тестах выше

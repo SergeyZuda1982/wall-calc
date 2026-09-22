@@ -8,6 +8,13 @@ import { migrateBoard, DEFAULT_BOARD_SPEC, DEFAULT_FLOOR_PLAN, emptyLevel } from
 import { duplicateFloorPlanGeometry } from '../core/duplicateFloorPlan'
 import { idbSetBackground, idbGetBackground, idbDeleteBackground, backgroundStorageKey } from './bgIndexedDb'
 
+// Union-типы (Staircase = SpiralStaircase | StraightRunStaircase) теряют
+// дискриминацию по kind через обычный Omit<Union,K> (Omit схлопывает union
+// до общих полей) — тот же приём, что уже применён в useTemplateStore.ts
+// (TemplateInput), продублирован здесь локально, чтобы не тянуть импорт
+// исключительно ради одного служебного типа.
+type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never
+
 const PROFILE_LETTER: Record<string, string> = {
   ps50: 'А', ps75: 'В', ps100: 'С',
 }
@@ -241,8 +248,12 @@ export interface ProjectStore {
   addCeilingSlope: (slope: Omit<CeilingSlope, 'id'>) => string
   updateCeilingSlope: (id: string, patch: Partial<CeilingSlope>) => void
   removeCeilingSlope: (id: string) => void
-  // лестницы (Фаза 4 объекта в Ростове, 20.09.2026) — см. types/index.ts Staircase
-  addStaircase: (st: Omit<Staircase, 'id'>) => string
+  // лестницы (Фаза 4 объекта в Ростове, 20.09.2026) — см. types/index.ts
+  // Staircase (SpiralStaircase | StraightRunStaircase — union, поэтому
+  // DistributiveOmit, а не обычный Omit: обычный Omit<Union,'id'> схлопывает
+  // union до общих полей и теряет дискриминацию по kind, ТА ЖЕ проблема и
+  // тот же приём исправления, что и у TemplateInput в useTemplateStore.ts).
+  addStaircase: (st: DistributiveOmit<Staircase, 'id'>) => string
   updateStaircase: (id: string, patch: Partial<Staircase>) => void
   removeStaircase: (id: string) => void
 
@@ -1249,7 +1260,12 @@ export const useProjectStore = create<ProjectStore>()(
       addStaircase: (st) => {
         const id = `stair_${Date.now()}_${Math.random().toString(36).slice(2)}`
         set(s => {
-          const newSt: Staircase = { ...st, id }
+          // Каст обоснован: Staircase — дискриминированный union (SpiralStaircase |
+          // StraightRunStaircase), TS не умеет сохранить дискриминацию через
+          // общий spread {...st, id} в generic CRUD-функции на весь union — тот
+          // же класс ограничения, что и в updateStaircase ниже. Сама функция
+          // типобезопасна для вызывающего кода (Omit<Staircase,'id'> на входе).
+          const newSt = { ...st, id } as Staircase
           return updateActiveFloorPlan(s, fp => ({ ...fp, staircases: [...(fp.staircases ?? []), newSt] }))
         })
         return id
@@ -1257,7 +1273,11 @@ export const useProjectStore = create<ProjectStore>()(
 
       updateStaircase: (id, patch) => {
         set(s => updateActiveFloorPlan(s, fp => ({
-          ...fp, staircases: (fp.staircases ?? []).map(st => st.id === id ? { ...st, ...patch } : st),
+          // Каст обоснован тем же, что и в addStaircase выше — TS не может
+          // подтвердить, что patch (Partial<Staircase>) сохраняет дискриминацию
+          // при спреде на существующий st. Вызывающий код передаёт patch с
+          // полями своего вида лестницы (проверяется на месте вызова через kind).
+          ...fp, staircases: (fp.staircases ?? []).map(st => st.id === id ? ({ ...st, ...patch } as Staircase) : st),
         })))
       },
 
