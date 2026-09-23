@@ -1215,7 +1215,16 @@ function levelHasGeometry(floorPlan: FloorPlan): boolean {
     // потолком (без стен/комнат/плит со спецификацией) считался "пустым" и
     // 3D показывал заглушку "нечего показывать", хотя CeilingEntityMesh
     // ниже по файлу готов был его отрисовать.
-    ceilingsToPolygons3D(floorPlan.ceilings ?? [], scaleMmPx).length > 0
+    ceilingsToPolygons3D(floorPlan.ceilings ?? [], scaleMmPx).length > 0 ||
+    // 20.09.2026: та же история с лестницами (Фаза 4) — план с ОДНОЙ только
+    // лестницей (без стен/комнат/плит) считался "пустым" и 3D показывал
+    // заглушку, хотя StaircaseTreadMesh ниже по файлу готов её отрисовать.
+    // Просто наличие записи в staircases достаточно (не нужно гонять полный
+    // spiralStaircasesToTreads3D/straightRunStaircasesToTreads3D ради
+    // булева ответа "есть ли вообще геометрия" — они могут дать 0 ступеней
+    // при вырожденных параметрах, но сама сущность на плане всё равно есть
+    // и должна не блокировать рендер уровня).
+    (floorPlan.staircases ?? []).length > 0
   )
 }
 
@@ -1409,6 +1418,32 @@ export default function Scene3D() {
         const half = Math.max(box.size.sx, box.size.sz) / 2
         minX = Math.min(minX, box.center.x - half); maxX = Math.max(maxX, box.center.x + half)
         minZ = Math.min(minZ, box.center.z - half); maxZ = Math.max(maxZ, box.center.z + half)
+      }
+      // 20.09.2026: лестницы (Фаза 4) — раньше не учитывались здесь, план
+      // с ОДНОЙ лестницей (без стен/комнат) давал вырожденные границы →
+      // дефолт -3..3, который может не накрывать реальное положение
+      // лестницы на плане. Берём центр по px-координатам напрямую (без
+      // полного spiralStaircasesToTreads3D/straightRunStaircasesToTreads3D
+      // — для диапазона слайдера точность до внешнего радиуса/ширины
+      // марша не критична, это не расчёт материалов).
+      for (const st of lv.floorPlan.staircases ?? []) {
+        if (st.kind === 'spiral') {
+          const cx = mmToM(st.cx * scaleMmPx), cz = mmToM(st.cy * scaleMmPx)
+          const r = mmToM(st.outerRadiusMm)
+          minX = Math.min(minX, cx - r); maxX = Math.max(maxX, cx + r)
+          minZ = Math.min(minZ, cz - r); maxZ = Math.max(maxZ, cz + r)
+        } else {
+          for (const seg of st.segments) {
+            const pts = seg.kind === 'flight'
+              ? [{ x: seg.x1, y: seg.y1 }, { x: seg.x2, y: seg.y2 }]
+              : [{ x: seg.cx, y: seg.cy }]
+            for (const p of pts) {
+              const x = mmToM(p.x * scaleMmPx), z = mmToM(p.y * scaleMmPx)
+              minX = Math.min(minX, x); maxX = Math.max(maxX, x)
+              minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z)
+            }
+          }
+        }
       }
     }
     if (!isFinite(minX)) { minX = -3; maxX = 3; minZ = -3; maxZ = 3 } // пустой план — просто дефолт
