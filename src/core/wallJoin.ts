@@ -13,6 +13,7 @@ import type { PlanLine, PlanLineType, LineCategory, RectColumn, RoundColumn, Sta
 import { getLineVisual } from '../data/constructionTaxonomy'
 import { rectColumnCornersPx, roundColumnPolygonPx } from './columnStamp'
 import { arcEndTangents } from './geometry2d'
+import { flightStepRectPx, mmToPx } from './staircase'
 
 const JOIN_EPS = 3 // допуск совпадения точек, px
 
@@ -455,6 +456,17 @@ export const COLUMN_EDGE_HALF_PX = 0.01
  * innerRadiusMm/ступеней — они не участвуют в стыковке стен), стена
  * лестничной клетки получает нормальный угол по касательной к внешнему
  * контуру лестницы вместо гладкого торца/наложения.
+ *
+ * Маршевая лестница (23.09.2026, следующий инкремент Фазы 4) участвует
+ * ТЕМ ЖЕ приёмом, но по-другому: единого контура (24-угольник) у неё нет —
+ * геометрия составная (флайты+площадки, Z-профиль), поэтому каждый
+ * segment добавляет СВОИ 4 грани отдельно (флайт — прямоугольник во всю
+ * длину марша через flightStepRectPx(...,0,1), площадка — тот же
+ * rectColumnCornersPx, что и у RectColumn/у самой площадки в 2D). Грани
+ * соседних segments у их общей внутренней границы (верх марша = низ
+ * следующей площадки) добавляются НЕЗАВИСИМО и потому дублируют друг
+ * друга геометрически — это безвредно: T/L-стык ищет совпадение с концами
+ * ЧУЖИХ стен (стен клетки), а не между собственными гранями лестницы.
  */
 export function buildWallsForJoin(
   lines: PlanLine[],
@@ -549,11 +561,6 @@ export function buildWallsForJoin(
   // винтовой лестницы ничем не отличается от круглой колонны для целей
   // стыковки стен). innerRadiusMm/ступени здесь ни при чём — вплотную к
   // стене может подходить только внешний контур.
-  //
-  // ⚠️ ТОЛЬКО винтовые (kind==='spiral') — маршевая (straight_run, второй
-  // инкремент, 20.09.2026) в wall-join пока НЕ участвует вообще (явно
-  // отложенная задача, см. types/index.ts StraightRunStaircase) — марши/
-  // площадки обычно просто стоят в уже нарисованном проёме клетки.
   staircases.filter((st): st is Extract<Staircase, { kind: 'spiral' }> => st.kind === 'spiral').forEach((st, stIdx) => {
     const poly = roundColumnPolygonPx(st.cx, st.cy, st.outerRadiusMm * 2, scaleMmPx)
     const n = poly.length
@@ -569,6 +576,30 @@ export function buildWallsForJoin(
         category: st.category ?? 'capital',
       })
     }
+  })
+  // Маршевая лестница (23.09.2026) — своего единого внешнего контура нет
+  // (составная геометрия, см. комментарий у buildWallsForJoin выше), поэтому
+  // КАЖДЫЙ segment (флайт или площадка) добавляет свои 4 грани независимо,
+  // тем же приёмом почти-нулевой-толщины капитальной псевдо-стены.
+  staircases.filter((st): st is Extract<Staircase, { kind: 'straight_run' }> => st.kind === 'straight_run').forEach((st, stIdx) => {
+    st.segments.forEach((seg, segIdx) => {
+      const corners = seg.kind === 'landing'
+        ? rectColumnCornersPx(seg.cx, seg.cy, seg.widthMm, seg.depthMm, seg.angleRad, scaleMmPx)
+        : flightStepRectPx(seg.x1, seg.y1, seg.x2, seg.y2, mmToPx(seg.widthMm, scaleMmPx), 0, 1)
+      for (let e = 0; e < 4; e++) {
+        const p0 = corners[e], p1 = corners[(e + 1) % 4]
+        walls.push({
+          id: `__straightrun_${st.id}_seg${segIdx}_edge${e}`,
+          x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y,
+          halfPx: COLUMN_EDGE_HALF_PX,
+          // диапазон дальше винтовых лестниц (которые могут занимать до
+          // n=24 граней на stIdx) — с большим запасом на segIdx*4, чтобы не
+          // пересечься при любом реалистичном числе лестниц/сегментов
+          createdIndex: -900000 - stIdx * 4000 - segIdx * 4 - e,
+          category: st.category ?? 'capital',
+        })
+      }
+    })
   })
   return walls
 }
