@@ -1116,6 +1116,33 @@ export interface RectColumn {
  */
 export type Staircase = SpiralStaircase | StraightRunStaircase
 
+/**
+ * Прогресс отделки лестницы (23.09.2026) — по прямому запросу Сергея:
+ * реальная лестница на объекте в Ростове уже залита монолитом, сейчас на
+ * этапе отделки, нужно фиксировать факт выполнения. Три раздельные зоны,
+ * подтверждено Сергеем явно (не разбивать/не объединять иначе):
+ *  - treads — ступени: проступь+подступёнок ВМЕСТЕ, одна операция
+ *    отделки (штукатурка/покраска), а не два отдельных пункта
+ *  - soffit — нижняя плоскость (видимая снизу поверхность марша)
+ *  - sideEdges — боковые грани лестницы, измеряются ПОГОНАЖОМ, а не
+ *    площадью — та же логика, что у облицовки колонны в "Закрытии
+ *    объёмов" (columnRunByPriceTier — погонный метр высоты, не площадь
+ *    грани); здесь эта сущность пока не подключена к самому отчёту
+ *    "Закрытие объёмов" (closingVolumesReport.ts не читает лестницы
+ *    вообще, как и колонны без WorkProgress) — отдельная будущая задача,
+ *    сейчас только сам чек-лист.
+ * Все три поля независимы и опциональны — WorkProgressChecklist.tsx уже
+ * умеет работать с progress===undefined (показывает "выбрать шаблон").
+ * Общая для ОБОИХ видов Staircase (не зависит от kind), поэтому не
+ * дублируется в SpiralStaircase/StraightRunStaircase по отдельности —
+ * оба интерфейса просто ссылаются на один и тот же тип поля.
+ */
+export interface StaircaseFinishProgress {
+  treads?: WorkProgress
+  soffit?: WorkProgress
+  sideEdges?: WorkProgress
+}
+
 /** Винтовая лестница — см. общий комментарий у Staircase выше. */
 export interface SpiralStaircase {
   id: string
@@ -1134,6 +1161,7 @@ export interface SpiralStaircase {
   spec?: PlanLineSpec
   category?: LineCategory   // по умолчанию 'capital'
   workStatus?: WorkStatus   // по умолчанию 'existing'
+  finishProgress?: StaircaseFinishProgress
   label: string
 }
 
@@ -1196,6 +1224,7 @@ export interface StraightRunStaircase {
   spec?: PlanLineSpec
   category?: LineCategory
   workStatus?: WorkStatus
+  finishProgress?: StaircaseFinishProgress
   label: string
 }
 
