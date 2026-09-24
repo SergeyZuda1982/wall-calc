@@ -7169,6 +7169,44 @@ export default function FloorPlan() {
                     (с учётом уклона, если есть) и общему числу ступеней; ручного override высоты для маршевой пока нет.
                   </div>
                 )}
+
+                {/* 23.09.2026, по прямому запросу Сергея — лестница на объекте
+                    в Ростове уже залита монолитом, сейчас отделывается.
+                    Три независимые зоны (StaircaseFinishProgress,
+                    types/index.ts) — ступени (проступь+подступёнок вместе,
+                    Сергей подтвердил не разделять), нижняя плоскость,
+                    боковые грани (в реальности считаются погонажом, не
+                    площадью — сам расчёт погонажа/площади здесь пока не
+                    ведётся, это будущая задача для "Закрытия объёмов", тут
+                    только чек-лист этапов). Контекст шаблонов — finish_masonry
+                    (монолитный бетон под штукатурку/покраску, та же категория,
+                    что у кирпичной/бетонной стены в обычном чек-листе отделки),
+                    ОБЩИЙ для обоих видов лестницы — поле не зависит от kind. */}
+                <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
+                  <div style={{ fontSize: 10, color: '#999', marginBottom: 6, textTransform: 'uppercase' }}>Этапы отделки</div>
+                  <WorkProgressChecklist
+                    label="Ступени (проступь + подступёнок)"
+                    progress={st.finishProgress?.treads}
+                    templates={templatesForContext(allWorkStageTemplates, 'finish_masonry')}
+                    onChange={p => updateStaircase(st.id, { finishProgress: { ...st.finishProgress, treads: p } })}
+                    onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'finish_masonry' })}
+                  />
+                  <WorkProgressChecklist
+                    label="Нижняя плоскость"
+                    progress={st.finishProgress?.soffit}
+                    templates={templatesForContext(allWorkStageTemplates, 'finish_masonry')}
+                    onChange={p => updateStaircase(st.id, { finishProgress: { ...st.finishProgress, soffit: p } })}
+                    onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'finish_masonry' })}
+                  />
+                  <WorkProgressChecklist
+                    label="Боковые грани (погонаж)"
+                    progress={st.finishProgress?.sideEdges}
+                    templates={templatesForContext(allWorkStageTemplates, 'finish_masonry')}
+                    onChange={p => updateStaircase(st.id, { finishProgress: { ...st.finishProgress, sideEdges: p } })}
+                    onSaveTemplate={t => addCustomWorkStageTemplate({ ...t, context: 'finish_masonry' })}
+                  />
+                </div>
+
                 <button onClick={() => { removeStaircase(st.id); setInspectorStaircaseId(null) }}
                   style={{ marginTop: 4, fontSize: 12, padding: '6px 10px', border: '1px solid #e53935', borderRadius: 5, color: '#e53935', background: '#fff', cursor: 'pointer' }}>
                   🗑 Удалить лестницу
