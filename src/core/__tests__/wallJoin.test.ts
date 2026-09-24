@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory, rectColumnExposedFraction, roundColumnExposedFraction, columnExposedPerimeterFraction, type WallForJoin, type Pt } from '../wallJoin'
 import { roundColumnPolygonPx } from '../columnStamp'
-import type { PlanLine, RectColumn, RoundColumn, SpiralStaircase } from '../../types'
+import type { PlanLine, RectColumn, RoundColumn, SpiralStaircase, StraightRunStaircase, StaircaseSegment } from '../../types'
 
 // scaleMmPx = 10 (как дефолт в FloorPlan), т.е. 1px = 10мм
 // B — капитальная стена 200мм толщиной (halfPx=10), горизонтальная, ось y=50, x: 0..200
@@ -682,6 +682,99 @@ describe('buildWallsForJoin — ЛЕСТНИЦЫ (20.09.2026, Фаза 4 объ�
     const res = computeWallJoins(walls)
     const jw = res.get('W1')!
     expect(jw.cap1).toBe(false) // T-стык распознан, торец не рисуется
+  })
+})
+
+describe('buildWallsForJoin — МАРШЕВАЯ ЛЕСТНИЦА (23.09.2026, стыковка со стенами клетки)', () => {
+  function line(overrides: Partial<PlanLine> = {}): PlanLine {
+    return {
+      id: 'L1', x1: 0, y1: 0, x2: 300, y2: 0,
+      type: 'wall_new', lengthMm: 3000, label: 'П-1',
+      spec: { material: 'gkl', subtype: 'ps75' },
+      ...overrides,
+    } as PlanLine
+  }
+  function flight(overrides: Partial<Extract<StaircaseSegment, { kind: 'flight' }>> = {}): StaircaseSegment {
+    return { kind: 'flight', id: 'f1', x1: 0, y1: 0, x2: 0, y2: 300, widthMm: 1000, ...overrides }
+  }
+  function landing(overrides: Partial<Extract<StaircaseSegment, { kind: 'landing' }>> = {}): StaircaseSegment {
+    return { kind: 'landing', id: 'l1', cx: 0, cy: 300, widthMm: 1000, depthMm: 1200, angleRad: 0, thicknessMm: 200, ...overrides }
+  }
+  function straightRun(overrides: Partial<StraightRunStaircase> = {}): StraightRunStaircase {
+    return {
+      id: 'sr1', kind: 'straight_run',
+      segments: [flight()],
+      targetRiserMm: 170, treadThicknessMm: 30, label: 'Лестница',
+      ...overrides,
+    }
+  }
+
+  it('один флайт добавляет 4 грани, капитальные, почти нулевой толщины', () => {
+    const st = straightRun({ segments: [flight()] })
+    const walls = buildWallsForJoin([], 10, [], [], [st])
+    expect(walls).toHaveLength(4)
+    walls.forEach(w => {
+      expect(w.id).toContain('sr1')
+      expect(w.category).toBe('capital')
+      expect(w.halfPx).toBeCloseTo(0.01)
+    })
+  })
+
+  it('флайт+площадка — 8 граней, id по сегментам не пересекаются', () => {
+    const st = straightRun({ segments: [flight(), landing()] })
+    const walls = buildWallsForJoin([], 10, [], [], [st])
+    expect(walls).toHaveLength(8)
+    const ids = new Set(walls.map(w => w.id))
+    expect(ids.size).toBe(8)
+  })
+
+  it('без лестниц (дефолт []) — маршевая не ломает обратную совместимость', () => {
+    const walls = buildWallsForJoin([line()], 10)
+    expect(walls).toHaveLength(1)
+  })
+
+  it('несколько маршевых лестниц — id граней не пересекаются между собой', () => {
+    const sts = [straightRun({ id: 'srA' }), straightRun({ id: 'srB', segments: [flight(), landing()] })]
+    const walls = buildWallsForJoin([], 10, [], [], sts)
+    expect(walls).toHaveLength(4 + 8)
+    const ids = new Set(walls.map(w => w.id))
+    expect(ids.size).toBe(4 + 8)
+  })
+
+  it('винтовая и маршевая одновременно — id граней не пересекаются ни у одной пары', () => {
+    const spiral: SpiralStaircase = {
+      id: 'sp1', kind: 'spiral', cx: 2000, cy: 2000,
+      innerRadiusMm: 200, outerRadiusMm: 150,
+      startAngleRad: 0, totalAngleRad: Math.PI * 2,
+      targetRiserMm: 170, treadThicknessMm: 30, label: 'Винтовая',
+    }
+    const sr = straightRun({ segments: [flight(), landing()] })
+    const walls = buildWallsForJoin([], 10, [], [], [spiral, sr])
+    expect(walls).toHaveLength(24 + 8)
+    const ids = new Set(walls.map(w => w.id))
+    expect(ids.size).toBe(24 + 8)
+  })
+
+  it('стена клетки, упирающаяся в БОКОВОЙ край флайта, получает T-стык (не проходит насквозь)', () => {
+    // Флайт: центральная линия (0,0)->(0,300), ширина 1000мм=100px при scale=10 →
+    // боковая грань флайта проходит по x = -50 (левая сторона, px).
+    const st = straightRun({ segments: [flight({ x1: 0, y1: 0, x2: 0, y2: 300, widthMm: 1000 })] })
+    const wall = line({ id: 'W1', x1: -50, y1: 150, x2: -250, y2: 150 }) // упирается в середину боковой грани
+    const walls = buildWallsForJoin([wall], 10, [], [], [st])
+    const res = computeWallJoins(walls)
+    const jw = res.get('W1')!
+    expect(jw.cap1).toBe(false) // T-стык распознан, торец не рисуется
+  })
+
+  it('стена клетки, упирающаяся в край ПЛОЩАДКИ, получает T-стык', () => {
+    const st = straightRun({ segments: [flight(), landing({ cx: 0, cy: 300, widthMm: 1000, depthMm: 1200, angleRad: 0 })] })
+    // Площадка: центр (0,300)px, ширина 100px, глубина 120px, angleRad=0 →
+    // как у RectColumn: правая грань по x=+50.
+    const wall = line({ id: 'W2', x1: 50, y1: 300, x2: 250, y2: 300 })
+    const walls = buildWallsForJoin([wall], 10, [], [], [st])
+    const res = computeWallJoins(walls)
+    const jw = res.get('W2')!
+    expect(jw.cap1).toBe(false)
   })
 })
 
