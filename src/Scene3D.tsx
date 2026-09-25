@@ -34,8 +34,10 @@ import {
 import type { PlanLineType, FloorPlan, PlanLine, WorkStageTemplate, Level } from './types'
 import { virtualSlabsFromLevelAbove } from './core/ceilingSlope'
 import CeilingGridMesh from './components/CeilingGridMesh'
+import { CeilingGridMeshP131 } from './components/CeilingCalc3DPreview'
 import CeilingEntityMesh from './components/CeilingEntityMesh'
 import { resolveFrameParams } from './core/calcP112Frame'
+import { calcP131FrameGeometry } from './core/calcP131Frame'
 import { formatDistanceM } from './core/formatDistance'
 import { lineProgressColor, lineProgressSummary, wallGklVisual3D } from './core/lineProgress'
 import { isCeilingBuiltForRender, ceilingGklVisual3D } from './core/ceilingProgress3D'
@@ -349,6 +351,61 @@ function SlabOrColumn({ room, ceilingMm, skipFloor, opacity = 1 }: { room: RoomP
         </mesh>
       )}
     </>
+  )
+}
+
+/**
+ * 25.09.2026 — обёртка над CeilingGridMeshP131 (та же геометрия, что и в
+ * самостоятельном 3D-превью калькулятора, CeilingCalc3DPreview.tsx) для
+ * РЕАЛЬНОГО помещения на плане с ceilingSpec.type==='p131' (быстрое меню
+ * «Потолок» по ПКМ на помещении, FloorPlan.tsx applyRoomCeilingGklType).
+ *
+ * П131 не умеет клипаться по произвольному контуру (в отличие от
+ * CeilingGridMesh для П112/П113) — она рассчитана на прямоугольное
+ * помещение, как и весь калькулятор П131 (форма просит roomLengthMm/
+ * roomWidthMm напрямую). Для реальной комнаты берём bounding box её
+ * контура — тот же принцип упрощения "fit-в-bbox", что уже принят в
+ * проекте для похожих задач (см. core/staircase.ts, вставка лестницы в
+ * вырез плиты) — разумная отправная точка, П131 и предназначен для узких
+ * прямоугольных коридоров. Для существенно непрямоугольного помещения
+ * каркас будет неточным — известный, а не скрытый компромисс.
+ */
+function CeilingGridMeshP131ForRoom({ room, spec, ceilingM }: {
+  room: RoomPolygon3D; spec: NonNullable<RoomPolygon3D['ceilingSpec']>; ceilingM: number
+}) {
+  const bbox = useMemo(() => {
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
+    for (const p of room.points) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x)
+      minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z)
+    }
+    return { minX, minZ, lengthMm: Math.round(mToMm(maxX - minX)), widthMm: Math.round(mToMm(maxZ - minZ)) }
+  }, [room.points])
+
+  const pnAlongLength = spec.bearingAlongLength ?? true
+  // 500мм — тот же официально фиксированный шаг несущего ПС, что и в
+  // калькуляторе (CeilingCalc.tsx: `if (key === 'type' && val === 'p131')
+  // next.stepC = 500`), а не spec.stepC — подстраховка на случай, если у
+  // комнаты остался ceilingSpec от ДО переключения на П131 общей формой
+  // (applyRoomCeilingGklType в FloorPlan.tsx тоже фиксирует 500 явно, но
+  // здесь дешевле и надёжнее не доверять сохранённому значению).
+  const geo = useMemo(
+    () => calcP131FrameGeometry(bbox.lengthMm, bbox.widthMm, 500, pnAlongLength, spec.layers, spec.layoutMode ?? 'user'),
+    [bbox.lengthMm, bbox.widthMm, pnAlongLength, spec.layers, spec.layoutMode],
+  )
+  if (bbox.lengthMm <= 0 || bbox.widthMm <= 0) return null
+  return (
+    <group position={[bbox.minX, 0, bbox.minZ]}>
+      <CeilingGridMeshP131
+        roomLengthMm={bbox.lengthMm}
+        roomWidthMm={bbox.widthMm}
+        pnAlongLength={pnAlongLength}
+        runningPositionsMm={geo.psRunningPositions}
+        profileWidthMm={geo.profileSelection?.widthMm ?? 50}
+        paired={geo.profileSelection?.paired ?? false}
+        ceilingM={ceilingM}
+      />
+    </group>
   )
 }
 
@@ -1085,12 +1142,13 @@ function LevelGroup({
         // Не задан -> CeilingGridMesh падает на дефолты (DEFAULT_GRID_STEP_B/C),
         // как раньше.
         const spec = room.ceilingSpec
-        // 25.09.2026 — эта сетка умеет рисовать ТОЛЬКО П112/П113 (см. ceilingType
-        // ниже, там всё равно только два варианта). Раньше spec.type==='p131'
-        // (и 'p19') молча попадал в fallback 'p112' — рисовалась сетка с неверной
-        // топологией (П131 — совсем другой каркас, из профилей перегородок, свой
-        // CeilingGridMeshP131 из CeilingCalc3DPreview.tsx сюда не подключён).
-        // Лучше не показать ничего, чем показать неверную геометрию.
+        // 25.09.2026 — П131 рисуется отдельной, намного более простой
+        // сеткой (CeilingGridMeshP131ForRoom, см. её шапку) — эта, дальше
+        // по коду, умеет только П112/П113. П19 ("по индивидуальному
+        // проекту") своей 3D-геометрии не имеет вовсе — ничего не рисуем.
+        if (spec?.type === 'p131') {
+          return <CeilingGridMeshP131ForRoom key={`grid131-${room.id}`} room={room} spec={spec} ceilingM={mmToM(ceilingMm)} />
+        }
         if (spec && spec.type !== 'p112' && spec.type !== 'p113') return null
         const frameParams = spec
           ? resolveFrameParams({

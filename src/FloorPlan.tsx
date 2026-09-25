@@ -1715,13 +1715,12 @@ export default function FloorPlan() {
   // калькуляторе (CeilingCalc.tsx, константа DEF) — та же единая точка
   // правды, что и «Сохранить в 3D» из полной формы (Room.ceilingSpec, см.
   // Scene3D.tsx — 3D-сетка каркаса рисуется по нему сразу же, без
-  // дополнительных действий). Если у комнаты уже был свой ceilingSpec
-  // (настроен раньше через полную форму) — меняем ТОЛЬКО type, остальные
-  // поля (шаг/раскладка/материал листа и т.д.) сохраняем как пользователь
-  // их настроил; иначе — те же дефолты, что и у «Добавить» в калькуляторе.
-  // П131 в 3D-сетке Room-пути пока не рисуется (см. Scene3D.tsx, 25.09.2026) —
-  // спека всё равно сохраняется (годится для сметы), просто без 3D-каркаса,
-  // явный компромисс на этом инкременте, а не незамеченный баг.
+  // дополнительных действий, П112/П113 через CeilingGridMesh, П131 через
+  // свою CeilingGridMeshP131ForRoom, см. её шапку в Scene3D.tsx). Если у
+  // комнаты уже был свой ceilingSpec (настроен раньше через полную форму) —
+  // меняем ТОЛЬКО type, остальные поля (шаг/раскладка/материал листа и
+  // т.д.) сохраняем как пользователь их настроил, КРОМЕ stepC при переходе
+  // на П131 (см. ниже — там он всегда фиксирован).
   function applyRoomCeilingGklType(roomId: string, type: CeilingType) {
     const room = rooms.find(r => r.id === roomId)
     if (!room) return
@@ -1730,6 +1729,13 @@ export default function FloorPlan() {
     const spec: CeilingSpec = room.ceilingSpec
       ? { ...room.ceilingSpec, type, areaSqm, perimeterM }
       : { type, layers: 1, material: 'gsp', thickness: 12.5, stepC: 600, areaSqm, perimeterM }
+    // Шаг несущего ПС у П131 официально фиксирован на 500мм (не выбирается
+    // монтажником) — та же логика, что и в CeilingCalc.tsx (`if (key ===
+    // 'type' && val === 'p131') next.stepC = 500`), иначе комната унаследует
+    // случайный stepC от П112/П113 (обычно 600) и 3D-каркас/смета П131
+    // (см. CeilingGridMeshP131ForRoom в Scene3D.tsx, calcP131FrameGeometry
+    // в core/calcCeiling.ts) посчитаются с неверным шагом.
+    if (type === 'p131') spec.stepC = 500
     updateRoom(roomId, { ceilingMaterial: 'gkl', ceilingSpec: spec })
     setRoomQuickMenu(null)
   }

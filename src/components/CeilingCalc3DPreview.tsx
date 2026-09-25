@@ -177,8 +177,16 @@ function SheetLayoutMesh({ lengthMm, widthMm, sheetLayout, bearingPositionsMm, s
  * месте — упрощение того, что физически два профиля скреплены заодно, а не
  * разнесены в стороны (см. calcP131Frame.ts — спаривание удваивает
  * погонные метры материала, не занимает вторую параллельную позицию).
+ *
+ * Экспортирован (25.09.2026) — переиспользуется в Scene3D.tsx
+ * (CeilingGridMeshP131ForRoom) для реальных помещений на плане с
+ * ceilingSpec.type==='p131', установленным через быстрое меню «Потолок» по
+ * ПКМ на помещении (FloorPlan.tsx applyRoomCeilingGklType). Здесь, в
+ * калькуляторе, координаты локальные (комната всегда начинается в (0,0)) —
+ * Scene3D оборачивает в <group position=...> для реального мирового
+ * положения, сам компонент об этом не знает и не должен.
  */
-function CeilingGridMeshP131({
+export function CeilingGridMeshP131({
   roomLengthMm, roomWidthMm, pnAlongLength, runningPositionsMm, profileWidthMm, paired, ceilingM,
 }: {
   roomLengthMm: number; roomWidthMm: number; pnAlongLength: boolean
