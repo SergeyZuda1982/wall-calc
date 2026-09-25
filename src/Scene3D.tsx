@@ -1085,6 +1085,13 @@ function LevelGroup({
         // Не задан -> CeilingGridMesh падает на дефолты (DEFAULT_GRID_STEP_B/C),
         // как раньше.
         const spec = room.ceilingSpec
+        // 25.09.2026 — эта сетка умеет рисовать ТОЛЬКО П112/П113 (см. ceilingType
+        // ниже, там всё равно только два варианта). Раньше spec.type==='p131'
+        // (и 'p19') молча попадал в fallback 'p112' — рисовалась сетка с неверной
+        // топологией (П131 — совсем другой каркас, из профилей перегородок, свой
+        // CeilingGridMeshP131 из CeilingCalc3DPreview.tsx сюда не подключён).
+        // Лучше не показать ничего, чем показать неверную геометрию.
+        if (spec && spec.type !== 'p112' && spec.type !== 'p113') return null
         const frameParams = spec
           ? resolveFrameParams({
               stepC: spec.stepC, layoutMode: spec.layoutMode ?? 'user', userStepB: spec.stepB, userStepA: spec.stepA,

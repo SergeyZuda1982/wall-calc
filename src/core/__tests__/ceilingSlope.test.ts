@@ -350,6 +350,17 @@ describe('buildEffectiveCeilingSlopeResolver / effectiveCeilingSlopeHeightAtPoin
       const clB = { id: 'clB', label: 'B', outer: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }], material: 'stretch' } as Ceiling
       expect(ceilingMaterialForRoom(room, perim, [clA, clB])).toBe('rough')
     })
+
+    it('25.09.2026 — Room.ceilingMaterial (быстрое меню по ПКМ) приоритетнее накрывающей Ceiling-зоны', () => {
+      const roomWithMaterial: Room = { ...room, ceilingMaterial: 'stretch' }
+      const cl = { id: 'cl1', label: 'Потолок 1', outer: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }], material: 'gkl' } as Ceiling
+      expect(ceilingMaterialForRoom(roomWithMaterial, perim, [cl])).toBe('stretch')
+    })
+
+    it('25.09.2026 — Room.ceilingMaterial работает и БЕЗ какой-либо Ceiling-зоны вовсе', () => {
+      const roomWithMaterial: Room = { ...room, ceilingMaterial: 'suspended' }
+      expect(ceilingMaterialForRoom(roomWithMaterial, perim, [])).toBe('suspended')
+    })
   })
 })
 

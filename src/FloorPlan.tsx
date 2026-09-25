@@ -32,7 +32,7 @@ import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentRe
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
 import { calcPlanFrameEstimate, calcPlanFrameAreaByType } from './core/planFrameEstimate'
-import { buildCeilingProfilesByLineId, areaUnderProfileM2, resolveRibBeamDropMm, ceilingMaterialForRoom, virtualSlabsFromLevelAbove } from './core/ceilingSlope'
+import { buildCeilingProfilesByLineId, areaUnderProfileM2, resolveRibBeamDropMm, ceilingMaterialForRoom, virtualSlabsFromLevelAbove, roomPolygon } from './core/ceilingSlope'
 import { FASTENER_OPTIONS, ATTACHMENT_MATERIAL_LABEL, FASTENER_LABEL, suggestFastener, DEFAULT_FASTENER_STEP_MM } from './data/fastenerCatalog'
 import { finishMaterialCategoryOf, finishSidesOf, resolveFinishZones, finishTemplateContextOf } from './core/finishResolver'
 import { reverseLineDirection } from './core/lineReverse'
@@ -624,6 +624,18 @@ export default function FloorPlan() {
     screenX: number; screenY: number
     slabId: string; holeIndex: number
     holeBoundsPx: { minX: number; minY: number; maxX: number; maxY: number }
+  } | null>(null)
+  // 25.09.2026 — меню «Пол/Потолок» по ПКМ на помещении (в режиме 'select'),
+  // тот же принцип, что и slabHoleMenu выше. level — какой уровень дерева
+  // сейчас показан ('root' → Пол/Потолок; 'ceiling' → Черновой/ГКЛ/Подвесной/
+  // Натяжной; 'ceiling-suspended' → Армстронг/Реечный/Грильято/Кубота (лист
+  // конечных вариантов, но в Room.ceilingMaterial всё равно уйдёт родительское
+  // 'suspended' — см. applyRoomCeilingMaterial); 'ceiling-gkl-type' → П112/
+  // П113/П131 (см. applyRoomCeilingGklType); 'floor' → дерево TAXONOMY.floor).
+  const [roomQuickMenu, setRoomQuickMenu] = useState<{
+    screenX: number; screenY: number
+    roomId: string
+    level: 'root' | 'ceiling' | 'ceiling-suspended' | 'ceiling-gkl-type' | 'floor'
   } | null>(null)
   // Инспектор Плиты/Потолка (15.09.2026) — раньше эти сущности можно было
   // только удалить/редактировать через боковую панель «Плиты»/«Потолки»,
@@ -1596,6 +1608,17 @@ export default function FloorPlan() {
             }
           }
         }
+        // 25.09.2026 — ПКМ по самому помещению (не по вырезу/колонне) —
+        // меню «Пол/Потолок». Колонны (room.isColumn) — тот же замкнутый
+        // контур, что и помещение, но не помещение, пропускаем.
+        for (const room of rooms) {
+          if (room.isColumn) continue
+          const poly = roomPolygon(room, lines)
+          if (poly && poly.length >= 3 && pointInPolygon(world.x, world.y, poly)) {
+            setRoomQuickMenu({ screenX: e.evt.clientX, screenY: e.evt.clientY, roomId: room.id, level: 'root' })
+            return
+          }
+        }
       }
     }
     if (mode === 'draw') {
@@ -1668,6 +1691,47 @@ export default function FloorPlan() {
     setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null)
     setInspectorStaircaseId(id)
     setSlabHoleMenu(null)
+  }
+
+  // ── Быстрое меню «Пол/Потолок» помещения (25.09.2026) — вызывается из
+  // HTML-меню roomQuickMenu ниже, по ПКМ на самом помещении (не на вырезе/
+  // колонне). Пишет material напрямую в Room (ceilingMaterial/floorMaterial) —
+  // ceilingMaterial приоритетнее накрывающей Ceiling-зоны при поиске
+  // материала для чек-листа (см. ceilingMaterialForRoom в core/ceilingSlope.ts).
+  // floorMaterial — пока только классификация, своей 3D-сущности «пол
+  // помещения» в проекте нет.
+  function applyRoomCeilingMaterial(roomId: string, material: string) {
+    updateRoom(roomId, { ceilingMaterial: material })
+    setRoomQuickMenu(null)
+  }
+
+  function applyRoomFloorMaterial(roomId: string, material: string) {
+    updateRoom(roomId, { floorMaterial: material })
+    setRoomQuickMenu(null)
+  }
+
+  // ГКЛ потолок — вместо обычных детей таксономии (1 слой/2 слоя/Фигурный)
+  // быстрое меню сразу спрашивает тип каркаса П112/П113/П131, как в
+  // калькуляторе (CeilingCalc.tsx, константа DEF) — та же единая точка
+  // правды, что и «Сохранить в 3D» из полной формы (Room.ceilingSpec, см.
+  // Scene3D.tsx — 3D-сетка каркаса рисуется по нему сразу же, без
+  // дополнительных действий). Если у комнаты уже был свой ceilingSpec
+  // (настроен раньше через полную форму) — меняем ТОЛЬКО type, остальные
+  // поля (шаг/раскладка/материал листа и т.д.) сохраняем как пользователь
+  // их настроил; иначе — те же дефолты, что и у «Добавить» в калькуляторе.
+  // П131 в 3D-сетке Room-пути пока не рисуется (см. Scene3D.tsx, 25.09.2026) —
+  // спека всё равно сохраняется (годится для сметы), просто без 3D-каркаса,
+  // явный компромисс на этом инкременте, а не незамеченный баг.
+  function applyRoomCeilingGklType(roomId: string, type: CeilingType) {
+    const room = rooms.find(r => r.id === roomId)
+    if (!room) return
+    const areaSqm = room.areaM2
+    const perimeterM = room.perimeterMm / 1000
+    const spec: CeilingSpec = room.ceilingSpec
+      ? { ...room.ceilingSpec, type, areaSqm, perimeterM }
+      : { type, layers: 1, material: 'gsp', thickness: 12.5, stepC: 600, areaSqm, perimeterM }
+    updateRoom(roomId, { ceilingMaterial: 'gkl', ceilingSpec: spec })
+    setRoomQuickMenu(null)
   }
 
   // ── Ограничение черчения внутри периметра ─────────────────────────────────
@@ -7821,6 +7885,100 @@ export default function FloorPlan() {
           </div>
         </div>
       )}
+
+      {/* 25.09.2026 — меню «Пол/Потолок» по ПКМ на помещении, см.
+          handleStageContextMenu/roomQuickMenu выше. Тот же принцип HTML-меню,
+          что и у slabHoleMenu — просто с уровнями (root → ceiling/floor →
+          конкретный материал), поэтому клики НЕ закрывают меню сразу (кроме
+          конечного выбора и клика мимо/Escape). */}
+      {roomQuickMenu && (() => {
+        const menuRoom = rooms.find(r => r.id === roomQuickMenu.roomId)
+        if (!menuRoom) return null
+        const itemStyle: React.CSSProperties = {
+          display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+          padding: '8px 10px', fontSize: 13, border: 'none', background: 'transparent', cursor: 'pointer', color: '#333',
+        }
+        const headerStyle: React.CSSProperties = { fontSize: 10, color: '#999', padding: '6px 10px 4px', textTransform: 'uppercase' }
+        const hoverOn = (e: React.MouseEvent<HTMLButtonElement>) => (e.currentTarget.style.background = '#f5f6fa')
+        const hoverOff = (e: React.MouseEvent<HTMLButtonElement>) => (e.currentTarget.style.background = 'transparent')
+
+        let title = `Помещение «${menuRoom.label}»`
+        let items: { key: string; label: string; onClick: () => void }[] = []
+        if (roomQuickMenu.level === 'root') {
+          title = `Помещение «${menuRoom.label}»`
+          items = [
+            { key: 'ceiling', label: '◱ Потолок', onClick: () => setRoomQuickMenu(m => m && { ...m, level: 'ceiling' }) },
+            { key: 'floor', label: '▭ Пол', onClick: () => setRoomQuickMenu(m => m && { ...m, level: 'floor' }) },
+          ]
+        } else if (roomQuickMenu.level === 'ceiling') {
+          title = 'Отделка потолка'
+          items = TAXONOMY.ceiling.map(node =>
+            node.value === 'suspended'
+              ? { key: node.value, label: node.label, onClick: () => setRoomQuickMenu(m => m && { ...m, level: 'ceiling-suspended' }) }
+              : node.value === 'gkl'
+              ? { key: node.value, label: node.label, onClick: () => setRoomQuickMenu(m => m && { ...m, level: 'ceiling-gkl-type' }) }
+              : { key: node.value, label: node.label, onClick: () => applyRoomCeilingMaterial(menuRoom.id, node.value) },
+          )
+        } else if (roomQuickMenu.level === 'ceiling-suspended') {
+          title = 'Подвесной — вариант'
+          const suspended = TAXONOMY.ceiling.find(n => n.value === 'suspended')
+          items = (suspended?.children ?? []).map(child => ({
+            key: child.value, label: child.label,
+            // Сама комната понимает только верхний уровень (см. Room.ceilingMaterial
+            // в types/index.ts) — какой бы вариант ни выбрали, в Room уходит
+            // родительское 'suspended', конкретная система пока не разделяется.
+            onClick: () => applyRoomCeilingMaterial(menuRoom.id, 'suspended'),
+          }))
+        } else if (roomQuickMenu.level === 'ceiling-gkl-type') {
+          title = 'ГКЛ — тип каркаса'
+          items = (['p112', 'p113', 'p131'] as CeilingType[]).map(t => ({
+            key: t, label: CEILING_TYPE_LABELS[t],
+            onClick: () => applyRoomCeilingGklType(menuRoom.id, t),
+          }))
+        } else if (roomQuickMenu.level === 'floor') {
+          title = 'Покрытие пола'
+          items = TAXONOMY.floor.map(node => ({
+            key: node.value, label: node.label,
+            onClick: () => applyRoomFloorMaterial(menuRoom.id, node.value),
+          }))
+        }
+
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 1100 }}
+            onClick={() => setRoomQuickMenu(null)}
+            onContextMenu={e => { e.preventDefault(); setRoomQuickMenu(null) }}>
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                position: 'fixed',
+                left: Math.min(roomQuickMenu.screenX, window.innerWidth - 240),
+                top: Math.min(roomQuickMenu.screenY, window.innerHeight - 40 - items.length * 36),
+                background: '#fff', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+                border: '1px solid #ddd', minWidth: 220, maxWidth: 260, padding: 4,
+              }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={headerStyle}>{title}</div>
+                {roomQuickMenu.level !== 'root' && (
+                  <button
+                    onClick={() => setRoomQuickMenu(m => m && {
+                      ...m,
+                      level: m.level === 'ceiling-suspended' || m.level === 'ceiling-gkl-type' ? 'ceiling' : 'root',
+                    })}
+                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#999', fontSize: 12, padding: '4px 10px' }}>
+                    ← назад
+                  </button>
+                )}
+              </div>
+              {items.map(item => (
+                <button key={item.key} onClick={item.onClick} style={itemStyle} onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
