@@ -197,6 +197,114 @@ export function resolveStraightRunSteps(
 }
 
 /**
+ * Ограничивающий прямоугольник полигона (px) — используется для подгонки
+ * лестницы под произвольный вырез в плите (Slab.holes), см. функции ниже.
+ */
+export interface BoundsPx {
+  minX: number; minY: number; maxX: number; maxY: number
+}
+
+export function polygonBoundsPx(pts: Point2D[]): BoundsPx {
+  if (pts.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 }
+  let minX = pts[0].x, minY = pts[0].y, maxX = pts[0].x, maxY = pts[0].y
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  }
+  return { minX, minY, maxX, maxY }
+}
+
+/**
+ * Вписанная окружность под произвольный проём (23.09.2026, вставка
+ * винтовой лестницы через ПКМ по вырезу в плите — см. FloorPlan.tsx,
+ * контекстное меню на Slab.holes). Радиус = половина МЕНЬШЕЙ стороны
+ * bbox — гарантированно вписывается в bbox проёма при любой форме
+ * контура (в отличие от окружности через самую дальнюю вершину, которая
+ * для прямоугольного проёма вышла бы за короткую сторону — по диагонали).
+ * Не истинная maximum-inscribed-circle для произвольного невыпуклого
+ * контура (там понадобился бы куда более тяжёлый алгоритм) — та же
+ * степень приближения, что и у vertex-average центроида Room в проекте
+ * (ceilingMaterialForRoom) — для реального случая (вырез под лестницу
+ * почти круглый/квадратный) даёт вменяемый результат.
+ */
+export function fitCircleToBoundsPx(bounds: BoundsPx): { cx: number; cy: number; radiusPx: number } {
+  return {
+    cx: (bounds.minX + bounds.maxX) / 2,
+    cy: (bounds.minY + bounds.maxY) / 2,
+    radiusPx: Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) / 2,
+  }
+}
+
+/**
+ * Подгонка маршевой лестницы под произвольный проём (23.09.2026) — тот же
+ * дефолтный Z-профиль (марш→площадка→марш с поворотом 90°), что у кнопки
+ * "Добавить маршевую лестницу" (FloorPlan.tsx), РАВНОМЕРНО отмасштабированный
+ * и отцентрированный внутрь bbox проёма. Сознательно НЕ подбирает форму под
+ * контур проёма (произвольный полигон вырезa) — per-segment редактирование
+ * координат маршей/площадки после создания пока не поддержано (см.
+ * types/index.ts StraightRunStaircase), так что точная подгонка формы под
+ * контур даст мало пользы без возможности потом её скорректировать: простое
+ * "вписать в bbox" — разумная стартовая точка, дальше подступёнок/толщина
+ * правятся в инспекторе, а geometрию при большом несоответствии проще
+ * перерисовать заново тем же добавлением по умолчанию.
+ *
+ * baseFlightLenMm/baseWidthMm/baseLandingMm — те же значения по умолчанию
+ * (2400/1000/1000мм), что у кнопки-дефолта; итоговый bbox заготовки при
+ * дефолтных параметрах — квадрат 3400×3400мм (landingMm+flightLenMm по
+ * обеим осям), поэтому масштаб — по МЕНЬШЕЙ стороне bbox проёма относительно
+ * этого базового квадрата.
+ */
+export interface StraightRunFitPx {
+  f1: { x1: number; y1: number; x2: number; y2: number }
+  landingCx: number; landingCy: number
+  f2: { x1: number; y1: number; x2: number; y2: number }
+  widthMm: number
+  landingMm: number
+}
+
+export function fitStraightRunZProfileToBoundsPx(
+  boundsPx: BoundsPx,
+  scaleMmPx: number,
+  baseFlightLenMm = 2400, baseWidthMm = 1000, baseLandingMm = 1000,
+): StraightRunFitPx {
+  const holeWmm = (boundsPx.maxX - boundsPx.minX) * scaleMmPx
+  const holeHmm = (boundsPx.maxY - boundsPx.minY) * scaleMmPx
+  const baseSpanMm = baseLandingMm + baseFlightLenMm
+  const scale = holeWmm > 0 && holeHmm > 0 && scaleMmPx > 0 ? Math.min(holeWmm, holeHmm) / baseSpanMm : 1
+  const flightLenMm = baseFlightLenMm * scale
+  const widthMm = baseWidthMm * scale
+  const landingMm = baseLandingMm * scale
+
+  // Та же геометрия, что у кнопки-дефолта, в собственных мм-координатах
+  // ((0,0) = низ первого марша) — потом единым сдвигом кладём bbox
+  // заготовки центром точно в центр bbox проёма.
+  const f1x1mm = 0, f1y1mm = 0
+  const f1x2mm = 0, f1y2mm = -flightLenMm
+  const landingCxMm = 0, landingCyMm = f1y2mm - landingMm / 2
+  const f2x1mm = landingCxMm + landingMm / 2, f2y1mm = landingCyMm
+  const f2x2mm = f2x1mm + flightLenMm, f2y2mm = f2y1mm
+  const shapeCxMm = (-landingMm / 2 + f2x2mm) / 2
+  const shapeCyMm = (f1y2mm - landingMm + 0) / 2
+  const holeCxPx = (boundsPx.minX + boundsPx.maxX) / 2
+  const holeCyPx = (boundsPx.minY + boundsPx.maxY) / 2
+  const toPx = (mmX: number, mmY: number): Point2D => ({
+    x: holeCxPx + (scaleMmPx > 0 ? (mmX - shapeCxMm) / scaleMmPx : 0),
+    y: holeCyPx + (scaleMmPx > 0 ? (mmY - shapeCyMm) / scaleMmPx : 0),
+  })
+  const f1p1 = toPx(f1x1mm, f1y1mm), f1p2 = toPx(f1x2mm, f1y2mm)
+  const landingP = toPx(landingCxMm, landingCyMm)
+  const f2p1 = toPx(f2x1mm, f2y1mm), f2p2 = toPx(f2x2mm, f2y2mm)
+  return {
+    f1: { x1: f1p1.x, y1: f1p1.y, x2: f1p2.x, y2: f1p2.y },
+    landingCx: landingP.x, landingCy: landingP.y,
+    f2: { x1: f2p1.x, y1: f2p1.y, x2: f2p2.x, y2: f2p2.y },
+    widthMm, landingMm,
+  }
+}
+
+/**
  * Прямоугольник одной ступени марша (px) — марш идёт от (x1,y1) к (x2,y2)
  * (направление подъёма), stepIndex-я ступень занимает долю
  * [stepIndex/stepCount .. (stepIndex+1)/stepCount] длины марша, во всю

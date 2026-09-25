@@ -27,7 +27,7 @@ import {
   rectColumnCornersPx, angleTo, snapAngleToStep, rectAreaM2, mmToPx, snapToColumnRow, nearestColumnCenter,
 } from './core/columnStamp'
 import { computeWallJoins, buildWallsForJoin, computeJoinAngles, defaultCategory } from './core/wallJoin'
-import { flightStepRectPx } from './core/staircase'
+import { flightStepRectPx, polygonBoundsPx, fitCircleToBoundsPx, fitStraightRunZProfileToBoundsPx } from './core/staircase'
 import { resolveAllAttachments, attachmentMaterialOf } from './core/attachmentResolver'
 import type { AttachSurface, EndAttachment } from './core/attachmentResolver'
 import { calcLineFasteners, calcProjectFasteners } from './core/calcAttachmentFasteners'
@@ -613,6 +613,18 @@ export default function FloorPlan() {
   const [inspectorRectColumnId, setInspectorRectColumnId] = useState<string | null>(null)
   const [inspectorFreeformId, setInspectorFreeformId] = useState<string | null>(null)
   const [inspectorStaircaseId, setInspectorStaircaseId] = useState<string | null>(null)
+  // 23.09.2026 — вставка лестницы в вырез плиты по ПКМ (по просьбе Сергея:
+  // "вырезали проём → ПКМ по нему → выпадающий список → тип лестницы →
+  // лестница появляется в этом проёме"). Экранные координаты — для
+  // позиционирования HTML-меню (position: fixed), slabId/holeIndex —
+  // какой именно вырез какой Плиты был кликнут, holeBoundsPx — bbox
+  // выреза (уже посчитан на момент клика, чтобы не пересчитывать заново
+  // при выборе пункта меню). null — меню закрыто.
+  const [slabHoleMenu, setSlabHoleMenu] = useState<{
+    screenX: number; screenY: number
+    slabId: string; holeIndex: number
+    holeBoundsPx: { minX: number; minY: number; maxX: number; maxY: number }
+  } | null>(null)
   // Инспектор Плиты/Потолка (15.09.2026) — раньше эти сущности можно было
   // только удалить/редактировать через боковую панель «Плиты»/«Потолки»,
   // клик по самой фигуре на плане ничего не выделял (Shape рисовался с
@@ -1564,6 +1576,28 @@ export default function FloorPlan() {
   // ── ПКМ — отмена текущего действия ─────────────────────────────────────
   function handleStageContextMenu(e: KonvaEventObject<MouseEvent>) {
     e.evt.preventDefault()
+    // 23.09.2026 — ПКМ по вырезу в Плите (Slab.holes) в режиме 'select'
+    // открывает меню "вставить лестницу" вместо обычной отмены действия
+    // (в остальных режимах, а также если клик не попал в вырез, — старое
+    // поведение ниже без изменений, см. mode==='draw'/'pencil'/... блоки).
+    if (mode === 'select') {
+      const world = getPos(e)
+      if (world) {
+        for (const sl of slabs) {
+          for (let hi = 0; hi < sl.holes.length; hi++) {
+            const hole = sl.holes[hi]
+            if (hole.length >= 3 && pointInPolygon(world.x, world.y, hole)) {
+              setSlabHoleMenu({
+                screenX: e.evt.clientX, screenY: e.evt.clientY,
+                slabId: sl.id, holeIndex: hi,
+                holeBoundsPx: polygonBoundsPx(hole),
+              })
+              return
+            }
+          }
+        }
+      }
+    }
     if (mode === 'draw') {
       setDrawing(null)
       setChainStartPt(null)
@@ -1594,6 +1628,46 @@ export default function FloorPlan() {
         lastStampedRef.current = null
       }
     }
+  }
+
+  // ── Вставка лестницы в вырез плиты (23.09.2026) — вызывается из HTML-меню
+  // slabHoleMenu ниже, по правому клику на Slab.holes. slabId/holeIndex
+  // сейчас не участвуют в самой геометрии (вырез не "потребляется" —
+  // остаётся как есть, лестница просто ставится внутрь по его bbox);
+  // оставлены в сигнатуре на будущее (например, если понадобится пометить
+  // вырез как занятый или привязать лестницу к нему явной ссылкой).
+  function insertSpiralIntoHole(boundsPx: { minX: number; minY: number; maxX: number; maxY: number }) {
+    const { cx, cy, radiusPx } = fitCircleToBoundsPx(boundsPx)
+    const id = addStaircase({
+      kind: 'spiral',
+      cx, cy,
+      innerRadiusMm: 0, outerRadiusMm: Math.max(1, radiusPx * scaleMmPx),
+      startAngleRad: 0, totalAngleRad: Math.PI * 2,
+      targetRiserMm: 170, treadThicknessMm: 30,
+      label: 'Лестница (винтовая, по проёму)',
+    })
+    setInspectorId(null); setInspectorRoomId(null)
+    setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null)
+    setInspectorStaircaseId(id)
+    setSlabHoleMenu(null)
+  }
+
+  function insertStraightRunIntoHole(boundsPx: { minX: number; minY: number; maxX: number; maxY: number }) {
+    const fit = fitStraightRunZProfileToBoundsPx(boundsPx, scaleMmPx)
+    const id = addStaircase({
+      kind: 'straight_run',
+      targetRiserMm: 170, treadThicknessMm: 30,
+      label: 'Лестница (маршевая, по проёму)',
+      segments: [
+        { kind: 'flight', id: 'f1', x1: fit.f1.x1, y1: fit.f1.y1, x2: fit.f1.x2, y2: fit.f1.y2, widthMm: fit.widthMm },
+        { kind: 'landing', id: 'l1', cx: fit.landingCx, cy: fit.landingCy, widthMm: fit.landingMm, depthMm: fit.landingMm, angleRad: 0, thicknessMm: 30 },
+        { kind: 'flight', id: 'f2', x1: fit.f2.x1, y1: fit.f2.y1, x2: fit.f2.x2, y2: fit.f2.y2, widthMm: fit.widthMm },
+      ],
+    })
+    setInspectorId(null); setInspectorRoomId(null)
+    setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null)
+    setInspectorStaircaseId(id)
+    setSlabHoleMenu(null)
   }
 
   // ── Ограничение черчения внутри периметра ─────────────────────────────────
@@ -7699,6 +7773,51 @@ export default function FloorPlan() {
               <button onClick={() => { setShowScaleDialog(false); setScaleStep(0); setScalePt1(null); setScalePt2(null) }}
                 style={{ flex: 1, padding: 8, background: '#f5f5f5', color: '#333', border: '1px solid #ccc', borderRadius: 6, fontSize: 13, cursor: 'pointer' }}>Отмена</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 23.09.2026 — меню "вставить лестницу" по ПКМ на вырезе в Плите
+          (Slab.holes), см. handleStageContextMenu/slabHoleMenu выше. Простое
+          позиционированное меню (не модалка на весь экран) — прозрачный
+          full-screen фон только чтобы ловить клик мимо/Escape и закрыть. */}
+      {slabHoleMenu && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 1100 }}
+          onClick={() => setSlabHoleMenu(null)}
+          onContextMenu={e => { e.preventDefault(); setSlabHoleMenu(null) }}>
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              left: Math.min(slabHoleMenu.screenX, window.innerWidth - 240),
+              top: Math.min(slabHoleMenu.screenY, window.innerHeight - 120),
+              background: '#fff', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+              border: '1px solid #ddd', minWidth: 220, padding: 4,
+            }}>
+            <div style={{ fontSize: 10, color: '#999', padding: '6px 10px 4px', textTransform: 'uppercase' }}>
+              Вставить лестницу в проём
+            </div>
+            <button
+              onClick={() => insertSpiralIntoHole(slabHoleMenu.holeBoundsPx)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                padding: '8px 10px', fontSize: 13, border: 'none', background: 'transparent', cursor: 'pointer', color: '#333',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#f5f6fa')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+              <span style={{ fontSize: 15 }}>🌀</span> Винтовая (по вписанной окружности)
+            </button>
+            <button
+              onClick={() => insertStraightRunIntoHole(slabHoleMenu.holeBoundsPx)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                padding: '8px 10px', fontSize: 13, border: 'none', background: 'transparent', cursor: 'pointer', color: '#333',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#f5f6fa')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+              <span style={{ fontSize: 15 }}>🪜</span> Маршевая (по bbox проёма)
+            </button>
           </div>
         </div>
       )}
