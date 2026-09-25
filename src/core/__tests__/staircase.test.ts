@@ -6,6 +6,9 @@ import {
   resolveStraightRunSteps,
   flightStepRectPx,
   mmToPx,
+  polygonBoundsPx,
+  fitCircleToBoundsPx,
+  fitStraightRunZProfileToBoundsPx,
 } from '../staircase'
 
 describe('resolveStaircaseSteps', () => {
@@ -172,5 +175,89 @@ describe('flightStepRectPx', () => {
   it('вырожденный марш (нулевая длина) не падает — возвращает точку вместо NaN', () => {
     const rect = flightStepRectPx(5, 5, 5, 5, 100, 0, 4)
     rect.forEach(p => { expect(p.x).toBe(5); expect(p.y).toBe(5) })
+  })
+})
+
+describe('polygonBoundsPx / fitCircleToBoundsPx / fitStraightRunZProfileToBoundsPx (23.09.2026, вставка лестницы по проёму)', () => {
+  it('polygonBoundsPx — прямоугольник по вершинам произвольного контура', () => {
+    const pts = [{ x: 10, y: 20 }, { x: 100, y: 5 }, { x: 50, y: 200 }, { x: -30, y: 60 }]
+    const b = polygonBoundsPx(pts)
+    expect(b).toEqual({ minX: -30, minY: 5, maxX: 100, maxY: 200 })
+  })
+
+  it('polygonBoundsPx — пустой массив не падает', () => {
+    expect(polygonBoundsPx([])).toEqual({ minX: 0, minY: 0, maxX: 0, maxY: 0 })
+  })
+
+  it('fitCircleToBoundsPx — вписанная окружность по МЕНЬШЕЙ стороне bbox (не по диагонали)', () => {
+    // Прямоугольник 200×100 — вписанный радиус должен быть 50 (половина меньшей стороны),
+    // а НЕ ~112 (половина диагонали) — иначе лестница вылезла бы за короткие стороны проёма.
+    const b = { minX: 0, minY: 0, maxX: 200, maxY: 100 }
+    const c = fitCircleToBoundsPx(b)
+    expect(c).toEqual({ cx: 100, cy: 50, radiusPx: 50 })
+  })
+
+  it('fitCircleToBoundsPx — квадратный проём даёт окружность, вписанную впритык', () => {
+    const b = { minX: 0, minY: 0, maxX: 280, maxY: 280 } // 280px при scale=10 → 2800мм, реалистичный размер шахты
+    const c = fitCircleToBoundsPx(b)
+    expect(c.cx).toBe(140)
+    expect(c.cy).toBe(140)
+    expect(c.radiusPx).toBe(140)
+  })
+
+  it('fitStraightRunZProfileToBoundsPx — при bbox проёма РОВНО в размер базовой заготовки (3400×3400мм) масштаб=1', () => {
+    // scaleMmPx=10 → 3400мм = 340px
+    const b = { minX: 0, minY: 0, maxX: 340, maxY: 340 }
+    const fit = fitStraightRunZProfileToBoundsPx(b, 10)
+    expect(fit.widthMm).toBeCloseTo(1000, 6)
+    expect(fit.landingMm).toBeCloseTo(1000, 6)
+  })
+
+  it('fitStraightRunZProfileToBoundsPx — проём вдвое МЕНЬШЕ базовой заготовки даёт масштаб 0.5', () => {
+    const b = { minX: 0, minY: 0, maxX: 170, maxY: 170 } // 1700мм при scale=10 — половина от 3400
+    const fit = fitStraightRunZProfileToBoundsPx(b, 10)
+    expect(fit.widthMm).toBeCloseTo(500, 6)
+    expect(fit.landingMm).toBeCloseTo(500, 6)
+  })
+
+  it('fitStraightRunZProfileToBoundsPx — вся геометрия лежит строго внутри bbox проёма (никакая точка не выходит за границы)', () => {
+    const b = { minX: 100, minY: 200, maxX: 500, maxY: 700 } // прямоугольный (не квадратный) проём
+    const fit = fitStraightRunZProfileToBoundsPx(b, 10)
+    const pts = [
+      { x: fit.f1.x1, y: fit.f1.y1 }, { x: fit.f1.x2, y: fit.f1.y2 },
+      { x: fit.landingCx, y: fit.landingCy },
+      { x: fit.f2.x1, y: fit.f2.y1 }, { x: fit.f2.x2, y: fit.f2.y2 },
+    ]
+    // Допуск на половину ширины марша/площадки (точки — осевые линии, не грани) —
+    // проверяем с запасом в 60px (600мм при scale=10, больше половины дефолтной ширины/2=50px)
+    const margin = 60
+    pts.forEach(p => {
+      expect(p.x).toBeGreaterThanOrEqual(b.minX - margin)
+      expect(p.x).toBeLessThanOrEqual(b.maxX + margin)
+      expect(p.y).toBeGreaterThanOrEqual(b.minY - margin)
+      expect(p.y).toBeLessThanOrEqual(b.maxY + margin)
+    })
+  })
+
+  it('fitStraightRunZProfileToBoundsPx — итоговая геометрия центрирована в bbox проёма (границы площадки/марша, не осевые точки, совпадают с краями bbox)', () => {
+    const b = { minX: 0, minY: 0, maxX: 340, maxY: 340 } // scale=1 (масштаб заготовки к проёму)
+    const fit = fitStraightRunZProfileToBoundsPx(b, 10)
+    const halfLandingPx = fit.landingMm / 2 / 10 // 50px
+    // Левый край площадки (landingCx - halfLanding) = левая граница всей геометрии по X
+    expect(fit.landingCx - halfLandingPx).toBeCloseTo(b.minX, 1)
+    // Правый конец второго марша = правая граница по X
+    expect(fit.f2.x2).toBeCloseTo(b.maxX, 1)
+    // Верхний край площадки (landingCy - halfLanding) = верхняя граница по Y
+    expect(fit.landingCy - halfLandingPx).toBeCloseTo(b.minY, 1)
+    // Низ первого марша = нижняя граница по Y
+    expect(fit.f1.y1).toBeCloseTo(b.maxY, 1)
+  })
+
+  it('fitStraightRunZProfileToBoundsPx — вырожденный bbox (нулевая площадь) не падает, масштаб=1 по фолбэку', () => {
+    const b = { minX: 100, minY: 100, maxX: 100, maxY: 100 }
+    const fit = fitStraightRunZProfileToBoundsPx(b, 10)
+    expect(fit.widthMm).toBeCloseTo(1000, 6)
+    expect(Number.isFinite(fit.f1.x1)).toBe(true)
+    expect(Number.isFinite(fit.f2.x2)).toBe(true)
   })
 })
