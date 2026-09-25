@@ -1508,6 +1508,23 @@ export interface Room {
    */
   floorProgress?: WorkProgress
   ceilingProgress?: WorkProgress
+
+  /**
+   * НОВОЕ (25.09.2026): материал потолка/пола, поставленный БЫСТРЫМ меню
+   * (ПКМ по помещению на плане → «Потолок»/«Пол» → выбор отделки, см.
+   * FloorPlan.tsx roomQuickMenu) — тот же принцип верхнего уровня дерева
+   * data/constructionTaxonomy.ts (ceiling/floor), что и у Ceiling.material,
+   * не полный путь с подтипом (клик на «Армстронг» кладёт сюда 'suspended',
+   * не 'suspended:armstrong' — эта сущность понимает только верхний
+   * уровень, см. ceilingMaterialForRoom в core/ceilingSlope.ts). ceilingMaterial
+   * приоритетнее накрывающей Ceiling-зоны при поиске материала для чек-листа
+   * (core/ceilingSlope.ts ceilingMaterialForRoom). floorMaterial пока ТОЛЬКО
+   * классификация для чек-листа/сметы — своей 3D-геометрии «пол помещения»
+   * в проекте нет (есть только Плита, рисуется отдельно), см. обсуждение
+   * с Сергеем 25.09.2026.
+   */
+  ceilingMaterial?: string
+  floorMaterial?: string
 }
 
 // ─── Калькулятор плитки (15.07.2026) ──────────────────────────────────────

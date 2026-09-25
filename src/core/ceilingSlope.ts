@@ -62,8 +62,11 @@ export function ceilingSlopeHeightAt(slope: SlopePlane, x: number, y: number): n
   return slope.height1Mm + t * (slope.height2Mm - slope.height1Mm)
 }
 
-/** Полигон комнаты (мировые px), или null если контур не замкнут/не найден. */
-function roomPolygon(room: Room, lines: PlanLine[]): Point2D[] | null {
+/** Полигон комнаты (мировые px), или null если контур не замкнут/не найден.
+ *  Экспортирован (25.09.2026) — переиспользуется в FloorPlan.tsx для
+ *  point-in-polygon по клику ПКМ (меню «Пол/Потолок» помещения), чтобы не
+ *  дублировать сборку полигона из lineIds ещё в одном месте. */
+export function roomPolygon(room: Room, lines: PlanLine[]): Point2D[] | null {
   const pts = extractContourPoints(room.lineIds, lines)
   return pts.length >= 3 ? pts : null
 }
@@ -310,6 +313,11 @@ export function resolveRibBeamDropMm(
  * это редкий/ошибочный случай рисования, а не нормальный сценарий).
  */
 export function ceilingMaterialForRoom(room: Room, allLines: PlanLine[], ceilings: Ceiling[]): string | undefined {
+  // 25.09.2026 — материал, поставленный НАПРЯМУЮ на саму комнату (меню
+  // «Потолок» по ПКМ на помещении, см. FloorPlan.tsx applyRoomCeilingMaterial)
+  // приоритетнее накрывающей Ceiling-зоны — это явный, только что сделанный
+  // пользователем выбор именно для этой комнаты, а не совпадение по геометрии.
+  if (room.ceilingMaterial) return room.ceilingMaterial
   const poly = roomPolygon(room, allLines)
   if (!poly) return undefined
   let cx = 0, cy = 0
