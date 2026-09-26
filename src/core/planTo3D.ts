@@ -37,7 +37,7 @@ import { buildPositions } from './buildPositions'
 import { parseDoubleFrameSubtype } from '../data/constructionTaxonomy'
 import { ceilingSlopeHeightAt, buildEffectiveCeilingSlopeResolver, effectiveCeilingSlopeHeightAtPoint } from './ceilingSlope'
 import { arcFromChordAndSagitta, sampleArcPoints } from './geometry2d'
-import { resolveStaircaseSteps, spiralStepAngles, spiralStepSectorPx, resolveStraightRunSteps, flightStepRectPx, mmToPx as staircaseMmToPx } from './staircase'
+import { resolveStaircaseSteps, spiralStepAngles, spiralStepSectorPointsWithAngle, resolveStraightRunSteps, flightStepRectPx, mmToPx as staircaseMmToPx } from './staircase'
 import { rectColumnCornersPx } from './columnStamp'
 
 export const DEFAULT_HEIGHT_MM = 3000
@@ -856,38 +856,62 @@ export interface StaircaseTread3D {
   points: { x: number; z: number }[]
   /** высота верхней грани ступени над полом этажа, метры */
   topY: number
-  /** толщина плиты проступи, метры */
+  /**
+   * толщина плиты проступи, метры — у МАРШЕВОЙ лестницы (StaircaseTreadMesh
+   * рендерит постоянной толщиной, как раньше). У винтовой (23.09.2026,
+   * монолитная модель) больше не используется для геометрии — фактическая
+   * толщина/форма низа задаётся bottomYAtPoint ниже, это поле там 0 и не
+   * читается меш-компонентом.
+   */
   thicknessM: number
-}
-
-/** Центральная стойка/столб винтовой лестницы (если innerRadiusMm > 0) → цилиндр, метры. */
-export interface StaircasePost3D {
-  id: string
-  cx: number
-  cz: number
-  radius: number
-  bottomY: number
-  topY: number
+  /**
+   * 23.09.2026, монолитная лестница — ТОЛЬКО у винтовой (у маршевой всегда
+   * undefined, там нижняя грань плоская, thicknessM выше). Высота НИЖНЕЙ
+   * грани в каждой соответствующей точке `points` (тот же порядок и длина
+   * массива) — гладкая винтовая (коническая) поверхность соффита вместо
+   * постоянного отступа вниз, повторяющая реальную монолитную лестницу
+   * (см. фото объекта — сплошное тело без ступеней-плит и без отдельной
+   * центральной стойки). Раньше центральная стойка (StaircasePost3D,
+   * убрана в этом же инкременте) закрывала внутренний радиус отдельным
+   * цилиндром — теперь внутренняя стенка каждой ступени-клина сама
+   * является частью монолита (боковая грань между bottomYAtPoint и topY),
+   * отдельный столб больше не нужен независимо от innerRadiusMm.
+   */
+  bottomYAtPoint?: number[]
 }
 
 export interface StaircaseGeometry3D {
   treads: StaircaseTread3D[]
-  posts: StaircasePost3D[]
 }
 
 /**
- * Винтовые лестницы → ступени+столб в метрах, для Scene3D (Фаза 4 объекта
- * в Ростове, 20.09.2026, первый инкремент). Тот же принцип высоты, что у
- * roundColumnsToCylinders3D выше: по умолчанию верх лестницы —
- * effectiveCeilingSlopeHeightAtPoint в центре (реальная отметка плиты
- * следующего этажа, включая наклонные участки), customHeight — ручной
- * override общей высоты. Низ — bottomElevationMm (по умолчанию 0, пол
- * этого этажа).
+ * Винтовые лестницы → монолитные клинья-ступени в метрах, для Scene3D
+ * (Фаза 4 объекта в Ростове, 20.09.2026 первый инкремент — отдельные
+ * плиты-ступени+столб; 23.09.2026 — переход на монолитную модель по
+ * фото реального объекта: одно сплошное тело со ступенчатым верхом и
+ * ГЛАДКОЙ винтовой нижней поверхностью, без зазора и без отдельного
+ * столба). Тот же принцип высоты, что у roundColumnsToCylinders3D:
+ * по умолчанию верх лестницы — effectiveCeilingSlopeHeightAtPoint в
+ * центре (реальная отметка плиты следующего этажа, включая наклонные
+ * участки), customHeight — ручной override общей высоты. Низ —
+ * bottomElevationMm (по умолчанию 0, пол этого этажа).
+ *
+ * Нижняя грань каждой ступени-клина — не константа (как раньше
+ * treadThicknessMm), а ЛИНЕЙНАЯ функция угла θ по всей лестнице целиком:
+ * rampMm(θ) = bottomMm + (θ-startAngleRad)/totalAngleRad × totalHeightMm.
+ * Соседние клинья вычисляют эту функцию в ОБЩЕЙ угловой границе одинаково
+ * (та же формула, тот же θ) — поэтому их нижние грани стыкуются БЕЗ
+ * зазора/нахлёста, давая цельную гладкую винтовую поверхность соффита на
+ * всю лестницу (видно на фото объекта — Сергей подтвердил монолитность
+ * явно, 23.09.2026). Высота соффита зависит ТОЛЬКО от угла, не от радиуса
+ * (тот же принцип, что у обычного винтового пандуса) — тело клина между
+ * bottomYAtPoint[j] и topY на каждой точке контура StaircaseTreadMesh
+ * достраивает как loft (см. Scene3D.tsx).
  *
  * Число ступеней и их угловые/радиальные границы — через core/staircase.ts
- * (resolveStaircaseSteps/spiralStepAngles/spiralStepSectorPx), эта функция
- * только переводит px/мм результат в метры и раскладывает по высоте
- * (каждая следующая ступень на actualRiserMm выше предыдущей).
+ * (resolveStaircaseSteps/spiralStepAngles/spiralStepSectorPointsWithAngle),
+ * эта функция только переводит px/мм результат в метры и раскладывает по
+ * высоте (каждая следующая ступень на actualRiserMm выше предыдущей).
  *
  * Лестницы с вырожденной геометрией (stepCount=0 — totalHeightMm<=0 или
  * targetRiserMm<=0, см. resolveStaircaseSteps) молча пропускаются — та же
@@ -898,7 +922,6 @@ export function spiralStaircasesToTreads3D(
   lines: PlanLine[] = [], slabs: Slab[] = [], ceilings: Ceiling[] = [], slopes: CeilingSlope[] = [], rooms: Room[] = [],
 ): StaircaseGeometry3D {
   const treads: StaircaseTread3D[] = []
-  const posts: StaircasePost3D[] = []
   for (const st of staircases) {
     if (st.kind !== 'spiral') continue
     const bottomMm = st.bottomElevationMm ?? 0
@@ -912,27 +935,20 @@ export function spiralStaircasesToTreads3D(
     const outerRadiusPx = staircaseMmToPx(st.outerRadiusMm, scaleMmPx)
     const ranges = spiralStepAngles(st.startAngleRad, st.totalAngleRad, stepCount)
     ranges.forEach((r, i) => {
-      const sectorPx = spiralStepSectorPx(st.cx, st.cy, innerRadiusPx, outerRadiusPx, r.angleFromRad, r.angleToRad)
+      const sectorPts = spiralStepSectorPointsWithAngle(st.cx, st.cy, innerRadiusPx, outerRadiusPx, r.angleFromRad, r.angleToRad)
       treads.push({
         id: st.id,
-        points: sectorPx.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
+        points: sectorPts.map(p => ({ x: pxToM(p.x, scaleMmPx), z: pxToM(p.y, scaleMmPx) })),
         topY: mmToM(bottomMm + (i + 1) * actualRiserMm),
-        thicknessM: mmToM(st.treadThicknessMm),
+        thicknessM: 0,
+        bottomYAtPoint: sectorPts.map(p => {
+          const frac = st.totalAngleRad !== 0 ? (p.angleRad - st.startAngleRad) / st.totalAngleRad : 0
+          return mmToM(bottomMm + frac * totalHeightMm)
+        }),
       })
     })
-
-    if (st.innerRadiusMm > 0) {
-      posts.push({
-        id: st.id,
-        cx: pxToM(st.cx, scaleMmPx),
-        cz: pxToM(st.cy, scaleMmPx),
-        radius: mmToM(st.innerRadiusMm),
-        bottomY: mmToM(bottomMm),
-        topY: mmToM(bottomMm + totalHeightMm),
-      })
-    }
   }
-  return { treads, posts }
+  return { treads }
 }
 
 /**

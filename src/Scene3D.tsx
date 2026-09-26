@@ -29,7 +29,7 @@ import {
   spiralStaircasesToTreads3D, straightRunStaircasesToTreads3D,
   FLOOR_SLAB_THICKNESS_MM, CEILING_SLAB_THICKNESS_MM,
   type WallBox3D, type RoomPolygon3D, type SlabPolygon3D, type ColumnCylinder3D, type RectColumnBox3D, type FreeformPrism3D, type WallFaceFrame, type SlabStepRiser3D,
-  type StaircaseTread3D, type StaircasePost3D,
+  type StaircaseTread3D,
 } from './core/planTo3D'
 import type { PlanLineType, FloorPlan, PlanLine, WorkStageTemplate, Level } from './types'
 import { virtualSlabsFromLevelAbove } from './core/ceilingSlope'
@@ -476,16 +476,24 @@ function RoundColumnMesh({ cyl, opacity = 1, selected = false, measuring = false
 }
 
 /**
- * Одна ступень винтовой лестницы → extrude THREE.Shape по её сектору,
- * та же техника, что у HandDrawnSlabMesh (Shape(x,-z) → ExtrudeGeometry
- * → rotateX(-90°) → translate(0,-depth,0), верхняя грань оказывается на
- * y=0 локально) — здесь дополнительно позиционируем меш по Y на topY, так
- * верхняя грань ступени оказывается ровно на нужной высоте, а толщина
- * уходит вниз (Фаза 4 объекта в Ростове, 20.09.2026, первый инкремент).
+ * Одна ступень лестницы → three.js меш, метры. Два разных пути геометрии
+ * в зависимости от вида лестницы:
+ *  - маршевая (thicknessM>0, bottomYAtPoint не задан) — прежняя техника:
+ *    extrude THREE.Shape по контуру (Shape(x,-z) → ExtrudeGeometry →
+ *    rotateX(-90°) → translate(0,-depth,0), верхняя грань на y=0 локально),
+ *    меш позиционируется по Y на topY, толщина уходит вниз (20.09.2026).
+ *  - винтовая (bottomYAtPoint задан) — МОНОЛИТНЫЙ клин
+ *    (spiralStaircaseWedgeGeometry выше, 23.09.2026, по фото реального
+ *    объекта): нижняя грань не плоская, а гладко повторяет уклон всей
+ *    лестницы, геометрия уже в АБСОЛЮТНЫХ мировых координатах (tread.points
+ *    содержат x/z самой лестницы, не локальные) — меш позиционируется в
+ *    [0,0,0], сдвиг по Y не нужен, он уже "запечён" в саму геометрию.
  *
  * Каждая ступень — отдельный мини-меш (без общей геометрии на всю
  * лестницу, как и отдельные ExtrudeGeometry у ступенчатых плит
- * slabStepRisers3D) — CSG не нужен, ступени физически не пересекаются.
+ * slabStepRisers3D) — CSG не нужен, соседние клинья стыкуются по общей
+ * границе без наложения (см. комментарий у spiralStaircasesToTreads3D,
+ * planTo3D.ts, про непрерывность bottomYAtPoint на стыке ступеней).
  */
 function StaircaseTreadMesh({ tread, opacity = 1, selected = false, measuring = false, onSelect }: {
   tread: StaircaseTread3D
@@ -496,7 +504,11 @@ function StaircaseTreadMesh({ tread, opacity = 1, selected = false, measuring = 
 }) {
   const tex = useMemo(() => getWallTexture('concrete', 1, 1), [])
   const tint = useMemo(() => tintOverTexture(COLUMN_COLOR), [])
+  const monolithic = tread.bottomYAtPoint !== undefined
   const geo = useMemo(() => {
+    if (tread.bottomYAtPoint) {
+      return spiralStaircaseWedgeGeometry(tread.points, tread.topY, tread.bottomYAtPoint)
+    }
     const shape = new THREE.Shape(tread.points.map(p => new THREE.Vector2(p.x, -p.z)))
     const g = new THREE.ExtrudeGeometry(shape, { depth: tread.thicknessM, bevelEnabled: false, steps: 1 })
     g.rotateX(-Math.PI / 2)
@@ -509,7 +521,7 @@ function StaircaseTreadMesh({ tread, opacity = 1, selected = false, measuring = 
     onSelect(tread.id)
   }
   return (
-    <mesh geometry={geo} position={[0, tread.topY, 0]} castShadow receiveShadow onClick={handleClick}>
+    <mesh geometry={geo} position={monolithic ? [0, 0, 0] : [0, tread.topY, 0]} castShadow receiveShadow onClick={handleClick}>
       <meshStandardMaterial
         map={tex}
         color={tint}
@@ -524,42 +536,82 @@ function StaircaseTreadMesh({ tread, opacity = 1, selected = false, measuring = 
 }
 
 /**
- * Центральная стойка винтовой лестницы (innerRadiusMm > 0) → цилиндр,
- * тот же принцип, что и RoundColumnMesh выше (CylinderGeometry уже вдоль
- * вертикальной оси Y, поворот не нужен), но координата — bottomY..topY, а
- * не 0..heightM (лестница может начинаться не от пола, bottomElevationMm).
+ * Монолитный клин ступени винтовой лестницы (23.09.2026, по фото реального
+ * объекта — сплошное тело, а не тонкая плита-проступь + отдельная стойка).
+ * topPoints — замкнутый контур (сектор, тот же порядок точек, что у
+ * spiralStepSectorPointsWithAngle: внешняя дуга → внутренняя дуга/точка
+ * обратно), все на постоянной высоте topY; bottomYAtPoint — своя высота
+ * нижней грани НА КАЖДУЮ точку того же контура (та же длина массива) —
+ * гладкая винтовая поверхность соффита, см. StaircaseTread3D/
+ * spiralStaircasesToTreads3D (planTo3D.ts) — там же формула её расчёта.
+ *
+ * Грани строятся как верхняя крышка (веер треугольников от точки 0),
+ * нижняя крышка (тот же веер по нижнему кольцу) и боковая юбка (по квадрату
+ * на каждое ребро контура, верх+низ). Ориентация КАЖДОГО треугольника
+ * определяется не жёстко зашитым порядком обхода (сектор не всегда строго
+ * выпуклый при клине без внутренней дуги — треугольник у самого центра),
+ * а тестом "нормаль наружу от центроида всего тела" (та же идея, что у
+ * стандартного приёма ориентации граней выпуклого тела по центроиду) —
+ * работает единообразно для крышек И боковых граней без отдельного case
+ * на внешнюю/внутреннюю/радиальную (риser) грань.
  */
-function StaircasePostMesh({ post, opacity = 1, selected = false, measuring = false, onSelect }: {
-  post: StaircasePost3D
-  opacity?: number
-  selected?: boolean
-  measuring?: boolean
-  onSelect?: (id: string) => void
-}) {
-  const heightM = post.topY - post.bottomY
-  const tex = useMemo(() => getWallTexture('concrete', 2 * Math.PI * post.radius, heightM), [post.radius, heightM])
-  const tint = useMemo(() => tintOverTexture(COLUMN_COLOR), [])
-  function handleClick(e: ThreeEvent<MouseEvent>) {
-    if (measuring || !onSelect) return
-    e.stopPropagation()
-    onSelect(post.id)
+export function spiralStaircaseWedgeGeometry(
+  topPoints: { x: number; z: number }[],
+  topY: number,
+  bottomYAtPoint: number[],
+): THREE.BufferGeometry {
+  const n = topPoints.length
+  const positions: number[] = []
+  // Верхнее кольцо — индексы [0..n-1], нижнее — [n..2n-1]
+  for (const p of topPoints) positions.push(p.x, topY, p.z)
+  for (let i = 0; i < n; i++) positions.push(topPoints[i].x, bottomYAtPoint[i], topPoints[i].z)
+
+  const vx = (i: number) => new THREE.Vector3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])
+  let cx = 0, cy = 0, cz = 0
+  for (let i = 0; i < n * 2; i++) { cx += positions[i * 3]; cy += positions[i * 3 + 1]; cz += positions[i * 3 + 2] }
+  const centroid = new THREE.Vector3(cx / (n * 2), cy / (n * 2), cz / (n * 2))
+
+  const indices: number[] = []
+  // Треугольник (a,b,c) — ориентируем так, чтобы нормаль смотрела ОТ
+  // центроида наружу (звёздно-выпуклое тело относительно своего
+  // центроида — верно для клина ступени любой формы, включая вырожденный
+  // случай innerRadiusPx=0, где контур сходится в одну точку).
+  function pushOriented(a: number, b: number, c: number) {
+    const pa = vx(a), pb = vx(b), pc = vx(c)
+    const normal = new THREE.Vector3().subVectors(pb, pa).cross(new THREE.Vector3().subVectors(pc, pa))
+    const mid = new THREE.Vector3().addVectors(pa, pb).add(pc).divideScalar(3)
+    const outward = new THREE.Vector3().subVectors(mid, centroid)
+    if (normal.dot(outward) < 0) indices.push(a, c, b)
+    else indices.push(a, b, c)
   }
-  if (!(heightM > 0)) return null
-  return (
-    <mesh position={[post.cx, post.bottomY + heightM / 2, post.cz]} castShadow receiveShadow onClick={handleClick}>
-      <cylinderGeometry args={[post.radius, post.radius, heightM, 24]} />
-      <meshStandardMaterial
-        map={tex}
-        color={tint}
-        roughness={0.9}
-        transparent={opacity < 1}
-        opacity={opacity}
-        emissive={selected ? '#ffca28' : '#000000'}
-        emissiveIntensity={selected ? 0.55 : 0}
-      />
-    </mesh>
-  )
+
+  // Верхняя и нижняя крышки — веер от точки 0
+  for (let i = 1; i < n - 1; i++) {
+    pushOriented(0, i, i + 1)
+    pushOriented(n + 0, n + i, n + i + 1)
+  }
+  // Боковая юбка — по квадрату (2 треугольника) на каждое ребро контура
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    pushOriented(i, j, n + j)
+    pushOriented(i, n + j, n + i)
+  }
+
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geo.setIndex(indices)
+  geo.computeVertexNormals()
+  return geo
 }
+
+/**
+ * ⚠️ 23.09.2026 — центральная стойка (StaircasePostMesh/StaircasePost3D)
+ * УДАЛЕНА вместе с этим комментарием: с переходом на монолитную модель
+ * (spiralStaircaseWedgeGeometry выше) StaircaseGeometry3D больше не
+ * содержит posts (см. planTo3D.ts) — внутренняя стенка клина теперь сама
+ * часть монолита, отдельный цилиндр-столб больше не нужен независимо от
+ * innerRadiusMm.
+ */
 
 /**
  * Прямоугольная колонна (самостоятельная сущность) → коробка three.js.
@@ -981,7 +1033,7 @@ function LevelGroup({
   const staircaseGeometry = useMemo(() => {
     const spiral = spiralStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms)
     const straightRunTreads = straightRunStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms)
-    return { treads: [...spiral.treads, ...straightRunTreads], posts: spiral.posts }
+    return { treads: [...spiral.treads, ...straightRunTreads] }
   }, [staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms])
   const freeformPrisms = useMemo(
     () => freeformStructuresToPrisms3D(freeformStructures, scaleMmPx, ceilingMm),
@@ -1148,16 +1200,6 @@ function LevelGroup({
           tread={tread}
           opacity={opacity}
           selected={tread.id === selectedStaircaseId}
-          measuring={measuring}
-          onSelect={(id) => onSelectEntity({ kind: 'staircase', id })}
-        />
-      ))}
-      {staircaseGeometry.posts.map(post => (
-        <StaircasePostMesh
-          key={`stair-post-${post.id}`}
-          post={post}
-          opacity={opacity}
-          selected={post.id === selectedStaircaseId}
           measuring={measuring}
           onSelect={(id) => onSelectEntity({ kind: 'staircase', id })}
         />

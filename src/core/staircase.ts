@@ -114,23 +114,48 @@ export function spiralStepSectorPx(
   angleFromRad: number, angleToRad: number,
   arcSegments = 4,
 ): Point2D[] {
-  const pts: Point2D[] = []
+  return spiralStepSectorPointsWithAngle(cx, cy, innerRadiusPx, outerRadiusPx, angleFromRad, angleToRad, arcSegments)
+    .map(({ x, y }) => ({ x, y }))
+}
+
+/**
+ * Точка контура ступени (px) вместе с углом θ, на котором она лежит —
+ * нужно для монолитной 3D-модели (23.09.2026): нижняя грань ступени у
+ * реальной винтовой лестницы не плоская (не постоянная толщина от пола),
+ * а гладко повторяет общий уклон всей лестницы — видно на фото объекта
+ * (конический/винтовой соффит). planTo3D.ts считает высоту нижней грани
+ * в каждой точке как функцию именно θ (линейная интерполяция между
+ * bottomElevationMm в начале и bottomElevationMm+totalHeightMm в конце
+ * всей лестницы), не как функцию радиуса — соффит одной высоты на любом
+ * радиусе при данном θ, тот же принцип, что у винтового пандуса.
+ */
+export interface SectorPointWithAngle extends Point2D { angleRad: number }
+
+export function spiralStepSectorPointsWithAngle(
+  cx: number, cy: number,
+  innerRadiusPx: number, outerRadiusPx: number,
+  angleFromRad: number, angleToRad: number,
+  arcSegments = 4,
+): SectorPointWithAngle[] {
+  const pts: SectorPointWithAngle[] = []
   for (let i = 0; i <= arcSegments; i++) {
     const t = i / arcSegments
     const a = angleFromRad + (angleToRad - angleFromRad) * t
-    pts.push({ x: cx + outerRadiusPx * Math.cos(a), y: cy + outerRadiusPx * Math.sin(a) })
+    pts.push({ x: cx + outerRadiusPx * Math.cos(a), y: cy + outerRadiusPx * Math.sin(a), angleRad: a })
   }
   if (innerRadiusPx <= 1e-9) {
     // Вырожденная внутренняя дуга — клин сходится в центр одной точкой,
     // а не полноценной дугой (иначе получился бы вырожденный "нулевой"
     // сегмент дуги в каждой из arcSegments точек одного и того же центра).
-    pts.push({ x: cx, y: cy })
+    // Угол этой единственной точки — angleToRad (та же конвенция, что и
+    // у первой точки следующего блока при innerRadiusPx>0 ниже).
+    pts.push({ x: cx, y: cy, angleRad: angleToRad })
     return pts
   }
   for (let i = 0; i <= arcSegments; i++) {
     const t = i / arcSegments
     const a = angleToRad + (angleFromRad - angleToRad) * t
-    pts.push({ x: cx + innerRadiusPx * Math.cos(a), y: cy + innerRadiusPx * Math.sin(a) })
+    pts.push({ x: cx + innerRadiusPx * Math.cos(a), y: cy + innerRadiusPx * Math.sin(a), angleRad: a })
   }
   return pts
 }
