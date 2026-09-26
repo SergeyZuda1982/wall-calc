@@ -837,8 +837,19 @@ function RoomLabelTag({
  * по пустому месту сцены (см. onPointerMissed в Canvas ниже).
  */
 function EntitySelectionPanel({
-  x, y, z, label, statusText, statusColor, onClose,
-}: { x: number; y: number; z: number; label: string; statusText?: string; statusColor?: string; onClose: () => void }) {
+  x, y, z, label, statusText, statusColor, onClose, onFocus,
+}: {
+  x: number; y: number; z: number; label: string; statusText?: string; statusColor?: string
+  onClose: () => void
+  /**
+   * 26.09.2026: кнопка "приблизить к выделенному" (жалоба — на мобильном
+   * неудобно облетать сцену и трудно подъехать камерой к объекту вдалеке).
+   * Опционально — на случай, если для какого-то вида сущности когда-нибудь
+   * не найдётся разумной точки/дистанции фокуса, панель не должна падать
+   * без кнопки.
+   */
+  onFocus?: () => void
+}) {
   const borderColor = statusColor ?? '#3a7bd5'
   return (
     <Html position={[x, y, z]} center distanceFactor={10} zIndexRange={[30, 0]} occlude={false}>
@@ -854,6 +865,18 @@ function EntitySelectionPanel({
           <div style={{ fontWeight: 700, color: '#1a1f33' }}>{label}</div>
           {statusText && <div style={{ color: borderColor, fontWeight: 600 }}>{statusText}</div>}
         </div>
+        {onFocus && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onFocus() }}
+            title="Приблизить камеру к объекту"
+            style={{
+              border: 'none', background: 'none', cursor: 'pointer', fontSize: 15,
+              color: borderColor, padding: 0, lineHeight: 1,
+            }}
+          >
+            🎯
+          </button>
+        )}
         <button
           onClick={(e) => { e.stopPropagation(); onClose() }}
           title="Снять выделение"
@@ -1145,23 +1168,43 @@ function LevelGroup({
   // core/lineProgress.ts, тот же резолвер, что и 2D-дот); у колонн и
   // произвольных конструкций такого прогресса в модели данных пока нет —
   // для них показывается только label, без выдуманной строки статуса.
+  // sizeM у каждой ветки (26.09.2026, кнопка "приблизить к выделенному",
+  // EntitySelectionPanel) — грубая оценка габарита объекта в плане/по
+  // высоте, нужна только чтобы прикинуть, на какую дистанцию подвести
+  // камеру (см. focusOnPoint/CameraRig в родительском Scene3D): чем
+  // крупнее объект, тем дальше нужно остановиться, чтобы он весь влез в
+  // кадр, а не наоборот. Не претендует на точность (для стены с проёмами
+  // берётся размер ОДНОГО сегмента — первого найденного, а не всей линии
+  // целиком, см. selectedWallBox выше) — этого достаточно для цели кнопки
+  // (даже неточное приближение уже лучше, чем щипок вручную на телефоне).
   const panel = selectedLine && selectedWallBox
     ? {
         x: selectedWallBox.center.x, y: selectedWallBox.center.y + selectedWallBox.size.sy / 2 + 0.3, z: selectedWallBox.center.z,
         label: selectedLine.label,
         statusText: lineProgressSummary(selectedLine.buildProgress),
         statusColor: lineProgressColor(selectedLine.buildProgress),
+        sizeM: Math.max(selectedWallBox.size.sx, selectedWallBox.size.sy),
       }
     : selectedRoundCol && selectedRoundCyl
-    ? { x: selectedRoundCyl.cx, y: selectedRoundCyl.heightM + 0.3, z: selectedRoundCyl.cz, label: selectedRoundCol.label }
+    ? {
+        x: selectedRoundCyl.cx, y: selectedRoundCyl.heightM + 0.3, z: selectedRoundCyl.cz, label: selectedRoundCol.label,
+        sizeM: Math.max(selectedRoundCyl.radius * 2, selectedRoundCyl.heightM),
+      }
     : selectedRectCol && selectedRectBox
-    ? { x: selectedRectBox.center.x, y: selectedRectBox.center.y + selectedRectBox.size.sy / 2 + 0.3, z: selectedRectBox.center.z, label: selectedRectCol.label }
+    ? {
+        x: selectedRectBox.center.x, y: selectedRectBox.center.y + selectedRectBox.size.sy / 2 + 0.3, z: selectedRectBox.center.z, label: selectedRectCol.label,
+        sizeM: Math.max(selectedRectBox.size.sx, selectedRectBox.size.sy, selectedRectBox.size.sz),
+      }
     : selectedFreeform && selectedFreeformFirstPrism
     ? {
         x: selectedFreeformFirstPrism.points.reduce((s, p) => s + p.x, 0) / selectedFreeformFirstPrism.points.length,
         y: mmToM(selectedFreeform.heightMm ?? ceilingMm) + 0.3,
         z: selectedFreeformFirstPrism.points.reduce((s, p) => s + p.z, 0) / selectedFreeformFirstPrism.points.length,
         label: selectedFreeform.label,
+        sizeM: Math.max(
+          Math.max(...selectedFreeformFirstPrism.points.map(p => p.x)) - Math.min(...selectedFreeformFirstPrism.points.map(p => p.x)),
+          Math.max(...selectedFreeformFirstPrism.points.map(p => p.z)) - Math.min(...selectedFreeformFirstPrism.points.map(p => p.z)),
+        ),
       }
     : selectedStaircase && selectedStaircaseFirstTread
     ? {
@@ -1169,6 +1212,7 @@ function LevelGroup({
         y: staircaseGeometry.treads.filter(t => t.id === selectedStaircase.id).reduce((max, t) => Math.max(max, t.topY), 0) + 0.3,
         z: selectedStaircaseFirstTread.points.reduce((s, p) => s + p.z, 0) / selectedStaircaseFirstTread.points.length,
         label: selectedStaircase.label,
+        sizeM: 2, // ступень небольшая, вся лестница считается по крайним точкам одной ступени было бы неточно — фиксированный разумный дефолт
       }
     : null
 
@@ -1288,6 +1332,10 @@ function LevelGroup({
           statusText={'statusText' in panel ? panel.statusText : undefined}
           statusColor={'statusColor' in panel ? panel.statusColor : undefined}
           onClose={onDeselect}
+          onFocus={() => onFocusElement(
+            new THREE.Vector3(panel.x, panel.y, panel.z),
+            Math.max(panel.sizeM * 1.6, 3),
+          )}
         />
       )}
       {!dimmed && roomLabels.map(rl => (
@@ -2248,7 +2296,27 @@ export default function Scene3D() {
         />
         <CameraScaleSync scale={visualScale} controlsRef={controlsRef} />
         {cameraMode === 'orbit'
-          ? <OrbitControls ref={controlsRef} makeDefault enableRotate={!zoneDraw} enablePan={!zoneDraw} />
+          ? (
+            <OrbitControls
+              ref={controlsRef}
+              makeDefault
+              enableRotate={!zoneDraw}
+              enablePan={!zoneDraw}
+              // 26.09.2026: тюнинг под мобильный тач (жалоба — неудобно облетать/
+              // приближаться на телефоне). enableDamping даёт инерцию вместо
+              // резкого дёрганья при отпускании пальца — на маленьком экране
+              // палец легче случайно чуть сдвинуть, дампинг это сглаживает.
+              // zoomSpeed повышен (дефолт 1) — иначе на тач-пинче зум ощущается
+              // вяло по сравнению с мышиным колесом. minDistance/maxDistance не
+              // трогаем: дефолт (0..Infinity) не мешает приближаться, основная
+              // причина жалобы — комбинированный жест DOLLY_PAN (см. кнопку
+              // "приблизить к выделенному" у EntitySelectionPanel ниже, это
+              // основной фикс).
+              enableDamping
+              dampingFactor={0.15}
+              zoomSpeed={1.6}
+            />
+            )
           : <FlyControls makeDefault dragToLook movementSpeed={4} rollSpeed={0.6} />}
         {cameraMode === 'orbit' && <CameraRig focusTarget={focusTarget} controlsRef={controlsRef} />}
         {cameraMode === 'orbit' && <ViewJumpRig viewJump={viewJump} controlsRef={controlsRef} />}
