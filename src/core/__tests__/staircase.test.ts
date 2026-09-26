@@ -9,6 +9,7 @@ import {
   polygonBoundsPx,
   fitCircleToBoundsPx,
   fitStraightRunZProfileToBoundsPx,
+  spiralStepSectorPointsWithAngle,
 } from '../staircase'
 
 describe('resolveStaircaseSteps', () => {
@@ -259,5 +260,37 @@ describe('polygonBoundsPx / fitCircleToBoundsPx / fitStraightRunZProfileToBounds
     expect(fit.widthMm).toBeCloseTo(1000, 6)
     expect(Number.isFinite(fit.f1.x1)).toBe(true)
     expect(Number.isFinite(fit.f2.x2)).toBe(true)
+  })
+})
+
+describe('spiralStepSectorPointsWithAngle (23.09.2026, монолитная 3D-модель — угол θ на каждой точке контура)', () => {
+  it('внешняя дуга — угол каждой точки строго между angleFrom и angleTo, по возрастанию', () => {
+    const pts = spiralStepSectorPointsWithAngle(0, 0, 100, 300, 0, Math.PI / 6, 4)
+    for (let i = 0; i <= 4; i++) {
+      expect(pts[i].angleRad).toBeCloseTo(0 + (Math.PI / 6) * (i / 4), 9)
+    }
+  })
+
+  it('внутренняя дуга — углы идут В ОБРАТНОМ порядке (от angleTo к angleFrom), как и точки', () => {
+    const pts = spiralStepSectorPointsWithAngle(0, 0, 100, 300, 0, Math.PI / 6, 4)
+    // Точки [5..9] — внутренняя дуга, обратный обход
+    for (let i = 0; i <= 4; i++) {
+      const p = pts[5 + i]
+      expect(p.angleRad).toBeCloseTo(Math.PI / 6 - (Math.PI / 6) * (i / 4), 9)
+    }
+  })
+
+  it('innerRadiusPx=0 — единственная точка центра получает angleRad=angleTo', () => {
+    const pts = spiralStepSectorPointsWithAngle(0, 0, 0, 300, 0.2, 0.5, 4)
+    const last = pts[pts.length - 1]
+    expect(last.x).toBeCloseTo(0, 9)
+    expect(last.y).toBeCloseTo(0, 9)
+    expect(last.angleRad).toBeCloseTo(0.5, 9)
+  })
+
+  it('x/y совпадают с обычным spiralStepSectorPx (тот же контур, angleRad — лишь дополнительное поле)', () => {
+    const withAngle = spiralStepSectorPointsWithAngle(50, -20, 100, 300, 0.1, 0.9, 4)
+    const plain = spiralStepSectorPx(50, -20, 100, 300, 0.1, 0.9, 4)
+    expect(withAngle.map(p => ({ x: p.x, y: p.y }))).toEqual(plain)
   })
 })

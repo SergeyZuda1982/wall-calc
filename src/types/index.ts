@@ -1149,12 +1149,12 @@ export interface SpiralStaircase {
   kind: 'spiral'
   cx: number              // центр, px (координаты плана)
   cy: number
-  innerRadiusMm: number    // радиус центральной стойки/выреза; 0 — без стойки (клин до центра)
+  innerRadiusMm: number    // радиус внутреннего края клина ступеней; 0 — клин сходится в центр (см. монолитную 3D-модель ниже, 23.09.2026 — отдельной центральной стойки больше нет, это часть монолита)
   outerRadiusMm: number
   startAngleRad: number    // откуда начинается лестница (atan2-space, Y вниз — как angleTo в columnStamp.ts)
   totalAngleRad: number    // на сколько радиан закручивается; знак задаёт направление обхода (см. spiralStepAngles)
   targetRiserMm: number    // желаемая высота подступенка — см. resolveStaircaseSteps
-  treadThicknessMm: number // толщина плиты проступи
+  treadThicknessMm: number // толщина плиты проступи — ⚠️ 23.09.2026: в 3D для ВИНТОВОЙ лестницы больше не используется (монолитная модель, см. StaircaseTread3D.bottomYAtPoint в planTo3D.ts — нижняя грань гладкая, а не константной толщины); поле остаётся у пользователя для будущих задач (материалы/раскрой проступей, пока не реализовано)
   bottomElevationMm?: number // низ, мм от пола этажа; не задано = 0 (пол)
   heightMm?: number         // своя высота (верх - низ); см. подробный комментарий выше
   customHeight?: boolean
