@@ -1110,11 +1110,17 @@ function LevelGroup({
     () => rectColumnsToBoxes3D(rectColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms),
     [rectColumns, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms],
   )
+  // 27.09.2026 — фикс: высота лестницы по умолчанию считалась только по
+  // СОБСТВЕННЫМ плитам/потолкам этого этажа (slabs), без виртуальной плиты
+  // этажа СВЕРХУ (aboveLevelSlabs/slabsWithAbove) — той же самой, что уже
+  // подключена у колонн/ригелей чуть выше. Из-за этого лестница, вставленная
+  // в вырез плиты по ПКМ, не подхватывала реальный межэтажный габарит и
+  // откатывалась на грубую оценку estimateCeilingMm(lines).
   const staircaseGeometry = useMemo(() => {
-    const spiral = spiralStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms)
-    const straightRunTreads = straightRunStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms)
+    const spiral = spiralStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms)
+    const straightRunTreads = straightRunStaircasesToTreads3D(staircases, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms)
     return { treads: [...spiral.treads, ...straightRunTreads] }
-  }, [staircases, scaleMmPx, ceilingMm, lines, slabs, ceilings, ceilingSlopes, rooms])
+  }, [staircases, scaleMmPx, ceilingMm, lines, slabsWithAbove, ceilings, ceilingSlopes, rooms])
   const freeformPrisms = useMemo(
     () => freeformStructuresToPrisms3D(freeformStructures, scaleMmPx, ceilingMm),
     [freeformStructures, scaleMmPx, ceilingMm],
