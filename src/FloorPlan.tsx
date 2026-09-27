@@ -789,7 +789,7 @@ export default function FloorPlan() {
   // никуда не сохраняются, чтобы не раздувать localStorage/Supabase).
   // lastRenderedDataUrl нужен, чтобы не пытаться дорендерить чужую
   // подложку после переключения этажа (там свой PDF или его вообще нет).
-  const bgSourceRef = useRef<{ file: File; pageNum: number; lastRenderedDataUrl: string } | null>(null)
+  const bgSourceRef = useRef<{ file: File; pageNum: number; pageCount: number; lastRenderedDataUrl: string } | null>(null)
   const bgRerenderTimeoutRef = useRef<number | null>(null)
   const bgRerenderingRef = useRef(false)
   // true между "дорендер подложки закончился" и следующим прогоном эффекта
@@ -913,7 +913,7 @@ export default function FloorPlan() {
       } else {
         setBgUploading(true)
         const res = await renderPdfPageToImage(file, 1)
-        if (activeDiscipline === 'architecture') bgSourceRef.current = { file, pageNum: 1, lastRenderedDataUrl: res.dataUrl }
+        if (activeDiscipline === 'architecture') bgSourceRef.current = { file, pageNum: 1, pageCount: 1, lastRenderedDataUrl: res.dataUrl }
         writeActiveBackground({
           dataUrl: res.dataUrl, x: 0, y: 0,
           width: res.width, height: res.height,
@@ -935,7 +935,7 @@ export default function FloorPlan() {
     setBgError(null)
     try {
       const res = await renderPdfPageToImage(bgPendingFile, page)
-      if (activeDiscipline === 'architecture') bgSourceRef.current = { file: bgPendingFile, pageNum: page, lastRenderedDataUrl: res.dataUrl }
+      if (activeDiscipline === 'architecture') bgSourceRef.current = { file: bgPendingFile, pageNum: page, pageCount: bgPageCount, lastRenderedDataUrl: res.dataUrl }
       writeActiveBackground({
         dataUrl: res.dataUrl, x: 0, y: 0,
         width: res.width, height: res.height,
@@ -948,6 +948,34 @@ export default function FloorPlan() {
     setBgUploading(false)
     setBgPendingFile(null)
   }, [bgPendingFile, bgPageInput, bgPageCount, activeDiscipline, writeActiveBackground])
+
+  // 27.09.2026 — по просьбе Сергея: листать страницы уже ЗАГРУЖЕННОЙ
+  // подложки прямо на плане, не удаляя её целиком, если случайно выбрал
+  // не ту страницу при загрузке. Работает, только пока исходный файл
+  // ещё жив в памяти этой сессии (bgSourceRef, тот же источник, что и у
+  // дорендера-на-зум выше) — если файла уже нет (перезагрузили вкладку),
+  // кнопки листания просто не показываются, как и у дорендера. Меняем
+  // только dataUrl/width/height подложки — мировые x/y (положение на
+  // плане) намеренно не трогаем, чтобы не сбивать уже выставленное
+  // совмещение с планом, если разные страницы совпадают по формату
+  // листа (обычный случай для многостраничного комплекта чертежей).
+  const [bgPageSwitching, setBgPageSwitching] = useState(false)
+  const switchBgPage = useCallback(async (delta: number) => {
+    const s = bgSourceRef.current
+    if (!s || bgPageSwitching || activeDiscipline !== 'architecture') return
+    const nextPage = Math.min(Math.max(s.pageNum + delta, 1), s.pageCount)
+    if (nextPage === s.pageNum) return
+    setBgPageSwitching(true)
+    setBgError(null)
+    try {
+      const res = await renderPdfPageToImage(s.file, nextPage)
+      bgSourceRef.current = { ...s, pageNum: nextPage, lastRenderedDataUrl: res.dataUrl }
+      patchActiveBackground({ dataUrl: res.dataUrl, width: res.width, height: res.height })
+    } catch {
+      setBgError('Не удалось перелистнуть страницу.')
+    }
+    setBgPageSwitching(false)
+  }, [bgPageSwitching, activeDiscipline, patchActiveBackground])
 
   // Адаптивная ширина холста
   const containerRef = useRef<HTMLDivElement>(null)
@@ -4288,6 +4316,22 @@ export default function FloorPlan() {
                   onChange={e => patchActiveBackground({ opacity: parseFloat(e.target.value) })}
                   style={{ flex: 1 }} />
               </div>
+              {activeDiscipline === 'architecture' && bgSourceRef.current && bgSourceRef.current.pageCount > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: '#8a9ac8', minWidth: 56 }}>Страница</span>
+                  <button onClick={() => switchBgPage(-1)} disabled={bgPageSwitching || bgSourceRef.current.pageNum <= 1}
+                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 4, border: '1px solid #3a4060', background: 'transparent', color: '#fff', cursor: bgPageSwitching ? 'default' : 'pointer', opacity: bgSourceRef.current.pageNum <= 1 ? 0.4 : 1 }}>
+                    ◀
+                  </button>
+                  <span style={{ fontSize: 11, color: '#fff', minWidth: 44, textAlign: 'center' }}>
+                    {bgPageSwitching ? '…' : `${bgSourceRef.current.pageNum} / ${bgSourceRef.current.pageCount}`}
+                  </span>
+                  <button onClick={() => switchBgPage(1)} disabled={bgPageSwitching || bgSourceRef.current.pageNum >= bgSourceRef.current.pageCount}
+                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 4, border: '1px solid #3a4060', background: 'transparent', color: '#fff', cursor: bgPageSwitching ? 'default' : 'pointer', opacity: bgSourceRef.current.pageNum >= bgSourceRef.current.pageCount ? 0.4 : 1 }}>
+                    ▶
+                  </button>
+                </div>
+              )}
               {activeDiscipline === 'architecture' && (
                 <button onClick={() => switchMode('scale')}
                   style={{ fontSize: 11, padding: '6px 10px', borderRadius: 4, border: '1px solid #3a4060', background: mode === 'scale' ? '#7c8fcf' : 'transparent', color: '#fff', cursor: 'pointer' }}>
