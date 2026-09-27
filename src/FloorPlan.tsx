@@ -375,7 +375,7 @@ export default function FloorPlan() {
     addCeiling, removeCeiling, updateCeiling,
     addRoundColumn, updateRoundColumn, removeRoundColumn,
     addRectColumn, updateRectColumn, removeRectColumn,
-    addStaircase, updateStaircase, removeStaircase,
+    addStaircase, addStaircaseToLevel, updateStaircase, removeStaircase,
     addCeilingSlope, updateCeilingSlope, removeCeilingSlope,
     addFreeformStructure, updateFreeformStructure, removeFreeformStructure,
     addFreeformOpening, updateFreeformOpening, removeFreeformOpening,
@@ -624,6 +624,16 @@ export default function FloorPlan() {
     screenX: number; screenY: number
     slabId: string; holeIndex: number
     holeBoundsPx: { minX: number; minY: number; maxX: number; maxY: number }
+    // 27.09.2026 — второй шаг того же меню: после выбора "Винтовая"/
+    // "Маршевая" pendingKind заполняется, и меню переключается на список
+    // этажей вместо кнопок выбора вида. Вырез в плите сам по себе не
+    // говорит, что за ним — лестница, шахта лифта, вентиляция или
+    // дымоудаление, и даже когда это лестница, вырез физически
+    // принадлежит ВЕРХНЕМУ этажу, а не тому, чьё воздушное пространство
+    // лестница займёт — так что этаж-получатель НЕ выбирается
+    // автоматически (N-1), а спрашивается явно (решение Сергея,
+    // 27.09.2026, против автоматики).
+    pendingKind?: 'spiral' | 'straight_run'
   } | null>(null)
   // 25.09.2026 — меню «Пол/Потолок» по ПКМ на помещении (в режиме 'select'),
   // тот же принцип, что и slabHoleMenu выше. level — какой уровень дерева
@@ -1659,9 +1669,9 @@ export default function FloorPlan() {
   // остаётся как есть, лестница просто ставится внутрь по его bbox);
   // оставлены в сигнатуре на будущее (например, если понадобится пометить
   // вырез как занятый или привязать лестницу к нему явной ссылкой).
-  function insertSpiralIntoHole(boundsPx: { minX: number; minY: number; maxX: number; maxY: number }) {
+  function insertSpiralIntoHole(boundsPx: { minX: number; minY: number; maxX: number; maxY: number }, targetLevelId: string) {
     const { cx, cy, radiusPx } = fitCircleToBoundsPx(boundsPx)
-    const id = addStaircase({
+    const id = addStaircaseToLevel(targetLevelId, {
       kind: 'spiral',
       cx, cy,
       innerRadiusMm: 0, outerRadiusMm: Math.max(1, radiusPx * scaleMmPx),
@@ -1669,15 +1679,20 @@ export default function FloorPlan() {
       targetRiserMm: 170, treadThicknessMm: 30,
       label: 'Лестница (винтовая, по проёму)',
     })
+    // Лестница добавлена в targetLevelId, который необязательно совпадает
+    // с активным этажом (см. addStaircaseToLevel в сторе) — переключаемся
+    // туда, иначе открытый план её просто не покажет и инспектор откроется
+    // "в пустоту".
+    if (targetLevelId !== activeLevelId) selectLevel(targetLevelId)
     setInspectorId(null); setInspectorRoomId(null)
     setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null)
     setInspectorStaircaseId(id)
     setSlabHoleMenu(null)
   }
 
-  function insertStraightRunIntoHole(boundsPx: { minX: number; minY: number; maxX: number; maxY: number }) {
+  function insertStraightRunIntoHole(boundsPx: { minX: number; minY: number; maxX: number; maxY: number }, targetLevelId: string) {
     const fit = fitStraightRunZProfileToBoundsPx(boundsPx, scaleMmPx)
-    const id = addStaircase({
+    const id = addStaircaseToLevel(targetLevelId, {
       kind: 'straight_run',
       targetRiserMm: 170, treadThicknessMm: 30,
       label: 'Лестница (маршевая, по проёму)',
@@ -1687,6 +1702,7 @@ export default function FloorPlan() {
         { kind: 'flight', id: 'f2', x1: fit.f2.x1, y1: fit.f2.y1, x2: fit.f2.x2, y2: fit.f2.y2, widthMm: fit.widthMm },
       ],
     })
+    if (targetLevelId !== activeLevelId) selectLevel(targetLevelId)
     setInspectorId(null); setInspectorRoomId(null)
     setInspectorRoundColumnId(null); setInspectorRectColumnId(null); setInspectorFreeformId(null)
     setInspectorStaircaseId(id)
@@ -7865,29 +7881,75 @@ export default function FloorPlan() {
               background: '#fff', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
               border: '1px solid #ddd', minWidth: 220, padding: 4,
             }}>
-            <div style={{ fontSize: 10, color: '#999', padding: '6px 10px 4px', textTransform: 'uppercase' }}>
-              Вставить лестницу в проём
-            </div>
-            <button
-              onClick={() => insertSpiralIntoHole(slabHoleMenu.holeBoundsPx)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
-                padding: '8px 10px', fontSize: 13, border: 'none', background: 'transparent', cursor: 'pointer', color: '#333',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#f5f6fa')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-              <span style={{ fontSize: 15 }}>🌀</span> Винтовая (по вписанной окружности)
-            </button>
-            <button
-              onClick={() => insertStraightRunIntoHole(slabHoleMenu.holeBoundsPx)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
-                padding: '8px 10px', fontSize: 13, border: 'none', background: 'transparent', cursor: 'pointer', color: '#333',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#f5f6fa')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-              <span style={{ fontSize: 15 }}>🪜</span> Маршевая (по bbox проёма)
-            </button>
+            {!slabHoleMenu.pendingKind ? (
+              <>
+                <div style={{ fontSize: 10, color: '#999', padding: '6px 10px 4px', textTransform: 'uppercase' }}>
+                  Вставить лестницу в проём
+                </div>
+                <button
+                  onClick={() => setSlabHoleMenu(m => m ? { ...m, pendingKind: 'spiral' } : m)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                    padding: '8px 10px', fontSize: 13, border: 'none', background: 'transparent', cursor: 'pointer', color: '#333',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f5f6fa')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                  <span style={{ fontSize: 15 }}>🌀</span> Винтовая (по вписанной окружности)
+                </button>
+                <button
+                  onClick={() => setSlabHoleMenu(m => m ? { ...m, pendingKind: 'straight_run' } : m)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                    padding: '8px 10px', fontSize: 13, border: 'none', background: 'transparent', cursor: 'pointer', color: '#333',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f5f6fa')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                  <span style={{ fontSize: 15 }}>🪜</span> Маршевая (по bbox проёма)
+                </button>
+              </>
+            ) : (
+              <>
+                {/* 27.09.2026 — второй шаг: явный выбор этажа-получателя.
+                    Вырез в плите сам по себе не говорит, что за ним (лестница/
+                    шахта лифта/вентиляция/дымоудаление), и даже для лестницы
+                    вырез физически принадлежит другому этажу, чем тот, чьё
+                    воздушное пространство она займёт — поэтому список этажей
+                    показываем весь, без "умного" авто-выбора N-1. */}
+                <div style={{ fontSize: 10, color: '#999', padding: '6px 10px 4px', textTransform: 'uppercase' }}>
+                  В какой этаж поставить лестницу?
+                </div>
+                {levels.length === 0 && (
+                  <div style={{ padding: '8px 10px', fontSize: 13, color: '#999' }}>Нет доступных этажей</div>
+                )}
+                {[...levels].sort((a, b) => b.elevationMm - a.elevationMm).map(lv => (
+                  <button
+                    key={lv.id}
+                    onClick={() => {
+                      const kind = slabHoleMenu.pendingKind
+                      if (kind === 'spiral') insertSpiralIntoHole(slabHoleMenu.holeBoundsPx, lv.id)
+                      else if (kind === 'straight_run') insertStraightRunIntoHole(slabHoleMenu.holeBoundsPx, lv.id)
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', textAlign: 'left',
+                      padding: '8px 10px', fontSize: 13, border: 'none', background: 'transparent', cursor: 'pointer', color: '#333',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#f5f6fa')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                    <span>{lv.name}</span>
+                    <span style={{ color: '#999', fontSize: 11 }}>{lv.elevationMm} мм</span>
+                  </button>
+                ))}
+                <button
+                  onClick={() => setSlabHoleMenu(m => m ? { ...m, pendingKind: undefined } : m)}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left', marginTop: 2,
+                    padding: '8px 10px', fontSize: 12, border: 'none', borderTop: '1px solid #eee',
+                    background: 'transparent', cursor: 'pointer', color: '#888',
+                  }}>
+                  ← Назад
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

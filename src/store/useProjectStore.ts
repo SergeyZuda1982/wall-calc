@@ -254,6 +254,19 @@ export interface ProjectStore {
   // union до общих полей и теряет дискриминацию по kind, ТА ЖЕ проблема и
   // тот же приём исправления, что и у TemplateInput в useTemplateStore.ts).
   addStaircase: (st: DistributiveOmit<Staircase, 'id'>) => string
+  // 27.09.2026 — вставка лестницы в вырез плиты (см. addStaircase выше)
+  // требует явного выбора Сергеем, в какой этаж её класть (вырез в плите
+  // не обязательно вообще лестница — может быть шахта лифта, вентиляция,
+  // дымоудаление, и даже когда это лестница, вырез физически принадлежит
+  // ВЕРХНЕМУ этажу, а сама лестница обычно должна занимать воздушное
+  // пространство этажа снизу — см. диалог в чате 27.09.2026, решение
+  // Сергея явно против автоматики). В отличие от addStaircase (которая
+  // всегда пишет в АКТИВНЫЙ этаж через updateActiveFloorPlan/undo-стек),
+  // эта функция пишет напрямую в floorPlan УКАЗАННОГО этажа (тот же приём,
+  // что у duplicateLevel — прямой set() по p.levels, без undo-стека
+  // активного плана, т.к. undo-стек в этом сторе рассчитан только на
+  // правки активного этажа).
+  addStaircaseToLevel: (levelId: string, st: DistributiveOmit<Staircase, 'id'>) => string
   updateStaircase: (id: string, patch: Partial<Staircase>) => void
   removeStaircase: (id: string) => void
 
@@ -1256,6 +1269,38 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       // ─── Лестницы (Фаза 4 объекта в Ростове, 20.09.2026) ───────────────────
+
+      // 27.09.2026 — см. комментарий у объявления в интерфейсе выше: пишет
+      // в floorPlan УКАЗАННОГО этажа, не обязательно активного. НЕ трогает
+      // undoStack/redoStack (в отличие от updateActiveFloorPlan) — они в
+      // этом сторе привязаны конкретно к плану активного этажа, а тут может
+      // редактироваться и другой; если бы мы дёрнули общий syncActive (как
+      // у duplicateLevel), он сбросил бы undo-историю активного плана без
+      // всякой связи с этим действием — так что state собирается вручную,
+      // точечно.
+      addStaircaseToLevel: (levelId, st) => {
+        const id = `stair_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        set(s => {
+          const activeProjectId = resolveActiveProjectId(s.projects, s.activeProjectId)
+          const newSt = { ...st, id } as Staircase
+          const projects = s.projects.map(p => {
+            if (p.id !== activeProjectId) return p
+            const levels = p.levels.map(lv => lv.id === levelId
+              ? { ...lv, floorPlan: { ...lv.floorPlan, staircases: [...(lv.floorPlan.staircases ?? []), newSt] } }
+              : lv)
+            return { ...p, levels }
+          })
+          const activeProject = projects.find(p => p.id === activeProjectId)
+          const activeLevel = getActiveLevel(activeProject)
+          return {
+            activeProjectId,
+            projects,
+            levels: activeProject?.levels ?? s.levels,
+            floorPlan: activeLevel?.floorPlan ?? s.floorPlan,
+          }
+        })
+        return id
+      },
 
       addStaircase: (st) => {
         const id = `stair_${Date.now()}_${Math.random().toString(36).slice(2)}`
