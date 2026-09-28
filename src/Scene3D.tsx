@@ -908,6 +908,19 @@ function CameraRig({ focusTarget, controlsRef }: {
   const desiredTarget = useRef(new THREE.Vector3())
   const desiredPos = useRef(new THREE.Vector3())
   const lastNonce = useRef(0)
+  // 26.09.2026: раньше useFrame тянул камеру к цели БЕСКОНЕЧНО, поэтому после
+  // фокуса нельзя было ни вращать, ни отдалять камеру (лёрп откатывал любое
+  // ручное движение). Теперь анимация "оседает" (settled), когда камера
+  // доехала, либо когда пользователь начал управлять (событие 'start').
+  const settledNonce = useRef(0)
+
+  useEffect(() => {
+    const c = controlsRef.current
+    if (!c?.addEventListener) return
+    const onStart = () => { settledNonce.current = lastNonce.current }
+    c.addEventListener('start', onStart)
+    return () => c.removeEventListener('start', onStart)
+  }, [controlsRef])
 
   useEffect(() => {
     if (!focusTarget || focusTarget.nonce === lastNonce.current) return
@@ -922,9 +935,14 @@ function CameraRig({ focusTarget, controlsRef }: {
 
   useFrame(() => {
     if (!focusTarget || !controlsRef.current) return
+    if (settledNonce.current === focusTarget.nonce) return
     controlsRef.current.target.lerp(desiredTarget.current, 0.12)
     camera.position.lerp(desiredPos.current, 0.12)
     controlsRef.current.update()
+    if (
+      controlsRef.current.target.distanceToSquared(desiredTarget.current) < 1e-4 &&
+      camera.position.distanceToSquared(desiredPos.current) < 1e-4
+    ) settledNonce.current = focusTarget.nonce
   })
   return null
 }
