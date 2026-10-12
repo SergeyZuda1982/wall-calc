@@ -380,6 +380,30 @@ function calcLayer(
         const py = ys[k]
         const ph = ys[k + 1] - ys[k]
 
+        // 12.10.2026 — кусок ЦЕЛИКОМ внутри проёма(ов) не нуждается в листе
+        // вообще. Раньше эта проверка стояла ниже, ПОСЛЕ takeFromPool /
+        // «открываем новый лист» — лист уже был посчитан (sheetsNeeded++,
+        // sheetMm2, обрезки в пул), а потом кусок лишь помечался
+        // opening_void: площадь использования падала верно, а число листов и
+        // % отхода — нет (Сергей: облицовка 24000×12000 с проёмом
+        // 12000×7200 — листы внутри проёма считались в «Работе»). Теперь
+        // такой кусок пропускает и пул, и открытие листа.
+        const earlyOverlapping = openingsOverlapping(x1, x2, py, py + ph, openings)
+        if (earlyOverlapping.length > 0) {
+          const earlyBase: { x: number; y: number }[] =
+            isSlopedColumn && py + ph > Math.min(hL, hR)
+              ? clipRectBySlopedTop(x1, x2, py, py + ph, hL, hR)
+              : [{ x: x1, y: py }, { x: x2, y: py }, { x: x2, y: py + ph }, { x: x1, y: py + ph }]
+          const earlyNotched = subtractPolygons(
+            earlyBase,
+            earlyOverlapping.map(o => openingWorldPolygon(o.pos, o.sillHeight, o.width, o.height, o.shape)),
+          )
+          if (earlyNotched.length === 0) {
+            pieces.push({ x: x1, y: py, w: cw, h: ph, kind: 'opening_void', source: 'new_sheet' })
+            continue
+          }
+        }
+
         // Пробуем взять из пула
         const fromPool = takeFromPool(pool, cw, ph)
 
