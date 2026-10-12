@@ -3,7 +3,7 @@
  *
  * Для ГКЛ показываются 4 дропдауна: материал → подтип → толщина → длина.
  * Для ГВЛ: материал → толщина → длина.
- * Для Сапфир/Аквамарин: только материал (толщина и длина фиксированы).
+ * Для Сапфир/Аквамарин/Файерборд: только материал (толщина и длина фиксированы).
  */
 
 import type { BoardSpec, GklSubtype } from '../types'
@@ -38,7 +38,7 @@ const SEL: React.CSSProperties = {
 
 export function BoardSpecSelector({ value, onChange }: Props) {
   const m = value.material
-  const isFixed = m === 'sapphire' || m === 'aquamarine'
+  const isFixed = m === 'sapphire' || m === 'aquamarine' || m === 'fireboard'
   const thicknesses = m === 'gvl' ? GVL_THICKNESSES : GKL_THICKNESSES
   const lengths     = m === 'gvl' ? GVL_LENGTHS     : GKL_LENGTHS
 
@@ -49,6 +49,10 @@ export function BoardSpecSelector({ value, onChange }: Props) {
     }
     if (mat === 'aquamarine') {
       onChange({ material: 'aquamarine', subtype: null, thickness: 12.5, sheetWidth: 1200, sheetLength: 2500 })
+      return
+    }
+    if (mat === 'fireboard') {
+      onChange({ material: 'fireboard', subtype: null, thickness: 12.5, sheetWidth: 1200, sheetLength: 2500 })
       return
     }
     if (mat === 'gvl') {
@@ -71,6 +75,7 @@ export function BoardSpecSelector({ value, onChange }: Props) {
         <option value="gvl">ГВЛ</option>
         <option value="sapphire">Сапфир</option>
         <option value="aquamarine">Аквамарин</option>
+        <option value="fireboard">Файерборд</option>
       </select>
 
       {/* 2. Подтип — только для ГКЛ */}
@@ -83,7 +88,7 @@ export function BoardSpecSelector({ value, onChange }: Props) {
         </select>
       )}
 
-      {/* 3. Толщина + 4. Длина — скрыты для Сапфир/Аквамарин */}
+      {/* 3. Толщина + 4. Длина — скрыты для Сапфир/Аквамарин/Файерборд */}
       {!isFixed && (
         <>
           <select style={SEL} value={value.thickness}
