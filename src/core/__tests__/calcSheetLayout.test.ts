@@ -399,3 +399,53 @@ describe('calcSheetLayout — пул остатков не содержит др
     }
   })
 })
+
+describe('calcSheetLayout — листы целиком внутри проёма не считаются (12.10.2026)', () => {
+  // Облицовка 24000×12000 с проёмом 12000×7200 от пола — кейс Сергея:
+  // раньше лист «открывался» ДО проверки на проём, и все листы, попавшие
+  // внутрь проёма, оставались в sheetsNeeded/sheetAreaM2 (площадь
+  // использования падала верно, число листов — нет).
+  const wallL = 24000
+  const wallH = 12000
+  const opening = { id: 'o1', type: 'opening' as const, pos: 6000, width: 12000, height: 7200, sillHeight: 0 }
+
+  const calc = (openings: typeof opening[]) =>
+    calcSheetLayout(wallL, flatProfile(wallL, wallH), flatProfile(wallL, 0), 600, 600, 1, openings, spec, spec, 1)
+
+  it('с проёмом листов существенно меньше, чем без него', () => {
+    const without = calc([])
+    const withOpening = calc([opening])
+    expect(withOpening.layer1.sheetsNeeded).toBeLessThan(without.layer1.sheetsNeeded)
+    // площадь закупленных листов тоже падает (не только площадь использования)
+    expect(withOpening.layer1.sheetAreaM2).toBeLessThan(without.layer1.sheetAreaM2 - 50)
+  })
+
+  it('число листов согласовано с их площадью, закупаем не меньше, чем нужно по площади', () => {
+    const r = calc([opening]).layer1
+    const sheetArea = (spec.sheetWidth * spec.sheetLength) / 1e6
+    expect(r.sheetAreaM2).toBeCloseTo(r.sheetsNeeded * sheetArea, 1)
+    expect(r.sheetAreaM2).toBeGreaterThanOrEqual(r.usedAreaM2 - 0.01)
+    // 288 − 12×7.2 = 201.6 м² реально закрываемой площади
+    expect(r.usedAreaM2).toBeCloseTo(201.6, 1)
+  })
+
+  it('куски целиком внутри проёма помечены opening_void и не открывают лист', () => {
+    const r = calc([opening]).layer1
+    const voids = r.columns.flatMap(c => c.pieces).filter(p => p.kind === 'opening_void')
+    expect(voids.length).toBeGreaterThan(0)
+    // ни один не-void кусок не лежит целиком внутри проёма
+    for (const p of r.columns.flatMap(c => c.pieces).filter(p => p.kind !== 'opening_void')) {
+      const inside = p.x >= 6000 && p.x + p.w <= 18000 && p.y >= 0 && p.y + p.h <= 7200
+      expect(inside).toBe(false)
+    }
+  })
+
+  it('проём, лишь частично задевающий лист, лист не убирает (обрезок остаётся)', () => {
+    // маленький проём 900×2100 — задевает листы, но целиком ни один не закрывает
+    const door = { id: 'd1', type: 'door' as const, pos: 1000, width: 900, height: 2100, sillHeight: 0 }
+    const without = calcSheetLayout(3000, flatProfile(3000, 3000), flatProfile(3000, 0), 600, 600, 1, [], spec, spec, 1)
+    const withDoor = calcSheetLayout(3000, flatProfile(3000, 3000), flatProfile(3000, 0), 600, 600, 1, [door], spec, spec, 1)
+    expect(withDoor.layer1.sheetsNeeded).toBeLessThanOrEqual(without.layer1.sheetsNeeded)
+    expect(withDoor.layer1.sheetsNeeded).toBeGreaterThan(0)
+  })
+})
