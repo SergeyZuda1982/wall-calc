@@ -71,6 +71,7 @@ function boardSpecLabel(b: BoardSpec): string {
   if (b.material === 'gvl') return `ГВЛ ${b.thickness}мм`
   if (b.material === 'sapphire') return `ГКЛ Сапфир ${b.thickness}мм`
   if (b.material === 'aquamarine') return `ГКЛ Аквамарин ${b.thickness}мм`
+  if (b.material === 'fireboard') return `Файерборд ${b.thickness}мм`
   const abbr = getBoardSubtypeAbbr(b.subtype ?? undefined)
   return `${abbr || 'ГКЛ'} ${b.thickness}мм`
 }

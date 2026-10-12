@@ -24,7 +24,7 @@ export type MaxHeightBoardGroup = 'standard' | 'premium'
  * Группа листа для таблицы высот по BoardMaterial.
  * sapphire → premium (подтверждено таблицей Кнауф).
  * gkl (любой subtype) → standard.
- * gvl/aquamarine → standard (КОНСЕРВАТИВНЫЙ дефолт: в таблице Кнауф нет
+ * gvl/aquamarine/fireboard → standard (КОНСЕРВАТИВНЫЙ дефолт: в таблице Кнауф нет
  * отдельного столбца для ГВЛ/Аквамарин, используем заниженное безопасное
  * значение, а не гадаем).
  * Примечание: КНАУФ-Сайлентборд физически тоже premium, но его пока нет

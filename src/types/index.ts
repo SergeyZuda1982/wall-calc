@@ -28,7 +28,9 @@ export interface ProfileTemplate {
 // ─── Материал обшивки ────────────────────────────────────────────────────────
 
 // Базовый тип материала — используется как ключ пула раскроя и для типа самореза
-export type BoardMaterial = 'gkl' | 'gvl' | 'sapphire' | 'aquamarine'
+// 'fireboard' (12.10.2026) — КНАУФ-Файерборд (ГСП-ПНКФ, негорючий): фиксированный
+// сортамент 12.5 × 1200 × 2500, подтипов нет — как Сапфир/Аквамарин.
+export type BoardMaterial = 'gkl' | 'gvl' | 'sapphire' | 'aquamarine' | 'fireboard'
 
 // Подтипы ГКЛ (ГВЛ/Сапфир/Аквамарин подтипов не имеют)
 export type GklSubtype = 'standard' | 'moisture' | 'fire' | 'moisture_fire'
@@ -62,11 +64,12 @@ export function migrateBoard(val: BoardMaterial | BoardSpec | unknown): BoardSpe
 }
 
 // Человекочитаемая метка для BoardSpec
-// Примеры: «ГКЛВ 12.5», «ГВЛ 10», «Сапфир», «Аквамарин»
+// Примеры: «ГКЛВ 12.5», «ГВЛ 10», «Сапфир», «Аквамарин», «Файерборд»
 export function boardLabel(spec: BoardSpec): string {
   const { material, subtype, thickness, sheetLength } = spec
   if (material === 'sapphire')   return 'Сапфир'
   if (material === 'aquamarine') return 'Аквамарин'
+  if (material === 'fireboard')  return 'Файерборд'
 
   let label = material === 'gvl' ? 'ГВЛ' : 'ГКЛ'
   if (subtype === 'moisture')      label += 'В'
@@ -84,12 +87,16 @@ export const BOARD_LABEL: Record<BoardMaterial, string> = {
   gvl:        'ГВЛ',
   sapphire:   'Сапфир',
   aquamarine: 'Аквамарин',
+  fireboard:  'Файерборд',
 }
 
 // Тип самореза по материалу листа
 export function screwCode(spec: BoardSpec): 'TN' | 'MN' | 'XTN' {
   if (spec.material === 'gkl') return 'TN'
   if (spec.material === 'gvl') return 'MN'
+  // Файерборд — гипсовый лист (как ГКЛ), крепится саморезами TN. Тип взят по
+  // аналогии с ГКЛ — сверить с рекомендацией производителя (см. TASKS.md).
+  if (spec.material === 'fireboard') return 'TN'
   return 'XTN'
 }
 
