@@ -500,7 +500,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
   }
 
   // ─── Обшивка (все типы) ────────────────────────────────────────────────────
-  const matLabel = spec.material === 'gvl' ? 'ГВЛ' : spec.material === 'sapphire' ? 'Сапфир' : 'ГСП'
+  const matLabel = spec.material === 'gvl' ? 'ГВЛ' : spec.material === 'sapphire' ? 'Сапфир' : spec.material === 'fireboard' ? 'Файерборд' : 'ГСП'
   const thkLabel = spec.thickness
   materials.push({
     name: `${matLabel} ${thkLabel}мм`,
@@ -511,6 +511,7 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
 
   // Шурупы TN/MN/XTN — XTN для Сапфир/Аквамарин (см. screwCode() в types/index.ts,
   // та же логика уже используется для стен/облицовки)
+  // Файерборд — TN (как ГСП), см. screwCode() в types/index.ts
   const screwCode = spec.material === 'gvl' ? 'MN' : spec.material === 'sapphire' ? 'XTN' : 'TN'
   if (sheetRates.screw_25 > 0) {
     materials.push({

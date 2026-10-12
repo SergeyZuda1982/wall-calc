@@ -12,7 +12,8 @@ import type { BeamObstacle } from '../core/hangerBeamConflict'
 
 export type CeilingType = 'p112' | 'p113' | 'p131' | 'p19'
 export type CeilingLayers = 1 | 2
-export type CeilingMaterial = 'gsp' | 'gvl' | 'sapphire'
+// 'fireboard' (12.10.2026) — КНАУФ-Файерборд (ГСП-ПНКФ): фикс. 12.5мм, длина 2500 (как sapphire)
+export type CeilingMaterial = 'gsp' | 'gvl' | 'sapphire' | 'fireboard'
 export type CeilingSheetThickness = 9.5 | 12.5
 
 /** Шаг основных профилей c (мм). 400 добавлен 15.07.2026 — реальная практика
