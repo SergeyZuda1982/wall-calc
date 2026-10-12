@@ -229,6 +229,12 @@ export default function LiningCalc({ canvasW = 820, drawingElevation = false, on
   const kindMap = new Map((result?.studInfos ?? []).map(si => [si.pos, si.kind]))
   const orientationMap = new Map((result?.studInfos ?? []).map(si => [si.pos, si.orientation]))
 
+  // 12.10.2026 — проёмы для чертежа каркаса (раньше на схеме облицовки их не
+  // было вовсе: стойки шли сплошь сквозь проём, хотя расчёт материала и раскрой
+  // листов проёмы уже учитывали). Тот же набор, что уходит в calcLining
+  // (snapInput → ...form), так что чертёж не расходится со сметой.
+  const liningOpenings = form.openings.filter(o => o.width > 0).sort((a, b) => a.pos - b.pos)
+
   // Площадь утеплителя — вся стена минус проёмы (с учётом геометрии потолка/пола)
   const insulationArea = result
     ? (() => {
@@ -576,17 +582,49 @@ export default function LiningCalc({ canvasW = 820, drawingElevation = false, on
                   ]}
                   closed fill="#e8f0e8" stroke="#aaa" strokeWidth={1} />
 
-                {/* Направляющие — следуют профилю потолка/пола — псевдо-3D (три слоя) */}
-                {[
-                  railPoints(snapCeilingProfile, 4, 0, snapL),
-                  railPoints(snapFloorProfile, -4, 0, snapL),
-                ].map((pts, i) => (
-                  <Group key={`rail${i}`}>
-                    <Line points={pts} stroke="#384f60" strokeWidth={9}   lineCap="round" lineJoin="round" />
-                    <Line points={pts} stroke="#6a8898" strokeWidth={5.5} lineCap="round" lineJoin="round" />
-                    <Line points={pts} stroke="#aec8d4" strokeWidth={2}   lineCap="round" lineJoin="round" />
-                  </Group>
-                ))}
+                {/* Направляющие — следуют профилю потолка/пола — псевдо-3D (три слоя).
+                    Напольная разрезается под любым проёмом «от пола» (sillHeight=0) —
+                    совпадает с calcLining.ts (floorRail) и с перегородкой в App.tsx. */}
+                {(() => {
+                  const rail3D = (pts: number[], key: string) => (
+                    <Group key={key}>
+                      <Line points={pts} stroke="#384f60" strokeWidth={9}   lineCap="round" lineJoin="round" />
+                      <Line points={pts} stroke="#6a8898" strokeWidth={5.5} lineCap="round" lineJoin="round" />
+                      <Line points={pts} stroke="#aec8d4" strokeWidth={2}   lineCap="round" lineJoin="round" />
+                    </Group>
+                  )
+                  const floorLevel = liningOpenings.filter(o => o.sillHeight === 0)
+                  const floorSegs: React.ReactNode[] = []
+                  let cursor = 0
+                  for (const o of floorLevel) {
+                    if (o.pos > cursor) floorSegs.push(rail3D(railPoints(snapFloorProfile, -4, cursor, o.pos), `fl${o.id}`))
+                    cursor = Math.max(cursor, o.pos + o.width)
+                  }
+                  if (cursor < snapL) floorSegs.push(rail3D(railPoints(snapFloorProfile, -4, cursor, snapL), 'fl_end'))
+                  return <>
+                    {rail3D(railPoints(snapCeilingProfile, 4, 0, snapL), 'rail_ceil')}
+                    {floorSegs}
+                  </>
+                })()}
+
+                {/* Проёмы — прямоугольник, перемычка сверху (до наружной грани стоек
+                    проёма), подоконник у проёмов с sillHeight>0. Тот же вид, что в App.tsx. */}
+                {liningOpenings.map(o => {
+                  const oBottom = wallBotAt(o.pos) - o.sillHeight * scale
+                  const oTop = oBottom - o.height * scale
+                  const oX = tx(o.pos), oW = o.width * scale
+                  const color = o.type === 'door' ? '#ddeeff' : o.type === 'window' ? '#ffeedd' : '#eeeeee'
+                  const stroke = o.type === 'door' ? '#88aacc' : o.type === 'window' ? '#ccaa88' : '#aaaaaa'
+                  return (
+                    <Group key={`op${o.id}`}>
+                      <Rect x={oX} y={oTop} width={oW} height={o.height * scale} fill={color} stroke={stroke} strokeWidth={1} />
+                      <Rect x={oX - studW / 2} y={oTop - 6} width={oW + studW} height={6} fill="#5a7080" />
+                      {o.sillHeight > 0 && <Rect x={oX} y={oBottom - 6} width={oW} height={6} fill="#5a7080" />}
+                      <Text x={oX + oW / 2 - 20} y={oTop + o.height * scale / 2 - 6}
+                        text={`${o.width}×${o.height}`} fontSize={10} fill="#336" />
+                    </Group>
+                  )
+                })}
 
                 {/* Позиции рядовых стоек сверху — фиксированный уровень TOP_PAD,
                     он всегда выше самой высокой точки потолка, скос не задевает */}
@@ -637,6 +675,27 @@ export default function LiningCalc({ canvasW = 820, drawingElevation = false, on
                       </Group>
                     )
                   })() : null
+                  // Стойка внутри проёма — два сегмента: над проёмом (от потолочной
+                  // направляющей) и под подоконником (от напольной). Как в App.tsx и как
+                  // считает calcLining (aboveHeight + «Под подоконником»).
+                  if (insideOpening) {
+                    const aboveH = (localH - insideOpening.height - insideOpening.sillHeight) * scale - 8
+                    const belowH = insideOpening.sillHeight * scale - 8
+                    const grad = (h: number, y: number, k: string) => (
+                      <Rect key={k} x={tx(pos) - studW / 2} y={y} width={studW} height={h}
+                        fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+                        fillLinearGradientEndPoint={{ x: studW, y: 0 }}
+                        fillLinearGradientColorStops={[0, '#d0dce4', 0.18, '#b8c4cc', 0.82, '#b8c4cc', 1, '#9aa6ae']}
+                        stroke="#5a7080" strokeWidth={1} cornerRadius={2}
+                        onDblClick={() => removeStud(pos)} />
+                    )
+                    return (
+                      <Group key={`s${pos}`}>
+                        {aboveH > 0 && grad(aboveH, localTop + 8, 'a')}
+                        {belowH > 0 && grad(belowH, localBot - 8 - belowH, 'b')}
+                      </Group>
+                    )
+                  }
                   return (
                     <Group key={`s${pos}`}>
                       {(() => {
