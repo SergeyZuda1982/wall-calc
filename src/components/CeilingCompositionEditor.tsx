@@ -259,6 +259,7 @@ export default function CeilingCompositionEditor() {
                     <option value="gsp">ГСП (ГКЛ)</option>
                     <option value="gvl">ГВЛ</option>
                     <option value="sapphire">Сапфир</option>
+                    <option value="fireboard">Файерборд (ГСП-ПНКФ)</option>
                   </select>
                 </div>
                 <div>

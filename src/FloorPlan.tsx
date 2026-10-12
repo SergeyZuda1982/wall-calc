@@ -7509,18 +7509,19 @@ export default function FloorPlan() {
                     <select value={spec.material}
                       onChange={e => {
                         const mat = e.target.value as CeilingMaterial
-                        if (mat === 'sapphire') patchSpec({ material: mat, thickness: 12.5 })
+                        if (mat === 'sapphire' || mat === 'fireboard') patchSpec({ material: mat, thickness: 12.5 })
                         else patchSpec({ material: mat })
                       }}
                       style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
                       <option value="gsp">ГСП (ГКЛ)</option>
                       <option value="gvl">ГВЛ</option>
                       <option value="sapphire">Сапфир</option>
+                      <option value="fireboard">Файерборд (ГСП-ПНКФ)</option>
                     </select>
                   </label>
                   <label style={{ fontSize: 11, color: '#555' }}>
                     Толщина, мм
-                    <select value={spec.thickness} disabled={spec.material === 'sapphire'}
+                    <select value={spec.thickness} disabled={spec.material === 'sapphire' || spec.material === 'fireboard'}
                       onChange={e => patchSpec({ thickness: +e.target.value as CeilingSheetThickness })}
                       style={{ width: '100%', marginTop: 4, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12 }}>
                       <option value={9.5}>9.5</option>
