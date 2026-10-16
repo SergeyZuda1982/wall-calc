@@ -94,9 +94,8 @@ export const BOARD_LABEL: Record<BoardMaterial, string> = {
 export function screwCode(spec: BoardSpec): 'TN' | 'MN' | 'XTN' {
   if (spec.material === 'gkl') return 'TN'
   if (spec.material === 'gvl') return 'MN'
-  // Файерборд — гипсовый лист (как ГКЛ), крепится саморезами TN. Тип взят по
-  // аналогии с ГКЛ — сверить с рекомендацией производителя (см. TASKS.md).
-  if (spec.material === 'fireboard') return 'TN'
+  // Файерборд, как и Сапфир/Аквамарин, крепится саморезами XTN (подтвердил
+  // Сергей 12.10.2026) — отдельная ветка не нужна, это дефолт ниже.
   return 'XTN'
 }
 

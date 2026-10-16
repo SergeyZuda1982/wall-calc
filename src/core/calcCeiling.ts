@@ -511,8 +511,8 @@ export function calcCeiling(spec: CeilingSpec, polygonInput?: CeilingPolygonInpu
 
   // Шурупы TN/MN/XTN — XTN для Сапфир/Аквамарин (см. screwCode() в types/index.ts,
   // та же логика уже используется для стен/облицовки)
-  // Файерборд — TN (как ГСП), см. screwCode() в types/index.ts
-  const screwCode = spec.material === 'gvl' ? 'MN' : spec.material === 'sapphire' ? 'XTN' : 'TN'
+  // Сапфир и Файерборд — XTN (Файерборд подтвердил Сергей 12.10.2026), ГВЛ — MN, ГСП — TN
+  const screwCode = spec.material === 'gvl' ? 'MN' : (spec.material === 'sapphire' || spec.material === 'fireboard') ? 'XTN' : 'TN'
   if (sheetRates.screw_25 > 0) {
     materials.push({
       name: `Шуруп ${screwCode} 25мм (1й слой)`,

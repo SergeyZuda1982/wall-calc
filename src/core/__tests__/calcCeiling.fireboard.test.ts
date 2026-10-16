@@ -17,9 +17,9 @@ describe('calcCeiling — Файерборд (ГСП-ПНКФ)', () => {
     expect(res.materials.some(m => m.name.startsWith('ГСП '))).toBe(false)
   })
 
-  it('саморезы TN (как у ГСП)', () => {
+  it('саморезы XTN (как у Сапфира), не TN', () => {
     const item = res.materials.find(m => m.name.includes('Шуруп') && m.name.includes('25мм'))
-    expect(item!.name).toBe('Шуруп TN 25мм (1й слой)')
+    expect(item!.name).toBe('Шуруп XTN 25мм (1й слой)')
   })
 
   it('boardSpecFromCeilingSpec → material=fireboard, 12.5/1200/2500', () => {
