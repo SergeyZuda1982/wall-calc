@@ -5,19 +5,26 @@
  * ГКЛ вдоль/поперёк хорды, позволяет сдвигать стыки и для выбранного листа
  * показывает чертёж с сеткой 50 мм и таблицу ординат дуги (расстояния от
  * кромки листа до линии реза через заданный шаг). Расчёт — core/calcArcLayout.ts.
+ *
+ * По умолчанию одна дуга; дополнительные концентрические дуги (до 4 всего)
+ * добавляются кнопкой, у каждой — расстояние от предыдущей дуги.
  * Сетка на экране — ориентир; размечать нужно по числам таблицы.
  */
 
 import { useMemo, useState } from 'react'
 import {
-  arcV, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta,
-  type ArcGeometry, type ArcOrientation, type ArcSheet, type ArcWhich,
+  arcRadius, arcV, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta,
+  type ArcGeometry, type ArcOrientation, type ArcSheet,
 } from './core/calcArcLayout'
 
 const C = {
   bg: '#f4f5f7', panel: '#ffffff', border: '#dde1e8', accent: '#2563eb', accentLight: '#eff6ff',
-  text: '#111827', muted: '#6b7280', inner: '#1d4ed8', outer: '#dc2626',
+  text: '#111827', muted: '#6b7280',
 }
+/** Цвета дуг 1…4. */
+const ARC_COLORS = ['#1d4ed8', '#dc2626', '#059669', '#d97706']
+const MAX_ARCS = 4
+const DEFAULT_GAP = 200
 
 function NumField({ label, value, onChange, step = 1, suffix }: {
   label: string; value: number; onChange: (v: number) => void; step?: number; suffix?: string
@@ -56,11 +63,10 @@ const btn: React.CSSProperties = {
   padding: '6px 10px', fontSize: 12.5, border: `1px solid ${C.border}`, borderRadius: 6, background: '#fff', cursor: 'pointer',
 }
 
-function SheetDrawing({ sheet, geom, show }: { sheet: ArcSheet; geom: ArcGeometry; show: 'inner' | 'outer' | 'both' }) {
+function SheetDrawing({ sheet, geom, shown }: { sheet: ArcSheet; geom: ArcGeometry; shown: number[] }) {
   const { w, h } = sheet
   const fs = Math.max(w, h) / 55
   const pad = fs * 3
-  const arcs: ArcWhich[] = show === 'both' ? ['inner', 'outer'] : [show]
   const y = (v: number) => h - v
   const lines: React.ReactNode[] = []
   for (let u = 0; u <= w + 1e-6; u += 50) {
@@ -72,32 +78,34 @@ function SheetDrawing({ sheet, geom, show }: { sheet: ArcSheet; geom: ArcGeometr
     lines.push(<line key={'v' + v} x1={0} y1={y(v)} x2={w} y2={y(v)} stroke={major ? '#9ca3af' : '#e5e7eb'} strokeWidth={major ? fs / 18 : fs / 40} />)
   }
   // Линия дуги для листа (по 10 мм), обрезанная по листу
-  const curve = (which: ArcWhich) => {
+  const curve = (arc: number) => {
     const pts: string[] = []
     for (let du = 0; du <= w + 1e-6; du += 10) {
-      const dv = arcV(geom, which, sheet.u0 + du) - sheet.v0
+      const dv = arcV(geom, arc, sheet.u0 + du) - sheet.v0
       pts.push(`${du},${y(Math.min(Math.max(dv, 0), h))}`)
     }
     return pts.join(' ')
   }
-  const keep = (which: ArcWhich) => `0,${y(0)} ${curve(which)} ${w},${y(0)}`
+  const keep = (arc: number) => `0,${y(0)} ${curve(arc)} ${w},${y(0)}`
   return (
     <svg viewBox={`${-pad} ${-pad} ${w + pad * 2} ${h + pad * 2}`} style={{ width: '100%', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8 }}>
-      {arcs.includes('outer') && <polygon points={keep('outer')} fill="rgba(220,38,38,0.07)" />}
-      {arcs.includes('inner') && <polygon points={keep('inner')} fill="rgba(37,99,235,0.12)" />}
+      {[...shown].reverse().map(k => (
+        <polygon key={'k' + k} points={keep(k)} fill={ARC_COLORS[k]} fillOpacity={0.09} />
+      ))}
       {lines}
       <rect x={0} y={0} width={w} height={h} fill="none" stroke="#111827" strokeWidth={fs / 12} />
-      {arcs.map(which => {
-        const cut = sheet[which]
-        const col = which === 'inner' ? C.inner : C.outer
+      {shown.map(k => {
+        const cut = sheet.cuts[k]
+        const col = ARC_COLORS[k]
+        const last = cut.marks.length - 1
         return (
-          <g key={which}>
-            <polyline points={curve(which)} fill="none" stroke={col} strokeWidth={fs / 10} />
+          <g key={k}>
+            <polyline points={curve(k)} fill="none" stroke={col} strokeWidth={fs / 10} />
             {cut.marks.map((m, i) => (
               <g key={i}>
                 <circle cx={m.du} cy={y(m.dv)} r={fs / 6} fill={col} />
-                {(m.du % 250 === 0 || i === cut.marks.length - 1) && (
-                  <text x={m.du} y={y(m.dv) + (which === 'inner' ? fs * 1.4 : -fs * 0.6)} fontSize={fs} textAnchor="middle" fill={col} fontWeight={600}>
+                {(m.du % 250 === 0 || i === last) && (
+                  <text x={m.du} y={y(m.dv) + (k % 2 === 0 ? fs * 1.4 : -fs * 0.6)} fontSize={fs} textAnchor="middle" fill={col} fontWeight={600}>
                     {m.dv}
                   </text>
                 )}
@@ -118,7 +126,9 @@ export default function ArcCalc() {
   const [chord, setChord] = useState(20800)
   const [sagitta, setSagitta] = useState(1900)
   const [radius, setRadius] = useState(29413)
-  const [band, setBand] = useState(200)
+  /** Дополнительные дуги: расстояние каждой от предыдущей, мм. Пусто — только первая дуга. */
+  const [gaps, setGaps] = useState<number[]>([])
+  const [hidden, setHidden] = useState<number[]>([])
   const [sheetW, setSheetW] = useState(1200)
   const [sheetL, setSheetL] = useState(2500)
   const [orientation, setOrientation] = useState<ArcOrientation>('across')
@@ -126,7 +136,6 @@ export default function ArcCalc() {
   const [shiftV, setShiftV] = useState(0)
   const [stagger, setStagger] = useState(0)
   const [step, setStep] = useState(50)
-  const [show, setShow] = useState<'inner' | 'outer' | 'both'>('both')
   const [selected, setSelected] = useState(1)
   const [copied, setCopied] = useState(false)
 
@@ -134,35 +143,51 @@ export default function ArcCalc() {
     if (!(chord > 0)) return 'Хорда должна быть больше 0'
     if (mode === 'sagitta' && !(sagitta > 0 && sagitta <= chord / 2)) return 'Стрела должна быть от 0 до половины хорды'
     if (mode === 'radius' && !(radius >= chord / 2)) return 'Радиус не может быть меньше половины хорды'
+    if (gaps.some(g => !(g > 0))) return 'Расстояние между дугами должно быть больше 0'
     if (!(sheetW > 0 && sheetL > 0)) return 'Размер листа должен быть больше 0'
     if (!(step >= 5)) return 'Шаг разметки не меньше 5 мм'
     return null
-  }, [mode, chord, sagitta, radius, sheetW, sheetL, step])
+  }, [mode, chord, sagitta, radius, gaps, sheetW, sheetL, step])
 
   const geom = useMemo(() => {
     if (error) return null
-    return mode === 'sagitta' ? geometryFromChordSagitta(chord, sagitta, band) : geometryFromChordRadius(chord, radius, band)
-  }, [error, mode, chord, sagitta, radius, band])
+    const offsets = [0]
+    for (const g of gaps) offsets.push(offsets[offsets.length - 1] + g)
+    return mode === 'sagitta' ? geometryFromChordSagitta(chord, sagitta, offsets) : geometryFromChordRadius(chord, radius, offsets)
+  }, [error, mode, chord, sagitta, radius, gaps])
 
   const layout = useMemo(() => {
     if (!geom) return null
     return calcArcLayout({ geometry: geom, sheetWidth: sheetW, sheetLength: sheetL, orientation, shiftU, shiftV, stagger, step })
   }, [geom, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step])
 
+  const arcCount = gaps.length + 1
+  const shown = useMemo(
+    () => Array.from({ length: arcCount }, (_, k) => k).filter(k => !hidden.includes(k)),
+    [arcCount, hidden],
+  )
   const sheets = layout?.sheets ?? []
   const sel = sheets.find(s => s.id === selected) ?? sheets[0]
   const selIdx = sel ? sheets.indexOf(sel) : -1
   const a = orientation === 'across' ? sheetW : sheetL
 
-  const stats = (which: ArcWhich) => {
-    const list = sheets.filter(s => s[which].status !== 'none')
-    return { total: list.length, cut: list.filter(s => s[which].status === 'cut').length }
+  const stats = (k: number) => {
+    const list = sheets.filter(s => s.cuts[k]?.status !== 'none')
+    return { total: list.length, cut: list.filter(s => s.cuts[k]?.status === 'cut').length }
+  }
+
+  const addArc = () => setGaps(g => (g.length + 1 < MAX_ARCS ? [...g, DEFAULT_GAP] : g))
+  const removeArc = (i: number) => {
+    setGaps(g => g.filter((_, idx) => idx !== i))
+    setHidden([])
   }
 
   const copyTable = () => {
     if (!sel) return
-    const rows = ['от кромки, мм\tвнутр. дуга, мм\tнаруж. дуга, мм']
-    sel.inner.marks.forEach((m, i) => rows.push(`${m.du}\t${m.dv}\t${sel.outer.marks[i]?.dv ?? ''}`))
+    const head = ['от кромки, мм', ...shown.map(k => `дуга ${k + 1}, мм`)]
+    const ref = sel.cuts.find(c => c.marks.length) ?? sel.cuts[0]
+    const rows = [head.join('\t')]
+    ref.marks.forEach((m, i) => rows.push([m.du, ...shown.map(k => sel.cuts[k].marks[i]?.dv ?? '')].join('\t')))
     navigator.clipboard?.writeText(rows.join('\n')).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => { /* буфер недоступен */ })
   }
 
@@ -179,18 +204,32 @@ export default function ArcCalc() {
       <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 18, width: 320, flexShrink: 0 }}>
         <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14, color: C.text }}>📐 Разметка дуги</div>
 
-        <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 6 }}>Дуга (по плану)</div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: ARC_COLORS[0], marginBottom: 6 }}>Дуга 1 (по плану)</div>
         <Toggle value={mode} onChange={setMode} options={[['sagitta', 'Хорда + стрела'], ['radius', 'Хорда + радиус']]} />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, margin: '10px 0 6px' }}>
           <NumField label="Хорда" suffix="мм" value={chord} step={10} onChange={setChord} />
           {mode === 'sagitta'
             ? <NumField label="Стрела" suffix="мм" value={sagitta} step={10} onChange={setSagitta} />
             : <NumField label="Радиус" suffix="мм" value={radius} step={10} onChange={setRadius} />}
-          <NumField label="Полоса (до наружной дуги)" suffix="мм" value={band} step={10} onChange={setBand} />
         </div>
+
+        {gaps.map((gap, i) => (
+          <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-end', margin: '8px 0' }}>
+            <div style={{ flex: 1 }}>
+              <NumField label={`Дуга ${i + 2}: от дуги ${i + 1} (общий центр)`} suffix="мм" value={gap} step={10}
+                onChange={v => setGaps(g => g.map((x, idx) => (idx === i ? v : x)))} />
+            </div>
+            <button style={{ ...btn, color: ARC_COLORS[i + 1], borderColor: ARC_COLORS[i + 1] }} title="Убрать дугу" onClick={() => removeArc(i)}>✕</button>
+          </div>
+        ))}
+        {arcCount < MAX_ARCS && (
+          <button style={{ ...btn, margin: '6px 0 4px', width: '100%' }} onClick={addArc}>+ Добавить дугу</button>
+        )}
         {geom && (
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>
-            R внутр. = {geom.radiusInner.toFixed(0)} мм · R наруж. = {geom.radiusOuter.toFixed(0)} мм · стрела = {geom.sagitta.toFixed(0)} мм
+            {geom.offsets.map((_, k) => (
+              <div key={k}><span style={{ color: ARC_COLORS[k], fontWeight: 600 }}>Дуга {k + 1}</span>: R = {arcRadius(geom, k).toFixed(0)} мм{k === 0 ? `, стрела ${geom.sagitta.toFixed(0)} мм` : ''}</div>
+            ))}
           </div>
         )}
 
@@ -232,12 +271,16 @@ export default function ArcCalc() {
           <>
             <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
               <div style={{ fontSize: 13, color: C.text, marginBottom: 8 }}>
-                Под внутреннюю дугу: <b>{stats('inner').total}</b> листов (резать <b>{stats('inner').cut}</b>) · под наружную: <b>{stats('outer').total}</b> (резать <b>{stats('outer').cut}</b>).
-                Нажмите на лист на схеме.
+                {geom.offsets.map((_, k) => (
+                  <span key={k} style={{ marginRight: 14, whiteSpace: 'nowrap' }}>
+                    <b style={{ color: ARC_COLORS[k] }}>Дуга {k + 1}</b>: {stats(k).total} листов, резать <b>{stats(k).cut}</b>
+                  </span>
+                ))}
+                <div style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>Нажмите на лист на схеме.</div>
               </div>
               <OverviewSvg sheets={sheets} geom={geom} selectedId={sel?.id} onSelect={setSelected} layout={layout} />
               <div style={{ fontSize: 11.5, color: C.muted, marginTop: 6 }}>
-                Голубой — лист целиком под внутренней дугой, оранжевый — дуга режет лист, серый — только наружная дуга.
+                Цвет листа — по дуге 1: голубой — целиком под дугой, оранжевый — дуга режет лист, серый — лист нужен только для дальних дуг.
               </div>
             </div>
 
@@ -250,17 +293,27 @@ export default function ArcCalc() {
                   <span style={{ fontSize: 12, color: C.muted }}>
                     ряд {sel.row + 1}, {sel.w}×{sel.h} мм{sel.clippedByChord ? ' (обрезан по хорде)' : ''}, u = {Math.round(sel.u0)}…{Math.round(sel.u1)} от левого конца хорды
                   </span>
-                  <div style={{ marginLeft: 'auto', width: 230 }}>
-                    <Toggle value={show} onChange={setShow} options={[['inner', 'Внутр.'], ['outer', 'Наруж.'], ['both', 'Обе']]} />
-                  </div>
+                  {arcCount > 1 && (
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                      {Array.from({ length: arcCount }, (_, k) => {
+                        const on = !hidden.includes(k)
+                        return (
+                          <button key={k} onClick={() => setHidden(h => (on ? [...h, k] : h.filter(x => x !== k)))}
+                            style={{ ...btn, color: on ? '#fff' : ARC_COLORS[k], background: on ? ARC_COLORS[k] : '#fff', borderColor: ARC_COLORS[k], fontWeight: 600 }}>
+                            Дуга {k + 1}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
-                <SheetDrawing sheet={sel} geom={geom} show={show} />
+                <SheetDrawing sheet={sel} geom={geom} shown={shown} />
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '12px 0 6px' }}>
                   <b style={{ fontSize: 13 }}>Ординаты дуги, мм</b>
                   <button style={btn} onClick={copyTable}>{copied ? '✓ Скопировано' : 'Копировать'}</button>
                 </div>
-                <CutTable sheet={sel} />
+                <CutTable sheet={sel} shown={shown} />
               </div>
             )}
           </>
@@ -271,43 +324,46 @@ export default function ArcCalc() {
   )
 }
 
-function CutTable({ sheet }: { sheet: ArcSheet }) {
-  const note = (which: 'inner' | 'outer') => {
-    const s = sheet[which].status
-    return s === 'full' ? 'лист целиком под дугой, резать не надо' : s === 'none' ? 'лист за дугой, для неё не нужен' : null
-  }
-  const n1 = note('inner'); const n2 = note('outer')
-  const rows = sheet.outer.marks.length ? sheet.outer.marks : sheet.inner.marks
+function CutTable({ sheet, shown }: { sheet: ArcSheet; shown: number[] }) {
+  const notes = shown.flatMap(k => {
+    const s = sheet.cuts[k].status
+    if (s === 'full') return [{ k, text: 'лист целиком под дугой, резать не надо' }]
+    if (s === 'none') return [{ k, text: 'лист за дугой, для неё не нужен' }]
+    return []
+  })
+  const ref = sheet.cuts.find(c => c.marks.length)
+  const rows = ref ? ref.marks : []
   return (
     <div style={{ maxHeight: 360, overflow: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
-      {(n1 || n2) && (
+      {notes.length > 0 && (
         <div style={{ padding: 8, fontSize: 12, color: C.muted }}>
-          {n1 && <div>Внутренняя дуга: {n1}.</div>}
-          {n2 && <div>Наружная дуга: {n2}.</div>}
+          {notes.map(n => <div key={n.k}>Дуга {n.k + 1}: {n.text}.</div>)}
         </div>
       )}
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead>
-          <tr style={{ background: '#f9fafb', position: 'sticky', top: 0 }}>
-            <th style={th}>От левой кромки</th>
-            <th style={{ ...th, color: C.inner }}>Внутр. дуга</th>
-            <th style={{ ...th, color: C.outer }}>Наруж. дуга</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((m, i) => {
-            const mi = sheet.inner.marks[i]; const mo = sheet.outer.marks[i]
-            const major = m.du % 250 === 0
-            return (
-              <tr key={i} style={{ background: major ? '#f3f4f6' : '#fff', fontWeight: major ? 600 : 400 }}>
-                <td style={td}>{m.du}</td>
-                <td style={{ ...td, color: C.inner }}>{mi ? cell(mi) : '—'}</td>
-                <td style={{ ...td, color: C.outer }}>{mo ? cell(mo) : '—'}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+      {rows.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: '#f9fafb', position: 'sticky', top: 0 }}>
+              <th style={th}>От левой кромки</th>
+              {shown.map(k => <th key={k} style={{ ...th, color: ARC_COLORS[k] }}>Дуга {k + 1}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((m, i) => {
+              const major = m.du % 250 === 0
+              return (
+                <tr key={i} style={{ background: major ? '#f3f4f6' : '#fff', fontWeight: major ? 600 : 400 }}>
+                  <td style={td}>{m.du}</td>
+                  {shown.map(k => {
+                    const mk = sheet.cuts[k].marks[i]
+                    return <td key={k} style={{ ...td, color: ARC_COLORS[k] }}>{mk ? cell(mk) : '—'}</td>
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }
@@ -326,12 +382,12 @@ function OverviewSvg({ sheets, geom, selectedId, onSelect, layout }: {
   const vMax = Math.max(layout.vTop, ...sheets.map(s => s.v1)) + 300
   const vMin = -300
   const Y = (v: number) => vMax - v
-  const curve = (which: ArcWhich) => {
-    const half = which === 'inner' ? layout.halfInner : layout.halfOuter
+  const curve = (arc: number) => {
+    const half = layout.halfs[arc]
     const pts: string[] = []
     const from = geom.chord / 2 - half; const to = geom.chord / 2 + half
-    for (let u = from; u <= to; u += Math.max((to - from) / 400, 1)) pts.push(`${u},${Y(arcV(geom, which, u))}`)
-    pts.push(`${to},${Y(arcV(geom, which, to))}`)
+    for (let u = from; u <= to; u += Math.max((to - from) / 400, 1)) pts.push(`${u},${Y(arcV(geom, arc, u))}`)
+    pts.push(`${to},${Y(arcV(geom, arc, to))}`)
     return pts.join(' ')
   }
   const fs = 260
@@ -339,7 +395,7 @@ function OverviewSvg({ sheets, geom, selectedId, onSelect, layout }: {
     <div style={{ overflowX: 'auto' }}>
       <svg viewBox={`${uMin} 0 ${uMax - uMin} ${vMax - vMin}`} style={{ width: '100%', minWidth: 900, display: 'block' }}>
         {sheets.map(s => {
-          const st = s.inner.status
+          const st = s.cuts[0].status
           const fill = st === 'full' ? 'rgba(96,165,250,0.35)' : st === 'cut' ? 'rgba(251,146,60,0.45)' : 'rgba(156,163,175,0.25)'
           return (
             <g key={s.id} onClick={() => onSelect(s.id)} style={{ cursor: 'pointer' }}>
@@ -350,8 +406,9 @@ function OverviewSvg({ sheets, geom, selectedId, onSelect, layout }: {
           )
         })}
         <line x1={0} y1={Y(0)} x2={geom.chord} y2={Y(0)} stroke="#111827" strokeWidth={18} strokeDasharray="120 60" />
-        <polyline points={curve('inner')} fill="none" stroke={C.inner} strokeWidth={24} />
-        <polyline points={curve('outer')} fill="none" stroke={C.outer} strokeWidth={24} />
+        {geom.offsets.map((_, k) => (
+          <polyline key={k} points={curve(k)} fill="none" stroke={ARC_COLORS[k]} strokeWidth={24} />
+        ))}
       </svg>
     </div>
   )
