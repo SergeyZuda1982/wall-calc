@@ -11,8 +11,8 @@ describe('Файерборд как материал обшивки (12.10.2026)
     expect(boardLabel(fireboard)).toBe('Файерборд')
     expect(BOARD_LABEL.fireboard).toBe('Файерборд')
   })
-  it('саморез TN (как у ГКЛ), не XTN', () => {
-    expect(screwCode(fireboard)).toBe('TN')
+  it('саморез XTN (как у Сапфира), не TN', () => {
+    expect(screwCode(fireboard)).toBe('XTN')
   })
   it('таблица максимальных высот — консервативная группа standard', () => {
     expect(resolveMaxHeightGroup('fireboard')).toBe('standard')
