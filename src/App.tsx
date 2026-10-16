@@ -27,6 +27,7 @@ import FloorPlan from './FloorPlan'
 import Scene3D from './Scene3D'
 import CeilingCalc from './CeilingCalc'
 import TileCalc from './TileCalc'
+import ArcCalc from './ArcCalc'
 import ClosingVolumesReport from './components/ClosingVolumesReport'
 import ProjectMaterialsSummary from './components/ProjectMaterialsSummary'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
@@ -214,7 +215,7 @@ export default function App() {
   const [openingClickModal, setOpeningClickModal] = useState<{ pos: number; width: number } | null>(null)
   const [openingClickSill, setOpeningClickSill] = useState('0')
   const [openingClickHeight, setOpeningClickHeight] = useState('2100')
-  const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling' | 'tile' | '3d' | 'closing' | 'materials'>('wall')
+  const [activeTab, setActiveTab] = useState<'wall' | 'lining' | 'plan' | 'ceiling' | 'tile' | 'arc' | '3d' | 'closing' | 'materials'>('wall')
   // Вкладки с собственной адаптивной канвой (план/3D были такими всегда;
   // потолки/плитка добавлены 01.09.2026) — рабочая область должна занимать
   // весь экран без отступов и без ограничения ширины 900px формы-калькулятора.
@@ -222,7 +223,7 @@ export default function App() {
   // той же причине — на широком экране холст был втиснут в узкую колонку,
   // хотя справа полно свободного места.
   const isFullBleedTab = activeTab === 'plan' || activeTab === '3d' || activeTab === 'ceiling'
-    || activeTab === 'tile' || drawingElevation
+    || activeTab === 'tile' || activeTab === 'arc' || drawingElevation
 
   // Плита ("карандаш") на плане отправлена в расчёт потолка — переключаемся
   // на вкладку сразу, не заставляя искать её руками (сам расчёт CeilingCalc
@@ -917,7 +918,7 @@ export default function App() {
       {/* ─── Вкладки ─── */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid #dde',
         overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        {([['wall', 'Перегородки'], ['lining', 'Облицовка стен'], ['ceiling', '🏠 Потолки'], ['tile', '🀟 Плитка'], ['plan', '🗺 План'], ['3d', '🧊 3D'], ['closing', '🧾 Закрытие объёмов'], ['materials', '📋 Смета']] as const).map(([tab, label]) => (
+        {([['wall', 'Перегородки'], ['lining', 'Облицовка стен'], ['ceiling', '🏠 Потолки'], ['tile', '🀟 Плитка'], ['arc', '📐 Разметка дуги'], ['plan', '🗺 План'], ['3d', '🧊 3D'], ['closing', '🧾 Закрытие объёмов'], ['materials', '📋 Смета']] as const).map(([tab, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={{
             padding: '10px clamp(10px, 3vw, 24px)', fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap',
             border: 'none', borderBottom: activeTab === tab ? '2px solid #3a7bd5' : '2px solid transparent',
@@ -932,6 +933,7 @@ export default function App() {
       )}
       {activeTab === 'ceiling' && <CeilingCalc />}
       {activeTab === 'tile' && <TileCalc />}
+      {activeTab === 'arc' && <ArcCalc />}
       {activeTab === 'closing' && <ClosingVolumesReport />}
       {activeTab === 'materials' && <ProjectMaterialsSummary />}
 
