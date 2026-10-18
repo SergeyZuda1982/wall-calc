@@ -21,7 +21,8 @@
  * проекта; этого пока не делаем, чтобы не проектировать вслепую.
  */
 
-import type { EdgeProfile } from '../types'
+import type { EdgeProfile, Opening } from '../types'
+import { interpolateY, interpolateYLeft } from './profileGeometry'
 
 export const PRICE_TIER_THRESHOLD_MM = 3000
 
@@ -116,4 +117,80 @@ export function sumTierSplits(splits: TierSplit[]): TierSplit {
 /** Итоговая сумма в рублях по разбивке и двум ставкам (площадь и погонаж — одна и та же пара ставок, руб/м² и руб/пог.м численно совпадают по правилу Сергея, но это два разных смысла, поэтому split хранит оба) */
 export function tierSplitCost(split: TierSplit, rateBelow: number, rateAbove: number): number {
   return (split.belowM2 + split.belowM) * rateBelow + (split.aboveM2 + split.aboveM) * rateAbove
+}
+
+
+/** Площадь по обе стороны горизонтальной отметки (мм от нуля плана), м² */
+export interface BoundarySplit {
+  belowM2: number
+  aboveM2: number
+}
+
+/**
+ * Площадь стены между полом и потолком, разбитая горизонтальной отметкой
+ * boundaryMm (абсолютная отметка, как у профилей потолка/пола — при ровном
+ * полу на нуле это просто «высота от пола»). Работает для любых кусочно-
+ * линейных профилей потолка и пола (уклон, ломаная, ступени): участок
+ * режется в точках перегиба обоих профилей и в точках пересечения отметки,
+ * между ними всё линейно, поэтому трапеции дают точный результат.
+ *
+ * Проёмы (если переданы) считаются прямоугольниками по bounding box и
+ * возвращаются отдельно, чтобы вызывающий код сам решил, вычитать ли их.
+ */
+export function wallAreaByBoundary(
+  ceilingProfile: EdgeProfile,
+  floorProfile: EdgeProfile,
+  lengthMm: number,
+  boundaryMm: number,
+  openings: Opening[] = [],
+): { gross: BoundarySplit; openings: BoundarySplit; net: BoundarySplit } {
+  const T = boundaryMm
+  const below = (c: number, f: number) => Math.max(0, Math.min(c, T) - Math.min(f, T))
+  const above = (c: number, f: number) => Math.max(0, c - Math.max(f, T))
+
+  const xs = new Set<number>([0, lengthMm])
+  for (const p of ceilingProfile) if (p.x > 0 && p.x < lengthMm) xs.add(p.x)
+  for (const p of floorProfile) if (p.x > 0 && p.x < lengthMm) xs.add(p.x)
+  const xsSorted = [...xs].sort((a, b) => a - b)
+
+  let belowMm2 = 0, aboveMm2 = 0
+  for (let i = 0; i < xsSorted.length - 1; i++) {
+    const a = xsSorted[i], b = xsSorted[i + 1]
+    const w = b - a
+    if (w <= 0) continue
+    // c, f на концах участка: слева — правая часть стыка, справа — левая (ступени)
+    const c0 = interpolateY(ceilingProfile, a), c1 = interpolateYLeft(ceilingProfile, b)
+    const f0 = interpolateY(floorProfile, a), f1 = interpolateYLeft(floorProfile, b)
+    const cAt = (x: number) => c0 + ((x - a) / w) * (c1 - c0)
+    const fAt = (x: number) => f0 + ((x - a) / w) * (f1 - f0)
+    // точки излома подынтегральных функций: пересечения отметки потолком/полом
+    const cuts = [a, b]
+    for (const [v0, v1] of [[c0, c1], [f0, f1]] as const) {
+      if ((v0 - T) * (v1 - T) < 0) cuts.push(a + ((T - v0) / (v1 - v0)) * w)
+    }
+    cuts.sort((x, y) => x - y)
+    for (let j = 0; j < cuts.length - 1; j++) {
+      const x0 = cuts[j], x1 = cuts[j + 1]
+      if (x1 <= x0) continue
+      belowMm2 += (x1 - x0) * (below(cAt(x0), fAt(x0)) + below(cAt(x1), fAt(x1))) / 2
+      aboveMm2 += (x1 - x0) * (above(cAt(x0), fAt(x0)) + above(cAt(x1), fAt(x1))) / 2
+    }
+  }
+
+  let opBelow = 0, opAbove = 0
+  for (const o of openings) {
+    const floorY = interpolateY(floorProfile, o.pos + o.width / 2)
+    const bottom = floorY + o.sillHeight
+    const top = bottom + o.height
+    opBelow += o.width * below(top, bottom)
+    opAbove += o.width * above(top, bottom)
+  }
+
+  const toM2 = (mm2: number) => mm2 / 1_000_000
+  const gross = { belowM2: toM2(belowMm2), aboveM2: toM2(aboveMm2) }
+  const op = { belowM2: toM2(opBelow), aboveM2: toM2(opAbove) }
+  return {
+    gross, openings: op,
+    net: { belowM2: Math.max(0, gross.belowM2 - op.belowM2), aboveM2: Math.max(0, gross.aboveM2 - op.aboveM2) },
+  }
 }
