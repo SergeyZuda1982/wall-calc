@@ -57,7 +57,7 @@ import { snapPoint, snapOrtho, getFlushCandidates } from './core/planSnap'
 
 // ─── Константы ───────────────────────────────────────────────────────────────
 
-const CANVAS_H   = 520
+const CANVAS_H_DEFAULT = 520
 const SNAP_SCREEN_PX = 24   // порог снапа в экранных пикселях (увеличен для тач-устройств — нет hover перед тапом)
 const CHAIN_SNAP_SCREEN_PX = 34   // ещё более терпимый порог для продолжения цепочки от конца предыдущей линии
 const DRAG_THRESHOLD = 4
@@ -981,6 +981,11 @@ export default function FloorPlan() {
   const containerRef = useRef<HTMLDivElement>(null)
   const stageRef     = useRef<any>(null)
   const [canvasW, setCanvasW] = useState(600)
+  // Высота холста — по реальному размеру контейнера (раньше была константа 520 px,
+  // из-за чего подложка занимала только полосу сверху).
+  const [canvasH, setCanvasH] = useState(CANVAS_H_DEFAULT)
+  // Таблица «Конструкции на плане» — плавающее окно поверх холста, по кнопке.
+  const [showConstrTable, setShowConstrTable] = useState(false)
 
   // ── Мобильная адаптация ──
   const isMobile = useIsMobile()
@@ -988,11 +993,19 @@ export default function FloorPlan() {
   const [mobileRightOpen, setMobileRightOpen] = useState(false)
   useEffect(() => {
     function update() {
-      if (containerRef.current) setCanvasW(containerRef.current.offsetWidth)
+      const el = containerRef.current
+      if (!el) return
+      setCanvasW(el.offsetWidth)
+      setCanvasH(Math.max(200, el.clientHeight))
     }
     update()
     window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
+    let ro: ResizeObserver | null = null
+    if (containerRef.current && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(update)
+      ro.observe(containerRef.current)
+    }
+    return () => { window.removeEventListener('resize', update); ro?.disconnect() }
   }, [])
 
   // Space — режим панорамирования
@@ -1591,10 +1604,10 @@ export default function FloorPlan() {
     const minY = Math.min(...pts.map(p => p.y)), maxY = Math.max(...pts.map(p => p.y))
     const w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1)
     const pad = 60
-    const newScale = Math.min((canvasW - pad * 2) / w, (CANVAS_H - pad * 2) / h, 5)
+    const newScale = Math.min((canvasW - pad * 2) / w, (canvasH - pad * 2) / h, 5)
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
     setStageScale(newScale)
-    setStagePos({ x: canvasW / 2 - cx * newScale, y: CANVAS_H / 2 - cy * newScale })
+    setStagePos({ x: canvasW / 2 - cx * newScale, y: canvasH / 2 - cy * newScale })
   }
 
   // ── Зум колёсиком ─────────────────────────────────────────────────────────
@@ -2932,6 +2945,12 @@ export default function FloorPlan() {
 
         <div style={{ flex: 1 }} />
 
+        <button onClick={() => setShowConstrTable(v => !v)}
+          title="Таблица конструкций на плане (окно поверх холста)"
+          style={{ ...toolBtnStyle(showConstrTable), padding: '4px 10px', fontSize: 12 }}>
+          📋 Конструкции ({lines.length + ceilings.length})
+        </button>
+
         {/* Высота потолка этажа (08.07.2026) — постоянно видимый контрол,
             вместо поля на панели рисования, которое раньше терялось внизу
             экрана (см. бэклог идей пользователя). Клик — новое значение;
@@ -3876,7 +3895,7 @@ export default function FloorPlan() {
               <button
                 onClick={() => {
                   const cxPx = (canvasW / 2 - stagePos.x) / stageScale
-                  const cyPx = (CANVAS_H / 2 - stagePos.y) / stageScale
+                  const cyPx = (canvasH / 2 - stagePos.y) / stageScale
                   const id = addStaircase({
                     kind: 'spiral',
                     cx: cxPx, cy: cyPx,
@@ -3899,7 +3918,7 @@ export default function FloorPlan() {
               <button
                 onClick={() => {
                   const cxPx = (canvasW / 2 - stagePos.x) / stageScale
-                  const cyPx = (CANVAS_H / 2 - stagePos.y) / stageScale
+                  const cyPx = (canvasH / 2 - stagePos.y) / stageScale
                   const toPx = (mm: number) => mm / scaleMmPx
                   const flightLenMm = 2400, widthMm = 1000, landingMm = 1000
                   const f1x1 = cxPx, f1y1 = cyPx
@@ -4526,7 +4545,7 @@ export default function FloorPlan() {
         </div>
 
         {/* ════════════════════ ЦЕНТР ════════════════════ */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#f5f7fb' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: '#f5f7fb', position: 'relative' }}>
 
           {/* ── Центральный тулбар ── */}
           <div style={{
@@ -4649,13 +4668,14 @@ export default function FloorPlan() {
           {/* ── Холст ── */}
             <div ref={containerRef}
               style={{
+                flex: 1, minHeight: 0, position: 'relative',
                 border: '1px solid #dde', borderRadius: 8, overflow: 'hidden', background: '#fafafa',
                 cursor: spaceDown ? (panStartRef.current ? 'grabbing' : 'grab')
                   : mode === 'draw' ? 'crosshair' : mode === 'select' ? 'default' : mode === 'erase' ? 'pointer' : mode === 'trim' ? 'crosshair' : mode === 'opening' ? 'crosshair' : 'default',
                 touchAction: 'none',
                 boxShadow: '0 1px 6px rgba(0,0,0,0.08)',
               }}>
-              <Stage ref={stageRef} width={canvasW} height={CANVAS_H}
+              <Stage ref={stageRef} width={canvasW} height={canvasH}
                 scaleX={stageScale} scaleY={stageScale}
                 x={stagePos.x} y={stagePos.y}
                 onClick={handleStageClick} onTap={handleStageClick}
@@ -4670,7 +4690,7 @@ export default function FloorPlan() {
                     const x0 = -stagePos.x / stageScale - 100
                     const y0 = -stagePos.y / stageScale - 100
                     const x1 = (canvasW - stagePos.x) / stageScale + 100
-                    const y1 = (CANVAS_H - stagePos.y) / stageScale + 100
+                    const y1 = (canvasH - stagePos.y) / stageScale + 100
                     const step = 50
                     const lw = 1 / stageScale
                     const gx0 = Math.floor(x0 / step) * step
@@ -5953,14 +5973,20 @@ export default function FloorPlan() {
             </div>
 
           {/* ── Таблица конструкций снизу ── */}
-          {(lines.length > 0 || ceilings.length > 0) && (
+          {showConstrTable && (
             <div style={{
-              background: '#fff', borderTop: '1px solid #e0e4ee',
-              padding: '0', flexShrink: 0, maxHeight: 240, overflowY: 'auto',
+              position: 'absolute', left: 12, right: 12, bottom: 12, zIndex: 15,
+              background: '#fff', border: '1px solid #c9d1e6', borderRadius: 8,
+              boxShadow: '0 6px 24px rgba(0,0,0,0.25)',
+              padding: '0', maxHeight: '60%', overflowY: 'auto',
             }}>
               <div style={{ padding: '10px 16px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#1e2433', display: 'flex', alignItems: 'center', gap: 10 }}>
                   Конструкции на плане
+                  <button onClick={() => setShowConstrTable(false)} title="Закрыть"
+                    style={{ border: 'none', background: '#eef1f8', borderRadius: 4, cursor: 'pointer', fontSize: 12, padding: '2px 8px', color: '#555' }}>
+                    ✕
+                  </button>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   {progressSummary.totalSurfaces > 0 && (
