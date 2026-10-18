@@ -41,6 +41,7 @@ import ProfileEditor from './components/ProfileEditor'
 import ProfileCanvasEditor from './components/ProfileCanvasEditor'
 import ElevationPencilEditor from './components/ElevationPencilEditor'
 import { interpolateY, flatProfile, maxStudHeight, integrateHeight } from './core/profileGeometry'
+import { wallAreaByBoundary } from './core/laborPriceTiers'
 import { calcSheetLayout } from './core/calcSheetLayout'
 import SheetLayoutCanvas from './components/SheetLayoutCanvas'
 
@@ -206,6 +207,8 @@ function fmtCut(totalMm: number, bars: number, wasteMm: number): React.ReactNode
 export default function App() {
   const [form, setForm] = useState<WallInput>(DEFAULT_INPUT)
   const [drawingElevation, setDrawingElevation] = useState(false)
+  // Отметка границы (мм) для разбивки площади стены «ниже/выше». Пусто = не считать.
+  const [boundaryMmInput, setBoundaryMmInput] = useState('')
   const [shiftInput, setShiftInput] = useState('100')
 
   // Произвольный проём по двум кликам на плане (14.07.2026): 1-й клик — начало,
@@ -1044,6 +1047,11 @@ export default function App() {
           <div style={{ flex: 1, minWidth: 130 }}>
             <label style={{ fontSize: 13 }}>Высота (мм)</label><br />
             <input type="number" value={form.height || ''} onChange={e => set('height', Number(e.target.value))} style={{ width: '100%', padding: 7, marginTop: 2 }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 130 }}>
+            <label style={{ fontSize: 13 }}>Отметка границы (мм)</label><br />
+            <input type="number" placeholder="напр. 3000" value={boundaryMmInput}
+              onChange={e => setBoundaryMmInput(e.target.value)} style={{ width: '100%', padding: 7, marginTop: 2 }} />
           </div>
         </div>
 
@@ -1887,6 +1895,28 @@ export default function App() {
                       <td style={{ paddingBottom: 6 }}><b>{result.aboveStuds} шт</b></td></tr>}
                     <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>ГКЛ ({gklLayers} сл.):</td>
                       <td style={{ paddingBottom: 6 }}><b>{result.gklArea.toFixed(2)} м²</b></td></tr>
+                    {(() => {
+                      const T = Number(boundaryMmInput)
+                      if (!(T > 0)) return null
+                      const ceilP = form.ceilingProfile && form.ceilingProfile.length >= 2 ? form.ceilingProfile : flatProfile(form.length, form.height)
+                      const floorP = form.floorProfile && form.floorProfile.length >= 2 ? form.floorProfile : flatProfile(form.length, 0)
+                      const split = wallAreaByBoundary(ceilP, floorP, form.length, T, form.openings)
+                      const hasOp = form.openings.length > 0
+                      const row = { paddingRight: 16, paddingBottom: 6, color: '#555' }
+                      const f2 = (n: number) => n.toFixed(2)
+                      return (
+                        <>
+                          <tr><td style={row}>Площадь стены ниже {T} мм:</td>
+                            <td style={{ paddingBottom: 6 }}><b>{f2(split.gross.belowM2)} м²</b></td></tr>
+                          <tr><td style={row}>Площадь стены выше {T} мм:</td>
+                            <td style={{ paddingBottom: 6 }}><b>{f2(split.gross.aboveM2)} м²</b></td></tr>
+                          {hasOp && <>
+                            <tr><td style={{ ...row, color: '#888', fontSize: 12 }}>за вычетом проёмов, ниже / выше:</td>
+                              <td style={{ paddingBottom: 6, fontSize: 12 }}>{f2(split.net.belowM2)} / {f2(split.net.aboveM2)} м²</td></tr>
+                          </>}
+                        </>
+                      )
+                    })()}
                     {hasInsulation && insulationArea && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Утеплитель:</td>
                       <td style={{ paddingBottom: 6 }}><b>{insulationArea} м²</b></td></tr>}
                     {result.sealingTapeLm > 0 && <tr><td style={{ paddingRight: 16, paddingBottom: 6, color: '#555' }}>Лента уплотнительная:</td>
