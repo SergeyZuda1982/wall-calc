@@ -15,6 +15,7 @@ import { useMemo, useState } from 'react'
 import {
   arcRadius, arcV, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta,
   type ArcGeometry, type ArcOrientation, type ArcSheet,
+  labelIndices,
 } from './core/calcArcLayout'
 
 const C = {
@@ -63,7 +64,7 @@ const btn: React.CSSProperties = {
   padding: '6px 10px', fontSize: 12.5, border: `1px solid ${C.border}`, borderRadius: 6, background: '#fff', cursor: 'pointer',
 }
 
-function SheetDrawing({ sheet, geom, shown }: { sheet: ArcSheet; geom: ArcGeometry; shown: number[] }) {
+function SheetDrawing({ sheet, geom, shown, labelStep }: { sheet: ArcSheet; geom: ArcGeometry; shown: number[]; labelStep: number }) {
   const { w, h } = sheet
   const fs = Math.max(w, h) / 55
   const pad = fs * 3
@@ -97,14 +98,14 @@ function SheetDrawing({ sheet, geom, shown }: { sheet: ArcSheet; geom: ArcGeomet
       {shown.map(k => {
         const cut = sheet.cuts[k]
         const col = ARC_COLORS[k]
-        const last = cut.marks.length - 1
+        const labeled = labelIndices(cut.marks.map(m => m.du), labelStep)
         return (
           <g key={k}>
             <polyline points={curve(k)} fill="none" stroke={col} strokeWidth={fs / 10} />
             {cut.marks.map((m, i) => (
               <g key={i}>
                 <circle cx={m.du} cy={y(m.dv)} r={fs / 6} fill={col} />
-                {(m.du % 250 === 0 || i === last) && (
+                {labeled.has(i) && (
                   <text x={m.du} y={y(m.dv) + (k % 2 === 0 ? fs * 1.4 : -fs * 0.6)} fontSize={fs} textAnchor="middle" fill={col} fontWeight={600}>
                     {m.dv}
                   </text>
@@ -136,6 +137,7 @@ export default function ArcCalc() {
   const [shiftV, setShiftV] = useState(0)
   const [stagger, setStagger] = useState(0)
   const [step, setStep] = useState(50)
+  const [labelStep, setLabelStep] = useState(250)
   const [selected, setSelected] = useState(1)
   const [copied, setCopied] = useState(false)
 
@@ -146,8 +148,9 @@ export default function ArcCalc() {
     if (gaps.some(g => !(g > 0))) return 'Расстояние между дугами должно быть больше 0'
     if (!(sheetW > 0 && sheetL > 0)) return 'Размер листа должен быть больше 0'
     if (!(step >= 5)) return 'Шаг разметки не меньше 5 мм'
+    if (!(labelStep >= step)) return 'Шаг подписей не меньше шага отметок'
     return null
-  }, [mode, chord, sagitta, radius, gaps, sheetW, sheetL, step])
+  }, [mode, chord, sagitta, radius, gaps, sheetW, sheetL, step, labelStep])
 
   const geom = useMemo(() => {
     if (error) return null
@@ -262,6 +265,10 @@ export default function ArcCalc() {
 
         <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, margin: '10px 0 6px' }}>Разметка</div>
         <NumField label="Шаг отметок вдоль кромки" suffix="мм" value={step} step={25} onChange={setStep} />
+        <NumField label="Шаг подписей на чертеже и жирных строк в таблице" suffix="мм" value={labelStep} step={25} onChange={setLabelStep} />
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+          {[25, 50, 100, 250].map(v => <button key={v} style={btn} onClick={() => setLabelStep(v)}>{v}</button>)}
+        </div>
         {error && <div style={{ marginTop: 12, padding: 8, background: '#fef2f2', color: '#b91c1c', borderRadius: 6, fontSize: 12.5 }}>{error}</div>}
       </div>
 
@@ -307,13 +314,13 @@ export default function ArcCalc() {
                     </div>
                   )}
                 </div>
-                <SheetDrawing sheet={sel} geom={geom} shown={shown} />
+                <SheetDrawing sheet={sel} geom={geom} shown={shown} labelStep={labelStep} />
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '12px 0 6px' }}>
                   <b style={{ fontSize: 13 }}>Ординаты дуги, мм</b>
                   <button style={btn} onClick={copyTable}>{copied ? '✓ Скопировано' : 'Копировать'}</button>
                 </div>
-                <CutTable sheet={sel} shown={shown} />
+                <CutTable sheet={sel} shown={shown} labelStep={labelStep} />
               </div>
             )}
           </>
@@ -324,7 +331,7 @@ export default function ArcCalc() {
   )
 }
 
-function CutTable({ sheet, shown }: { sheet: ArcSheet; shown: number[] }) {
+function CutTable({ sheet, shown, labelStep }: { sheet: ArcSheet; shown: number[]; labelStep: number }) {
   const notes = shown.flatMap(k => {
     const s = sheet.cuts[k].status
     if (s === 'full') return [{ k, text: 'лист целиком под дугой, резать не надо' }]
@@ -333,6 +340,7 @@ function CutTable({ sheet, shown }: { sheet: ArcSheet; shown: number[] }) {
   })
   const ref = sheet.cuts.find(c => c.marks.length)
   const rows = ref ? ref.marks : []
+  const labeled = labelIndices(rows.map(m => m.du), labelStep)
   return (
     <div style={{ maxHeight: 360, overflow: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
       {notes.length > 0 && (
@@ -350,7 +358,7 @@ function CutTable({ sheet, shown }: { sheet: ArcSheet; shown: number[] }) {
           </thead>
           <tbody>
             {rows.map((m, i) => {
-              const major = m.du % 250 === 0
+              const major = labeled.has(i)
               return (
                 <tr key={i} style={{ background: major ? '#f3f4f6' : '#fff', fontWeight: major ? 600 : 400 }}>
                   <td style={td}>{m.du}</td>

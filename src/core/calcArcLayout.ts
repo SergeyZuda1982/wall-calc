@@ -218,3 +218,19 @@ export function calcArcLayout(input: ArcLayoutInput): ArcLayoutResult {
   }
   return { sheets, halfMax, halfs, vTop }
 }
+
+/** Индексы отметок, которые подписываем: первая, затем каждая, дошедшая до очередного шага подписи, и последняя. */
+export function labelIndices(dus: number[], labelStep: number): Set<number> {
+  const out = new Set<number>()
+  if (dus.length === 0) return out
+  const stepL = labelStep > 0 ? labelStep : 250
+  let next = dus[0]
+  dus.forEach((du, i) => {
+    if (du >= next - 1e-6) {
+      out.add(i)
+      while (next <= du + 1e-6) next += stepL
+    }
+  })
+  out.add(dus.length - 1)
+  return out
+}
