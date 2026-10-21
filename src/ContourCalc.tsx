@@ -20,6 +20,8 @@ import {
   type ContourOrientation, type ContourSheet, type ContourVertex,
 } from './core/calcContourLayout'
 import { labelIndices } from './core/calcArcLayout'
+import { contourToCeilingSeed } from './core/contourToCeilingSeed'
+import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import {
   flipEdgeBulge, isBulgeInward, moveVertex, removeVertex, sagittaFromChordRadius, setEdgeBulge, setEdgeChord,
   sketchExample, splitEdge,
@@ -296,6 +298,12 @@ export default function ContourCalc() {
     if (t === 'sheets' && !selectedSheet) setSelectedSheet(1)
   }
 
+  /** Передать контур в калькулятор потолков: App сам переключит вкладку, когда появится семя. */
+  const sendToCeilingCalc = () => {
+    const seed = contourToCeilingSeed(vertices, { refEdge })
+    if (seed) useCeilingSeedStore.getState().setSeed(seed)
+  }
+
   const selEdge = selection?.kind === 'edge' ? selection.index : -1
   const selVertex = selection?.kind === 'vertex' ? selection.index : -1
 
@@ -525,9 +533,16 @@ export default function ContourCalc() {
           )}
         </div>
       )}
-      {closed && !error && tool !== 'sheets' && (
-        <button style={{ ...btn, alignSelf: 'flex-start', background: C.accent, color: '#fff', borderColor: C.accent, padding: '9px 16px', fontSize: 13.5 }}
-          onClick={() => chooseTool('sheets')}>Раскладка листов →</button>
+      {closed && !error && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {tool !== 'sheets' && (
+            <button style={{ ...btn, background: C.accent, color: '#fff', borderColor: C.accent, padding: '9px 16px', fontSize: 13.5 }}
+              onClick={() => chooseTool('sheets')}>Раскладка листов →</button>
+          )}
+          <button style={{ ...btn, padding: '9px 16px', fontSize: 13.5, borderColor: C.ok, color: C.ok, fontWeight: 600 }}
+            title="Передать контур, площадь и периметр на вкладку «Потолки»"
+            onClick={sendToCeilingCalc}>→ В калькулятор потолков</button>
+        </div>
       )}
       {layout?.error && <div style={{ padding: 10, background: '#fef2f2', color: C.danger, borderRadius: 8, fontSize: 13 }}>{layout.error}</div>}
 
