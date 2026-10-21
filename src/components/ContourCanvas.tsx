@@ -30,6 +30,8 @@ export interface ContourCanvasProps {
   fitSignal: number
   onAddVertex: (p: Pt) => void
   onClose: () => void
+  /** Правая кнопка мыши при рисовании: убрать последнюю точку. */
+  onUndoLast: () => void
   onDragStart: () => void
   onDragVertex: (i: number, p: Pt) => void
   onSelect: (s: Selection) => void
@@ -182,6 +184,7 @@ export default function ContourCanvas(props: ContourCanvasProps) {
 
   // ── события указателя ──
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
     e.currentTarget.setPointerCapture(e.pointerId)
     const p = localXY(e)
     ptrs.current.set(e.pointerId, p)
@@ -238,6 +241,7 @@ export default function ContourCanvas(props: ContourCanvasProps) {
   }
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
     const p = localXY(e)
     const st = g.current
     const had = ptrs.current.size
@@ -348,7 +352,12 @@ export default function ContourCanvas(props: ContourCanvasProps) {
       <svg ref={svgRef} width={size.w} height={size.h}
         style={{ display: 'block', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8, touchAction: 'none', cursor: tool === 'draw' ? 'crosshair' : 'default', userSelect: 'none' }}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp} onPointerLeave={onPointerLeave}>
+        onPointerCancel={onPointerUp} onPointerLeave={onPointerLeave}
+        onContextMenu={e => {
+          if (tool !== 'draw') return
+          e.preventDefault()
+          if (!closed && n > 0) props.onUndoLast()
+        }}>
         {gridLines}
         {fillD && <path d={fillD} fill="rgba(59,130,246,0.07)" fillRule="evenodd" />}
 

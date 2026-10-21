@@ -281,6 +281,12 @@ export default function ContourCalc() {
     if (n > 0 && Math.hypot(vertices[n - 1].x - p.x, vertices[n - 1].y - p.y) < 1) return
     commit([...vertices, { x: p.x, y: p.y }], false)
   }
+  /** Правая кнопка мыши при рисовании: убрать последнюю точку (в истории — можно вернуть «Отменить»). */
+  const undoLastPoint = () => {
+    if (closed || n === 0) return
+    const rest = vertices.slice(0, -1).map((v, i, a) => (i === a.length - 1 ? { ...v, sag: 0 } : v))
+    commit(rest, false)
+  }
   const closeContour = () => {
     if (n < 3) return
     commit(vertices, true); setTool('edit'); setSelection(null)
@@ -378,7 +384,7 @@ export default function ContourCalc() {
   }
 
   const hint = tool === 'draw'
-    ? 'Нажимайте по сетке: вершины ставятся по порядку. Замкнуть — нажать на первую (зелёную) вершину или кнопкой ниже. Двумя пальцами или колесом — масштаб, перетаскивание — сдвиг.'
+    ? 'Нажимайте по сетке: вершины ставятся по порядку. Замкнуть — нажать на первую (зелёную) вершину или кнопкой ниже. Правая кнопка мыши — убрать последнюю точку. Двумя пальцами или колесом — масштаб, перетаскивание — сдвиг.'
     : tool === 'edit'
       ? 'Тяните вершину, чтобы переместить. Нажмите на сторону — сделать её дугой, задать длину, стрелу, радиус или опорной.'
       : 'Нажмите на лист, чтобы увидеть точки реза и ординаты по дугам.'
@@ -502,7 +508,7 @@ export default function ContourCalc() {
         <ContourCanvas
           vertices={vertices} closed={closed} tool={tool} selection={selection} refEdge={refEdge}
           grid={settings.grid} ortho={settings.ortho} layout={layout} selectedSheet={selectedSheet} fitSignal={fitSignal}
-          onAddVertex={addVertex} onClose={closeContour}
+          onAddVertex={addVertex} onClose={closeContour} onUndoLast={undoLastPoint}
           onDragStart={() => { snapshot(); lastEdit.current = '' }}
           onDragVertex={(i, p) => setVertices(vs => moveVertex(vs, i, p))}
           onSelect={setSelection} onSelectSheet={setSelectedSheet}
