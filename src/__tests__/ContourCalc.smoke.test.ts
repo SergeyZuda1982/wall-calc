@@ -17,6 +17,9 @@ describe('ContourCalc', () => {
     expect(html).toContain('<svg')
     expect(html).toContain('поставить первую вершину')
   })
+  it('в подсказке есть правая кнопка мыши', () => {
+    expect(html).toContain('Правая кнопка мыши')
+  })
   it('без контура итогов нет', () => {
     expect(html).not.toContain('Площадь потолка')
   })
