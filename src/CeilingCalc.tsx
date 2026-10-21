@@ -164,7 +164,7 @@ export default function CeilingCalc() {
   const [previewMode, setPreviewMode] = useState<'2d' | '3d'>('2d')
   const canvasRef = useRef<HTMLDivElement>(null)
   const [canvasW, setCanvasW] = useState(600)
-  const [seedBanner, setSeedBanner] = useState<{ label: string; holesCount: number; zoneCount: number } | null>(null)
+  const [seedBanner, setSeedBanner] = useState<{ label: string; holesCount: number; zoneCount: number; fromContour?: boolean } | null>(null)
   // Зоны (одна или несколько Плит/Потолков), пришедшие вместе с seed — для
   // холста показываем реально обведённую форму(ы), а не только цифры
   // площади/периметра (см. KONSPEKT.md 10.07.2026, пункты 3 и 4).
@@ -232,7 +232,7 @@ export default function CeilingCalc() {
       setResult(calcCeiling(next))
       return next
     })
-    setSeedBanner({ label: consumeSeed.label, holesCount: consumeSeed.holesCount, zoneCount: consumeSeed.zones.length })
+    setSeedBanner({ label: consumeSeed.label, holesCount: consumeSeed.holesCount, zoneCount: consumeSeed.zones.length, fromContour: consumeSeed.source === 'contour' })
     setSeedZones(consumeSeed.zones)
     setSeedRoomId(consumeSeed.roomId ?? null)
     setSavedToRoom(false)
@@ -240,11 +240,8 @@ export default function CeilingCalc() {
     setSavedToCeiling(false)
     // Сохранённая ранее стена старта (startWallSideIndex) — та же зона
     // (индекс 0, у Ceiling-сида зона всегда одна, см. ceilingEntityId).
-    setStartWall(
-      savedCeilingEntity?.startWallSideIndex != null
-        ? { zoneIndex: 0, sideIndex: savedCeilingEntity.startWallSideIndex }
-        : null,
-    )
+    const startIdx = savedCeilingEntity?.startWallSideIndex ?? consumeSeed.startSideIndex
+    setStartWall(startIdx != null ? { zoneIndex: 0, sideIndex: startIdx } : null)
     clearSeed()
   }, [consumeSeed, clearSeed, floorPlanRooms, floorPlanCeilings])
 
@@ -611,6 +608,8 @@ export default function CeilingCalc() {
             <div>
               {seedBanner.zoneCount > 1 ? (
                 <>Площадь/периметр — сумма <b>{seedBanner.zoneCount} зон</b>, объединённых с плана: «{seedBanner.label}».</>
+              ) : seedBanner.fromContour ? (
+                <>Площадь/периметр точные (с дугами) — из вкладки «Контур потолка»: «<b>{seedBanner.label}</b>». Дуги в раскладке заменены ломаной с допуском 1 мм.</>
               ) : (
                 <>Площадь/периметр взяты из плиты «<b>{seedBanner.label}</b>» на плане.</>
               )}

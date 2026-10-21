@@ -63,6 +63,15 @@ export interface CeilingSeed {
    * (updateCeiling(ceilingEntityId, { ceilingSpec, startWallSideIndex })).
    */
   ceilingEntityId?: string
+  /**
+   * НОВОЕ (21.10.2026, мост с вкладкой «Контур потолка», contourToCeilingSeed.ts):
+   * индекс стороны единственной зоны (в том же порядке, что polygonSides), которую
+   * надо сразу выбрать стеной начала раскладки. Приоритет ниже, чем у сохранённой
+   * в Ceiling (startWallSideIndex).
+   */
+  startSideIndex?: number
+  /** Откуда пришёл контур: 'contour' — вкладка «Контур потолка»; не задано — план. */
+  source?: 'contour'
 }
 
 interface CeilingSeedState {
