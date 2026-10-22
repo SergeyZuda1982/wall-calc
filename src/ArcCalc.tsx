@@ -16,6 +16,8 @@ import {
   arcRadius, arcV, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta,
   type ArcGeometry, type ArcOrientation, type ArcSheet,
   labelIndices,
+  ordinateOffsets,
+  type OffsetFrom,
 } from './core/calcArcLayout'
 
 const C = {
@@ -140,6 +142,7 @@ export default function ArcCalc() {
   const [labelStep, setLabelStep] = useState(250)
   const [selected, setSelected] = useState(1)
   const [copied, setCopied] = useState(false)
+  const [offFrom, setOffFrom] = useState<OffsetFrom>('top')
 
   const error = useMemo(() => {
     if (!(chord > 0)) return 'Хорда должна быть больше 0'
@@ -187,10 +190,11 @@ export default function ArcCalc() {
 
   const copyTable = () => {
     if (!sel) return
-    const head = ['от кромки, мм', ...shown.map(k => `дуга ${k + 1}, мм`)]
+    const offs = shown.map(k => ordinateOffsets(sel.cuts[k].marks.map(m => (m.clipped ? null : m.dv)), offFrom).offsets)
+    const head = ['от кромки, мм', ...shown.flatMap(k => [`дуга ${k + 1}, мм`, `дуга ${k + 1}: от ${offFrom === 'top' ? 'верхней' : 'нижней'} линии, мм`])]
     const ref = sel.cuts.find(c => c.marks.length) ?? sel.cuts[0]
     const rows = [head.join('\t')]
-    ref.marks.forEach((m, i) => rows.push([m.du, ...shown.map(k => sel.cuts[k].marks[i]?.dv ?? '')].join('\t')))
+    ref.marks.forEach((m, i) => rows.push([m.du, ...shown.flatMap((k, j) => [sel.cuts[k].marks[i]?.dv ?? '', offs[j][i] ?? ''])].join('\t')))
     navigator.clipboard?.writeText(rows.join('\n')).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => { /* буфер недоступен */ })
   }
 
@@ -320,7 +324,10 @@ export default function ArcCalc() {
                   <b style={{ fontSize: 13 }}>Ординаты дуги, мм</b>
                   <button style={btn} onClick={copyTable}>{copied ? '✓ Скопировано' : 'Копировать'}</button>
                 </div>
-                <CutTable sheet={sel} shown={shown} labelStep={labelStep} />
+                <div style={{ maxWidth: 300, marginBottom: 8 }}>
+                  <Toggle value={offFrom} onChange={setOffFrom} options={[['top', 'Отступ от верхней'], ['bottom', 'От нижней']]} />
+                </div>
+                <CutTable sheet={sel} shown={shown} labelStep={labelStep} offFrom={offFrom} />
               </div>
             )}
           </>
@@ -331,7 +338,7 @@ export default function ArcCalc() {
   )
 }
 
-function CutTable({ sheet, shown, labelStep }: { sheet: ArcSheet; shown: number[]; labelStep: number }) {
+function CutTable({ sheet, shown, labelStep, offFrom }: { sheet: ArcSheet; shown: number[]; labelStep: number; offFrom: OffsetFrom }) {
   const notes = shown.flatMap(k => {
     const s = sheet.cuts[k].status
     if (s === 'full') return [{ k, text: 'лист целиком под дугой, резать не надо' }]
@@ -341,6 +348,8 @@ function CutTable({ sheet, shown, labelStep }: { sheet: ArcSheet; shown: number[
   const ref = sheet.cuts.find(c => c.marks.length)
   const rows = ref ? ref.marks : []
   const labeled = labelIndices(rows.map(m => m.du), labelStep)
+  const offs = shown.map(k => ordinateOffsets(sheet.cuts[k].marks.map(m => (m.clipped ? null : m.dv)), offFrom))
+  const arrow = offFrom === 'top' ? '↓ от верхней' : '↑ от нижней'
   return (
     <div style={{ maxHeight: 360, overflow: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
       {notes.length > 0 && (
@@ -349,11 +358,24 @@ function CutTable({ sheet, shown, labelStep }: { sheet: ArcSheet; shown: number[
         </div>
       )}
       {rows.length > 0 && (
+        <div style={{ padding: 8, fontSize: 12, color: C.muted, lineHeight: 1.5 }}>
+          {shown.map((k, j) => offs[j].top === null ? null : (
+            <div key={k} style={{ color: ARC_COLORS[k] }}>
+              Дуга {k + 1}: верхняя линия {offs[j].top}, нижняя {offs[j].bottom}, между ними {offs[j].span} мм.
+            </div>
+          ))}
+          <div>Проведите поперёк листа две линии по этим отметкам, а внутри между ними мерьте столбец «{arrow}».</div>
+        </div>
+      )}
+      {rows.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f9fafb', position: 'sticky', top: 0 }}>
               <th style={th}>От левой кромки</th>
-              {shown.map(k => <th key={k} style={{ ...th, color: ARC_COLORS[k] }}>Дуга {k + 1}</th>)}
+              {shown.map(k => [
+                <th key={k} style={{ ...th, color: ARC_COLORS[k] }}>Дуга {k + 1}</th>,
+                <th key={k + 'o'} style={{ ...th, color: ARC_COLORS[k], fontStyle: 'italic' }}>{arrow}</th>,
+              ])}
             </tr>
           </thead>
           <tbody>
@@ -362,9 +384,13 @@ function CutTable({ sheet, shown, labelStep }: { sheet: ArcSheet; shown: number[
               return (
                 <tr key={i} style={{ background: major ? '#f3f4f6' : '#fff', fontWeight: major ? 600 : 400 }}>
                   <td style={td}>{m.du}</td>
-                  {shown.map(k => {
+                  {shown.map((k, j) => {
                     const mk = sheet.cuts[k].marks[i]
-                    return <td key={k} style={{ ...td, color: ARC_COLORS[k] }}>{mk ? cell(mk) : '—'}</td>
+                    const off = offs[j].offsets[i]
+                    return [
+                      <td key={k} style={{ ...td, color: ARC_COLORS[k] }}>{mk ? cell(mk) : '—'}</td>,
+                      <td key={k + 'o'} style={{ ...td, color: ARC_COLORS[k], fontStyle: 'italic' }}>{off === null || off === undefined ? '—' : off}</td>,
+                    ]
                   })}
                 </tr>
               )

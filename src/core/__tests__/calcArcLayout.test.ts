@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  arcRadius, arcV, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta,
+  arcRadius, arcV, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta, ordinateOffsets,
   type ArcLayoutInput,
 } from '../calcArcLayout'
 
@@ -119,3 +119,39 @@ describe('необязательные дуги', () => {
     expect(r.vTop).toBeCloseTo(2400, 6)
   })
 })
+
+describe('ordinateOffsets: отступы от крайней линии', () => {
+  // ординаты листа из скриншота пользователя, отметки 750…1200 через 50 мм
+  const shot = [1798, 1802, 1806, 1810, 1814, 1818, 1821, 1825, 1828, 1832]
+  it('от верхней: 1832 → 0, 1828 → 4, 1825 → 7, 1821 → 11, 1818 → 14 (пример пользователя)', () => {
+    const r = ordinateOffsets(shot, 'top')
+    expect(r.top).toBe(1832)
+    expect(r.bottom).toBe(1798)
+    expect(r.span).toBe(34)
+    expect(r.offsets.slice(-5).reverse()).toEqual([0, 4, 7, 11, 14])
+    expect(r.offsets[0]).toBe(34)
+  })
+  it('от нижней: наименьшая получает 0', () => {
+    const r = ordinateOffsets(shot, 'bottom')
+    expect(r.offsets[0]).toBe(0)
+    expect(r.offsets[9]).toBe(34)
+  })
+  it('краевые отметки (null) в границы не входят и дают null', () => {
+    const r = ordinateOffsets([0, 112, 219, null, 424], 'top')
+    expect(r.top).toBe(424)
+    expect(r.bottom).toBe(0)
+    expect(r.offsets).toEqual([424, 312, 205, null, 0])
+  })
+  it('пустой набор и одни null', () => {
+    expect(ordinateOffsets([], 'top')).toEqual({ offsets: [], top: null, bottom: null, span: 0 })
+    expect(ordinateOffsets([null, null], 'top').offsets).toEqual([null, null])
+  })
+  it('сходится с настоящей раскладкой: у листа 9 дуга почти горизонтальна, разброс малый', () => {
+    const lay = calcArcLayout(input({ geometry: gOne, step: 50 }))
+    const s9 = lay.sheets.find(s => s.id === 9)!
+    const r = ordinateOffsets(s9.cuts[0].marks.map(m => (m.clipped ? null : m.dv)), 'top')
+    expect(r.top).toBe(1900)
+    expect(r.span).toBeLessThan(15)
+  })
+})
+
