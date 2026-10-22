@@ -57,31 +57,86 @@
  * поперечный монтаж (calcCeiling.ts, calcProjectSheetLayout.ts) — для
  * прочих типов потолка (П113/П131/П19) и старых вызовов без этого параметра
  * поведение не меняется (старая ¼-схема).
+ *
+ * ─── Фаза 5 (04.08.2026): точные вырезы, та же механика, что у стен ────────
+ * Пользователь явно попросил перенести подход стен (фаза 2, calcSheetLayout.ts,
+ * см. TASKS.md "2D-solver с полигональными вырезами") на потолок: НЕ
+ * "прямоугольная аппроксимация по скан-линии" вокруг дырки (шахта/короб/люстра
+ * из holesMm — см. slabToCeilingSeed.ts, holesMm остаётся простым Point2D[][],
+ * без формального OpeningShape/sagitta — авторится обводкой по подложке, а не
+ * числовым редактором проёма стены, поэтому единой модели данных для АВТОРИНГА
+ * с проёмами стен здесь нет и пока не планируется; ЕДИНОЕ — это сам примитив
+ * вычитания), а точный полигон-вырез на готовом куске.
+ *
+ * Разделение ролей (важно не перепутать):
+ * — ВНЕШНИЙ контур потолка (outerLoop) — по-прежнему участвует в скан-линии
+ *   (segs/bandCriticalXs/widthRangesAtX, механика 12–15.07.2026 не менялась)
+ *   — это аналог границ самой заготовки (у стены — x1..x2, 0..wallH), а не
+ *   выреза, и для прямолинейных контуров скан-линия + критические X дают
+ *   точный (не приближённый) результат.
+ * — ДЫРКИ (holesMm) теперь ИСКЛЮЧЕНЫ из скан-линии/критических X — кусок
+ *   генерируется на всю длину/ширину полосы, как если бы дырок не было
+ *   (только внешний контур), а вычитаются они уже ИЗ ГОТОВОГО кандидата
+ *   через `subtractPolygons()` (та же обёртка над polygon-clipping, что у
+ *   стен) — даёт точный контур выреза (в т.ч. скруглённого/косого, если
+ *   дырка обведена такой формой), а не рассыпание на мелкие прямоугольные
+ *   огрызки.
+ * — Дырка, разрезающая кандидат НАСКВОЗЬ на несколько частей — как и у
+ *   стен, это ОДИН физический лист с несколькими обрезками (решение
+ *   пользователя, то же обоснование: лист/пул уже учтены один раз по
+ *   ограничивающему прямоугольнику кандидата, доп. части просто добавляют
+ *   площадь в смету). Каждая часть получает свой tight bounding box
+ *   (u1/u2/v1/v2) — как и у стен (фаза 3) — для точной подписи размера на
+ *   схеме; новый `kind: 'notched'` и `polygon` (координаты в ЛОКАЛЬНОЙ,
+ *   уже НЕ транспонированной системе кадра — см. фикс 13.07.2026 про
+ *   useRotated) хранят реальную форму.
+ * — Внешний контур потолка (в отличие от дырок) тут НЕ гоняется через
+ *   subtractPolygons — он и так уже точно учтён скан-линией; полигон
+ *   пересечения кандидата с внешним контуром отдельно не строится, чтобы
+ *   не трогать проверенный код 12–15.07.2026 без необходимости.
+ * — 2D-схема (`CeilingCalc.tsx`) для kind:'notched' рисует реальный
+ *   `polygon`, а не Rect по u1..u2×v1..v2 (та же логика, что
+ *   `SheetLayoutCanvas.tsx` у стен) — иначе на схеме будет закрашенный
+ *   прямоугольник поверх дырки, если вырез не разделил кусок насквозь, а
+ *   просто "откусил" угол/край. 3D-меш (`CeilingEntityMesh.tsx`) пока
+ *   ОСТАВЛЕН прямоугольным (box по tight bbox части) — точная 3D-геометрия
+ *   выреза не бралась в эту сессию, это как минимум отдельная follow-up
+ *   задача (см. заметку в конце сессии).
  */
 
 import type { Point2D } from './geometry2d'
-import { insideSegments } from './geometry2d'
+import { insideSegments, subtractPolygons, polygonArea } from './geometry2d'
 import { buildLocalFrame, polygonsToLocal } from './calcPolygonP112Frame'
 import { zoneJoints, takeFromPool, type PoolItem } from './calcSheetLayout'
 import type { BoardSpec, BoardOffcut } from '../types'
 import { DEFAULT_BOARD_SPEC } from '../types'
 
 const SHEET_W = 1200
+/** Минимальная площадь части выреза, которую ещё считаем материалом, а не
+ *  вырожденным геометрическим мусором от вычитания (мм²; ~1см² при 1мм-точности). */
+const MIN_NOTCH_PART_AREA_MM2 = 100
 
 // ─── Кусок листа с реальными координатами ───────────────────────────────────
 
 export interface PolygonSheetPiece {
   /** мм, локальные координаты той же системы, что calcPolygonP112Frame
    *  (U — вдоль стены старта, V — вглубь от неё; могут быть отрицательными,
-   *  см. заголовок файла про обе стороны от стены). */
+   *  см. заголовок файла про обе стороны от стены). Для notched-кусков —
+   *  СОБСТВЕННЫЙ tight bounding box части (не общий прямоугольник
+   *  кандидата), см. заголовок файла про фазу 5. */
   u1: number
   u2: number
   v1: number
   v2: number
   /** length_cut — обрезан вдоль U (короче листа); width_cut — обрезана полоса
-   *  вдоль V (уже 1200мм, у края контура); both_cut — и то и другое. */
-  kind: 'full' | 'length_cut' | 'width_cut' | 'both_cut'
+   *  вдоль V (уже 1200мм, у края контура); both_cut — и то и другое;
+   *  notched — задет вырезом (шахта/короб/люстра, holesMm) — реальная
+   *  форма в `polygon`, см. заголовок файла про фазу 5 (04.08.2026). */
+  kind: 'full' | 'length_cut' | 'width_cut' | 'both_cut' | 'notched'
   source: 'new_sheet' | 'offcut'
+  /** Только для kind === 'notched': реальная форма после вычитания дырок
+   *  (мм, та же локальная система, что u1/v1). */
+  polygon?: Point2D[]
 }
 
 export interface PolygonSheetLayerResult {
@@ -235,6 +290,16 @@ function widthRangesAtX(loops: Point2D[][], x: number, v1: number, v2: number): 
 
 // ─── Детальный раскрой одного слоя (реальные куски + пул) ──────────────────
 
+/** Bbox двух полигонов задевают друг друга? (дешёвый предфильтр перед
+ *  subtractPolygons — не гонять вычитание для дырок, которые заведомо
+ *  далеко от текущего кандидата, тот же приём, что openingsOverlapping()
+ *  в calcSheetLayout.ts). */
+function bboxOverlaps(a: Point2D[], u1: number, u2: number, v1: number, v2: number): boolean {
+  const ax1 = Math.min(...a.map(p => p.x)), ax2 = Math.max(...a.map(p => p.x))
+  const ay1 = Math.min(...a.map(p => p.y)), ay2 = Math.max(...a.map(p => p.y))
+  return ax1 < u2 && ax2 > u1 && ay1 < v2 && ay2 > v1
+}
+
 function calcLayerDetailed(
   loopsLocal: Point2D[][],
   vMin: number, vMax: number,
@@ -244,6 +309,13 @@ function calcLayerDetailed(
   sharedPool: PoolItem[],
   bearingStepMm?: number,
 ): PolygonSheetLayerResult {
+  // 04.08.2026 (фаза 5): дырки (holesMm) больше НЕ участвуют в скан-линии/
+  // критических X — только внешний контур (см. заголовок файла). Кандидат
+  // считается по outerLoop, дырки вычитаются из готового кандидата ниже.
+  const outerLoop = loopsLocal[0]
+  const outerLoops = [outerLoop]
+  const holeLoops = loopsLocal.slice(1)
+
   // Слой 2 сдвигает саму сетку полос на пол-ширины листа — швы между полосами
   // не совпадают со швами слоя 1 (см. заголовок файла).
   const bandPhase = layer === 2 ? SHEET_W / 2 : 0
@@ -260,7 +332,7 @@ function calcLayerDetailed(
     const cw = v2 - v1
     if (cw <= 0) continue
     const bandCenter = Math.min(v1 + cw / 2, vMax - 1e-6)
-    const segs = insideSegments(loopsLocal, bandCenter, 'y')
+    const segs = insideSegments(outerLoops, bandCenter, 'y')
 
     const bandIndex = Math.round((v1 - bandPhase) / SHEET_W)
 
@@ -284,7 +356,7 @@ function calcLayerDetailed(
       vOffset = ((bandIndex + (layer === 2 ? 2 : 0)) % 4 + 4) % 4 * (sheetL / 4)
     }
 
-    const criticalXs = bandCriticalXs(loopsLocal, v1, v2)
+    const criticalXs = bandCriticalXs(outerLoops, v1, v2)
 
     for (const [a, b] of segs) {
       const runLen = b - a
@@ -303,12 +375,16 @@ function calcLayerDetailed(
           const ph = u2 - u1
           if (ph <= 0) continue
           const xm = (u1 + u2) / 2
-          const ranges = widthRangesAtX(loopsLocal, xm, v1, v2)
+          const ranges = widthRangesAtX(outerLoops, xm, v1, v2)
 
           for (const [pv1, pv2] of ranges) {
             const pcw = pv2 - pv1
             if (pcw <= 0) continue
 
+            // Материал/пул расходуются один раз на кандидат, по его
+            // ограничивающему прямоугольнику pcw×ph — так же, как у стен
+            // (фаза 2): дырка, если она тут есть, только "откусывает" от
+            // уже открытого листа, а не открывает лист заново.
             const fromPool = takeFromPool(sharedPool, pcw, ph)
             let source: PolygonSheetPiece['source']
             if (fromPool) {
@@ -338,8 +414,46 @@ function calcLayerDetailed(
               : lengthCut ? 'length_cut'
               : 'full'
 
-            pieces.push({ u1, u2, v1: pv1, v2: pv2, kind, source })
-            usedMm2 += pcw * ph
+            // ── Вычитание дырок (фаза 5, 04.08.2026) — та же механика, что
+            // у стен (calcSheetLayout.ts, фаза 2): вычитаем ИЗ ГОТОВОГО
+            // прямоугольного кандидата все дырки, чей bbox его задевает.
+            const overlappingHoles = holeLoops.filter(h => bboxOverlaps(h, u1, u2, pv1, pv2))
+
+            if (overlappingHoles.length === 0) {
+              pieces.push({ u1, u2, v1: pv1, v2: pv2, kind, source })
+              usedMm2 += pcw * ph
+            } else {
+              const candidateRect: Point2D[] = [
+                { x: u1, y: pv1 }, { x: u2, y: pv1 }, { x: u2, y: pv2 }, { x: u1, y: pv2 },
+              ]
+              const notched = subtractPolygons(candidateRect, overlappingHoles)
+
+              if (notched.length === 0) {
+                // Кандидат целиком внутри дырки(ок) — материала тут нет
+                // вообще; лист/пул уже "потрачены" выше как заготовка,
+                // просто в готовый раскрой этот кусок не попадает.
+                continue
+              }
+              // Может распасться на несколько частей (дырка делит кандидат
+              // насквозь) — один физический лист с несколькими обрезками
+              // (решение пользователя, то же обоснование, что у стен), не
+              // отдельные листы: source/пул уже учтены выше по pcw×ph.
+              // Каждая часть — свой tight bounding box (фаза 3 у стен) для
+              // точной подписи размера на схеме.
+              for (const part of notched) {
+                const partArea = polygonArea(part)
+                if (partArea < MIN_NOTCH_PART_AREA_MM2) continue
+                const xs = part.map(pt => pt.x)
+                const yy = part.map(pt => pt.y)
+                const bx1 = Math.min(...xs), bx2 = Math.max(...xs)
+                const by1 = Math.min(...yy), by2 = Math.max(...yy)
+                pieces.push({
+                  u1: bx1, u2: bx2, v1: by1, v2: by2,
+                  kind: 'notched', source, polygon: part,
+                })
+                usedMm2 += partArea
+              }
+            }
           }
         }
       }
@@ -433,7 +547,14 @@ export function calcPolygonSheetLayout(
   // кусков обратно в исходную систему кадра сразу после расчёта.
   if (useRotated) {
     const swapUV = (pieces: PolygonSheetPiece[]): PolygonSheetPiece[] =>
-      pieces.map(p => ({ ...p, u1: p.v1, u2: p.v2, v1: p.u1, v2: p.u2 }))
+      pieces.map(p => ({
+        ...p, u1: p.v1, u2: p.v2, v1: p.u1, v2: p.u2,
+        // 04.08.2026 (фаза 5): polygon (notched-кусков) считался в тех же
+        // транспонированных координатах, что u1/v1 выше — разворачиваем
+        // x<->y в каждой точке контура тем же способом, иначе форма выреза
+        // на схеме окажется отражена/перепутана по осям с u1/u2/v1/v2.
+        polygon: p.polygon?.map(pt => ({ x: pt.y, y: pt.x })),
+      }))
     layer1.pieces = swapUV(layer1.pieces)
     if (layer2) layer2.pieces = swapUV(layer2.pieces)
   }
