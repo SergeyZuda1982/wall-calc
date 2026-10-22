@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { edgeArc, tessellate, toWorld, type ContourLayoutResult, type ContourVertex, type Pt } from '../core/calcContourLayout'
 import { distanceToEdge, isCCW, snapPoint } from '../core/contourEdit'
+import { openEnds, type DraftState } from '../core/contourSegments'
 import { C } from './calcTheme'
 
 export type ContourTool = 'draw' | 'edit' | 'sheets'
@@ -28,8 +29,10 @@ export interface ContourCanvasProps {
   selectedSheet: number | null
   /** Меняется — холст вписывает контур в окно. */
   fitSignal: number
-  onAddVertex: (p: Pt) => void
-  onClose: () => void
+  /** Набор отдельных линий, из которых собирается контур, пока он не замкнулся. */
+  draft: DraftState
+  /** Клик в режиме рисования (точка уже привязана). */
+  onDrawClick: (p: Pt) => void
   /** Правая кнопка мыши при рисовании: убрать последнюю точку. */
   onUndoLast: () => void
   onDragStart: () => void
@@ -93,12 +96,15 @@ export default function ContourCanvas(props: ContourCanvasProps) {
   useEffect(() => {
     const { w, h } = sizeRef.current
     const vs = propsRef.current.vertices
-    if (vs.length === 0) {
+    if (vs.length === 0 && propsRef.current.draft.segments.length === 0 && !propsRef.current.draft.pending) {
       const s = (w - 80) / 8000
       setView({ s, tx: 40, ty: h - 40 })
       return
     }
-    const pts = vs.length >= 3 ? tessellate(vs, 5) : vs
+    const dr = propsRef.current.draft
+    const pts: Pt[] = vs.length >= 3 ? tessellate(vs, 5)
+      : [...dr.segments.flatMap(sg => [sg.a, sg.b]), ...(dr.pending ? [dr.pending.p] : [])]
+    if (pts.length === 0) { setView({ s: (w - 80) / 8000, tx: 40, ty: h - 40 }); return }
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity
     for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y) }
     const bw = Math.max(x1 - x0, 500), bh = Math.max(y1 - y0, 500)
@@ -133,12 +139,15 @@ export default function ContourCanvas(props: ContourCanvasProps) {
   }
 
   const n = vertices.length
+  const draft = props.draft
+  const draftPoints = useMemo(() => draft.segments.flatMap(sg => [sg.a, sg.b]), [draft.segments])
+  const ends = useMemo(() => openEnds(draft.segments), [draft.segments])
   const snapAt = (sp: { x: number; y: number }, forDrag: boolean) => {
     const w = toW(sp.x, sp.y)
-    const prev = !forDrag && !closed && n > 0 ? vertices[n - 1] : null
+    const prev = !forDrag && !closed && draft.pending ? draft.pending.p : null
     return snapPoint(w, {
       grid, ortho: ortho && !forDrag, prev,
-      vertices: forDrag ? [] : vertices, vertexTol: HIT_VERTEX_PX / view.s,
+      vertices: forDrag || closed ? [] : draftPoints, vertexTol: HIT_VERTEX_PX / view.s,
     })
   }
 
@@ -254,11 +263,7 @@ export default function ContourCanvas(props: ContourCanvasProps) {
     if (tool === 'draw') {
       if (closed) return
       const sn = snapAt(p, false)
-      if (sn.kind === 'vertex') {
-        if (sn.vertexIndex === 0 && n >= 3) props.onClose()
-        return
-      }
-      props.onAddVertex({ x: sn.x, y: sn.y })
+      props.onDrawClick({ x: sn.x, y: sn.y })
     } else if (tool === 'edit') {
       const vi = hitVertex(p)
       if (vi >= 0) return props.onSelect({ kind: 'vertex', index: vi })
@@ -339,11 +344,14 @@ export default function ContourCanvas(props: ContourCanvasProps) {
 
   // масштабная линейка
   const barLen = [100, 200, 500, 1000, 2000, 5000, 10000].find(v => v * view.s >= 70) ?? 10000
-  const lastV = n > 0 ? vertices[n - 1] : null
+  const lastV = draft.pending ? draft.pending.p : null
   const hoverInfo = tool === 'draw' && !closed && hover && lastV
     ? { len: Math.round(Math.hypot(hover.x - lastV.x, hover.y - lastV.y)), ang: Math.round((Math.atan2(hover.y - lastV.y, hover.x - lastV.x) * 180) / Math.PI) }
     : null
-  const closeHot = tool === 'draw' && !closed && n >= 3 && hover && Math.hypot(hover.x - vertices[0].x, hover.y - vertices[0].y) * view.s <= HIT_VERTEX_PX
+  const nearEnd = tool === 'draw' && !closed && hover
+    ? ends.find(e => Math.hypot(hover.x - e.x, hover.y - e.y) * view.s <= HIT_VERTEX_PX) ?? null
+    : null
+  const closeHot = !!nearEnd && !!lastV
 
   const halo: React.CSSProperties = { paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3.5, strokeLinejoin: 'round' }
 
@@ -399,13 +407,41 @@ export default function ContourCanvas(props: ContourCanvasProps) {
           )
         })}
 
-        {tool === 'draw' && !closed && lastV && hover && (
+        {!closed && draft.segments.map((sg, i) => {
+          const arc = edgeArc(sg.a, sg.b, sg.sag ?? 0)
+          const sa = toS(sg.a), sb = toS(sg.b)
+          const len = Math.hypot(sg.b.x - sg.a.x, sg.b.y - sg.a.y)
+          const mx = (sa.x + sb.x) / 2, my = (sa.y + sb.y) / 2
+          return (
+            <g key={'d' + i}>
+              {arc
+                ? <path d={pathD([sg.a, ...Array.from({ length: 47 }, (_, k) => { const ang = arc.a0 + (arc.sweep * (k + 1)) / 48; return { x: arc.cx + arc.R * Math.cos(ang), y: arc.cy + arc.R * Math.sin(ang) } }), sg.b])} fill="none" stroke="#374151" strokeWidth={2.2} />
+                : <line x1={sa.x} y1={sa.y} x2={sb.x} y2={sb.y} stroke="#374151" strokeWidth={2.2} />}
+              {Math.hypot(sa.x - sb.x, sa.y - sb.y) > 46 && (
+                <text x={mx} y={my - 7} textAnchor="middle" fontSize={11} fill="#111827" style={halo}>{Math.round(len)}</text>
+              )}
+            </g>
+          )
+        })}
+        {!closed && draft.segments.length > 0 && ends.map((e, i) => {
+          const s0 = toS(e)
+          return <circle key={'e' + i} cx={s0.x} cy={s0.y} r={6} fill="#fbbf24" stroke="#92400e" strokeWidth={1.6} />
+        })}
+        {!closed && draft.segments.length > 0 && draftPoints.filter(pt => !ends.some(e => e.x === pt.x && e.y === pt.y)).map((pt, i) => {
+          const s0 = toS(pt)
+          return <circle key={'q' + i} cx={s0.x} cy={s0.y} r={4} fill="#fff" stroke="#111827" strokeWidth={1.5} />
+        })}
+
+        {tool === 'draw' && !closed && draft.pending && (
+          <circle cx={toS(draft.pending.p).x} cy={toS(draft.pending.p).y} r={7} fill="rgba(37,99,235,0.3)" stroke="#2563eb" strokeWidth={2} />
+        )}
+        {tool === 'draw' && !closed && hover && (
           <g>
-            <line x1={toS(lastV).x} y1={toS(lastV).y} x2={toS(hover).x} y2={toS(hover).y} stroke="#2563eb" strokeWidth={1.5} strokeDasharray="6 4" />
+            {lastV && <line x1={toS(lastV).x} y1={toS(lastV).y} x2={toS(hover).x} y2={toS(hover).y} stroke="#2563eb" strokeWidth={1.5} strokeDasharray="6 4" />}
             <circle cx={toS(hover).x} cy={toS(hover).y} r={closeHot ? 10 : 5} fill={closeHot ? 'rgba(5,150,105,0.25)' : 'rgba(37,99,235,0.25)'} stroke={closeHot ? '#059669' : '#2563eb'} />
             {hoverInfo && (
               <text x={toS(hover).x + 10} y={toS(hover).y - 10} fontSize={11} fill="#1e3a8a" style={halo}>
-                {closeHot ? 'замкнуть' : `${hoverInfo.len} мм · ${hoverInfo.ang}°`}
+                {closeHot ? 'соединить' : `${hoverInfo.len} мм · ${hoverInfo.ang}°`}
               </text>
             )}
           </g>
@@ -422,9 +458,9 @@ export default function ContourCanvas(props: ContourCanvasProps) {
           )
         })}
 
-        {n === 0 && tool === 'draw' && (
+        {n === 0 && tool === 'draw' && draft.segments.length === 0 && !draft.pending && (
           <text x={size.w / 2} y={size.h / 2} textAnchor="middle" fontSize={14} fill={C.muted}>
-            Нажмите на сетку, чтобы поставить первую вершину
+            Нажмите на сетку — начало первой линии
           </text>
         )}
 

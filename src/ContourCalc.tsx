@@ -21,6 +21,9 @@ import {
 } from './core/calcContourLayout'
 import { labelIndices } from './core/calcArcLayout'
 import { contourToCeilingSeed } from './core/contourToCeilingSeed'
+import {
+  EMPTY_DRAFT, addSegment, chainToDraft, draftStatus, drawClick, endChain, undoLast, type DraftState,
+} from './core/contourSegments'
 import { useCeilingSeedStore } from './store/useCeilingSeedStore'
 import {
   flipEdgeBulge, isBulgeInward, moveVertex, removeVertex, sagittaFromChordRadius, setEdgeBulge, setEdgeChord,
@@ -40,10 +43,10 @@ const DEFAULT_SETTINGS: Settings = {
   sheetW: 1200, sheetL: 2500, orientation: 'across', shiftU: 0, shiftV: 0, stagger: 0, step: 50, labelStep: 250, grid: 100, ortho: true,
 }
 
-interface Saved { vertices: ContourVertex[]; closed: boolean; refEdge: number | null; settings: Settings }
+interface Saved { vertices: ContourVertex[]; closed: boolean; refEdge: number | null; settings: Settings; draft: DraftState }
 
 function loadSaved(): Saved {
-  const empty: Saved = { vertices: [], closed: false, refEdge: null, settings: DEFAULT_SETTINGS }
+  const empty: Saved = { vertices: [], closed: false, refEdge: null, settings: DEFAULT_SETTINGS, draft: EMPTY_DRAFT }
   try {
     if (typeof window === 'undefined') return empty
     const raw = window.localStorage.getItem(STORAGE_KEY)
@@ -52,10 +55,24 @@ function loadSaved(): Saved {
     const vertices: ContourVertex[] = Array.isArray(d.vertices)
       ? d.vertices.filter((v: ContourVertex) => Number.isFinite(v?.x) && Number.isFinite(v?.y)).map((v: ContourVertex) => ({ x: v.x, y: v.y, ...(v.sag ? { sag: v.sag } : {}) }))
       : []
+    const isPt = (p: unknown): p is { x: number; y: number } => !!p && Number.isFinite((p as { x: number }).x) && Number.isFinite((p as { y: number }).y)
+    const closed = !!d.closed && vertices.length >= 3
+    let draft: DraftState = EMPTY_DRAFT
+    if (!closed) {
+      if (d.draft && Array.isArray(d.draft.segments)) {
+        draft = {
+          segments: d.draft.segments.filter((sg: { a: unknown; b: unknown }) => isPt(sg?.a) && isPt(sg?.b)),
+          pending: isPt(d.draft.pending?.p) ? { p: d.draft.pending.p, auto: !!d.draft.pending.auto } : null,
+        }
+      } else if (vertices.length > 0) {
+        draft = chainToDraft(vertices)   // сохранено старой версией: незамкнутая цепочка вершин
+      }
+    }
     return {
-      vertices, closed: !!d.closed && vertices.length >= 3,
+      vertices: closed ? vertices : [], closed,
       refEdge: Number.isInteger(d.refEdge) ? d.refEdge : null,
       settings: { ...DEFAULT_SETTINGS, ...(d.settings ?? {}) },
+      draft,
     }
   } catch { return empty }
 }
@@ -210,19 +227,24 @@ export default function ContourCalc() {
   const narrow = useIsNarrow()
   const [vertices, setVertices] = useState<ContourVertex[]>(init.vertices)
   const [closed, setClosed] = useState(init.closed)
+  const [draft, setDraft] = useState<DraftState>(init.draft)
+  const [lenIn, setLenIn] = useState(0)
+  const [angIn, setAngIn] = useState(0)
+  const [startX, setStartX] = useState(0)
+  const [startY, setStartY] = useState(0)
   const [refEdgeState, setRefEdgeState] = useState<number | null>(init.refEdge)
   const [settings, setSettings] = useState<Settings>(init.settings)
   const [tool, setTool] = useState<ContourTool>(init.closed ? 'edit' : 'draw')
   const [selection, setSelection] = useState<Selection>(null)
   const [selectedSheet, setSelectedSheet] = useState<number | null>(null)
   const [fitSignal, setFitSignal] = useState(0)
-  const [history, setHistory] = useState<Array<{ vertices: ContourVertex[]; closed: boolean }>>([])
+  const [history, setHistory] = useState<Array<{ vertices: ContourVertex[]; closed: boolean; draft: DraftState }>>([])
   const [arcInput, setArcInput] = useState<'sagitta' | 'radius'>('sagitta')
   const lastEdit = useRef('')
   const setS = (patch: Partial<Settings>) => setSettings(s => ({ ...s, ...patch }))
 
   const n = vertices.length
-  const snapshot = () => setHistory(h => [...h.slice(-59), { vertices, closed }])
+  const snapshot = () => setHistory(h => [...h.slice(-59), { vertices, closed, draft }])
   const commit = (nv: ContourVertex[], nClosed = closed) => {
     snapshot(); lastEdit.current = ''
     setVertices(nv); setClosed(nClosed)
@@ -236,7 +258,7 @@ export default function ContourCalc() {
     setHistory(h => {
       if (!h.length) return h
       const last = h[h.length - 1]
-      setVertices(last.vertices); setClosed(last.closed); setSelection(null)
+      setVertices(last.vertices); setClosed(last.closed); setDraft(last.draft); setSelection(null)
       return h.slice(0, -1)
     })
     lastEdit.current = ''
@@ -244,9 +266,9 @@ export default function ContourCalc() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ vertices, closed, refEdge: refEdgeState, settings }))
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ vertices, closed, refEdge: refEdgeState, settings, draft }))
     } catch { /* хранилище недоступно */ }
-  }, [vertices, closed, refEdgeState, settings])
+  }, [vertices, closed, refEdgeState, settings, draft])
 
   const edgeCount = closed ? n : Math.max(n - 1, 0)
   const refEdge = closed && n >= 3 ? (refEdgeState !== null && refEdgeState < n ? refEdgeState : defaultRefEdge(vertices)) : 0
@@ -277,29 +299,54 @@ export default function ContourCalc() {
       : !(settings.labelStep >= settings.step) ? 'Шаг подписей не меньше шага отметок' : null
 
   // ── действия ──
-  const addVertex = (p: { x: number; y: number }) => {
-    if (n > 0 && Math.hypot(vertices[n - 1].x - p.x, vertices[n - 1].y - p.y) < 1) return
-    commit([...vertices, { x: p.x, y: p.y }], false)
+  /** Состояние линий изменилось: если они замкнулись в корректную фигуру — собираем контур. */
+  const applyDraft = (nd: DraftState) => {
+    const st = draftStatus(nd.segments)
+    snapshot(); lastEdit.current = ''
+    if (st.loop && validateContour(st.loop) === null) {
+      setVertices(st.loop); setClosed(true); setDraft(EMPTY_DRAFT)
+      setRefEdgeState(null); setSelection(null); setTool('edit'); setFitSignal(x => x + 1)
+    } else {
+      setDraft(nd)
+    }
   }
-  /** Правая кнопка мыши при рисовании: убрать последнюю точку (в истории — можно вернуть «Отменить»). */
-  const undoLastPoint = () => {
-    if (closed || n === 0) return
-    const rest = vertices.slice(0, -1).map((v, i, a) => (i === a.length - 1 ? { ...v, sag: 0 } : v))
-    commit(rest, false)
+  const drawAt = (p: { x: number; y: number }) => { if (!closed) applyDraft(drawClick(draft, p)) }
+  /** Правая кнопка мыши при рисовании: убрать последнюю точку (в истории — «Отменить» вернёт). */
+  const undoLastPoint = () => { if (!closed) applyDraft(undoLast(draft)) }
+  const finishLine = () => { if (draft.pending) setDraft(endChain(draft)) }
+  const addByDimensions = () => {
+    if (!draft.pending || !(lenIn > 0)) return
+    const r = (angIn * Math.PI) / 180
+    const a = draft.pending.p
+    applyDraft(addSegment(draft, a, { x: Math.round((a.x + lenIn * Math.cos(r)) * 100) / 100, y: Math.round((a.y + lenIn * Math.sin(r)) * 100) / 100 }))
   }
-  const closeContour = () => {
-    if (n < 3) return
-    commit(vertices, true); setTool('edit'); setSelection(null)
-  }
+  const draftInfo = useMemo(() => {
+    const st = draftStatus(draft.segments)
+    const loopErr = st.loop ? validateContour(st.loop) : null
+    return { ...st, loopErr }
+  }, [draft.segments])
+
+  // Esc — закончить цепочку (поднять «перо»)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && tool === 'draw') setDraft(d => endChain(d))
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [tool])
+
   const clearAll = () => {
-    if (n > 0 && !window.confirm('Очистить контур?')) return
+    if ((n > 0 || draft.segments.length > 0) && !window.confirm('Очистить контур?')) return
+    snapshot(); setDraft(EMPTY_DRAFT)
     commit([], false); setSelection(null); setRefEdgeState(null); setSelectedSheet(null); setTool('draw'); setFitSignal(x => x + 1)
   }
   const loadExample = () => {
+    setDraft(EMPTY_DRAFT)
     commit(sketchExample(), true); setSelection(null); setRefEdgeState(null); setSelectedSheet(null); setTool('edit'); setFitSignal(x => x + 1)
   }
   const chooseTool = (t: ContourTool) => {
     if (t === 'draw' && closed) return
+    if (t !== 'draw' && !closed) return
     setTool(t); setSelection(null)
     if (t === 'sheets' && !selectedSheet) setSelectedSheet(1)
   }
@@ -384,7 +431,7 @@ export default function ContourCalc() {
   }
 
   const hint = tool === 'draw'
-    ? 'Нажимайте по сетке: вершины ставятся по порядку. Замкнуть — нажать на первую (зелёную) вершину или кнопкой ниже. Правая кнопка мыши — убрать последнюю точку. Двумя пальцами или колесом — масштаб, перетаскивание — сдвиг.'
+    ? 'Рисуйте линии по одной, в любом порядке: нажатие — начало, второе нажатие — конец. Следующая линия продолжает цепочку; чтобы начать новую в другом месте — нажмите ещё раз в последней точке, клавишу Esc или «Закончить линию». Когда линии образуют замкнутую фигуру, контур соберётся сам. Правая кнопка мыши — убрать последнюю точку. «Править» и «Листы» откроются после замыкания.'
     : tool === 'edit'
       ? 'Тяните вершину, чтобы переместить. Нажмите на сторону — сделать её дугой, задать длину, стрелу, радиус или опорной.'
       : 'Нажмите на лист, чтобы увидеть точки реза и ординаты по дугам.'
@@ -399,10 +446,37 @@ export default function ContourCalc() {
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
         <button style={btn} onClick={undo} disabled={!history.length}>↶ Отменить</button>
         <button style={btn} onClick={() => setFitSignal(x => x + 1)}>⤢ Вписать</button>
-        {!closed && n >= 3 && <button style={{ ...btn, color: '#fff', background: C.ok, borderColor: C.ok }} onClick={closeContour}>Замкнуть</button>}
-        <button style={btn} onClick={clearAll} disabled={n === 0}>🗑 Очистить</button>
+        {tool === 'draw' && !closed && draft.pending && <button style={{ ...btn, color: '#fff', background: C.accent, borderColor: C.accent }} onClick={finishLine}>✂ Закончить линию</button>}
+        <button style={btn} onClick={clearAll} disabled={n === 0 && draft.segments.length === 0 && !draft.pending}>🗑 Очистить</button>
       </div>
-      {n === 0 && <button style={{ ...btn, width: '100%', marginBottom: 10 }} onClick={loadExample}>Пример с эскиза (размеры условные)</button>}
+      {n === 0 && draft.segments.length === 0 && !draft.pending && <button style={{ ...btn, width: '100%', marginBottom: 10 }} onClick={loadExample}>Пример с эскиза (размеры условные)</button>}
+
+      {tool === 'draw' && !closed && (
+        <div style={{ ...card, padding: 12, marginBottom: 12, background: '#f8fafc' }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 8 }}>Линия по размерам</div>
+          {draft.pending ? (
+            <>
+              <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 8 }}>
+                От точки ({Math.round(draft.pending.p.x)}; {Math.round(draft.pending.p.y)}). Угол: 0° — вправо, 90° — вверх, 180° — влево, 270° — вниз.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <NumField label="Длина" suffix="мм" value={lenIn} step={10} onChange={setLenIn} />
+                <NumField label="Угол" suffix="°" value={angIn} step={5} onChange={setAngIn} />
+              </div>
+              <button style={{ ...btn, marginTop: 8 }} disabled={!(lenIn > 0)} onClick={addByDimensions}>Провести линию</button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 8 }}>Начало линии — нажатием на холст или координатами:</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <NumField label="X" suffix="мм" value={startX} step={100} onChange={setStartX} />
+                <NumField label="Y (вверх)" suffix="мм" value={startY} step={100} onChange={setStartY} />
+              </div>
+              <button style={{ ...btn, marginTop: 8 }} onClick={() => applyDraft(drawClick(draft, { x: startX, y: startY }))}>Поставить начало</button>
+            </>
+          )}
+        </div>
+      )}
 
       <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 6 }}>Привязка при рисовании</div>
       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 6 }}>
@@ -419,7 +493,7 @@ export default function ContourCalc() {
         <input type="checkbox" checked={settings.ortho} onChange={e => setS({ ortho: e.target.checked })} />
         Прямые углы (только вдоль осей)
       </label>
-      <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>Косые стороны: уберите «Прямые углы» и поставьте точки по сетке.</div>
+      <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>Косую сторону проведите от конца до конца уже нарисованных линий (концы притягивают курсор) или задайте длиной и углом.</div>
 
       {edgeEditor()}
       {vertexEditor()}
@@ -508,7 +582,7 @@ export default function ContourCalc() {
         <ContourCanvas
           vertices={vertices} closed={closed} tool={tool} selection={selection} refEdge={refEdge}
           grid={settings.grid} ortho={settings.ortho} layout={layout} selectedSheet={selectedSheet} fitSignal={fitSignal}
-          onAddVertex={addVertex} onClose={closeContour} onUndoLast={undoLastPoint}
+          draft={draft} onDrawClick={drawAt} onUndoLast={undoLastPoint}
           onDragStart={() => { snapshot(); lastEdit.current = '' }}
           onDragVertex={(i, p) => setVertices(vs => moveVertex(vs, i, p))}
           onSelect={setSelection} onSelectSheet={setSelectedSheet}
@@ -521,7 +595,11 @@ export default function ContourCalc() {
       </div>
 
       {error && <div style={{ padding: 10, background: '#fef2f2', color: C.danger, borderRadius: 8, fontSize: 13 }}>{error}</div>}
-      {!closed && n >= 3 && <div style={{ padding: 10, background: '#fffbeb', color: '#92400e', borderRadius: 8, fontSize: 13 }}>Контур не замкнут. Нажмите «Замкнуть» или на первую вершину, чтобы получить площадь и раскладку.</div>}
+      {!closed && draft.segments.length > 0 && (
+        <div style={{ padding: 10, background: draftInfo.problem || draftInfo.loopErr ? '#fef2f2' : '#fffbeb', color: draftInfo.problem || draftInfo.loopErr ? C.danger : '#92400e', borderRadius: 8, fontSize: 13 }}>
+          {draftInfo.problem ?? draftInfo.loopErr ?? `Линий: ${draft.segments.length}. Незамкнутых концов: ${draftInfo.openEnds} (жёлтые точки). Контур соберётся сам, когда линии сомкнутся в фигуру; точки линий притягиваются друг к другу.`}
+        </div>
+      )}
 
       {closed && !error && (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>

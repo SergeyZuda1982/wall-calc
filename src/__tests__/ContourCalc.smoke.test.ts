@@ -13,9 +13,9 @@ describe('ContourCalc', () => {
     expect(html).toContain('Привязка при рисовании')
     expect(html).toContain('Пример с эскиза')
   })
-  it('холст — svg с подсказкой про первую вершину', () => {
+  it('холст — svg с подсказкой про первую линию', () => {
     expect(html).toContain('<svg')
-    expect(html).toContain('поставить первую вершину')
+    expect(html).toContain('начало первой линии')
   })
   it('в подсказке есть правая кнопка мыши', () => {
     expect(html).toContain('Правая кнопка мыши')
