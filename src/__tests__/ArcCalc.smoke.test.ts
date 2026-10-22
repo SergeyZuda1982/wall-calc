@@ -40,3 +40,12 @@ describe('labelIndices (шаг подписей)', () => {
     expect(renderToString(createElement(ArcCalc))).toContain('Шаг подписей')
   })
 })
+
+describe('отступы от крайней линии', () => {
+  it('в таблице ординат есть столбец отступов и переключатель', () => {
+    const html = renderToString(createElement(ArcCalc))
+    expect(html).toContain('от верхней')
+    expect(html).toContain('От нижней')
+  })
+})
+

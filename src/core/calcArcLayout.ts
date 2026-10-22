@@ -234,3 +234,25 @@ export function labelIndices(dus: number[], labelStep: number): Set<number> {
   out.add(dus.length - 1)
   return out
 }
+
+export type OffsetFrom = 'top' | 'bottom'
+
+/**
+ * Отступы ординат от крайней линии — чтобы мерить рулеткой короткие расстояния
+ * между двумя линиями, проведёнными поперёк листа по самой дальней и самой ближней
+ * отметке. from = 'top': от наибольшей отметки (она получает 0), 'bottom': от наименьшей.
+ * null во входе (отметка у края листа или ниже хорды) в границы не входит, в ответе — null.
+ */
+export function ordinateOffsets(vals: Array<number | null>, from: OffsetFrom): {
+  offsets: Array<number | null>
+  top: number | null
+  bottom: number | null
+  span: number
+} {
+  const real = vals.filter((v): v is number => v !== null && Number.isFinite(v))
+  if (real.length === 0) return { offsets: vals.map(() => null), top: null, bottom: null, span: 0 }
+  const top = Math.max(...real), bottom = Math.min(...real)
+  const ref = from === 'top' ? top : bottom
+  return { offsets: vals.map(v => (v === null || !Number.isFinite(v) ? null : Math.abs(ref - v))), top, bottom, span: top - bottom }
+}
+

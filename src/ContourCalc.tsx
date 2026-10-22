@@ -19,7 +19,7 @@ import {
   calcContourLayout, contourAreaMm2, contourEdges, contourPerimeterMm, defaultRefEdge, edgeArc, validateContour,
   type ContourOrientation, type ContourSheet, type ContourVertex,
 } from './core/calcContourLayout'
-import { labelIndices } from './core/calcArcLayout'
+import { labelIndices, ordinateOffsets, type OffsetFrom } from './core/calcArcLayout'
 import { contourToCeilingSeed } from './core/contourToCeilingSeed'
 import {
   EMPTY_DRAFT, addSegment, chainToDraft, draftStatus, drawClick, endChain, undoLast, type DraftState,
@@ -158,6 +158,7 @@ function copyText(text: string, done: () => void) {
 
 function SheetTables({ sheet, labelStep, sideName }: { sheet: ContourSheet; labelStep: number; sideName: (e: number) => string }) {
   const [copied, setCopied] = useState('')
+  const [offFrom, setOffFrom] = useState<OffsetFrom>('top')
   const flash = (k: string) => { setCopied(k); setTimeout(() => setCopied(''), 1500) }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
@@ -185,28 +186,47 @@ function SheetTables({ sheet, labelStep, sideName }: { sheet: ContourSheet; labe
           </div>
         </div>
       )}
+      {sheet.arcs.length > 0 && (
+        <div style={{ width: 240 }}>
+          <Toggle value={offFrom} onChange={setOffFrom} options={[['top', 'От дальней линии'], ['bottom', 'От ближней']]} />
+        </div>
+      )}
       {sheet.arcs.map((arc, k) => {
         const labeled = labelIndices(arc.rows.map(r => r.pos), labelStep)
+        const col = ARC_COLORS[k % ARC_COLORS.length]
         const posHead = arc.axis === 'u' ? 'От левой кромки' : 'От нижней кромки'
         const valHead = arc.axis === 'u' ? 'до реза от нижней кромки' : 'до реза от левой кромки'
+        // «дальняя» линия — с наибольшей отметкой (выше на листе при axis 'u', правее при 'v')
+        const offs = ordinateOffsets(arc.rows.map(r => (r.vals.length ? r.vals[0] : null)), offFrom)
+        const offHead = offFrom === 'top' ? '↓ от дальней линии' : '↑ от ближней линии'
         return (
           <div key={arc.edge}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-              <b style={{ fontSize: 13, color: ARC_COLORS[k % ARC_COLORS.length] }}>Ординаты: {sideName(arc.edge)}, мм</b>
+              <b style={{ fontSize: 13, color: col }}>Ординаты: {sideName(arc.edge)}, мм</b>
               <button style={btn} onClick={() => copyText(
-                [`${posHead}\t${valHead}`, ...arc.rows.map(r => `${r.pos}\t${r.vals.join(' / ')}`)].join('\n'),
+                [`${posHead}\t${valHead}\t${offHead}`, ...arc.rows.map((r, i) => `${r.pos}\t${r.vals.join(' / ')}\t${offs.offsets[i] ?? ''}`)].join('\n'),
                 () => flash('a' + arc.edge))}>{copied === 'a' + arc.edge ? '✓ Скопировано' : 'Копировать'}</button>
             </div>
+            {offs.top !== null && (
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 6, lineHeight: 1.5 }}>
+                Дальняя линия {offs.top}, ближняя {offs.bottom}, между ними {offs.span} мм. Проведите их поперёк листа и мерьте внутри столбец «{offHead}».
+              </div>
+            )}
             <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'auto', maxHeight: 340 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead><tr style={{ background: '#f9fafb', position: 'sticky', top: 0 }}><th style={th}>{posHead}</th><th style={{ ...th, color: ARC_COLORS[k % ARC_COLORS.length] }}>{valHead}</th></tr></thead>
+                <thead><tr style={{ background: '#f9fafb', position: 'sticky', top: 0 }}>
+                  <th style={th}>{posHead}</th>
+                  <th style={{ ...th, color: col }}>{valHead}</th>
+                  <th style={{ ...th, color: col, fontStyle: 'italic' }}>{offHead}</th>
+                </tr></thead>
                 <tbody>
                   {arc.rows.map((r, i) => {
                     const major = labeled.has(i)
                     return (
                       <tr key={i} style={{ background: major ? '#f3f4f6' : '#fff', fontWeight: major ? 600 : 400 }}>
                         <td style={td}>{r.pos}</td>
-                        <td style={{ ...td, color: ARC_COLORS[k % ARC_COLORS.length] }}>{r.vals.join(' / ')}</td>
+                        <td style={{ ...td, color: col }}>{r.vals.join(' / ')}</td>
+                        <td style={{ ...td, color: col, fontStyle: 'italic' }}>{offs.offsets[i] ?? '—'}</td>
                       </tr>
                     )
                   })}
