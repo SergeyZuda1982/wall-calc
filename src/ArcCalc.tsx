@@ -11,7 +11,9 @@
  * Сетка на экране — ориентир; размечать нужно по числам таблицы.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import CalcFileButtons from './components/CalcFileButtons'
+import { pickNum, pickOneOf } from './core/calcFile'
 import {
   arcRadius, arcV, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta,
   type ArcGeometry, type ArcOrientation, type ArcSheet,
@@ -124,25 +126,76 @@ function SheetDrawing({ sheet, geom, shown, labelStep }: { sheet: ArcSheet; geom
   )
 }
 
+const ARC_STORAGE_KEY = 'wallcalc.arc.v1'
+interface ArcSaved {
+  mode: 'sagitta' | 'radius'; chord: number; sagitta: number; radius: number; gaps: number[]; hidden: number[]
+  sheetW: number; sheetL: number; orientation: ArcOrientation; shiftU: number; shiftV: number; stagger: number
+  step: number; labelStep: number; selected: number; offFrom: OffsetFrom
+}
+const ARC_DEFAULT: ArcSaved = {
+  mode: 'sagitta', chord: 20800, sagitta: 1900, radius: 29413, gaps: [], hidden: [], sheetW: 1200, sheetL: 2500,
+  orientation: 'across', shiftU: 0, shiftV: 0, stagger: 0, step: 50, labelStep: 250, selected: 1, offFrom: 'top',
+}
+const numList = (v: unknown): number[] => (Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number' && Number.isFinite(x)) : [])
+/** Приводит произвольные данные (localStorage / файл) к безопасному состоянию вкладки. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function sanitizeArcSaved(d: unknown): ArcSaved {
+  const o = (d && typeof d === 'object' ? d : {}) as Record<string, unknown>
+  const D = ARC_DEFAULT
+  const gaps = numList(o.gaps).slice(0, 3)
+  return {
+    mode: pickOneOf(o.mode, ['sagitta', 'radius'] as const, D.mode),
+    chord: pickNum(o.chord, D.chord), sagitta: pickNum(o.sagitta, D.sagitta), radius: pickNum(o.radius, D.radius),
+    gaps, hidden: numList(o.hidden).filter(k => k >= 0 && k <= gaps.length),
+    sheetW: pickNum(o.sheetW, D.sheetW), sheetL: pickNum(o.sheetL, D.sheetL),
+    orientation: pickOneOf(o.orientation, ['across', 'along'] as const, D.orientation) as ArcOrientation,
+    shiftU: pickNum(o.shiftU, 0), shiftV: pickNum(o.shiftV, 0), stagger: pickNum(o.stagger, 0),
+    step: pickNum(o.step, D.step), labelStep: pickNum(o.labelStep, D.labelStep),
+    selected: pickNum(o.selected, 1), offFrom: pickOneOf(o.offFrom, ['top', 'bottom'] as const, D.offFrom) as OffsetFrom,
+  }
+}
+function loadArcSaved(): ArcSaved {
+  try {
+    if (typeof window === 'undefined') return ARC_DEFAULT
+    const raw = window.localStorage.getItem(ARC_STORAGE_KEY)
+    return raw ? sanitizeArcSaved(JSON.parse(raw)) : ARC_DEFAULT
+  } catch { return ARC_DEFAULT }
+}
+
 export default function ArcCalc() {
-  const [mode, setMode] = useState<'sagitta' | 'radius'>('sagitta')
-  const [chord, setChord] = useState(20800)
-  const [sagitta, setSagitta] = useState(1900)
-  const [radius, setRadius] = useState(29413)
+  const [init] = useState(loadArcSaved)
+  const [mode, setMode] = useState<'sagitta' | 'radius'>(init.mode)
+  const [chord, setChord] = useState(init.chord)
+  const [sagitta, setSagitta] = useState(init.sagitta)
+  const [radius, setRadius] = useState(init.radius)
   /** Дополнительные дуги: расстояние каждой от предыдущей, мм. Пусто — только первая дуга. */
-  const [gaps, setGaps] = useState<number[]>([])
-  const [hidden, setHidden] = useState<number[]>([])
-  const [sheetW, setSheetW] = useState(1200)
-  const [sheetL, setSheetL] = useState(2500)
-  const [orientation, setOrientation] = useState<ArcOrientation>('across')
-  const [shiftU, setShiftU] = useState(0)
-  const [shiftV, setShiftV] = useState(0)
-  const [stagger, setStagger] = useState(0)
-  const [step, setStep] = useState(50)
-  const [labelStep, setLabelStep] = useState(250)
-  const [selected, setSelected] = useState(1)
+  const [gaps, setGaps] = useState<number[]>(init.gaps)
+  const [hidden, setHidden] = useState<number[]>(init.hidden)
+  const [sheetW, setSheetW] = useState(init.sheetW)
+  const [sheetL, setSheetL] = useState(init.sheetL)
+  const [orientation, setOrientation] = useState<ArcOrientation>(init.orientation)
+  const [shiftU, setShiftU] = useState(init.shiftU)
+  const [shiftV, setShiftV] = useState(init.shiftV)
+  const [stagger, setStagger] = useState(init.stagger)
+  const [step, setStep] = useState(init.step)
+  const [labelStep, setLabelStep] = useState(init.labelStep)
+  const [selected, setSelected] = useState(init.selected)
   const [copied, setCopied] = useState(false)
-  const [offFrom, setOffFrom] = useState<OffsetFrom>('top')
+  const [offFrom, setOffFrom] = useState<OffsetFrom>(init.offFrom)
+
+  const snapshot = (): ArcSaved => ({
+    mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom,
+  })
+  useEffect(() => {
+    try { window.localStorage.setItem(ARC_STORAGE_KEY, JSON.stringify(snapshot())) } catch { /* хранилище недоступно */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom])
+  const applySaved = (d: unknown) => {
+    const v = sanitizeArcSaved(d)
+    setMode(v.mode); setChord(v.chord); setSagitta(v.sagitta); setRadius(v.radius); setGaps(v.gaps); setHidden(v.hidden)
+    setSheetW(v.sheetW); setSheetL(v.sheetL); setOrientation(v.orientation); setShiftU(v.shiftU); setShiftV(v.shiftV)
+    setStagger(v.stagger); setStep(v.step); setLabelStep(v.labelStep); setSelected(v.selected); setOffFrom(v.offFrom)
+  }
 
   const error = useMemo(() => {
     if (!(chord > 0)) return 'Хорда должна быть больше 0'
@@ -210,6 +263,7 @@ export default function ArcCalc() {
       {/* ── Форма ── */}
       <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 18, width: 320, flexShrink: 0 }}>
         <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14, color: C.text }}>📐 Разметка дуги</div>
+        <div style={{ marginBottom: 12 }}><CalcFileButtons kind="arc" getData={snapshot} onLoad={applySaved} /></div>
 
         <div style={{ fontSize: 12, fontWeight: 600, color: ARC_COLORS[0], marginBottom: 6 }}>Дуга 1 (по плану)</div>
         <Toggle value={mode} onChange={setMode} options={[['sagitta', 'Хорда + стрела'], ['radius', 'Хорда + радиус']]} />
