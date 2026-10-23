@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ContourCanvas, { type ContourTool, type Selection } from './components/ContourCanvas'
+import CalcFileButtons from './components/CalcFileButtons'
 import { NumField, Toggle } from './components/calcFields'
 import { C, btn, card } from './components/calcTheme'
 import {
@@ -45,13 +46,11 @@ const DEFAULT_SETTINGS: Settings = {
 
 interface Saved { vertices: ContourVertex[]; closed: boolean; refEdge: number | null; settings: Settings; draft: DraftState }
 
-function loadSaved(): Saved {
+/** Приводит произвольные данные (localStorage / файл) к безопасному состоянию вкладки. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function parseSaved(d: any): Saved {
   const empty: Saved = { vertices: [], closed: false, refEdge: null, settings: DEFAULT_SETTINGS, draft: EMPTY_DRAFT }
   try {
-    if (typeof window === 'undefined') return empty
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return empty
-    const d = JSON.parse(raw)
     const vertices: ContourVertex[] = Array.isArray(d.vertices)
       ? d.vertices.filter((v: ContourVertex) => Number.isFinite(v?.x) && Number.isFinite(v?.y)).map((v: ContourVertex) => ({ x: v.x, y: v.y, ...(v.sag ? { sag: v.sag } : {}) }))
       : []
@@ -75,6 +74,14 @@ function loadSaved(): Saved {
       draft,
     }
   } catch { return empty }
+}
+
+function loadSaved(): Saved {
+  try {
+    if (typeof window === 'undefined') return parseSaved({})
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    return raw ? parseSaved(JSON.parse(raw)) : parseSaved({})
+  } catch { return parseSaved({}) }
 }
 
 function useIsNarrow(px = 960) {
@@ -290,6 +297,12 @@ export default function ContourCalc() {
     } catch { /* хранилище недоступно */ }
   }, [vertices, closed, refEdgeState, settings, draft])
 
+  const applySaved = (d: unknown) => {
+    const v = parseSaved(d)
+    setVertices(v.vertices); setClosed(v.closed); setDraft(v.draft); setRefEdgeState(v.refEdge); setSettings(v.settings)
+    setTool(v.closed ? 'edit' : 'draw'); setSelection(null); setSelectedSheet(null); setHistory([]); setFitSignal(x => x + 1)
+  }
+
   const edgeCount = closed ? n : Math.max(n - 1, 0)
   const refEdge = closed && n >= 3 ? (refEdgeState !== null && refEdgeState < n ? refEdgeState : defaultRefEdge(vertices)) : 0
 
@@ -459,6 +472,7 @@ export default function ContourCalc() {
   const leftPanel = (
     <div style={{ ...card, padding: 16, width: narrow ? 'auto' : 330, flexShrink: 0 }}>
       <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 10, color: C.text }}>✏️ Контур потолка</div>
+      <div style={{ marginBottom: 10 }}><CalcFileButtons kind="contour" getData={() => ({ vertices, closed, refEdge: refEdgeState, settings, draft })} onLoad={applySaved} /></div>
 
       <Toggle value={tool} onChange={chooseTool} options={[['draw', '✏️ Рисовать'], ['edit', '✋ Править'], ['sheets', '🧱 Листы']]} />
       <div style={{ fontSize: 12, color: C.muted, margin: '8px 0 10px', lineHeight: 1.45 }}>{hint}</div>
