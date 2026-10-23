@@ -12,7 +12,10 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import CalcFileButtons from './components/CalcFileButtons'
+import ExportMenu, { type ExportScope } from './components/ExportMenu'
+import { buildArcReport } from './core/arcReport'
 import { pickNum, pickOneOf } from './core/calcFile'
 import {
   arcRadius, arcV, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta,
@@ -251,6 +254,16 @@ export default function ArcCalc() {
     navigator.clipboard?.writeText(rows.join('\n')).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => { /* буфер недоступен */ })
   }
 
+  const buildReport = (scope: ExportScope) => {
+    if (!geom || !layout) throw new Error('нет раскладки')
+    return buildArcReport({
+      geom, sheets, shown, labelStep, offFrom, orientation, sheetW, sheetL, shiftU, shiftV, stagger, step,
+      sheetIds: scope === 'selected' && sel ? [sel.id] : 'all',
+      drawing: sh => renderToStaticMarkup(<SheetDrawing sheet={sh} geom={geom} shown={shown} labelStep={labelStep} />),
+      overview: () => renderToStaticMarkup(<OverviewSvg sheets={sheets} geom={geom} onSelect={() => undefined} layout={layout} />),
+    })
+  }
+
   const moveBtns = (val: number, set: (v: number) => void) => (
     <div style={{ display: 'flex', gap: 4 }}>
       <button style={btn} onClick={() => set(val - 50)}>−50</button>
@@ -347,6 +360,10 @@ export default function ArcCalc() {
               <div style={{ fontSize: 11.5, color: C.muted, marginTop: 6 }}>
                 Цвет листа — по дуге 1: голубой — целиком под дугой, оранжевый — дуга режет лист, серый — лист нужен только для дальних дуг.
               </div>
+            </div>
+
+            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+              <ExportMenu build={buildReport} selectedLabel={sel ? `лист №${sel.id}` : null} disabled={sheets.length === 0} />
             </div>
 
             {sel && (

@@ -13,7 +13,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ContourCanvas, { type ContourTool, type Selection } from './components/ContourCanvas'
+import { renderToStaticMarkup } from 'react-dom/server'
 import CalcFileButtons from './components/CalcFileButtons'
+import ExportMenu, { type ExportScope } from './components/ExportMenu'
+import { buildContourReport } from './core/contourReport'
 import { NumField, Toggle } from './components/calcFields'
 import { C, btn, card } from './components/calcTheme'
 import {
@@ -325,6 +328,17 @@ export default function ContourCalc() {
   const sideName = (e: number) => {
     const info = edgesInfo[e]
     return info?.radius !== null && info ? `дуга, сторона ${e + 1}` : `прямая, сторона ${e + 1}`
+  }
+
+  const buildReport = (scope: ExportScope) => {
+    if (!layout || layout.error) throw new Error('нет раскладки')
+    return buildContourReport({
+      vertices, layout, areaM2, perimeterM, sheetW: settings.sheetW, sheetL: settings.sheetL, orientation: settings.orientation,
+      shiftU: settings.shiftU, shiftV: settings.shiftV, stagger: settings.stagger, step: settings.step, labelStep: settings.labelStep,
+      refSide: refEdge + 1, offFrom: 'top', sideName,
+      sheetIds: scope === 'selected' && sel ? [sel.id] : 'all',
+      drawing: sh => renderToStaticMarkup(<SheetDrawing sheet={sh} labelStep={settings.labelStep} />),
+    })
   }
 
   const sizeErr = !(settings.sheetW > 0 && settings.sheetL > 0) ? 'Размер листа должен быть больше 0'
@@ -663,6 +677,10 @@ export default function ContourCalc() {
         </div>
       )}
       {layout?.error && <div style={{ padding: 10, background: '#fef2f2', color: C.danger, borderRadius: 8, fontSize: 13 }}>{layout.error}</div>}
+
+      {tool === 'sheets' && layout && !layout.error && !sizeErr && sheets.length > 0 && (
+        <div style={card}><ExportMenu build={buildReport} selectedLabel={sel ? `лист №${sel.id}` : null} /></div>
+      )}
 
       {tool === 'sheets' && layout && !layout.error && sel && !sizeErr && (
         <div style={card}>
