@@ -15,8 +15,10 @@
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
     "@supabase/supabase-js": "^2.108.2",
+    "exceljs": "^4.4.0",
     "konva": "^10.3.0",
     "pdfjs-dist": "^6.1.200",
+    "pdfmake": "^0.3.12",
     "polygon-clipping": "^0.15.7",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
@@ -27,6 +29,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.3",
+    "@types/pdfmake": "^0.3.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
