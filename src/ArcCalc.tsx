@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import CalcFileButtons from './components/CalcFileButtons'
+import { NumField } from './components/calcFields'
 import ExportMenu, { type ExportScope } from './components/ExportMenu'
 import { buildArcReport } from './core/arcReport'
 import { pickNum, pickOneOf } from './core/calcFile'
@@ -34,21 +35,6 @@ const ARC_COLORS = ['#1d4ed8', '#dc2626', '#059669', '#d97706']
 const MAX_ARCS = 4
 const DEFAULT_GAP = 200
 
-function NumField({ label, value, onChange, step = 1, suffix }: {
-  label: string; value: number; onChange: (v: number) => void; step?: number; suffix?: string
-}) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12, color: C.muted }}>
-      {label}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <input type="number" value={value} step={step}
-          onChange={e => { const v = parseFloat(e.target.value); onChange(isNaN(v) ? 0 : v) }}
-          style={{ width: '100%', padding: '7px 9px', fontSize: 13, border: `1px solid ${C.border}`, borderRadius: 6, boxSizing: 'border-box' }} />
-        {suffix && <span style={{ fontSize: 12, color: C.muted, flexShrink: 0 }}>{suffix}</span>}
-      </div>
-    </label>
-  )
-}
 
 function Toggle<T extends string>({ value, options, onChange }: {
   value: T; options: [T, string][]; onChange: (v: T) => void
