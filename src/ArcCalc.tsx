@@ -128,11 +128,13 @@ interface ArcSaved {
   step: number; labelStep: number; selected: number; offFrom: OffsetFrom
   /** Наклонная поверхность: опуск между кромками и смещение по горизонтали, мм. */
   incl: boolean; dropH: number; offsetH: number
+  /** Просадка нижней кромки у краёв, мм (неровный потолок). */
+  droopE: number
 }
 const ARC_DEFAULT: ArcSaved = {
   mode: 'sagitta', chord: 20800, sagitta: 1900, radius: 29413, gaps: [], hidden: [], sheetW: 1200, sheetL: 2500,
   orientation: 'across', shiftU: 0, shiftV: 0, stagger: 0, step: 50, labelStep: 250, selected: 1, offFrom: 'top',
-  incl: false, dropH: 1200, offsetH: 2250,
+  incl: false, dropH: 1200, offsetH: 2250, droopE: 0,
 }
 const numList = (v: unknown): number[] => (Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number' && Number.isFinite(x)) : [])
 /** Приводит произвольные данные (localStorage / файл) к безопасному состоянию вкладки. */
@@ -151,6 +153,7 @@ export function sanitizeArcSaved(d: unknown): ArcSaved {
     step: pickNum(o.step, D.step), labelStep: pickNum(o.labelStep, D.labelStep),
     selected: pickNum(o.selected, 1), offFrom: pickOneOf(o.offFrom, ['top', 'bottom'] as const, D.offFrom) as OffsetFrom,
     incl: o.incl === true, dropH: pickNum(o.dropH, D.dropH), offsetH: pickNum(o.offsetH, D.offsetH),
+    droopE: pickNum(o.droopE, 0),
   }
 }
 function loadArcSaved(): ArcSaved {
@@ -184,23 +187,24 @@ export default function ArcCalc() {
   const [incl, setIncl] = useState(init.incl)
   const [dropH, setDropH] = useState(init.dropH)
   const [offsetH, setOffsetH] = useState(init.offsetH)
+  const [droopE, setDroopE] = useState(init.droopE)
   const [edgeStep, setEdgeStep] = useState(500)
   const [edgeCopied, setEdgeCopied] = useState(false)
 
   const snapshot = (): ArcSaved => ({
     mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom,
-    incl, dropH, offsetH,
+    incl, dropH, offsetH, droopE,
   })
   useEffect(() => {
     try { window.localStorage.setItem(ARC_STORAGE_KEY, JSON.stringify(snapshot())) } catch { /* хранилище недоступно */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom, incl, dropH, offsetH])
+  }, [mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom, incl, dropH, offsetH, droopE])
   const applySaved = (d: unknown) => {
     const v = sanitizeArcSaved(d)
     setMode(v.mode); setChord(v.chord); setSagitta(v.sagitta); setRadius(v.radius); setGaps(v.gaps); setHidden(v.hidden)
     setSheetW(v.sheetW); setSheetL(v.sheetL); setOrientation(v.orientation); setShiftU(v.shiftU); setShiftV(v.shiftV)
     setStagger(v.stagger); setStep(v.step); setLabelStep(v.labelStep); setSelected(v.selected); setOffFrom(v.offFrom)
-    setIncl(v.incl); setDropH(v.dropH); setOffsetH(v.offsetH)
+    setIncl(v.incl); setDropH(v.dropH); setOffsetH(v.offsetH); setDroopE(v.droopE)
   }
 
   const error = useMemo(() => {
@@ -213,23 +217,23 @@ export default function ArcCalc() {
     if (!(labelStep >= step)) return 'Шаг подписей не меньше шага отметок'
     if (incl) {
       const sg = mode === 'sagitta' ? sagitta : radius - Math.sqrt(Math.max(radius * radius - (chord / 2) ** 2, 0))
-      return validateInclined({ chord, sagitta: sg, drop: dropH, shift: offsetH })
+      return validateInclined({ chord, sagitta: sg, drop: dropH, shift: offsetH, edgeDroop: droopE })
     }
     return null
-  }, [mode, chord, sagitta, radius, gaps, sheetW, sheetL, step, labelStep, incl, dropH, offsetH])
+  }, [mode, chord, sagitta, radius, gaps, sheetW, sheetL, step, labelStep, incl, dropH, offsetH, droopE])
 
   /** Дуга в плане → параметры наклонной поверхности (стрела берётся из радиуса, если задан он). */
   const inclInput = useMemo(() => {
     if (!incl || error) return null
     const sg = mode === 'sagitta' ? sagitta : radius - Math.sqrt(Math.max(radius * radius - (chord / 2) ** 2, 0))
-    return { chord, sagitta: sg, drop: dropH, shift: offsetH }
-  }, [incl, error, mode, chord, sagitta, radius, dropH, offsetH])
+    return { chord, sagitta: sg, drop: dropH, shift: offsetH, edgeDroop: droopE }
+  }, [incl, error, mode, chord, sagitta, radius, dropH, offsetH, droopE])
   const inc = useMemo(() => (inclInput ? calcInclined(inclInput) : null), [inclInput])
 
   const geom = useMemo(() => {
     if (error) return null
     // Наклон: работаем в развёртке — верхняя кромка, нижняя = та же дуга, сдвинутая на длину стойки.
-    if (inc) return bandGeometry(geometryFromChordSagitta(inc.devChord, inc.devSagitta), inc.rulingLength)
+    if (inc) return bandGeometry(geometryFromChordSagitta(inc.devChord, inc.devSagitta), inc.rulingLength, inc.droopAlong)
     const offsets = [0]
     for (const g of gaps) offsets.push(offsets[offsets.length - 1] + g)
     return mode === 'sagitta' ? geometryFromChordSagitta(chord, sagitta, offsets) : geometryFromChordRadius(chord, radius, offsets)
@@ -319,9 +323,13 @@ export default function ArcCalc() {
               <NumField label="Опуск по вертикали" suffix="мм" value={dropH} step={10} onChange={setDropH} />
               <NumField label="Между дугами по горизонтали" suffix="мм" value={offsetH} step={10} onChange={setOffsetH} />
             </div>
+            <div style={{ marginTop: 10 }}>
+              <NumField label="Просадка нижней кромки у краёв (0 — потолок в уровне)" suffix="мм" value={droopE} step={5} onChange={setDroopE} />
+            </div>
             {inc && (
               <div style={{ fontSize: 12, color: C.text, marginTop: 8, lineHeight: 1.55 }}>
-                <div>Стойка по наклону: <b>{inc.rulingLength.toFixed(0)} мм</b>, наклон {inc.angleDeg.toFixed(1)}°</div>
+                <div>Стойка по наклону: <b>{inc.rulingLength.toFixed(0)} мм</b>, наклон {inc.angleDeg.toFixed(1)}°
+                  {droopE > 0 && <> · у краёв <b>{inc.rulingLengthEdge.toFixed(0)} мм</b></>}</div>
                 <div>План: R = {inc.planRadius.toFixed(0)} мм, длина дуги {inc.planArcLength.toFixed(0)} мм</div>
                 <div>Развёртка: хорда <b>{inc.devChord.toFixed(0)} мм</b>, стрела <b>{inc.devSagitta.toFixed(0)} мм</b>, R ≈ <b>{inc.devRadius.toFixed(0)} мм</b></div>
                 <div>Стрела поперёк стоек: {inc.sagittaAcross.toFixed(0)} мм</div>
@@ -573,8 +581,8 @@ function EdgeTable({ input, inc, step, onStep, copied, onCopy }: {
   const rows = useMemo(() => inclinedEdgeTable(input, step > 0 ? step : 500), [input, step])
   const L = inc.rulingLength
   const copy = () => {
-    const head = ['u (вдоль кромки), мм', 'верх: от хорды, мм', `низ: от хорды (+${L.toFixed(0)}), мм`, 'в плане x, мм', 'в плане y, мм']
-    const text = [head.join('\t'), ...rows.map(r => [r.u, r.w, (r.w + L).toFixed(1), r.x, r.y].join('\t'))].join('\n')
+    const head = ['u (вдоль кромки), мм', 'верх: от хорды, мм', 'низ: от хорды, мм', 'в плане x, мм', 'в плане y, мм']
+    const text = [head.join('\t'), ...rows.map(r => [r.u, r.w, r.wBottom, r.x, r.y].join('\t'))].join('\n')
     navigator.clipboard?.writeText(text).then(onCopy).catch(() => { /* буфер недоступен */ })
   }
   return (
@@ -587,7 +595,8 @@ function EdgeTable({ input, inc, step, onStep, copied, onCopy }: {
       <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, lineHeight: 1.5 }}>
         Развёртка: хорда {inc.devChord.toFixed(0)} мм, стрела {inc.devSagitta.toFixed(0)} мм, R ≈ {inc.devRadius.toFixed(0)} мм.
         u — длина вдоль кромки от левого конца, «от хорды» — отступ от прямой, соединяющей концы кромки.
-        Нижняя кромка — та же кривая, ниже на {L.toFixed(0)} мм вдоль стоек. Значения точные (по окружности раскладки ниже отличаются не более чем на 1,5 мм).
+        Нижняя кромка — та же кривая, ниже на {L.toFixed(0)} мм вдоль стоек
+        {inc.droopAlong > 0 ? `, плюс просадка у краёв до ${inc.droopAlong.toFixed(1)} мм вдоль стоек (по параболе)` : ''}. Значения точные (по окружности раскладки ниже отличаются не более чем на 1,5 мм).
       </div>
       <div style={{ maxHeight: 320, overflow: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -605,7 +614,7 @@ function EdgeTable({ input, inc, step, onStep, copied, onCopy }: {
               <tr key={i}>
                 <td style={td}>{r.u}</td>
                 <td style={{ ...td, color: ARC_COLORS[0] }}>{r.w}</td>
-                <td style={{ ...td, color: ARC_COLORS[1] }}>{(r.w + L).toFixed(1)}</td>
+                <td style={{ ...td, color: ARC_COLORS[1] }}>{r.wBottom}</td>
                 <td style={{ ...td, color: C.muted }}>{r.x}</td>
                 <td style={{ ...td, color: C.muted }}>{r.y}</td>
               </tr>

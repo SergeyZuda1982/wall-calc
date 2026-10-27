@@ -27,6 +27,12 @@ export interface InclinedInput {
   drop: number
   /** Расстояние между дугами по горизонтали (перпендикулярно хорде), мм. */
   shift: number
+  /**
+   * Просадка нижней кромки у краёв относительно центра, мм по вертикали
+   * (неровный потолок: в центре опуск `drop`, у концов `drop + edgeDroop`,
+   * между ними по параболе). Верхняя кромка не меняется. По умолчанию 0.
+   */
+  edgeDroop?: number
 }
 
 export interface InclinedResult {
@@ -50,13 +56,19 @@ export interface InclinedResult {
   devRadius: number
   /** Площадь одной стороны поверхности, м². */
   areaM2: number
+  /** Добавка к длине стойки у краёв за счёт просадки, мм (= edgeDroop · sin α). */
+  droopAlong: number
+  /** Длина стойки у краёв, мм. */
+  rulingLengthEdge: number
 }
 
 export interface InclinedPoint {
   /** Положение вдоль развёртки от левого конца, мм. */
   u: number
-  /** Ордината кромки от хорды развёртки (к выпуклости), мм. Нижняя кромка = w + L. */
+  /** Ордината верхней кромки от хорды развёртки (к выпуклости), мм. */
   w: number
+  /** Ордината нижней кромки от той же хорды: w + L + просадка по параболе, мм. */
+  wBottom: number
   /** Положение в плане вдоль хорды от левого конца, мм. */
   x: number
   /** Прогиб в плане от хорды, мм. */
@@ -67,6 +79,7 @@ export function validateInclined(i: InclinedInput): string | null {
   if (!(i.chord > 0)) return 'Хорда должна быть больше 0'
   if (!(i.sagitta > 0 && i.sagitta <= i.chord / 2)) return 'Стрела должна быть от 0 до половины хорды'
   if (!(i.drop > 0)) return 'Опуск должен быть больше 0'
+  if (i.edgeDroop !== undefined && !(i.edgeDroop >= 0)) return 'Просадка нижней кромки не может быть отрицательной'
   if (!(i.shift > 0)) return 'Расстояние между дугами по горизонтали должно быть больше 0 (при 0 поверхность вертикальная, и дуга на развёртке — прямая)'
   return null
 }
@@ -97,13 +110,16 @@ export function calcInclined(i: InclinedInput): InclinedResult {
   const theta = Math.asin(Math.min(i.chord / 2 / R, 1))
   const { us } = buildU(i, 8000)
   const devChord = us[us.length - 1]
+  const droopAlong = (i.edgeDroop ?? 0) * sinA
   const devSagitta = i.sagitta * cosA
   const devRadius = devSagitta > 0 ? (devChord * devChord) / (8 * devSagitta) + devSagitta / 2 : Infinity
   return {
     rulingLength: L, sinA, cosA, angleDeg: (Math.atan2(i.drop, i.shift) * 180) / Math.PI,
     planRadius: R, planArcLength: 2 * R * theta,
     devChord, sagittaAcross: i.sagitta * sinA, devSagitta, devRadius,
-    areaM2: (devChord * L) / 1e6,
+    // параболическая добавка: среднее по длине = 1/3 от краевого значения
+    areaM2: (devChord * (L + droopAlong / 3)) / 1e6,
+    droopAlong, rulingLengthEdge: L + droopAlong,
   }
 }
 
@@ -116,6 +132,7 @@ export function inclinedEdgeTable(i: InclinedInput, stepU: number): InclinedPoin
   const R = planRadiusOf(i.chord, i.sagitta)
   const L = Math.hypot(i.shift, i.drop)
   const cosA = i.shift / L
+  const droopAlong = (i.edgeDroop ?? 0) * (i.drop / L)
   const { xs, us } = buildU(i, n)
   const total = us[n]
   const yAt = (x: number) => Math.sqrt(Math.max(R * R - (x - i.chord / 2) ** 2, 0)) - (R - i.sagitta)
@@ -130,6 +147,12 @@ export function inclinedEdgeTable(i: InclinedInput, stepU: number): InclinedPoin
     const f = du > 0 ? (u - us[k]) / du : 0
     const x = xs[k] + f * (xs[k + 1] - xs[k])
     const y = yAt(x)
-    return { u: Math.round(u * 10) / 10, w: Math.round(y * cosA * 10) / 10, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 }
+    const t = (u - total / 2) / (total / 2)
+    const w = y * cosA
+    return {
+      u: Math.round(u * 10) / 10, w: Math.round(w * 10) / 10,
+      wBottom: Math.round((w + L + droopAlong * t * t) * 10) / 10,
+      x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10,
+    }
   })
 }
