@@ -80,3 +80,45 @@ describe('bandGeometry — полоса между двумя сдвинутым
     expect(Math.abs(band - r.areaM2) / r.areaM2).toBeLessThan(0.003)
   })
 })
+
+describe('просадка нижней кромки у краёв (неровный потолок)', () => {
+  const base = { chord: 20860, sagitta: 1900, drop: 1200, shift: 2250 }
+  const inp = { ...base, edgeDroop: 30 }
+  const r0 = calcInclined(base)
+  const r = calcInclined(inp)
+  it('стойка у краёв длиннее на edgeDroop·sinα, в центре прежняя', () => {
+    expect(r.droopAlong).toBeCloseTo(30 * 1200 / 2550, 6)          // ≈ 14.1 мм
+    expect(r.rulingLengthEdge).toBeCloseTo(Math.hypot(2250, 1230), 0) // 2564.4 — точное значение при сдвиге по вертикали
+    expect(r.rulingLength).toBeCloseTo(2550, 6)
+  })
+  it('верхняя кромка и развёртка не меняются', () => {
+    expect(r.devChord).toBeCloseTo(r0.devChord, 6)
+    expect(r.devSagitta).toBeCloseTo(r0.devSagitta, 6)
+  })
+  it('таблица: нижняя кромка в центре = w + L, на краях + droopAlong, посередине между ними по параболе', () => {
+    const t = inclinedEdgeTable(inp, r.devChord / 4)
+    const L = r.rulingLength
+    expect(t[0].wBottom - t[0].w).toBeCloseTo(L + r.droopAlong, 0)
+    expect(t[2].wBottom - t[2].w).toBeCloseTo(L, 0)            // центр
+    expect(t[1].wBottom - t[1].w).toBeCloseTo(L + r.droopAlong / 4, 0) // четверть: (0.5)² = 0.25
+    expect(t[4].wBottom - t[4].w).toBeCloseTo(L + r.droopAlong, 0)
+  })
+  it('без просадки нижняя = w + L', () => {
+    const t = inclinedEdgeTable(base, 5000)
+    for (const p of t) expect(p.wBottom - p.w).toBeCloseTo(2550, 0)
+  })
+  it('площадь растёт на ⅓·droopAlong·хорду', () => {
+    expect(r.areaM2 - r0.areaM2).toBeCloseTo((r.devChord * r.droopAlong / 3) / 1e6, 6)
+  })
+  it('раскладка по полосе согласована с площадью', () => {
+    const g = bandGeometry(geometryFromChordSagitta(r.devChord, r.devSagitta), r.rulingLength, r.droopAlong)
+    expect(arcV(g, 1, 0) - arcV(g, 0, 0)).toBeCloseTo(r.rulingLength + r.droopAlong, 6)
+    expect(arcV(g, 1, r.devChord / 2) - arcV(g, 0, r.devChord / 2)).toBeCloseTo(r.rulingLength, 6)
+    const lay = calcArcLayout({ geometry: g, sheetWidth: 1200, sheetLength: 2500, orientation: 'along', shiftU: 0, shiftV: 0, stagger: 0, step: 50 })
+    const band = lay.sheets.reduce((a, sh) => a + sh.cuts[1].keptAreaM2 - sh.cuts[0].keptAreaM2, 0)
+    expect(Math.abs(band - r.areaM2) / r.areaM2).toBeLessThan(0.003)
+  })
+  it('отрицательная просадка отклоняется', () => {
+    expect(validateInclined({ ...base, edgeDroop: -5 })).not.toBeNull()
+  })
+})

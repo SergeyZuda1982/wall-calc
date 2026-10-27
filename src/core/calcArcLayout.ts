@@ -42,6 +42,12 @@ export interface ArcGeometry {
    */
   shifts?: number[]
   /**
+   * Дополнительный провис дуги i вдоль v (мм): у концов хорды на `sags[i]` больше,
+   * в центре 0, между ними по параболе. Для нижней кромки, которая у краёв
+   * опускается из-за неровного потолка. По умолчанию 0.
+   */
+  sags?: number[]
+  /**
    * Режим «полоса»: поверхность — это область МЕЖДУ дугой 0 (верхняя кромка) и
    * дугой 1 (нижняя кромка), а не область под дугой. Лист в раскладку входит,
    * если он не целиком под дугой 0 и хоть частично под дугой 1.
@@ -134,8 +140,15 @@ const shiftOf = (g: ArcGeometry, i: number): number => g.shifts?.[i] ?? 0
  * Полоса между дугой 0 и такой же дугой, перенесённой на `shift` мм вдоль v
  * (наклонная поверхность в развёртке: shift — длина стойки).
  */
-export function bandGeometry(base: ArcGeometry, shift: number): ArcGeometry {
-  return { ...base, offsets: [0, 0], shifts: [0, shift], band: true }
+export function bandGeometry(base: ArcGeometry, shift: number, edgeSag = 0): ArcGeometry {
+  return { ...base, offsets: [0, 0], shifts: [0, shift], sags: [0, edgeSag], band: true }
+}
+
+const sagAt = (g: ArcGeometry, i: number, u: number): number => {
+  const sg = g.sags?.[i] ?? 0
+  if (!sg) return 0
+  const t = (u - g.chord / 2) / (g.chord / 2)
+  return sg * t * t
 }
 
 /** Высота дуги i над хордой в точке u (мм). −Infinity — за пределами окружности. */
@@ -146,7 +159,7 @@ export function arcV(g: ArcGeometry, i: number, u: number): number {
   const x = u - g.chord / 2
   const t = R * R - x * x
   if (t < 0) return -Infinity
-  return Math.sqrt(t) - g.d + sh
+  return Math.sqrt(t) - g.d + sh + sagAt(g, i, u)
 }
 
 /** Полуширина области, где дуга i выше хорды (v ≥ 0). */
@@ -203,7 +216,7 @@ export function calcArcLayout(input: ArcLayoutInput): ArcLayoutResult {
   const b = orientation === 'across' ? input.sheetLength : input.sheetWidth
   const halfs = g.offsets.map((_, i) => halfExtent(g, i))
   const halfMax = Math.max(...halfs)
-  const vTop = Math.max(...g.offsets.map((_, i) => arcRadius(g, i) - g.d + shiftOf(g, i)))
+  const vTop = Math.max(...g.offsets.map((_, i) => arcRadius(g, i) - g.d + shiftOf(g, i) + Math.max(g.sags?.[i] ?? 0, 0)))
   const centerU = g.chord / 2
 
   const sheets: ArcSheet[] = []
