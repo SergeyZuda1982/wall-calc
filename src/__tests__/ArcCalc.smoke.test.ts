@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
-import ArcCalc from '../ArcCalc'
+import ArcCalc, { sanitizeArcSaved } from '../ArcCalc'
 import { labelIndices } from '../core/calcArcLayout'
 
 describe('ArcCalc', () => {
@@ -49,3 +49,34 @@ describe('отступы от крайней линии', () => {
   })
 })
 
+
+describe('ArcCalc: наклонная поверхность', () => {
+  const renderIncl = () => {
+    const g = globalThis as unknown as { window?: unknown }
+    const prev = g.window
+    g.window = {
+      localStorage: {
+        getItem: () => JSON.stringify({ incl: true, chord: 20860, sagitta: 1900, dropH: 1200, offsetH: 2250, orientation: 'along' }),
+        setItem: () => undefined,
+      },
+    }
+    try { return renderToString(createElement(ArcCalc)) } finally { g.window = prev }
+  }
+  it('по умолчанию наклон выключен', () => {
+    expect(sanitizeArcSaved({}).incl).toBe(false)
+  })
+  it('с включённым наклоном: цифры развёртки, таблица координат, нижняя кромка', () => {
+    const html = renderIncl()
+    expect(html).toContain('2550')               // длина стойки
+    expect(html).toContain('Координаты кромки на развёртке')
+    expect(html).toContain('Нижняя кромка')
+    expect(html).toContain('Верхняя кромка')
+    expect(html).not.toContain('+ Добавить дугу') // в режиме наклона дуги не добавляются
+  })
+  it('сохраняет и читает поля наклона', () => {
+    const v = sanitizeArcSaved({ incl: true, dropH: 900, offsetH: 1500 })
+    expect(v.incl).toBe(true)
+    expect(v.dropH).toBe(900)
+    expect(v.offsetH).toBe(1500)
+  })
+})

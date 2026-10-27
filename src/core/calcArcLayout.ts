@@ -34,6 +34,19 @@ export interface ArcGeometry {
   offsets: number[]
   /** Расстояние от хорды до центра окружностей (центр лежит на −d по v). */
   d: number
+  /**
+   * Параллельный перенос дуги i вдоль v (мм), по умолчанию 0. Дуга с переносом
+   * существует только в пределах хорды u ∈ [0, chord] (боковые края — вертикали).
+   * Нужен для наклонной цилиндрической поверхности: нижняя кромка на развёртке —
+   * та же дуга, сдвинутая вдоль стоек (а не концентрическая).
+   */
+  shifts?: number[]
+  /**
+   * Режим «полоса»: поверхность — это область МЕЖДУ дугой 0 (верхняя кромка) и
+   * дугой 1 (нижняя кромка), а не область под дугой. Лист в раскладку входит,
+   * если он не целиком под дугой 0 и хоть частично под дугой 1.
+   */
+  band?: boolean
 }
 
 export interface ArcLayoutInput {
@@ -115,17 +128,30 @@ export function arcRadius(g: ArcGeometry, i: number): number {
   return g.radius + g.offsets[i]
 }
 
+const shiftOf = (g: ArcGeometry, i: number): number => g.shifts?.[i] ?? 0
+
+/**
+ * Полоса между дугой 0 и такой же дугой, перенесённой на `shift` мм вдоль v
+ * (наклонная поверхность в развёртке: shift — длина стойки).
+ */
+export function bandGeometry(base: ArcGeometry, shift: number): ArcGeometry {
+  return { ...base, offsets: [0, 0], shifts: [0, shift], band: true }
+}
+
 /** Высота дуги i над хордой в точке u (мм). −Infinity — за пределами окружности. */
 export function arcV(g: ArcGeometry, i: number, u: number): number {
   const R = arcRadius(g, i)
+  const sh = shiftOf(g, i)
+  if (sh !== 0 && (u < -1e-6 || u > g.chord + 1e-6)) return -Infinity
   const x = u - g.chord / 2
   const t = R * R - x * x
   if (t < 0) return -Infinity
-  return Math.sqrt(t) - g.d
+  return Math.sqrt(t) - g.d + sh
 }
 
 /** Полуширина области, где дуга i выше хорды (v ≥ 0). */
 function halfExtent(g: ArcGeometry, i: number): number {
+  if (shiftOf(g, i) !== 0) return g.chord / 2
   const R = arcRadius(g, i)
   return Math.sqrt(Math.max(R * R - g.d * g.d, 0))
 }
@@ -177,7 +203,7 @@ export function calcArcLayout(input: ArcLayoutInput): ArcLayoutResult {
   const b = orientation === 'across' ? input.sheetLength : input.sheetWidth
   const halfs = g.offsets.map((_, i) => halfExtent(g, i))
   const halfMax = Math.max(...halfs)
-  const vTop = arcRadius(g, g.offsets.length - 1) - g.d
+  const vTop = Math.max(...g.offsets.map((_, i) => arcRadius(g, i) - g.d + shiftOf(g, i)))
   const centerU = g.chord / 2
 
   const sheets: ArcSheet[] = []
@@ -209,7 +235,10 @@ export function calcArcLayout(input: ArcLayoutInput): ArcLayoutResult {
       const clippedByChord = r.j === -1 && shiftV > EPS
       const cuts = g.offsets.map((_, k) => cutForSheet(g, k, u0, a, v0, h, input.step))
       // Лист нужен, если хоть одна дуга проходит над его площадью.
-      if (cuts.every(c => c.status === 'none')) continue
+      // В режиме полосы — не целиком под верхней кромкой и хоть частично под нижней.
+      if (g.band && cuts.length >= 2
+        ? cuts[0].status === 'full' || cuts[1].status === 'none'
+        : cuts.every(c => c.status === 'none')) continue
       sheets.push({
         id: id++, row, col: i, u0, u1: u0 + a, v0, v1: r.v1, w: a, h, clippedByChord, cuts,
       })
