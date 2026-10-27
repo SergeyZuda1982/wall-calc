@@ -11,7 +11,7 @@
  * Сетка на экране — ориентир; размечать нужно по числам таблицы.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import CalcFileButtons from './components/CalcFileButtons'
 import { NumField } from './components/calcFields'
@@ -26,6 +26,8 @@ import {
   ordinateOffsets,
   type OffsetFrom,
 } from './core/calcArcLayout'
+
+const ArcView3D = lazy(() => import('./components/ArcView3D'))
 
 const C = {
   bg: '#f4f5f7', panel: '#ffffff', border: '#dde1e8', accent: '#2563eb', accentLight: '#eff6ff',
@@ -190,6 +192,7 @@ export default function ArcCalc() {
   const [droopE, setDroopE] = useState(init.droopE)
   const [edgeStep, setEdgeStep] = useState(500)
   const [edgeCopied, setEdgeCopied] = useState(false)
+  const [show3d, setShow3d] = useState(false)
 
   const snapshot = (): ArcSaved => ({
     mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom,
@@ -398,6 +401,19 @@ export default function ArcCalc() {
       <div style={{ flex: 1, minWidth: 300, display: 'flex', flexDirection: 'column', gap: 16 }}>
         {inc && inclInput && <EdgeTable input={inclInput} inc={inc} step={edgeStep} onStep={setEdgeStep}
           copied={edgeCopied} onCopy={() => { setEdgeCopied(true); setTimeout(() => setEdgeCopied(false), 1500) }} />}
+        {inc && inclInput && (
+          <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: show3d ? 10 : 0 }}>
+              <b style={{ fontSize: 14 }}>3D-вид поверхности</b>
+              <button style={btn} onClick={() => setShow3d(v => !v)}>{show3d ? 'Скрыть' : 'Показать'}</button>
+            </div>
+            {show3d && (
+              <Suspense fallback={<div style={{ color: C.muted, fontSize: 13 }}>Загрузка 3D…</div>}>
+                <ArcView3D input={inclInput} />
+              </Suspense>
+            )}
+          </div>
+        )}
         {layout && geom && sheets.length > 0 && (
           <>
             <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
