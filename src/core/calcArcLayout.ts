@@ -77,11 +77,25 @@ export interface ArcMark {
   clipped: 'top' | 'bottom' | null
 }
 
+/** Точка, где линия реза доходит до кромки листа (между отметками, поэтому в таблице её не видно). */
+export interface ArcCrossing {
+  /** Расстояние от левой кромки листа, мм (округлено до 1 мм). */
+  du: number
+  /** Расстояние от правой кромки листа, мм. */
+  duRight: number
+  /** bottom — линия реза спускается к нижней кромке листа («0»), top — поднимается к верхней. */
+  edge: 'bottom' | 'top'
+  /** Линия реза после этой точки идёт вверх (true) или вниз (false). */
+  rising: boolean
+}
+
 export interface ArcCut {
   /** full — лист целиком под дугой (резать не надо), cut — дуга пересекает лист,
    *  none — лист целиком за дугой (в раскладку не входит). */
   status: 'full' | 'cut' | 'none'
   marks: ArcMark[]
+  /** Где линия реза выходит на нижнюю/верхнюю кромку листа. */
+  crossings: ArcCrossing[]
   /** Площадь части листа под дугой, м². */
   keptAreaM2: number
 }
@@ -113,6 +127,18 @@ export interface ArcLayoutResult {
 }
 
 const EPS = 1e-9
+
+/** Текст для разметчика: где линия реза выходит на кромку листа. Пусто, если не пересекает. */
+export function crossingNotes(cut: ArcCut): string[] {
+  return cut.crossings.map(c => {
+    const edge = c.edge === 'bottom' ? 'нижней' : 'верхней'
+    const zero = c.edge === 'bottom' ? ' («0»)' : ''
+    const tail = c.rising
+      ? `левее линия лежит на ${edge} кромке, правее идёт ${c.edge === 'bottom' ? 'вверх' : 'вниз от неё'}`
+      : `левее линия идёт ${c.edge === 'bottom' ? 'вниз к кромке' : 'вверх к кромке'}, правее лежит на ${edge} кромке`
+    return `доходит до ${edge} кромки листа${zero} на ${c.du} мм от левой кромки (${c.duRight} мм от правой); ${tail}`
+  })
+}
 
 /** offsets — смещения дуг от первой; offsets[0] должен быть 0. */
 export function geometryFromChordSagitta(chord: number, sagitta: number, offsets: number[] = [0]): ArcGeometry {
@@ -173,6 +199,46 @@ function mod(a: number, n: number): number {
   return ((a % n) + n) % n
 }
 
+/**
+ * Точки, где дуга пересекает нижнюю (dv = 0) и верхнюю (dv = h) кромку листа.
+ * Скан с шагом 2 мм, затем деление пополам до 0,01 мм. Касание без перехода не считается.
+ */
+export function findCrossings(
+  g: ArcGeometry, arc: number, u0: number, w: number, v0: number, h: number,
+): ArcCrossing[] {
+  const out: ArcCrossing[] = []
+  const val = (du: number) => arcV(g, arc, u0 + du) - v0
+  const n = Math.max(Math.ceil(w / 2), 1)
+  const refine = (level: number, a: number, b: number): number => {
+    let lo = a, hi = b
+    const above = val(a) >= level
+    for (let it = 0; it < 40 && hi - lo > 0.01; it++) {
+      const mid = (lo + hi) / 2
+      if ((val(mid) >= level) === above) lo = mid
+      else hi = mid
+    }
+    return (lo + hi) / 2
+  }
+  for (const [level, edge] of [[0, 'bottom'], [h, 'top']] as const) {
+    let prevDu = 0
+    let prev = val(0) >= level
+    for (let i = 1; i <= n; i++) {
+      const du = (i * w) / n
+      const cur = val(du) >= level
+      if (cur !== prev) {
+        const x = refine(level, prevDu, du)
+        // Отсечь «пересечения» на самом краю листа (линия там уже на кромке).
+        if (x > 0.5 && x < w - 0.5) {
+          out.push({ du: Math.round(x), duRight: Math.round(w - x), edge, rising: cur })
+        }
+      }
+      prev = cur
+      prevDu = du
+    }
+  }
+  return out.sort((p, q) => p.du - q.du)
+}
+
 function cutForSheet(
   g: ArcGeometry, arc: number,
   u0: number, w: number, v0: number, h: number, step: number,
@@ -191,8 +257,8 @@ function cutForSheet(
     kept += Math.min(Math.max(dv, 0), h) * (w / n)
   }
   const keptAreaM2 = kept / 1e6
-  if (allBottom) return { status: 'none', marks: [], keptAreaM2: 0 }
-  if (allTop) return { status: 'full', marks: [], keptAreaM2: (w * h) / 1e6 }
+  if (allBottom) return { status: 'none', marks: [], crossings: [], keptAreaM2: 0 }
+  if (allTop) return { status: 'full', marks: [], crossings: [], keptAreaM2: (w * h) / 1e6 }
 
   const marks: ArcMark[] = []
   const stepSafe = Math.max(step, 1)
@@ -207,7 +273,7 @@ function cutForSheet(
     else if (raw > h) { dv = h; clipped = 'top' }
     marks.push({ du: Math.round(du * 100) / 100, dv: Math.round(dv), clipped })
   }
-  return { status: 'cut', marks, keptAreaM2 }
+  return { status: 'cut', marks, crossings: findCrossings(g, arc, u0, w, v0, h), keptAreaM2 }
 }
 
 export function calcArcLayout(input: ArcLayoutInput): ArcLayoutResult {
