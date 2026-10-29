@@ -66,6 +66,21 @@ export interface ArcLayoutInput {
   stagger: number
   /** Шаг ординат вдоль кромки листа, мм. */
   step: number
+  /**
+   * Разбежка поперечных стыков между соседними колонками, мм: чётные колонки 0, нечётные
+   * сдвинуты по v на это значение (0–500–0–500). 0/не задано — стыки колонок на одной высоте.
+   * Только для orientation = 'across'. Включает режим колонок: сдвиг рядов по u (`stagger`) в нём не применяется.
+   */
+  colStaggerV?: number
+  /** Ручной сдвиг стыков для колонки (индекс `col` листа → мм), заменяет автоматическое значение. */
+  colOffsets?: Record<number, number>
+}
+
+/** Сдвиг стыков колонки по v (до взятия по модулю длины листа), мм. */
+export function colShiftV(col: number, colStaggerV: number, colOffsets?: Record<number, number>): number {
+  const manual = colOffsets?.[col]
+  if (manual !== undefined && Number.isFinite(manual)) return manual
+  return mod(col, 2) === 1 ? colStaggerV : 0
 }
 
 export interface ArcMark {
@@ -290,40 +305,57 @@ export function calcArcLayout(input: ArcLayoutInput): ArcLayoutResult {
     return { sheets, halfMax, halfs, vTop }
   }
 
-  const shiftV = mod(input.shiftV, b)
+  // Режим колонок — только для листов «поперёк хорды»; «вдоль хорды» разбегается рядами (`stagger`).
+  const columnMode = orientation === 'across' && ((input.colStaggerV ?? 0) !== 0
+    || Object.values(input.colOffsets ?? {}).some(v => Number.isFinite(v) && v !== 0))
+  const colStaggerV = input.colStaggerV ?? 0
+
   const uMin = centerU - halfMax
   const uMax = centerU + halfMax
 
-  let id = 1
-  let row = 0
-  // Первый (нижний) ряд: от хорды до первого стыка, если стык не на хорде.
-  const rowEdges: Array<{ v0: number; v1: number; j: number }> = []
-  if (shiftV > EPS) rowEdges.push({ v0: 0, v1: shiftV, j: -1 })
-  for (let j = 0; shiftV + j * b < vTop; j++) {
-    rowEdges.push({ v0: shiftV + j * b, v1: shiftV + (j + 1) * b, j })
+  type Pending = Omit<ArcSheet, 'id'>
+  const pending: Pending[] = []
+  const rowEdgesFor = (shiftV: number): Array<{ v0: number; v1: number; j: number }> => {
+    const out: Array<{ v0: number; v1: number; j: number }> = []
+    // Первый (нижний) ряд: от хорды до первого стыка, если стык не на хорде.
+    if (shiftV > EPS) out.push({ v0: 0, v1: shiftV, j: -1 })
+    for (let j = 0; shiftV + j * b < vTop; j++) out.push({ v0: shiftV + j * b, v1: shiftV + (j + 1) * b, j })
+    return out
+  }
+  const addSheet = (u0: number, i: number, rowIdx: number, r: { v0: number; v1: number; j: number }, shiftV: number) => {
+    const v0 = r.v0
+    const h = r.v1 - r.v0
+    const clippedByChord = r.j === -1 && shiftV > EPS
+    const cuts = g.offsets.map((_, k) => cutForSheet(g, k, u0, a, v0, h, input.step))
+    // Лист нужен, если хоть одна дуга проходит над его площадью.
+    // В режиме полосы — не целиком под верхней кромкой и хоть частично под нижней.
+    if (g.band && cuts.length >= 2
+      ? cuts[0].status === 'full' || cuts[1].status === 'none'
+      : cuts.every(c => c.status === 'none')) return
+    pending.push({ row: rowIdx, col: i, u0, u1: u0 + a, v0, v1: r.v1, w: a, h, clippedByChord, cuts })
   }
 
-  for (const r of rowEdges) {
-    const off = mod(input.shiftU + r.j * input.stagger, a)
+  if (columnMode) {
+    // Колонки по u с общим сдвигом shiftU, у каждой колонки свой сдвиг стыков по v.
+    const off = mod(input.shiftU, a)
     const iFrom = Math.floor((uMin - off) / a)
     const iTo = Math.ceil((uMax - off) / a)
     for (let i = iFrom; i < iTo; i++) {
-      const u0 = off + i * a
-      const v0 = r.v0
-      const h = r.v1 - r.v0
-      const clippedByChord = r.j === -1 && shiftV > EPS
-      const cuts = g.offsets.map((_, k) => cutForSheet(g, k, u0, a, v0, h, input.step))
-      // Лист нужен, если хоть одна дуга проходит над его площадью.
-      // В режиме полосы — не целиком под верхней кромкой и хоть частично под нижней.
-      if (g.band && cuts.length >= 2
-        ? cuts[0].status === 'full' || cuts[1].status === 'none'
-        : cuts.every(c => c.status === 'none')) continue
-      sheets.push({
-        id: id++, row, col: i, u0, u1: u0 + a, v0, v1: r.v1, w: a, h, clippedByChord, cuts,
-      })
+      const shiftV = mod(input.shiftV + colShiftV(i, colStaggerV, input.colOffsets), b)
+      rowEdgesFor(shiftV).forEach((r, rowIdx) => addSheet(off + i * a, i, rowIdx, r, shiftV))
     }
-    row++
+    // Нумерация как в обычном режиме: по рядам, внутри ряда слева направо.
+    pending.sort((p, q) => p.row - q.row || p.col - q.col)
+  } else {
+    const shiftV = mod(input.shiftV, b)
+    rowEdgesFor(shiftV).forEach((r, rowIdx) => {
+      const off = mod(input.shiftU + r.j * input.stagger, a)
+      const iFrom = Math.floor((uMin - off) / a)
+      const iTo = Math.ceil((uMax - off) / a)
+      for (let i = iFrom; i < iTo; i++) addSheet(off + i * a, i, rowIdx, r, shiftV)
+    })
   }
+  pending.forEach((p, k) => sheets.push({ id: k + 1, ...p }))
   return { sheets, halfMax, halfs, vTop }
 }
 
