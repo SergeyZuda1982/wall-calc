@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { calcInclined, inclinedEdgeTable, validateInclined } from '../calcInclinedArc'
 import { geometryFromChordSagitta, bandGeometry, calcArcLayout, arcV } from '../calcArcLayout'
+import { buildInclinedSurface3D } from '../inclinedArc3D'
 
 const IN = { chord: 20860, sagitta: 1900, drop: 1200, shift: 2250 }
 
@@ -120,5 +121,49 @@ describe('просадка нижней кромки у краёв (неровн
   })
   it('отрицательная просадка отклоняется', () => {
     expect(validateInclined({ ...base, edgeDroop: -5 })).not.toBeNull()
+  })
+})
+
+describe('стрела нижней дуги', () => {
+  const base = { chord: 20670, sagitta: 1900, drop: 1000, shift: 3400, edgeDroop: 40 }
+  it('равная стрела не меняет расчёт', () => {
+    const a = calcInclined(base)
+    const b = calcInclined({ ...base, bottomSagitta: 1900 })
+    expect(b.droopAlong).toBeCloseTo(a.droopAlong, 9)
+    expect(b.areaM2).toBeCloseTo(a.areaM2, 9)
+  })
+  it('нижняя дуга выпуклее на 20 мм: стойки у краёв короче на ≈ 20·cos α', () => {
+    const a = calcInclined(base)
+    const b = calcInclined({ ...base, bottomSagitta: 1920 })
+    expect(a.droopAlong - b.droopAlong).toBeCloseTo(20 * a.cosA, 6)
+  })
+  it('в центре стойка не меняется, у краёв — по таблице кромки', () => {
+    const t = inclinedEdgeTable({ ...base, bottomSagitta: 1880 }, 1000)
+    const mid = t[Math.floor(t.length / 2)]
+    const L = Math.hypot(3400, 1000)
+    expect(mid.wBottom - mid.w).toBeGreaterThan(L - 1)
+    expect(mid.wBottom - mid.w).toBeLessThan(L + 1)
+    const end = t[t.length - 1]
+    const r = calcInclined({ ...base, bottomSagitta: 1880 })
+    expect(end.wBottom - end.w).toBeCloseTo(L + r.droopAlong, 1)
+  })
+  it('3D: у края стойка ≈ длине по расчёту (первый порядок, до 0,5 мм)', () => {
+    const inp = { ...base, bottomSagitta: 1880 }
+    const s3 = buildInclinedSurface3D(inp)!
+    const e = s3.topEdge.length - 3
+    const d = Math.hypot(
+      s3.bottomEdge[e] - s3.topEdge[e], s3.bottomEdge[e + 1] - s3.topEdge[e + 1], s3.bottomEdge[e + 2] - s3.topEdge[e + 2],
+    ) * 1000
+    const r = calcInclined(inp)
+    expect(Math.abs(d - r.rulingLengthEdge)).toBeLessThan(0.5)
+    // вершины дуг остаются на расстоянии shift
+    const c = Math.floor((s3.topEdge.length / 3) / 2) * 3
+    expect(Math.abs((s3.bottomEdge[c + 2] - s3.topEdge[c + 2]) * 1000 - 3400)).toBeLessThan(2)
+  })
+  it('проверка: стрела нижней дуги должна быть в разумных пределах', () => {
+    expect(validateInclined({ ...base, bottomSagitta: 0 })).toMatch(/Стрела нижней дуги/)
+    expect(validateInclined({ ...base, bottomSagitta: 1e6 })).toMatch(/Стрела нижней дуги/)
+    expect(validateInclined({ ...base, shift: 100, bottomSagitta: 2200 })).toMatch(/слишком выпуклая/)
+    expect(validateInclined({ ...base, bottomSagitta: 1880 })).toBeNull()
   })
 })

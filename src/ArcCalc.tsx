@@ -147,11 +147,13 @@ interface ArcSaved {
   incl: boolean; dropH: number; offsetH: number
   /** Просадка нижней кромки у краёв, мм (неровный потолок). */
   droopE: number
+  /** Стрела нижней дуги, мм (0 — такая же, как у верхней). */
+  botSag: number
 }
 const ARC_DEFAULT: ArcSaved = {
   mode: 'sagitta', chord: 20800, sagitta: 1900, radius: 29413, gaps: [], hidden: [], sheetW: 1200, sheetL: 2500,
   orientation: 'across', shiftU: 0, shiftV: 0, stagger: 0, step: 50, labelStep: 250, selected: 1, offFrom: 'top',
-  incl: false, dropH: 1200, offsetH: 2250, droopE: 0,
+  incl: false, dropH: 1200, offsetH: 2250, droopE: 0, botSag: 0,
 }
 const numList = (v: unknown): number[] => (Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number' && Number.isFinite(x)) : [])
 /** Приводит произвольные данные (localStorage / файл) к безопасному состоянию вкладки. */
@@ -170,7 +172,7 @@ export function sanitizeArcSaved(d: unknown): ArcSaved {
     step: pickNum(o.step, D.step), labelStep: pickNum(o.labelStep, D.labelStep),
     selected: pickNum(o.selected, 1), offFrom: pickOneOf(o.offFrom, ['top', 'bottom'] as const, D.offFrom) as OffsetFrom,
     incl: o.incl === true, dropH: pickNum(o.dropH, D.dropH), offsetH: pickNum(o.offsetH, D.offsetH),
-    droopE: pickNum(o.droopE, 0),
+    droopE: pickNum(o.droopE, 0), botSag: pickNum(o.botSag, 0),
   }
 }
 function loadArcSaved(): ArcSaved {
@@ -205,24 +207,25 @@ export default function ArcCalc() {
   const [dropH, setDropH] = useState(init.dropH)
   const [offsetH, setOffsetH] = useState(init.offsetH)
   const [droopE, setDroopE] = useState(init.droopE)
+  const [botSag, setBotSag] = useState(init.botSag)
   const [edgeStep, setEdgeStep] = useState(500)
   const [edgeCopied, setEdgeCopied] = useState(false)
   const [show3d, setShow3d] = useState(false)
 
   const snapshot = (): ArcSaved => ({
     mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom,
-    incl, dropH, offsetH, droopE,
+    incl, dropH, offsetH, droopE, botSag,
   })
   useEffect(() => {
     try { window.localStorage.setItem(ARC_STORAGE_KEY, JSON.stringify(snapshot())) } catch { /* хранилище недоступно */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom, incl, dropH, offsetH, droopE])
+  }, [mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom, incl, dropH, offsetH, droopE, botSag])
   const applySaved = (d: unknown) => {
     const v = sanitizeArcSaved(d)
     setMode(v.mode); setChord(v.chord); setSagitta(v.sagitta); setRadius(v.radius); setGaps(v.gaps); setHidden(v.hidden)
     setSheetW(v.sheetW); setSheetL(v.sheetL); setOrientation(v.orientation); setShiftU(v.shiftU); setShiftV(v.shiftV)
     setStagger(v.stagger); setStep(v.step); setLabelStep(v.labelStep); setSelected(v.selected); setOffFrom(v.offFrom)
-    setIncl(v.incl); setDropH(v.dropH); setOffsetH(v.offsetH); setDroopE(v.droopE)
+    setIncl(v.incl); setDropH(v.dropH); setOffsetH(v.offsetH); setDroopE(v.droopE); setBotSag(v.botSag)
   }
 
   const error = useMemo(() => {
@@ -235,17 +238,17 @@ export default function ArcCalc() {
     if (!(labelStep >= step)) return 'Шаг подписей не меньше шага отметок'
     if (incl) {
       const sg = mode === 'sagitta' ? sagitta : radius - Math.sqrt(Math.max(radius * radius - (chord / 2) ** 2, 0))
-      return validateInclined({ chord, sagitta: sg, drop: dropH, shift: offsetH, edgeDroop: droopE })
+      return validateInclined({ chord, sagitta: sg, drop: dropH, shift: offsetH, edgeDroop: droopE, ...(botSag > 0 ? { bottomSagitta: botSag } : {}) })
     }
     return null
-  }, [mode, chord, sagitta, radius, gaps, sheetW, sheetL, step, labelStep, incl, dropH, offsetH, droopE])
+  }, [mode, chord, sagitta, radius, gaps, sheetW, sheetL, step, labelStep, incl, dropH, offsetH, droopE, botSag])
 
   /** Дуга в плане → параметры наклонной поверхности (стрела берётся из радиуса, если задан он). */
   const inclInput = useMemo(() => {
     if (!incl || error) return null
     const sg = mode === 'sagitta' ? sagitta : radius - Math.sqrt(Math.max(radius * radius - (chord / 2) ** 2, 0))
-    return { chord, sagitta: sg, drop: dropH, shift: offsetH, edgeDroop: droopE }
-  }, [incl, error, mode, chord, sagitta, radius, dropH, offsetH, droopE])
+    return { chord, sagitta: sg, drop: dropH, shift: offsetH, edgeDroop: droopE, ...(botSag > 0 ? { bottomSagitta: botSag } : {}) }
+  }, [incl, error, mode, chord, sagitta, radius, dropH, offsetH, droopE, botSag])
   const inc = useMemo(() => (inclInput ? calcInclined(inclInput) : null), [inclInput])
 
   const geom = useMemo(() => {
@@ -335,19 +338,20 @@ export default function ArcCalc() {
         {incl && (
           <div style={{ background: C.accentLight, border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
             <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 6 }}>
-              Нижняя кромка — такая же дуга, сдвинутая вниз и вперёд. Стойки параллельны. Дуга выше задаётся в плане, разметка ведётся в развёртке.
+              Нижняя кромка — такая же дуга, сдвинутая вниз и вперёд (стрелу нижней дуги можно задать другой). Стойки параллельны. Дуга выше задаётся в плане, разметка ведётся в развёртке.
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <NumField label="Опуск по вертикали" suffix="мм" value={dropH} step={10} onChange={setDropH} />
               <NumField label="Между дугами по горизонтали" suffix="мм" value={offsetH} step={10} onChange={setOffsetH} />
             </div>
-            <div style={{ marginTop: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
               <NumField label="Просадка нижней кромки у краёв (0 — потолок в уровне)" suffix="мм" value={droopE} step={5} onChange={setDroopE} />
+              <NumField label="Стрела нижней дуги (0 — как у верхней)" suffix="мм" value={botSag} step={5} onChange={setBotSag} />
             </div>
             {inc && (
               <div style={{ fontSize: 12, color: C.text, marginTop: 8, lineHeight: 1.55 }}>
                 <div>Стойка по наклону: <b>{inc.rulingLength.toFixed(0)} мм</b>, наклон {inc.angleDeg.toFixed(1)}°
-                  {droopE > 0 && <> · у краёв <b>{inc.rulingLengthEdge.toFixed(0)} мм</b></>}</div>
+                  {inc.droopAlong !== 0 && <> · у краёв <b>{inc.rulingLengthEdge.toFixed(0)} мм</b></>}</div>
                 <div>План: R = {inc.planRadius.toFixed(0)} мм, длина дуги {inc.planArcLength.toFixed(0)} мм</div>
                 <div>Развёртка: хорда <b>{inc.devChord.toFixed(0)} мм</b>, стрела <b>{inc.devSagitta.toFixed(0)} мм</b>, R ≈ <b>{inc.devRadius.toFixed(0)} мм</b></div>
                 <div>Стрела поперёк стоек: {inc.sagittaAcross.toFixed(0)} мм</div>
@@ -634,7 +638,7 @@ function EdgeTable({ input, inc, step, onStep, copied, onCopy }: {
         Развёртка: хорда {inc.devChord.toFixed(0)} мм, стрела {inc.devSagitta.toFixed(0)} мм, R ≈ {inc.devRadius.toFixed(0)} мм.
         u — длина вдоль кромки от левого конца, «от хорды» — отступ от прямой, соединяющей концы кромки.
         Нижняя кромка — та же кривая, ниже на {L.toFixed(0)} мм вдоль стоек
-        {inc.droopAlong > 0 ? `, плюс просадка у краёв до ${inc.droopAlong.toFixed(1)} мм вдоль стоек (по параболе)` : ''}. Значения точные (по окружности раскладки ниже отличаются не более чем на 1,5 мм).
+        {inc.droopAlong !== 0 ? `, ${inc.droopAlong > 0 ? 'плюс' : 'минус'} у краёв до ${Math.abs(inc.droopAlong).toFixed(1)} мм вдоль стоек (по параболе: просадка и разница стрел)` : ''}. Значения точные (по окружности раскладки ниже отличаются не более чем на 1,5 мм).
       </div>
       <div style={{ maxHeight: 320, overflow: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
