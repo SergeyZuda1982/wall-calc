@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  arcRadius, arcV, calcArcLayout, crossingNotes, findCrossings, geometryFromChordRadius, geometryFromChordSagitta, ordinateOffsets,
+  arcRadius, arcV, bandGeometry, calcArcLayout, crossingNotes, findCrossings, geometryFromChordRadius, geometryFromChordSagitta, ordinateOffsets,
   type ArcLayoutInput,
 } from '../calcArcLayout'
 
@@ -200,5 +200,67 @@ describe('выход линии реза на кромку листа', () => {
     const txt = crossingNotes(sheet.cuts[0]).join(' ')
     expect(txt).toContain('от левой кромки')
     expect(txt).toContain('от правой')
+  })
+})
+
+describe('разбежка стыков между колонками', () => {
+  const base = () => input({ geometry: bandGeometry(geometryFromChordSagitta(20708, 1823), 3544), orientation: 'across' })
+  const joints = (lay: ReturnType<typeof calcArcLayout>, col: number) =>
+    lay.sheets.filter(s => s.col === col).map(s => Math.round(s.v0)).sort((x, y) => x - y)
+
+  it('выключена: поведение прежнее (стыки колонок на одной высоте, нумерация та же)', () => {
+    const a = calcArcLayout(base())
+    const b = calcArcLayout({ ...base(), colStaggerV: 0, colOffsets: {} })
+    expect(b.sheets.map(s => [s.id, s.row, s.col, s.v0])).toEqual(a.sheets.map(s => [s.id, s.row, s.col, s.v0]))
+  })
+  it('0–500–0–500: нечётные колонки сдвинуты по высоте на 500, чётные нет', () => {
+    const lay = calcArcLayout({ ...base(), colStaggerV: 500 })
+    const cols = [...new Set(lay.sheets.map(s => s.col))]
+    for (const c of cols) {
+      const js = lay.sheets.filter(s => s.col === c && s.v0 > 0).map(s => Math.round(s.v0 % 2500))
+      const expected = (((c % 2) + 2) % 2) === 1 ? 500 : 0
+      for (const j of js) expect(j).toBe(expected)
+    }
+  })
+  it('соседние колонки: стыки по высоте различаются на 500 (по модулю листа)', () => {
+    const lay = calcArcLayout({ ...base(), colStaggerV: 500 })
+    const cols = [...new Set(lay.sheets.map(s => s.col))].sort((p, q) => p - q)
+    const j = (c: number) => Math.round(lay.sheets.find(s => s.col === c && s.v0 > 0)!.v0 % 2500)
+    for (let k = 1; k < cols.length; k++) expect(Math.abs(j(cols[k]) - j(cols[k - 1]))).toBe(500)
+  })
+  it('ручной сдвиг колонки заменяет автоматический', () => {
+    const auto = calcArcLayout({ ...base(), colStaggerV: 500 })
+    const mid = [...new Set(auto.sheets.map(s => s.col))].sort((p, q) => p - q)[3]
+    const lay = calcArcLayout({ ...base(), colStaggerV: 500, colOffsets: { [mid]: 1500 } })
+    const js = lay.sheets.filter(s => s.col === mid && s.v0 > 0).map(s => Math.round(s.v0 % 2500))
+    expect(js.length).toBeGreaterThan(0)
+    for (const x of js) expect(x).toBe(1500)
+    // остальные колонки не тронуты
+    const other = [...new Set(auto.sheets.map(s => s.col))].find(c => c !== mid)!
+    expect(joints(lay, other)).toEqual(joints(auto, other))
+  })
+  it('ручной сдвиг работает и при выключенной авторазбежке', () => {
+    const lay0 = calcArcLayout(base())
+    const col = [...new Set(lay0.sheets.map(s => s.col))][2]
+    const lay = calcArcLayout({ ...base(), colStaggerV: 0, colOffsets: { [col]: 1000 } })
+    const js = lay.sheets.filter(s => s.col === col && s.v0 > 0).map(s => Math.round(s.v0 % 2500))
+    for (const x of js) expect(x).toBe(1000)
+  })
+  it('площадь листов не теряется: каждая колонка закрывает полосу целиком', () => {
+    const lay = calcArcLayout({ ...base(), colStaggerV: 500 })
+    // Суммарная площадь, оставленная под нижней кромкой минус под верхней = площадь полосы — не зависит от раскладки.
+    const band = lay.sheets.reduce((s, sh) => s + sh.cuts[1].keptAreaM2 - sh.cuts[0].keptAreaM2, 0)
+    const lay0 = calcArcLayout(base())
+    const band0 = lay0.sheets.reduce((s, sh) => s + sh.cuts[1].keptAreaM2 - sh.cuts[0].keptAreaM2, 0)
+    expect(band).toBeCloseTo(band0, 2)
+  })
+})
+
+describe('разбежка колонок только поперёк хорды', () => {
+  it('вдоль хорды colStaggerV игнорируется, остаётся смещение рядов', () => {
+    const p = { orientation: 'along' as const, stagger: 600 }
+    const a = calcArcLayout(input(p))
+    const b = calcArcLayout(input({ ...p, colStaggerV: 500, colOffsets: { 1: 700 } }))
+    expect(b.sheets.map(s => [s.id, s.u0, s.v0])).toEqual(a.sheets.map(s => [s.id, s.u0, s.v0]))
   })
 })

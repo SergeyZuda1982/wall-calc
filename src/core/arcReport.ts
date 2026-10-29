@@ -11,6 +11,9 @@ export interface ArcReportInput {
   orientation: ArcOrientation
   sheetW: number; sheetL: number
   shiftU: number; shiftV: number; stagger: number; step: number
+  /** Разбежка стыков по колонкам, мм, и ручные сдвиги (индекс колонки → мм). */
+  colStaggerV?: number
+  colOv?: Record<string, number>
   /** id листов в отчёте. */
   sheetIds: number[] | 'all'
   drawing?: (s: ArcSheet) => string
@@ -34,6 +37,9 @@ export function buildArcReport(o: ArcReportInput): Report {
     ['Сдвиг по хорде, мм', String(o.shiftU)],
     ['Сдвиг от хорды, мм', String(o.shiftV)],
     ...(o.orientation === 'along' ? [['Смещение рядов, мм', String(o.stagger)] as [string, string]] : []),
+    ...(o.orientation === 'across' && ((o.colStaggerV ?? 0) > 0 || Object.keys(o.colOv ?? {}).length > 0)
+      ? [['Разбежка стыков по колонкам, мм', `${o.colStaggerV ?? 0} (через колонку)${Object.keys(o.colOv ?? {}).length ? `, вручную: ${Object.entries(o.colOv ?? {}).map(([k, v]) => `к${k}=${v}`).join(', ')}` : ''}`] as [string, string]]
+      : []),
     ['Шаг отметок, мм', String(o.step)],
     ['Листов в раскладке', String(o.sheets.length)],
     ...geom.offsets.map((_, k): [string, string] => {

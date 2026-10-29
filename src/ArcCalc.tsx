@@ -22,7 +22,7 @@ import { calcInclined, inclinedEdgeTable, validateInclined } from './core/calcIn
 import {
   arcRadius, arcV, bandGeometry, calcArcLayout, crossingNotes, geometryFromChordRadius, geometryFromChordSagitta,
   type ArcGeometry, type ArcOrientation, type ArcSheet,
-  labelIndices,
+  colShiftV, labelIndices,
   ordinateOffsets,
   type OffsetFrom,
 } from './core/calcArcLayout'
@@ -149,13 +149,26 @@ interface ArcSaved {
   droopE: number
   /** Стрела нижней дуги, мм (0 — такая же, как у верхней). */
   botSag: number
+  /** Разбежка стыков между колонками: нечётные колонки сдвинуты по высоте на это значение, мм (0 — выкл.). */
+  colStaggerV: number
+  /** Ручные сдвиги стыков по колонкам: индекс колонки → мм. */
+  colOv: Record<string, number>
 }
 const ARC_DEFAULT: ArcSaved = {
   mode: 'sagitta', chord: 20800, sagitta: 1900, radius: 29413, gaps: [], hidden: [], sheetW: 1200, sheetL: 2500,
   orientation: 'across', shiftU: 0, shiftV: 0, stagger: 0, step: 50, labelStep: 250, selected: 1, offFrom: 'top',
-  incl: false, dropH: 1200, offsetH: 2250, droopE: 0, botSag: 0,
+  incl: false, dropH: 1200, offsetH: 2250, droopE: 0, botSag: 0, colStaggerV: 500, colOv: {},
 }
 const numList = (v: unknown): number[] => (Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number' && Number.isFinite(x)) : [])
+const numRecord = (v: unknown): Record<string, number> => {
+  const out: Record<string, number> = {}
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (/^-?\d{1,4}$/.test(k) && typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= 100000) out[k] = x
+    }
+  }
+  return out
+}
 /** Приводит произвольные данные (localStorage / файл) к безопасному состоянию вкладки. */
 // eslint-disable-next-line react-refresh/only-export-components
 export function sanitizeArcSaved(d: unknown): ArcSaved {
@@ -173,6 +186,7 @@ export function sanitizeArcSaved(d: unknown): ArcSaved {
     selected: pickNum(o.selected, 1), offFrom: pickOneOf(o.offFrom, ['top', 'bottom'] as const, D.offFrom) as OffsetFrom,
     incl: o.incl === true, dropH: pickNum(o.dropH, D.dropH), offsetH: pickNum(o.offsetH, D.offsetH),
     droopE: pickNum(o.droopE, 0), botSag: pickNum(o.botSag, 0),
+    colStaggerV: Math.max(pickNum(o.colStaggerV, D.colStaggerV), 0), colOv: numRecord(o.colOv),
   }
 }
 function loadArcSaved(): ArcSaved {
@@ -208,24 +222,26 @@ export default function ArcCalc() {
   const [offsetH, setOffsetH] = useState(init.offsetH)
   const [droopE, setDroopE] = useState(init.droopE)
   const [botSag, setBotSag] = useState(init.botSag)
+  const [colStaggerV, setColStaggerV] = useState(init.colStaggerV)
+  const [colOv, setColOv] = useState<Record<string, number>>(init.colOv)
   const [edgeStep, setEdgeStep] = useState(500)
   const [edgeCopied, setEdgeCopied] = useState(false)
   const [show3d, setShow3d] = useState(false)
 
   const snapshot = (): ArcSaved => ({
     mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom,
-    incl, dropH, offsetH, droopE, botSag,
+    incl, dropH, offsetH, droopE, botSag, colStaggerV, colOv,
   })
   useEffect(() => {
     try { window.localStorage.setItem(ARC_STORAGE_KEY, JSON.stringify(snapshot())) } catch { /* хранилище недоступно */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom, incl, dropH, offsetH, droopE, botSag])
+  }, [mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom, incl, dropH, offsetH, droopE, botSag, colStaggerV, colOv])
   const applySaved = (d: unknown) => {
     const v = sanitizeArcSaved(d)
     setMode(v.mode); setChord(v.chord); setSagitta(v.sagitta); setRadius(v.radius); setGaps(v.gaps); setHidden(v.hidden)
     setSheetW(v.sheetW); setSheetL(v.sheetL); setOrientation(v.orientation); setShiftU(v.shiftU); setShiftV(v.shiftV)
     setStagger(v.stagger); setStep(v.step); setLabelStep(v.labelStep); setSelected(v.selected); setOffFrom(v.offFrom)
-    setIncl(v.incl); setDropH(v.dropH); setOffsetH(v.offsetH); setDroopE(v.droopE); setBotSag(v.botSag)
+    setIncl(v.incl); setDropH(v.dropH); setOffsetH(v.offsetH); setDroopE(v.droopE); setBotSag(v.botSag); setColStaggerV(v.colStaggerV); setColOv(v.colOv)
   }
 
   const error = useMemo(() => {
@@ -262,8 +278,8 @@ export default function ArcCalc() {
 
   const layout = useMemo(() => {
     if (!geom) return null
-    return calcArcLayout({ geometry: geom, sheetWidth: sheetW, sheetLength: sheetL, orientation, shiftU, shiftV, stagger, step })
-  }, [geom, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step])
+    return calcArcLayout({ geometry: geom, sheetWidth: sheetW, sheetLength: sheetL, orientation, shiftU, shiftV, stagger, step, colStaggerV, colOffsets: colOv })
+  }, [geom, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, colStaggerV, colOv])
 
   const arcCount = incl && inc ? 2 : gaps.length + 1
   const arcName = (k: number) => (incl && inc ? (k === 0 ? 'Верхняя кромка' : 'Нижняя кромка') : `Дуга ${k + 1}`)
@@ -273,6 +289,7 @@ export default function ArcCalc() {
     [arcCount, hidden],
   )
   const sheets = layout?.sheets ?? []
+  const sheetCols = useMemo(() => [...new Set(sheets.map(sh => sh.col))].sort((p, q) => p - q), [sheets])
   const sel = sheets.find(s => s.id === selected) ?? sheets[0]
   const selIdx = sel ? sheets.indexOf(sel) : -1
   const a = orientation === 'across' ? sheetW : sheetL
@@ -301,7 +318,7 @@ export default function ArcCalc() {
   const buildReport = (scope: ExportScope) => {
     if (!geom || !layout) throw new Error('нет раскладки')
     return buildArcReport({
-      geom, sheets, shown, labelStep, offFrom, orientation, sheetW, sheetL, shiftU, shiftV, stagger, step,
+      geom, sheets, shown, labelStep, offFrom, orientation, sheetW, sheetL, shiftU, shiftV, stagger, step, colStaggerV, colOv,
       sheetIds: scope === 'selected' && sel ? [sel.id] : 'all',
       drawing: sh => renderToStaticMarkup(<SheetDrawing sheet={sh} geom={geom} shown={shown} labelStep={labelStep} />),
       overview: () => renderToStaticMarkup(<OverviewSvg sheets={sheets} geom={geom} onSelect={() => undefined} layout={layout} />),
@@ -398,6 +415,28 @@ export default function ArcCalc() {
           <button style={btn} onClick={() => setShiftU((((chordU / 2 - a / 2) % a) + a) % a)}>Лист в центре дуги</button>
           <button style={btn} onClick={() => { setShiftU(0); setShiftV(0) }}>Сброс</button>
         </div>
+        {orientation === 'across' && <>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, margin: '14px 0 6px' }}>Разбежка стыков между колонками</div>
+        <NumField label="Сдвиг стыков через колонку (0 — выкл.)" suffix="мм" value={colStaggerV} step={500} onChange={v => setColStaggerV(Math.max(v, 0))} />
+        <div style={{ display: 'flex', gap: 6, margin: '4px 0 8px' }}>
+          {[0, 500, 1000].map(v => <button key={v} style={btn} onClick={() => setColStaggerV(v)}>{v === 0 ? 'Выкл.' : `0–${v}–0–${v}`}</button>)}
+        </div>
+        {sheetCols.length > 0 && (
+          <details style={{ marginBottom: 8 }}>
+            <summary style={{ cursor: 'pointer', fontSize: 12.5 }}>Сдвиг стыков по колонкам вручную{Object.keys(colOv).length > 0 ? ` (задано: ${Object.keys(colOv).length})` : ''}</summary>
+            <div style={{ fontSize: 11.5, color: C.muted, margin: '6px 0' }}>
+              Высота стыка от хорды развёртки для каждой колонки слева направо. Значение по модулю длины листа ({orientation === 'across' ? sheetL : sheetW} мм).
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {sheetCols.map((c, n) => (
+                <NumField key={c} label={`Колонка ${n + 1}`} suffix="мм" value={colShiftV(c, colStaggerV, colOv)} step={500}
+                  onChange={v => setColOv({ ...colOv, [c]: v })} />
+              ))}
+            </div>
+            <button style={{ ...btn, marginTop: 6 }} disabled={Object.keys(colOv).length === 0} onClick={() => setColOv({})}>Сбросить ручные</button>
+          </details>
+        )}
+        </>}
         {orientation === 'along' && (
           <>
             <NumField label="Смещение рядов вразбежку" suffix="мм" value={stagger} step={50} onChange={setStagger} />
