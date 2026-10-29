@@ -76,6 +76,16 @@ export interface ArcLayoutInput {
   colOffsets?: Record<number, number>
 }
 
+/**
+ * Новый сдвиг стыков колонки при перетаскивании: стартовый сдвиг + смещение указателя по v,
+ * округлённое до шага `snap`, по модулю длины листа `period` (результат в [0, period)).
+ */
+export function dragColumnOffset(startOffset: number, deltaV: number, snap: number, period: number): number {
+  const step = snap > 0 ? snap : 1
+  const moved = startOffset + Math.round(deltaV / step) * step
+  return ((moved % period) + period) % period
+}
+
 /** Сдвиг стыков колонки по v (до взятия по модулю длины листа), мм. */
 export function colShiftV(col: number, colStaggerV: number, colOffsets?: Record<number, number>): number {
   const manual = colOffsets?.[col]

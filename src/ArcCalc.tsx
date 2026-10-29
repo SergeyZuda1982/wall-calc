@@ -11,7 +11,7 @@
  * Сетка на экране — ориентир; размечать нужно по числам таблицы.
  */
 
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import CalcFileButtons from './components/CalcFileButtons'
 import { NumField } from './components/calcFields'
@@ -22,7 +22,7 @@ import { calcInclined, inclinedEdgeTable, validateInclined } from './core/calcIn
 import {
   arcRadius, arcV, bandGeometry, calcArcLayout, crossingNotes, geometryFromChordRadius, geometryFromChordSagitta,
   type ArcGeometry, type ArcOrientation, type ArcSheet,
-  colShiftV, labelIndices,
+  colShiftV, dragColumnOffset, labelIndices,
   ordinateOffsets,
   type OffsetFrom,
 } from './core/calcArcLayout'
@@ -227,6 +227,8 @@ export default function ArcCalc() {
   const [edgeStep, setEdgeStep] = useState(500)
   const [edgeCopied, setEdgeCopied] = useState(false)
   const [show3d, setShow3d] = useState(false)
+  const [dragMode, setDragMode] = useState(false)
+  const [snap, setSnap] = useState(500)
 
   const snapshot = (): ArcSaved => ({
     mode, chord, sagitta, radius, gaps, hidden, sheetW, sheetL, orientation, shiftU, shiftV, stagger, step, labelStep, selected, offFrom,
@@ -483,7 +485,33 @@ export default function ArcCalc() {
                 ))}
                 <div style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>Нажмите на лист на схеме.</div>
               </div>
-              <OverviewSvg sheets={sheets} geom={geom} selectedId={sel?.id} onSelect={setSelected} layout={layout} />
+              {orientation === 'across' && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+                  <button style={{ ...btn, background: dragMode ? '#2563eb' : '#fff', color: dragMode ? '#fff' : C.text }}
+                    onClick={() => setDragMode(v => !v)}>✋ Двигать колонки</button>
+                  {dragMode && (
+                    <>
+                      <span style={{ fontSize: 12, color: C.muted }}>шаг:</span>
+                      {[250, 500, 1000].map(v => (
+                        <button key={v} style={{ ...btn, fontWeight: snap === v ? 700 : 400, borderColor: snap === v ? '#2563eb' : C.border }}
+                          onClick={() => setSnap(v)}>{v}</button>
+                      ))}
+                      <button style={btn} disabled={Object.keys(colOv).length === 0} onClick={() => setColOv({})}>Сбросить ручные</button>
+                    </>
+                  )}
+                </div>
+              )}
+              <OverviewSvg sheets={sheets} geom={geom} selectedId={sel?.id} onSelect={setSelected} layout={layout}
+                drag={dragMode && orientation === 'across' ? {
+                  snap, period: sheetL,
+                  getOffset: c => colShiftV(c, colStaggerV, colOv),
+                  onChange: (c, off) => setColOv(prev => ({ ...prev, [c]: off })),
+                } : undefined} />
+              {dragMode && orientation === 'across' && (
+                <div style={{ fontSize: 11.5, color: C.muted, marginTop: 6 }}>
+                  Потяните лист вверх или вниз: вся колонка сдвигается по высоте шагами по {snap} мм. Схему вправо-влево можно листать как обычно.
+                </div>
+              )}
               <div style={{ fontSize: 11.5, color: C.muted, marginTop: 6 }}>
                 {incl && inc
                   ? 'Развёртка наклонной поверхности. Цвет листа — по верхней кромке: оранжевый — верхняя кромка режет лист, серый — лист целиком в поверхности. Нижнюю кромку режет лист с отметками «Нижняя кромка».'
@@ -614,15 +642,40 @@ const td: React.CSSProperties = { padding: '4px 10px', borderBottom: '1px solid 
 const cell = (m: { dv: number; clipped: 'top' | 'bottom' | null }) =>
   m.clipped === 'top' ? `${m.dv} (край листа)` : m.clipped === 'bottom' ? '0 (ниже хорды)' : String(m.dv)
 
-function OverviewSvg({ sheets, geom, selectedId, onSelect, layout }: {
+/** Перетаскивание колонок листов по высоте (пальцем или мышью) со снапом к шагу. */
+interface ColDrag {
+  /** Шаг привязки, мм. */
+  snap: number
+  /** Длина колонки по v (период стыков), мм. */
+  period: number
+  getOffset: (col: number) => number
+  onChange: (col: number, offset: number) => void
+}
+
+function OverviewSvg({ sheets, geom, selectedId, onSelect, layout, drag }: {
   sheets: ArcSheet[]; geom: ArcGeometry; selectedId?: number
   onSelect: (id: number) => void; layout: ReturnType<typeof calcArcLayout>
+  drag?: ColDrag
 }) {
+  const svgRef = useRef<SVGSVGElement>(null)
+  const dragRef = useRef<{ col: number; v0: number; off0: number; last: number } | null>(null)
+  const [dragCol, setDragCol] = useState<number | null>(null)
+  // Положение указателя в координатах схемы → v (мм от хорды развёртки).
+  const pointerV = (e: React.PointerEvent): number | null => {
+    const svg = svgRef.current
+    const ctm = svg?.getScreenCTM()
+    if (!svg || !ctm) return null
+    const pt = svg.createSVGPoint()
+    pt.x = e.clientX; pt.y = e.clientY
+    return vMaxRef.current - pt.matrixTransform(ctm.inverse()).y
+  }
+  const vMaxRef = useRef(0)
   const uMin = Math.min(...sheets.map(s => s.u0), 0) - 300
   const uMax = Math.max(...sheets.map(s => s.u1), geom.chord) + 300
   const vMax = Math.max(layout.vTop, ...sheets.map(s => s.v1)) + 300
   const vMin = -300
   const Y = (v: number) => vMax - v
+  vMaxRef.current = vMax
   const curve = (arc: number) => {
     const half = layout.halfs[arc]
     const pts: string[] = []
@@ -634,14 +687,35 @@ function OverviewSvg({ sheets, geom, selectedId, onSelect, layout }: {
   const fs = 260
   return (
     <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`${uMin} 0 ${uMax - uMin} ${vMax - vMin}`} style={{ width: '100%', minWidth: 900, display: 'block' }}>
+      <svg ref={svgRef} viewBox={`${uMin} 0 ${uMax - uMin} ${vMax - vMin}`}
+        style={{ width: '100%', minWidth: 900, display: 'block', touchAction: drag ? 'pan-x' : 'auto', userSelect: 'none' }}
+        onPointerMove={e => {
+          const d = dragRef.current
+          if (!drag || !d) return
+          const v = pointerV(e)
+          if (v === null) return
+          const off = dragColumnOffset(d.off0, v - d.v0, drag.snap, drag.period)
+          if (off !== d.last) { d.last = off; drag.onChange(d.col, off) }
+        }}
+        onPointerUp={() => { dragRef.current = null; setDragCol(null) }}
+        onPointerCancel={() => { dragRef.current = null; setDragCol(null) }}>
         {sheets.map(s => {
           const st = s.cuts[0].status
           const fill = st === 'full' ? 'rgba(96,165,250,0.35)' : st === 'cut' ? 'rgba(251,146,60,0.45)' : 'rgba(156,163,175,0.25)'
           return (
-            <g key={s.id} onClick={() => onSelect(s.id)} style={{ cursor: 'pointer' }}>
+            <g key={s.id} onClick={() => onSelect(s.id)} style={{ cursor: drag ? 'ns-resize' : 'pointer' }}
+              onPointerDown={e => {
+                if (!drag) return
+                const v = pointerV(e)
+                if (v === null) return
+                const off0 = drag.getOffset(s.col)
+                dragRef.current = { col: s.col, v0: v, off0, last: off0 }
+                setDragCol(s.col)
+                svgRef.current?.setPointerCapture(e.pointerId)
+              }}>
               <rect x={s.u0} y={Y(s.v1)} width={s.w} height={s.h} fill={fill}
-                stroke={s.id === selectedId ? '#111827' : '#6b7280'} strokeWidth={s.id === selectedId ? 40 : 12} />
+                stroke={dragCol === s.col ? '#2563eb' : s.id === selectedId ? '#111827' : '#6b7280'}
+                strokeWidth={dragCol === s.col ? 36 : s.id === selectedId ? 40 : 12} />
               <text x={(s.u0 + s.u1) / 2} y={Y((s.v0 + s.v1) / 2) + fs / 3} fontSize={fs} textAnchor="middle" fill="#111827" pointerEvents="none">{s.id}</text>
             </g>
           )
