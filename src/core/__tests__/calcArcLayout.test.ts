@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  arcRadius, arcV, bandGeometry, calcArcLayout, crossingNotes, findCrossings, geometryFromChordRadius, geometryFromChordSagitta, ordinateOffsets,
+  arcRadius, arcV, bandGeometry, calcArcLayout, crossingNotes, dragColumnOffset, findCrossings, geometryFromChordRadius, geometryFromChordSagitta, ordinateOffsets,
   type ArcLayoutInput,
 } from '../calcArcLayout'
 
@@ -262,5 +262,22 @@ describe('разбежка колонок только поперёк хорды
     const a = calcArcLayout(input(p))
     const b = calcArcLayout(input({ ...p, colStaggerV: 500, colOffsets: { 1: 700 } }))
     expect(b.sheets.map(s => [s.id, s.u0, s.v0])).toEqual(a.sheets.map(s => [s.id, s.u0, s.v0]))
+  })
+})
+
+describe('перетаскивание колонки', () => {
+  it('смещение округляется до шага', () => {
+    expect(dragColumnOffset(0, 240, 500, 2500)).toBe(0)
+    expect(dragColumnOffset(0, 260, 500, 2500)).toBe(500)
+    expect(dragColumnOffset(500, 1010, 500, 2500)).toBe(1500)
+    expect(dragColumnOffset(0, 130, 250, 2500)).toBe(250)
+  })
+  it('вниз — в минус, по кругу в пределах листа', () => {
+    expect(dragColumnOffset(500, -500, 500, 2500)).toBe(0)
+    expect(dragColumnOffset(0, -500, 500, 2500)).toBe(2000)
+    expect(dragColumnOffset(2000, 1000, 500, 2500)).toBe(500)
+  })
+  it('шаг ≤ 0 не ломает расчёт', () => {
+    expect(Number.isFinite(dragColumnOffset(0, 10, 0, 2500))).toBe(true)
   })
 })
