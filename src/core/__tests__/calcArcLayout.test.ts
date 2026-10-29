@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  arcRadius, arcV, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta, ordinateOffsets,
+  arcRadius, arcV, calcArcLayout, crossingNotes, findCrossings, geometryFromChordRadius, geometryFromChordSagitta, ordinateOffsets,
   type ArcLayoutInput,
 } from '../calcArcLayout'
 
@@ -155,3 +155,50 @@ describe('ordinateOffsets: отступы от крайней линии', () =>
   })
 })
 
+
+
+describe('выход линии реза на кромку листа', () => {
+  it('находит точку, где дуга уходит в 0 на нижней кромке (крайний лист)', () => {
+    const lay = calcArcLayout(input({ geometry: gOne }))
+    // Крайний левый лист нижнего ряда: дуга выходит из нуля где-то внутри листа.
+    const sheet = lay.sheets.find(s => s.row === 0 && s.cuts[0].crossings.length > 0)
+    expect(sheet).toBeTruthy()
+    const c = sheet!.cuts[0].crossings.find(x => x.edge === 'bottom')!
+    expect(c.du + c.duRight).toBe(sheet!.w)
+    // В найденной точке высота дуги над нижней кромкой листа ≈ 0.
+    const dv = arcV(gOne, 0, sheet!.u0 + c.du) - sheet!.v0
+    expect(Math.abs(dv)).toBeLessThan(1)
+  })
+  it('точка лежит между отметками: до неё отметка 0, после — больше нуля', () => {
+    const lay = calcArcLayout(input({ geometry: gOne, step: 300 }))
+    const sheet = lay.sheets.find(s => s.row === 0 && s.cuts[0].crossings.some(x => x.edge === 'bottom'))!
+    const c = sheet.cuts[0].crossings.find(x => x.edge === 'bottom')!
+    const before = sheet.cuts[0].marks.filter(m => m.du < c.du).pop()
+    const after = sheet.cuts[0].marks.find(m => m.du > c.du)
+    const lo = c.rising ? before : after
+    const hi = c.rising ? after : before
+    expect(lo?.dv).toBe(0)
+    expect(hi!.dv).toBeGreaterThan(0)
+  })
+  it('верхняя кромка: дуга пересекает верх листа в найденной точке', () => {
+    const w = 1200, h = 2500
+    const list = findCrossings(gOne, 0, 0, w, 0, h)
+    for (const c of list) {
+      const dv = arcV(gOne, 0, c.du) - 0
+      expect(Math.abs(dv - (c.edge === 'bottom' ? 0 : h))).toBeLessThan(2)
+    }
+  })
+  it('лист целиком под дугой или за ней — пересечений нет', () => {
+    const lay = calcArcLayout(input({ geometry: gOne }))
+    for (const s of lay.sheets) {
+      if (s.cuts[0].status !== 'cut') expect(s.cuts[0].crossings).toEqual([])
+    }
+  })
+  it('текст для разметчика называет расстояние от левой и от правой кромки', () => {
+    const lay = calcArcLayout(input({ geometry: gOne }))
+    const sheet = lay.sheets.find(s => s.cuts[0].crossings.some(x => x.edge === 'bottom'))!
+    const txt = crossingNotes(sheet.cuts[0]).join(' ')
+    expect(txt).toContain('от левой кромки')
+    expect(txt).toContain('от правой')
+  })
+})

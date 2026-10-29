@@ -1,4 +1,4 @@
-import { arcRadius, labelIndices, ordinateOffsets, type ArcGeometry, type ArcOrientation, type ArcSheet, type OffsetFrom } from './calcArcLayout'
+import { arcRadius, crossingNotes, labelIndices, ordinateOffsets, type ArcGeometry, type ArcOrientation, type ArcSheet, type OffsetFrom } from './calcArcLayout'
 import { fmtDateRu, type Report, type ReportCell, type ReportSection } from './calcReport'
 
 export interface ArcReportInput {
@@ -56,6 +56,9 @@ export function buildArcReport(o: ArcReportInput): Report {
     o.shown.forEach((k, j) => {
       if (offs[j].top !== null) notes.push(`Дуга ${k + 1}: верхняя линия ${offs[j].top}, нижняя ${offs[j].bottom}, между ними ${offs[j].span} мм.`)
     })
+    for (const k of o.shown) {
+      for (const t of crossingNotes(sheet.cuts[k])) notes.push(`Дуга ${k + 1}: ${t}.`)
+    }
     if (rows.length) notes.push(`Проведите поперёк листа две линии по этим отметкам, а между ними мерьте столбец «отступ от ${fromWord} линии».`)
     const head = ['От левой кромки, мм', ...o.shown.flatMap(k => [`Дуга ${k + 1}, мм`, `Дуга ${k + 1}: отступ от ${fromWord} линии, мм`])]
     const body: ReportCell[][] = rows.map((m, i) => [

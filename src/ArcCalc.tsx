@@ -20,7 +20,7 @@ import { buildArcReport } from './core/arcReport'
 import { pickNum, pickOneOf } from './core/calcFile'
 import { calcInclined, inclinedEdgeTable, validateInclined } from './core/calcInclinedArc'
 import {
-  arcRadius, arcV, bandGeometry, calcArcLayout, geometryFromChordRadius, geometryFromChordSagitta,
+  arcRadius, arcV, bandGeometry, calcArcLayout, crossingNotes, geometryFromChordRadius, geometryFromChordSagitta,
   type ArcGeometry, type ArcOrientation, type ArcSheet,
   labelIndices,
   ordinateOffsets,
@@ -63,7 +63,7 @@ const btn: React.CSSProperties = {
 function SheetDrawing({ sheet, geom, shown, labelStep }: { sheet: ArcSheet; geom: ArcGeometry; shown: number[]; labelStep: number }) {
   const { w, h } = sheet
   const fs = Math.max(w, h) / 55
-  const pad = fs * 3
+  const pad = fs * 4
   const y = (v: number) => h - v
   const lines: React.ReactNode[] = []
   for (let u = 0; u <= w + 1e-6; u += 50) {
@@ -116,7 +116,22 @@ function SheetDrawing({ sheet, geom, shown, labelStep }: { sheet: ArcSheet; geom
           </g>
         )
       })}
-      <text x={w / 2} y={h + pad * 0.75} fontSize={fs} textAnchor="middle" fill={C.muted}>
+      {shown.map(k => sheet.cuts[k].crossings.map((c, i) => {
+        const col = ARC_COLORS[k]
+        const bottom = c.edge === 'bottom'
+        const yy = bottom ? y(0) : y(h)
+        const ly = bottom ? h + fs * (1.5 + 1.2 * (k % 2)) : -fs * (0.6 + 1.2 * (k % 2))
+        return (
+          <g key={`x${k}_${i}`}>
+            <line x1={c.du} y1={yy} x2={c.du} y2={ly + (bottom ? -fs : fs * 0.3)} stroke={col} strokeWidth={fs / 14} strokeDasharray={`${fs / 3} ${fs / 4}`} />
+            <circle cx={c.du} cy={yy} r={fs / 4} fill="#fff" stroke={col} strokeWidth={fs / 12} />
+            <text x={c.du} y={ly} fontSize={fs} textAnchor="middle" fill={col} fontWeight={700}>
+              {c.edge === 'bottom' ? '0' : 'край'} на {c.du} → | ← {c.duRight}
+            </text>
+          </g>
+        )
+      }))}
+      <text x={w / 2} y={h + fs * 3.7} fontSize={fs} textAnchor="middle" fill={C.muted}>
         низ листа — со стороны хорды · клетка 50 мм (жирная — 250 мм) · {w}×{h} мм
       </text>
     </svg>
@@ -487,6 +502,7 @@ function CutTable({ sheet, shown, labelStep, offFrom, name }: { sheet: ArcSheet;
     if (s === 'none') return [{ k, text: 'лист за дугой, для неё не нужен' }]
     return []
   })
+  const crossNotes = shown.flatMap(k => crossingNotes(sheet.cuts[k]).map(text => ({ k, text })))
   const ref = sheet.cuts.find(c => c.marks.length)
   const rows = ref ? ref.marks : []
   const labeled = labelIndices(rows.map(m => m.du), labelStep)
@@ -497,6 +513,12 @@ function CutTable({ sheet, shown, labelStep, offFrom, name }: { sheet: ArcSheet;
       {notes.length > 0 && (
         <div style={{ padding: 8, fontSize: 12, color: C.muted }}>
           {notes.map(n => <div key={n.k}>{name(n.k)}: {n.text}.</div>)}
+        </div>
+      )}
+      {crossNotes.length > 0 && (
+        <div style={{ padding: 8, fontSize: 12.5, lineHeight: 1.5, borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>Где линия реза выходит на кромку листа</div>
+          {crossNotes.map((n, i) => <div key={i} style={{ color: ARC_COLORS[n.k] }}>{name(n.k)}: {n.text}.</div>)}
         </div>
       )}
       {rows.length > 0 && (
