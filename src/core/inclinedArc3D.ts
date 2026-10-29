@@ -7,7 +7,8 @@
  * хорде в сторону выпуклости верхней дуги и дальше, куда сдвинута нижняя кромка.
  *
  * Верхняя кромка: (x, 0, y(x)), y(x) — прогиб дуги плана от хорды.
- * Нижняя кромка: (x, −(drop + δ(x)), y(x) + shift), где δ(x) — просадка
+ * Нижняя кромка: (x, −(drop + δ(x)), yB(x) + shift), где yB — дуга нижней кромки
+ * (та же стрела по умолчанию; при другой стреле вершины дуг остаются на расстоянии shift), δ(x) — просадка
  * (0 в центре, edgeDroop у концов, по параболе). Это точное положение (перенос
  * верхней точки), а не развёртка.
  * Стойки — прямые между точками кромок, расставлены с шагом studStep мм
@@ -46,10 +47,14 @@ export function buildInclinedSurface3D(
   const droop = input.edgeDroop ?? 0
   const R = (chord * chord) / (8 * sagitta) + sagitta / 2
   const yAt = (x: number) => Math.sqrt(Math.max(R * R - (x - chord / 2) ** 2, 0)) - (R - sagitta)
+  // Нижняя дуга: своя стрела; вершины дуг остаются на расстоянии shift (центр к центру).
+  const sB = input.bottomSagitta ?? sagitta
+  const RB = (chord * chord) / (8 * sB) + sB / 2
+  const yBAt = (x: number) => Math.sqrt(Math.max(RB * RB - (x - chord / 2) ** 2, 0)) - (RB - sB) + (sagitta - sB)
   const dAt = (x: number) => drop + droop * ((x - chord / 2) / (chord / 2)) ** 2
 
   const top = (x: number): [number, number, number] => [(x - chord / 2) * MM, 0, yAt(x) * MM]
-  const bot = (x: number): [number, number, number] => [(x - chord / 2) * MM, -dAt(x) * MM, (yAt(x) + shift) * MM]
+  const bot = (x: number): [number, number, number] => [(x - chord / 2) * MM, -dAt(x) * MM, (yBAt(x) + shift) * MM]
 
   const positions = new Float32Array((rows + 1) * (cols + 1) * 3)
   const topEdge = new Float32Array((cols + 1) * 3)
